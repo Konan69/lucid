@@ -117,7 +117,14 @@ const changesLayer = Layer.effectContext(
   }),
 )
 const testLayer = artifactStoreLayer.pipe(
-  Layer.provideMerge(Layer.mergeAll(testDatabaseLayer, changesLayer, runtimeHistoryLayer)),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      testDatabaseLayer,
+      changesLayer,
+      runtimeHistoryLayer,
+      authLayer.pipe(Layer.provide(testConfigLayer)),
+    ),
+  ),
 )
 const encodeOrigin = Schema.encodeSync(StoredRunOrigin)
 
@@ -196,7 +203,13 @@ const fixture = Effect.fn('Artifacts.test.fixture')(function* () {
   )
   yield* Ref.update(yield* Responses, (entries) => [
     ...entries,
-    { threadId, runId, toolCallId: documentCall, settled: false, toolName: 'write_document' },
+    {
+      threadId,
+      runId,
+      toolCallId: documentCall,
+      settled: false,
+      toolName: 'write_document' as const,
+    },
   ])
   return { database, person, member, admin, outsider, threadId, runId, companyId }
 })
@@ -228,14 +241,14 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
               runId,
               toolCallId: inspectionCall,
               settled: false,
-              toolName: 'inspect_file',
+              toolName: 'inspect_file' as const,
             },
             {
               threadId,
               runId,
               toolCallId: publicationCall,
               settled: false,
-              toolName: 'publish_file',
+              toolName: 'publish_file' as const,
             },
           ])
           const inspected = yield* keepInspection(
@@ -346,7 +359,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
           )
           expect(fileResponse.headers.get('content-disposition')).toContain('attachment;')
-        }).pipe(Effect.provide(authLayer.pipe(Layer.provide(testConfigLayer)))),
+        }),
     )
 
     it.effect(
@@ -538,7 +551,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
               runId: theirs,
               toolCallId: theirCall,
               settled: false,
-              toolName: 'write_document',
+              toolName: 'write_document' as const,
             },
           ])
           expect(
@@ -602,7 +615,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
             runId: later,
             toolCallId: laterCall,
             settled: false,
-            toolName: 'write_document',
+            toolName: 'write_document' as const,
           },
         ])
         yield* store.write(person.id, threadId, {
@@ -712,13 +725,14 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
               person: { id: person.id, name: person.name, image: null },
             }),
           )
+          const body = detail.content.body
           yield* Effect.forEach(
             [1, 2, 3],
             () =>
               store.write(person.id, threadId, {
                 toolCallId: documentCall,
                 title: 'plan',
-                body: detail.content.body,
+                body,
               }),
             { concurrency: 3 },
           )
