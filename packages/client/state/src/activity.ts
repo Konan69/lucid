@@ -287,6 +287,22 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.title)],
   },
+  inspect_file: {
+    said: {
+      running: 'Looking over the file',
+      done: 'Looked over the file',
+      failed: 'Could not open the file to check it',
+    },
+    detail: (asked) => [said(asked.path)],
+  },
+  publish_file: {
+    said: {
+      running: 'Handing over the file',
+      done: 'Handed over the file',
+      failed: 'Could not hand over the file',
+    },
+    detail: (asked) => [said(asked.title)],
+  },
   read_document: {
     said: {
       running: 'Reading a document',
