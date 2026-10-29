@@ -61,6 +61,8 @@ export const invalidatePending = Effect.fn('Approvals.invalidatePending')(functi
     })
     .from(approvals)
     .where(and(eq(approvals.status, 'pending'), bound))
+    // One order for every invalidator, so two closing overlapping sets cannot deadlock.
+    .orderBy(approvals.id)
     .for('update')
   if (values.length === 0) return []
   const rows = yield* Effect.forEach(values, decodeLocked)
