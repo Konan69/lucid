@@ -79,27 +79,19 @@ export async function learningBrowser(state, id, directory, browser) {
     await run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
     const detail = await settled(state, turn.id, 1, 'Completed', directory)
     const page = await history(state, turn.id, directory, 'turn-' + index)
+    const text = page.messages
+      .filter((message) => message.role === 'assistant')
+      .flatMap((message) => message.parts)
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join(' ')
     if (index === 0) await learningFact(state, directory, marker, { detail, page })
-    else {
-      const text = page.messages
-        .filter((message) => message.role === 'assistant')
-        .flatMap((message) => message.parts)
-        .filter((part) => part.type === 'text')
-        .map((part) => part.text)
-        .join(' ')
-      assert.match(text, /green tea/iu)
-    }
-    await latestReply(browser, page, detail.runs[0].submissionId, {
-      directory,
-      stage: 'turn-' + index,
-    })
+    else assert.match(text, /green tea/iu)
+    await browser.exactReply(text, 'turn-' + index)
     await capture('turn-' + index)
     await run(['reload'])
     await run(['wait', '[aria-label="Message Vivid"]'])
-    await latestReply(browser, page, detail.runs[0].submissionId, {
-      directory,
-      stage: 'reloaded-' + index,
-    })
+    await browser.exactReply(text, 'reloaded-' + index)
     await capture('reloaded-' + index)
   }
 }
