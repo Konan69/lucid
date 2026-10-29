@@ -52,6 +52,12 @@ export type LibraryFolderId = typeof LibraryFolderId.Type
 /** Input request identifier: one question a Run could not answer alone. */
 export const InputRequestId = Schema.String.pipe(Schema.brand('InputRequestId'))
 export type InputRequestId = typeof InputRequestId.Type
+/** Handoff identifier: one step on the Computer that only the Person asked can do. */
+export const HandoffId = Schema.String.pipe(Schema.brand('HandoffId'))
+export type HandoffId = typeof HandoffId.Type
+/** One prepared field of a handoff, named by the server so a value never travels with a label. */
+export const HandoffFieldId = Schema.String.pipe(Schema.brand('HandoffFieldId'))
+export type HandoffFieldId = typeof HandoffFieldId.Type
 /** Approval identifier: authorization for one consequential action. */
 export const ApprovalId = Schema.String.pipe(Schema.brand('ApprovalId'))
 export type ApprovalId = typeof ApprovalId.Type

@@ -32,6 +32,7 @@ export const ToolName = Schema.Literals([
   'read_memory',
   'read_page',
   'read_skill',
+  'request_handoff',
   'resolve_owed',
   'run_code',
   'save_skill',

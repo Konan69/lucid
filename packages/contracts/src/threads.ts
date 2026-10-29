@@ -1,7 +1,7 @@
 import { Schema } from 'effect'
 import { Approval } from './approvals.js'
 import { PersonId, PersonSummary, ProjectId, RunId, ThreadId } from './identity.js'
-import { InputRequest } from './inputs.js'
+import { HandoffRequest, InputRequest } from './inputs.js'
 
 /** The image formats accepted by the conversation gateway and served inline to every client. */
 export const PictureMediaType = Schema.Literals([
@@ -274,6 +274,8 @@ export const ThreadDetail = Schema.Struct({
   approvals: Schema.Array(Approval),
   /** Every Input request raised in this Thread. */
   requests: Schema.Array(InputRequest),
+  /** Every handoff raised in this Thread, open or settled, so its card keeps its outcome. */
+  handoffs: Schema.Array(HandoffRequest),
 }).annotate({ identifier: 'ThreadDetail', title: 'Thread detail' })
 export interface ThreadDetail extends Schema.Schema.Type<typeof ThreadDetail> {}
 
@@ -363,6 +365,8 @@ export interface RuntimeAdmissionBody extends Schema.Schema.Type<typeof RuntimeA
 export const Inbox = Schema.Struct({
   approvals: Schema.Array(Approval),
   requests: Schema.Array(InputRequest),
+  /** Handoffs still waiting on this Person. */
+  handoffs: Schema.Array(HandoffRequest),
 }).annotate({ identifier: 'Inbox', title: 'Inbox' })
 export interface Inbox extends Schema.Schema.Type<typeof Inbox> {}
 
