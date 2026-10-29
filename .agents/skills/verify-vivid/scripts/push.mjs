@@ -47,6 +47,18 @@ const rowButton = `Array.from(document.querySelectorAll('[role="dialog"] div')).
 export const shown = `navigator.serviceWorker.getRegistrations().then(all => Promise.all(all.map(r => r.getNotifications()))).then(lists => lists.flat().map(n => ({ title: n.title, body: n.body, tag: n.tag, data: n.data })))`
 
 /**
+ * Waits until the worker shows a notification `predicate` (source text over `{ title, data }`)
+ * holds for. `wait --fn` polls a value and takes a promise as already true, so each poll asks the
+ * worker again and reads the answer the previous poll left on the page.
+ */
+export const waitShown = (run, predicate) =>
+  run([
+    'wait',
+    '--fn',
+    `(${shown}.then(list => { window.__vividVerifyShown = list.some(${predicate}) }), window.__vividVerifyShown === true)`,
+  ])
+
+/**
  * Grants this origin notifications through Chrome's own permission API, as a Person's Allow does.
  * Chrome keeps such a grant only while the DevTools connection that made it is open, so the
  * connection is handed back and closed when the journey ends.
@@ -81,17 +93,17 @@ export async function pushBrowser(state, id, directory, browser) {
  */
 export async function turnOn(state, id, { run, capture }) {
   await run(['open', state.web + '/t/' + id + '?settings=general'])
-  await run(['wait', '--fn', `Boolean(${rowButton})`])
+  await run(['wait', '--fn', `Boolean(${rowButton}) && !${rowButton}.disabled`])
   NodeAssert.equal(
     Result.getOrThrow(decodeLabel(await run(['eval', 'Notification.permission']))),
     'granted',
     'The grant must reach the page before it reads this browser',
   )
+  // An earlier journey in this run may have left this browser on; it stays on.
+  const label = Result.getOrThrow(decodeLabel(await run(['eval', `${rowButton}.innerText`])))
+  if (label === 'Turn off') return
   await capture('row-off')
-  NodeAssert.equal(
-    Result.getOrThrow(decodeLabel(await run(['eval', `${rowButton}.innerText`]))),
-    'Turn on',
-  )
+  NodeAssert.equal(label, 'Turn on')
   // A real press: the browser takes a permission question only inside a user gesture.
   await run(['find', 'role', 'button', 'click', '--name', 'Turn on', '--exact'])
   // The machine reads On once the server has the subscription: the row then offers Turn off.
@@ -140,11 +152,7 @@ async function journey(state, id, directory, { run, capture }) {
   )
   await settled(state, away, 1, 'Completed', directory)
   await run(['tab', app.tabId])
-  await run([
-    'wait',
-    '--fn',
-    `(async () => (await ${shown}).some(n => n.title === ${JSON.stringify(TITLE)}))()`,
-  ])
+  await waitShown(run, `n => n.title === ${JSON.stringify(TITLE)}`)
   const notifications = Result.getOrThrow(decodeShown(await run(['eval', shown])))
   await json(directory + '/notifications.json', notifications)
   const mine = notifications.find((n) => n.title === TITLE)
