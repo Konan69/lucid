@@ -56,7 +56,7 @@ export function artifactTools(runTool: RunTool) {
               output: {
                 ok: true,
                 inspection: outcome.inspection,
-                output: outcome.output,
+                file: outcome.output,
                 message:
                   'Look at this captured preview. Publish this inspection only after checking it. DOCX/PDF preview covers the first page.',
               },
