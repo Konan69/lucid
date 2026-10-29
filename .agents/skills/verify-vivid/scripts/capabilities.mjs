@@ -1,24 +1,27 @@
 import * as assert from 'node:assert/strict'
+import { PersonId } from '@vivid/contracts'
+import { Result, Schema } from 'effect'
 import { chat, history, json, rpc } from './wire.mjs'
 import { command } from './process.mjs'
 import { connectedOther } from './devices.mjs'
 
 const blockedComputer = 'blocked: no proof-owned Computer (Boat trial plan at its two-machine limit; the only Vivid Computer is production’s)'
+const decodePerson = Schema.decodeUnknownResult(PersonId)
 
 /** Only this run’s synthetic Person and container receive fixture rows. The finally block is
  * registered before insertion; no provider binding or machine is created or adopted. */
 async function asleep(state, directory, action) {
-  assert.match(state.person, /^[0-9a-f-]{36}$/u)
+  const person = Result.getOrThrow(decodePerson(state.person)).replaceAll("'", "''")
   const id = crypto.randomUUID()
   const sql = (statement) => command(['docker', 'exec', state.container, 'psql', '-U', 'verify', '-d', 'verify', '-v', 'ON_ERROR_STOP=1', '-At', '-c', statement])
   try {
-    await sql(`INSERT INTO vivid_computers(id,person_id,machine,status,since,last_activity_at,created_at) VALUES ('${id}','${state.person}','verify-${id}','stopped',1,73,1);`)
+    await sql(`INSERT INTO vivid_computers(id,person_id,machine,status,since,last_activity_at,created_at) VALUES ('${id}','${person}','verify-${id}','stopped',1,73,1);`)
     await action()
-    const activity = await sql(`SELECT last_activity_at FROM vivid_computers WHERE id='${id}' AND person_id='${state.person}';`)
+    const activity = await sql(`SELECT last_activity_at FROM vivid_computers WHERE id='${id}' AND person_id='${person}';`)
     assert.equal(activity.trim(), '73', 'Passive observations must not extend idle time')
     await json(directory + '/passive-activity.json', { lastActivityAt: 73 })
   } finally {
-    await sql(`DELETE FROM vivid_computers WHERE id='${id}' AND person_id='${state.person}';`)
+    await sql(`DELETE FROM vivid_computers WHERE id='${id}' AND person_id='${person}';`)
   }
 }
 
@@ -37,7 +40,13 @@ async function answer(state, id, directory, name, question) {
   const unavailable = reading.abilities.filter((ability) => !['Available', 'WakeOnUse'].includes(ability.availability._tag))
   const availableTools = new Set(reading.abilities.filter((ability) => ['Available', 'WakeOnUse'].includes(ability.availability._tag)).flatMap((ability) => ability.tools))
   for (const name of unavailable.flatMap((ability) => ability.tools)) {
-    if (!availableTools.has(name)) assert.ok(!text.includes(name), 'Answer names unavailable tool ' + name)
+    if (availableTools.has(name)) continue
+    // Plain verbs such as connect also occur in ordinary explanations. Only a snake-case
+    // identifier, code span or call expression actually names a model tool.
+    const identifier = name.includes('_')
+      ? new RegExp('\\b' + name + '\\b', 'u')
+      : new RegExp('`' + name + '`|\\b' + name + '\\s*\\(', 'u')
+    assert.doesNotMatch(text, identifier, 'Answer names unavailable tool ' + name)
   }
   await json(directory + '/' + name + '-capabilities.json', { reading, text })
   return reading
