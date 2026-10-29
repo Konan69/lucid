@@ -846,19 +846,56 @@ const drained = Effect.fn('Handoffs.drained')(function* (id: HandoffId) {
  * it (`drained`); any other open step becomes `withdrawing`. A claimed finish can still be
  * withdrawn: the Person changed their mind before its fields were shown empty.
  */
-const claimWithdrawals = Effect.fn('Handoffs.claimWithdrawals')(function* (where: SQL) {
+const claimWithdrawals = Effect.fn('Handoffs.claimWithdrawals')(function* (
+  ...where: Arr.NonEmptyReadonlyArray<SQL>
+) {
   const database = yield* Database
   yield* database.transaction((tx) =>
     Effect.gen(function* () {
       yield* tx
         .update(handoffs)
         .set({ status: 'draining' })
-        .where(and(where, eq(handoffs.status, 'applying')))
+        .where(and(...where, eq(handoffs.status, 'applying')))
       yield* tx
         .update(handoffs)
         .set({ status: 'withdrawing' })
-        .where(and(where, inArray(handoffs.status, ['waiting', 'ready', 'completing'])))
+        .where(and(...where, inArray(handoffs.status, ['waiting', 'ready', 'completing'])))
     }),
+  )
+})
+
+/**
+ * A Person's ordinary message moved the Thread on, so their open handoffs in it are withdrawn, as
+ * their waiting questions are (`store.ts` `withdrawWaiting`). Admission holds no Computer, so it
+ * only claims them here; `endWithdrawals` empties their fields and ends them.
+ */
+export const claimWithdrawalsFor = (threadId: ThreadId, personId: PersonId) =>
+  claimWithdrawals(eq(handoffs.threadId, threadId), eq(handoffs.personId, personId))
+
+/**
+ * Ends every claimed withdrawal of this Person's handoffs in this Thread. It ends only what was
+ * claimed, never an open step, so running it again, or after a send that was replayed and claimed
+ * nothing, changes nothing. A withdrawal a fill is still typing into ends with that fill.
+ */
+export const endWithdrawals = Effect.fn('Handoffs.endWithdrawals')(function* (
+  threadId: ThreadId,
+  personId: PersonId,
+) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .select()
+      .from(handoffs)
+      .where(
+        and(
+          eq(handoffs.threadId, threadId),
+          eq(handoffs.personId, personId),
+          eq(handoffs.status, 'withdrawing'),
+        ),
+      ),
+  )
+  return yield* Effect.forEach(rows, (value) =>
+    decodeRow(value).pipe(Effect.flatMap(finishWithdrawal)),
   )
 })
 

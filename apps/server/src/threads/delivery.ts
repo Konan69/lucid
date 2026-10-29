@@ -17,6 +17,7 @@ import { findPerson } from '../auth/access.ts'
 import { DeviceRegistry, deviceLayer } from '../computers/device.ts'
 import { ChannelReplies } from '../channels/replies.ts'
 import { Database } from '../database/client.ts'
+import { claimWithdrawalsFor } from '../inputs/handoff.ts'
 import { withdrawWaiting } from '../inputs/store.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { Notifier } from '../notifications/notifier.ts'
@@ -319,12 +320,15 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
         Effect.onInterrupt(() => runs.end(id, RunEnding.cases.Failed.make({ reason: 'Delivery' }))),
       )
       // Replays returned above. Only a newly reserved ordinary message accepted by the runtime
-      // closes questions; refusals and every server-produced delivery leave them waiting.
-      if (movesThreadOn(delivery))
+      // closes questions and handoffs; refusals and every server-produced delivery leave them.
+      // A handoff's withdrawal is only claimed here; `sendToThread` empties its fields.
+      if (movesThreadOn(delivery)) {
         yield* withdrawWaiting(thread.id, speaker.id).pipe(
           withDatabase,
           Effect.provideService(Changes, changes),
         )
+        yield* claimWithdrawalsFor(thread.id, speaker.id).pipe(withDatabase)
+      }
       yield* runs.admitted(admission)
       yield* threads.touch(thread.id, said)
       // What a Person just sent is not unread for them. They were just shown to be able to see the
