@@ -35,6 +35,7 @@ import { makeDeviceDecisions } from './devices'
 import { makeHandoffCalls } from './handing'
 import { makeNaming } from './name'
 import { makeNotifying } from './notifying'
+import { makeHelpers } from './helpers'
 import { makeConnecting } from './connecting'
 import { makeSending } from './sending'
 import { door } from './door'
@@ -373,6 +374,7 @@ function makeLiveData(session: SignedIn) {
   // the session's registry and socket are made: every screen, sheet and card of the session
   // presses and draws from it, and an attempt outlives whichever of them began it.
   const connecting = makeConnecting({ engine, connections: live.connections.atom })
+  const helping = makeHelpers(engine)
 
   followLook(engine, live)
 
@@ -431,6 +433,8 @@ function makeLiveData(session: SignedIn) {
     handing: makeHandoffCalls(engine),
     /** The Person changing their own name in Settings (`data/name.ts`). */
     naming: makeNaming(engine, live.me),
+    /** Stopping a helper and reading its result (`data/helpers.ts`). */
+    helpers: helping,
     /**
      * What Vivid remembers about the Person, read from their cell. There is no watch on it: the
      * Memory screen begins a new reading each time it is opened (`screen/settings/Memory.tsx`).
