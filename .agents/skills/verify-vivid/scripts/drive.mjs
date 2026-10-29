@@ -8,6 +8,7 @@ import { createRequire } from 'node:module'
 import { assertTable } from './table.mjs'
 import { devices } from './devices.mjs'
 import { reading } from './reading.mjs'
+import { helpers, helperstop } from './helpers.mjs'
 import { settingsProof } from './settingsproof.mjs'
 import { watch } from './watch.mjs'
 import { memory } from './memory.mjs'
@@ -41,6 +42,8 @@ export const features = [
   'settings',
   'memory',
   'discord',
+  'helpers',
+  'helperstop',
 ]
 export const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
@@ -407,6 +410,8 @@ const recipes = {
   reading,
   settings: settingsProof,
   discord: discordProof,
+  helpers,
+  helperstop,
 }
 const blocked = {
   code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
@@ -429,6 +434,8 @@ export async function drive(state, feature) {
           memory: 'Memory requires a real model; rehearsal cannot prove the memory tools.',
           owed: 'Tracking requires a real model; rehearsal cannot prove it.',
           todos: 'The list requires a real model; rehearsal cannot prove it.',
+          helpers: 'Helpers require a real model; rehearsal cannot start one.',
+          helperstop: 'Helpers require a real model; rehearsal cannot start one.',
         }
   let failed = false
   for (const name of chosen) {

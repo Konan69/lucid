@@ -17,6 +17,7 @@ import { feedBrowser } from './feedbrowser.mjs'
 import { owedBrowser } from './owedbrowser.mjs'
 import { todosBrowser } from './todosbrowser.mjs'
 import { offerBrowser } from './offer.mjs'
+import { helpersBrowser, helperstopBrowser } from './helpers.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { createElement } = web('react')
@@ -65,6 +66,8 @@ const recipes = {
   owed: { check: 'owed' },
   todos: { check: 'todos' },
   replies: { check: 'replies' },
+  helpers: { check: 'helpers' },
+  helperstop: { check: 'helperstop' },
   first: {
     phrase:
       'Write a detailed 1000-word guide to planning a community garden. Write directly in this reply as plain paragraphs. Do not create a document or ask questions.',
@@ -139,6 +142,16 @@ const specialRecipes = {
     drive: readBrowser,
     scope:
       'One web session, 52 Threads, repeat suppression, eviction after 50 remembered standings, unchanged standing after rename, real offscreen reply and one read on return. See scope.json for blocked subcases.',
+  },
+  helpers: {
+    drive: helpersBrowser,
+    scope:
+      'Two Researcher helpers started from the composer, their rows Done under the step, one opened to its answer, unchanged after reload; see helpers/scope.json for blocked kinds.',
+  },
+  helperstop: {
+    drive: helperstopBrowser,
+    scope:
+      "A working helper stopped with its own row's Stop, Stopped by a Person after reload, and the Thread heard it once.",
   },
   settings: {
     drive: settingsBrowser,
@@ -364,7 +377,7 @@ async function journey(state, feature) {
     evidence: directory,
   }
   const reason =
-    ['memory', 'question', 'approve', 'deny', 'owed', 'todos'].includes(feature) &&
+    ['memory', 'question', 'approve', 'deny', 'owed', 'todos', 'helpers', 'helperstop'].includes(feature) &&
     state.modelKind !== 'real'
       ? feature + ' requires a real model.'
       : missing[feature]
