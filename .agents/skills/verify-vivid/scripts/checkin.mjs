@@ -1,6 +1,6 @@
 import { Option, Schema } from 'effect'
 import * as NodeAssert from 'node:assert/strict'
-import { CheckinArming, WatchPurpose, RunOrigin, TimerReceipt } from '@vivid/contracts'
+import { CheckinArming, WatchPurpose, RunOrigin, TimerReceipt, OpenWork } from '@vivid/contracts'
 import { observe } from './observation.mjs'
 import { chat, history, rpc, settled, json } from './wire.mjs'
 
@@ -53,6 +53,12 @@ export async function checkin(state, id, directory) {
     CheckinArming.guards.Confirmed(watching.purpose.arming),
     'Subscription alone is not an armed check-in',
   )
+  const inventory = await rpc(state, 'ListOpenWork', undefined, directory)
+  const source = inventory.work.find(
+    (work) => OpenWork.guards.Owed(work) && work.threadId === id && work.checkins.includes(marker),
+  )
+  NodeAssert.ok(source, 'The timer must cover an explicit owed record in this Thread')
+  await json(directory + '/open-work.json', inventory)
   NodeAssert.equal(watching.purpose.arming.nextAt, expected)
   const first = timerReceipt(
     await history(state, id, directory),
