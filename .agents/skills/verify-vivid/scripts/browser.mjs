@@ -12,7 +12,7 @@ import { watchBrowser } from './watchbrowser.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
 import { readBrowser } from './readbrowser.mjs'
 import { settingsBrowser } from './settingsbrowser.mjs'
-import { memoryBrowser } from './memorybrowser.mjs'
+import { learningBrowser, memoryBrowser } from './memorybrowser.mjs'
 import { feedBrowser } from './feedbrowser.mjs'
 import { owedBrowser } from './owedbrowser.mjs'
 import { todosBrowser } from './todosbrowser.mjs'
@@ -60,6 +60,7 @@ const recipes = {
   reading: { check: 'reading' },
   settings: { check: 'settings' },
   memory: { check: 'memory' },
+  learning: { check: 'learning' },
   devices: { check: 'devices' },
   watch: { check: 'watch' },
   feed: { check: 'feed' },
@@ -90,6 +91,11 @@ const recipes = {
   },
 }
 const specialRecipes = {
+  learning: {
+    drive: learningBrowser,
+    scope:
+      'Composer fact, native learner completion, one surviving memory entry and new-Thread recall through the web.',
+  },
   approve: {
     drive: approve,
     scope: 'Real Verify Pulse approval card, Allow, one provider event and reload',

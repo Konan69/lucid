@@ -1,6 +1,6 @@
 # Learning
 
-Requires a real model and native Person cell storage. Run `verify feature learning <run>` after Launch and Doctor on the same head, then Cleanup. Android drives the same assertion with `verify phone learning <run>`.
+Requires a real model and native Person cell storage. Run `verify feature learning <run>` and `verify browser learning <run>` after Launch and Doctor on the same head, then Cleanup. Android drives the same assertion with `verify phone learning <run>`.
 
 Mention a unique project preference without asking Vivid to remember it. Observe the submission's `vivid.learning` LearnedRun document and wait for its native task to become terminal through file commit events in this launch's disposable SQLite. A receipt that only names the task is not completion.
 
