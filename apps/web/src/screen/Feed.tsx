@@ -158,7 +158,6 @@ export function FeedView({
             <Card
               key={item.card}
               card={item.card}
-              from={item.from}
               at={item.since}
               post={Option.fromNullOr(item.post)}
               ask={{ title: item.from, words: 'Vivid is working on this now.' }}
@@ -235,7 +234,6 @@ function Waiting({ item, now, onOpen }: { item: feed.Waiting; now: number; onOpe
         )}
         <Card
           card={item.card}
-          from={item.from}
           at={item.at}
           post={post}
           ask={{ title: item.from, words: feed.askedWords(item) }}

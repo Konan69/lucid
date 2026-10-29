@@ -18,8 +18,8 @@ export interface Reply {
 }
 
 /**
- * One card of the Feed: the face of one background Thread. Under a quiet row of where it is from
- * (which opens the Thread) and when, the card is one of the post's two cases (`FeedPost`):
+ * One card of the Feed: the face of one background Thread. Under a quiet row of when, with Open
+ * for a drawn card (a said card's title opens the Thread), the card is one of the post's two cases (`FeedPost`):
  *
  * - `Drawn`: Vivid's display is the whole card, drawn by the renderer a reply uses, and its own
  *   Buttons answer in the Thread as a reply's do. Nothing of ours is written above or under it
@@ -32,7 +32,6 @@ export interface Reply {
  */
 export function Card({
   card,
-  from,
   at,
   post,
   ask,
@@ -43,8 +42,6 @@ export function Card({
 }: {
   /** The card whose post this is; its display's programs run only as that post wrote them. */
   card: FeedCardId
-  /** What brought it: the background Thread's title. */
-  from: string
   /** When it was posted or began, epoch milliseconds. */
   at: number
   post: Option.Option<FeedPost>
@@ -67,15 +64,15 @@ export function Card({
       aria-label={title}
       className="overflow-hidden rounded-composer bg-surface-3 p-4 edge"
     >
-      <div className="flex min-h-5.5 items-center gap-2 text-label text-ink-2">
-        <button
-          type="button"
-          onClick={onOpen}
-          className="min-w-0 cursor-pointer truncate rounded-row text-start decoration-ink-4 underline-offset-4 hover:text-ink hover:underline focus-visible:outline-offset-2"
-        >
-          {from}
-        </button>
-        <time className="ms-auto shrink-0 text-ink-3 tabular-nums">{when(at, now)}</time>
+      {/* No name of where it is from: the post or the title below already says it, and
+          repeating it was the first thing read on every card (29 October 2026: "repeating"). */}
+      <div className="flex min-h-5.5 items-center gap-1 text-label">
+        <time className="me-auto shrink-0 text-ink-3 tabular-nums">{when(at, now)}</time>
+        {Option.exists(post, FeedPost.guards.Drawn) && (
+          <Button variant="ghost" size="xs" onClick={onOpen}>
+            Open
+          </Button>
+        )}
         {Option.exists(post, FeedPost.guards.Drawn) && Option.isSome(reply) && (
           <Button
             variant="ghost"

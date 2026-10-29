@@ -29,10 +29,11 @@ $slot = "Wed 21 Oct at 9:00"
 wed = Col([Caption("Wed 21 Oct"), Row([Pressable([Text("9:00", "sm")], @Set($slot, "Wed 21 Oct at 9:00"), $slot == "Wed 21 Oct at 9:00", 2), Pressable([Text("10:30", "sm")], @Set($slot, "Wed 21 Oct at 10:30"), $slot == "Wed 21 Oct at 10:30", 2), Pressable([Text("1:30 PM", "sm")], @Set($slot, "Wed 21 Oct at 1:30 PM"), $slot == "Wed 21 Oct at 1:30 PM", 2)], 2, null, "start", true)], 1)
 thu = Col([Caption("Thu 22 Oct"), Row([Pressable([Text("9:00", "sm")], @Set($slot, "Thu 22 Oct at 9:00"), $slot == "Thu 22 Oct at 9:00", 2), Pressable([Text("11:00", "sm")], @Set($slot, "Thu 22 Oct at 11:00"), $slot == "Thu 22 Oct at 11:00", 2), Pressable([Text("2:00 PM", "sm")], @Set($slot, "Thu 22 Oct at 2:00 PM"), $slot == "Thu 22 Oct at 2:00 PM", 2)], 2, null, "start", true)], 1)
 acts = Row([Button("None of these work", @ToAssistant("None of these times work"), "ghost"), Button("Book " + $slot, @ToAssistant("Book Iyin for " + $slot))], 2, null, "end")`,
-  `A drawn Feed card: the letter itself, drafted and ready, with what it carries and the Buttons that answer:
+  `A drawn Feed card: the letter itself, drafted and ready, with what it carries and the Buttons that answer. A Feed card is already a card, so its letter sits on it bare, never in a Card of its own:
 
-root = Col([draft, acts], 3)
-draft = Card([Caption("To Dana Bello"), Text("Dana, Friday at 10 works. I will bring the revised deck and the September numbers.", "sm"), Row([Badge("deck-v3.pdf"), Badge("september.xlsx")], 2)], "soft")
+root = Col([Caption("To Dana Bello"), letter, files, acts], 2)
+letter = Text("Dana, Friday at 10 works. I will bring the revised deck and the September numbers.", "md")
+files = Row([Badge("deck-v3.pdf"), Badge("september.xlsx")], 2)
 acts = Row([Button("Not now", @ToAssistant("Not now"), "ghost"), Button("Send it", @ToAssistant("Send the reply to Dana"))], 2, null, "end")`,
 ] as const
 

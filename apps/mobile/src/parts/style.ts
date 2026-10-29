@@ -144,6 +144,8 @@ export interface Skin {
   readonly sheetStrong: string
   /** The app's hairline edge, as the theme's own solid border. */
   readonly border: string
+  /** The edge of something to press or fill in, the web's `--iui-border-strong`. */
+  readonly borderStrong: string
   /** A wash of the display's tint, behind a run of code. */
   readonly codeBackground: string
   readonly ink: string
@@ -183,6 +185,7 @@ const OPENUI = {
     muted: '#676767',
     faint: '#8f8f8f',
     border: '#e7e7e7',
+    borderStrong: '#cecece',
     info: '#0068bc',
     infoSoft: '#edf5ff',
     success: '#00805d',
@@ -206,6 +209,7 @@ const OPENUI = {
     muted: '#ababab',
     faint: '#8c8c8c',
     border: '#383838',
+    borderStrong: '#4d4d4d',
     info: '#7cb8ff',
     infoSoft: '#16273b',
     success: '#5bcf9c',
@@ -252,6 +256,7 @@ export function skin(dark: boolean): Skin {
     sheet: theme.canvas,
     sheetStrong: theme.surfaceStrong,
     border: theme.border,
+    borderStrong: theme.borderStrong,
     codeBackground: theme.surface,
     ink: theme.ink,
     muted: theme.muted,

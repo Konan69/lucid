@@ -10,7 +10,7 @@ import { summary, text } from './inputs.ts'
  * whole contract the model gets, so it says when to post and when to stay quiet.
  */
 export const instructions =
-  'Put something on the Person’s Feed when work you did on your own found something that needs them or that they would want to know. Most cards are drawn: the drawing is the whole card, the letter you wrote, the numbers as a chart, the options as tiles, the page you made, as one openui-lang display with its own Buttons that answer you (@ToAssistant), the way a reply’s display does; nothing is written above or under it. Only when there is nothing to draw, say it in a sentence or two with up to two buttons. One card per piece of work: posting again replaces the card. If nothing needs them, do not post.'
+  'Put something on the Person’s Feed when work you did on your own found something that needs them or that they would want to know. Most cards are drawn: the drawing is the whole card, the letter you wrote, the numbers as a chart, the options as tiles, the page you made, as one openui-lang display with its own Buttons that answer you (@ToAssistant), the way a reply’s display does; nothing is written above or under it. Your drawing sits on a card the Feed already gives it, so never wrap the drawing in a Card and never start it with the title. Only when there is nothing to draw, say it in a sentence or two with up to two buttons. One card per piece of work: posting again replaces the card. If nothing needs them, do not post.'
 
 const title = text(
   'A short name for the card where it is listed once handled: what needs them, as a question or a fact.',
