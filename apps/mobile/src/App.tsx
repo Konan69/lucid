@@ -10,6 +10,7 @@ import {
   createNativeStackNavigator,
   type NativeStackNavigationOptions,
 } from '@react-navigation/native-stack'
+import { NotificationOpens } from '@vivid/contracts'
 import { workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
 import { useState, useSyncExternalStore, type ComponentProps } from 'react'
@@ -326,30 +327,32 @@ function Vivid({ go }: { go: StackLayout['navigation'] }) {
 const NOTHING = () => 0
 
 /**
- * Opens what a pressed notification is about (`data/notifying.ts`): its Thread in Home's place,
- * or the Feed in front when it is about none. The listener is the store's subscription, so it
- * goes with the shell, as `useAfreshOnReturn` listens: a shell left behind by a change of
- * workspace cannot move the new one.
+ * Opens where a pressed notification opens (`NotificationOpens`, `data/notifying.ts`): its Thread
+ * in Home's place, or the Feed or Notifications in front. The listener is the store's
+ * subscription, so it goes with the shell, as `useAfreshOnReturn` listens: a shell left behind by
+ * a change of workspace cannot move the new one.
  */
 function usePressedNotifications(
   front: FrontStore,
   navigation: NavigationContainerRefWithCurrent<Routes>,
 ) {
+  /** Puts a page in front. The stack as `keep` reads it: before there is one there is nothing to put it on. */
+  const show = (name: 'Feed' | 'Notifications') => {
+    if (!navigation.isReady()) return
+    Option.map(Option.fromUndefinedOr(navigation.getRootState()), (stack) =>
+      navigation.dispatch(openPage(stack, { name })),
+    )
+  }
   const [listen] = useState(
     () => () =>
-      listenForPresses((thread) =>
-        Option.match(thread, {
-          onSome: (id) => {
-            front.open(id, false)
+      listenForPresses(
+        NotificationOpens.match({
+          Thread: ({ threadId }) => {
+            front.open(threadId, false)
             if (navigation.isReady()) navigation.dispatch(StackActions.popToTop())
           },
-          onNone: () => {
-            if (!navigation.isReady()) return
-            // The stack as `keep` reads it: before there is one there is nothing to put Feed on.
-            Option.map(Option.fromUndefinedOr(navigation.getRootState()), (stack) =>
-              navigation.dispatch(openPage(stack, { name: 'Feed' })),
-            )
-          },
+          Feed: () => show('Feed'),
+          Notifications: () => show('Notifications'),
         }),
       ),
   )

@@ -99,14 +99,25 @@ export const SignInEnding = Schema.TaggedUnion({
 export type SignInEnding = typeof SignInEnding.Type
 
 /**
+ * Where a pressed notification opens, as the page's `NotificationOpens` (`@vivid/contracts`)
+ * encodes it. The Thread is plain text for the same reason as `SignInEnding`'s values; the page
+ * decodes it when the notice is pressed.
+ */
+export const DesktopNotificationOpens = Schema.TaggedUnion({
+  Thread: { threadId: NonEmptyString },
+  Feed: {},
+  Notifications: {},
+})
+export type DesktopNotificationOpens = typeof DesktopNotificationOpens.Type
+
+/**
  * A notification the page heard on its live list, for the shell to show as the system's own while
- * its window is not in front. The Thread is plain text for the same reason as `SignInEnding`'s
- * values; the page decodes it when the notice is pressed.
+ * its window is not in front, with where it opens when pressed.
  */
 export const DesktopNotification = Schema.Struct({
   title: Schema.String,
   body: Schema.String,
-  threadId: Schema.NullOr(NonEmptyString),
+  opens: DesktopNotificationOpens,
 })
 export interface DesktopNotification extends Schema.Schema.Type<typeof DesktopNotification> {}
 
@@ -175,7 +186,7 @@ export const BridgeEvent = Schema.TaggedUnion({
   PagesChanged: { value: BrowserState },
   PageDownloadRefused: { value: PageDownloadRefused },
   /** A notification the shell showed was pressed; the window is in front again. */
-  NotificationOpened: { threadId: Schema.NullOr(NonEmptyString) },
+  NotificationOpened: { opens: DesktopNotificationOpens },
 })
 export type BridgeEvent = typeof BridgeEvent.Type
 
@@ -273,7 +284,7 @@ export interface VividDesktopBridge {
     readonly show: (notification: DesktopNotification) => Promise<void>
     /** Hears each notification pressed; answers the way to stop listening. */
     readonly onOpened: (
-      listener: (opened: { readonly threadId: string | null }) => void,
+      listener: (opened: { readonly opens: DesktopNotificationOpens }) => void,
     ) => () => void
   }
 }

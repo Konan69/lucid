@@ -1,9 +1,9 @@
 import { useAtomValue } from '@effect/atom-react'
 import { VividRpcClient } from '@vivid/client-runtime'
 import {
+  NotificationOpens,
   PushDestination,
   PushPayload,
-  ThreadId,
   type Notification as Notice,
 } from '@vivid/contracts'
 import { notifying } from '@vivid/state'
@@ -204,11 +204,16 @@ export const turnNotificationsOff = () =>
 export const offerNotifications = () =>
   engine.registry.set(machine.send, machine.offer({ attempt: attempt() }))
 
-/** Where a notification is about: its Thread, or the Feed when it is about none. */
-const go = (threadId: PushPayload['threadId']) =>
-  threadId === null
-    ? void router.navigate({ to: '/feed' })
-    : void router.navigate({ to: '/t/$id', params: { id: threadId } })
+/**
+ * Goes where a pressed notification opens (`NotificationOpens`). Web has no Notifications page:
+ * the bell is in the sidebar, so an invitation's notice opens the app where the bell is.
+ */
+const go = (opens: NotificationOpens) =>
+  NotificationOpens.match(opens, {
+    Thread: ({ threadId }) => void router.navigate({ to: '/t/$id', params: { id: threadId } }),
+    Feed: () => void router.navigate({ to: '/feed' }),
+    Notifications: () => void router.navigate({ to: '/' }),
+  })
 
 const decodePressed = Schema.decodeUnknownOption(PushPayload)
 
@@ -216,7 +221,7 @@ const decodePressed = Schema.decodeUnknownOption(PushPayload)
 // without loading again (`worker/main.ts` `open`). It is the worker's only message.
 if (pushable) {
   navigator.serviceWorker.addEventListener('message', (event) => {
-    Option.map(decodePressed(event.data), (payload) => go(payload.threadId))
+    Option.map(decodePressed(event.data), (payload) => go(payload.opens))
   })
 }
 
@@ -227,13 +232,13 @@ if (pushable) {
  */
 export const showOnDesktop = (notice: Notice) =>
   Option.map(desktop, (notices) => {
-    void notices.show({ title: notice.title, body: notice.body, threadId: notice.threadId })
+    void notices.show({ title: notice.title, body: notice.body, opens: notice.opens })
   })
 
-const decodeOpened = Schema.decodeUnknownOption(Schema.NullOr(ThreadId))
+const decodeOpened = Schema.decodeUnknownOption(NotificationOpens)
 
-// The shell says which notice was pressed after it has brought its window forward. The shell
-// carries the Thread as plain text (its preload cannot load the contracts), so it is read here.
+// The shell says where a pressed notice opens after it has brought its window forward. It carries
+// a Thread as plain text (its preload cannot load the contracts), so it is read here.
 Option.map(desktop, (notices) =>
-  notices.onOpened(({ threadId }) => Option.map(decodeOpened(threadId), go)),
+  notices.onOpened(({ opens }) => Option.map(decodeOpened(opens), go)),
 )

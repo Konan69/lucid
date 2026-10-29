@@ -1,11 +1,14 @@
 import * as NodeCrypto from 'node:crypto'
 import { Effect } from 'effect'
 import {
+  FeedPost,
   Forbidden,
   InvalidRequest,
   NotificationId,
+  type CompanyId,
   type NotifyPersonRequest,
   type PersonId,
+  type RunId,
   type ThreadId,
 } from '@vivid/contracts'
 import { requireThread } from '../threads/access.ts'
@@ -50,6 +53,37 @@ export const notifyPerson = Effect.fn('Notifications.notifyPerson')(function* (i
       title,
       body,
       threadId: thread.id,
+    },
+  })
+})
+
+/**
+ * Tells the Person Vivid put something on their Feed from work nobody was watching. The Run and
+ * the post's own content name the notice, as `notifyPerson` names its own: the same post sent
+ * again by a retried tool call reads the notice it already made, while a changed post is new news
+ * and a new notice. The title is the post's; a `Said` post's words are the body, and a `Drawn`
+ * one has none, because its drawing is the card and no summary of it exists to quote.
+ */
+export const notifyPosted = Effect.fn('Notifications.notifyPosted')(function* (input: {
+  readonly personId: PersonId
+  readonly thread: { readonly id: ThreadId; readonly companyId: CompanyId | null }
+  readonly run: RunId
+  readonly post: FeedPost
+}) {
+  const id = NotificationId.make(
+    NodeCrypto.createHash('sha256')
+      .update(JSON.stringify([input.run, 'posted', input.post]))
+      .digest('hex'),
+  )
+  return yield* recordNotice({
+    id,
+    notice: {
+      personId: input.personId,
+      companyId: input.thread.companyId,
+      kind: 'posted',
+      title: input.post.title,
+      body: FeedPost.match(input.post, { Drawn: () => '', Said: ({ words }) => words }),
+      threadId: input.thread.id,
     },
   })
 })

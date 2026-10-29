@@ -12,6 +12,7 @@ import {
   BridgeEvent,
   type ColorSchemePreference,
   DesktopNotification,
+  type DesktopNotificationOpens,
   type VividDesktopBridge,
   decodeBridgeResponse,
   decodeBridgeEventResult,
@@ -186,13 +187,13 @@ const showNotification = Effect.fn('DesktopPreload.showNotification')(function* 
 })
 
 /** Who hears a pressed notification. The page subscribes once, as it loads. */
-const openedListeners = new Set<(opened: { readonly threadId: string | null }) => void>()
+const openedListeners = new Set<(opened: { readonly opens: DesktopNotificationOpens }) => void>()
 
 // One decoded adapter for the event channel's notification events, as `pages.ts` has its own.
 ipcRenderer.on(BRIDGE_EVENT_CHANNEL, (_event, payload) => {
   const result = decodeBridgeEventResult(payload)
   if (Result.isFailure(result) || !BridgeEvent.guards.NotificationOpened(result.success)) return
-  const opened = { threadId: result.success.threadId }
+  const opened = { opens: result.success.opens }
   for (const listener of openedListeners) listener(opened)
 })
 

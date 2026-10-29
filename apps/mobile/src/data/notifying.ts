@@ -1,5 +1,5 @@
 import { useAtomValue } from '@effect/atom-react'
-import { PushDestination, PushPayload, type ThreadId } from '@vivid/contracts'
+import { PushDestination, PushPayload, type NotificationOpens } from '@vivid/contracts'
 import { notifying, type makeLive } from '@vivid/state'
 import { Effect, Layer, Option, Result, Schema, Struct } from 'effect'
 import { PermissionStatus } from 'expo'
@@ -184,23 +184,21 @@ Notifications.setNotificationHandler({
 
 const decodePressed = Schema.decodeUnknownOption(PushPayload)
 
-/** What a pressed notification is about: its Thread, or none (the Feed). */
+/** Where a pressed notification opens (`NotificationOpens`), as the server said in its payload. */
 const pressedOf = (response: Notifications.NotificationResponse) =>
-  Option.map(decodePressed(response.notification.request.content.data), (payload) =>
-    Option.fromNullOr(payload.threadId),
-  )
+  Option.map(decodePressed(response.notification.request.content.data), (payload) => payload.opens)
 
 /**
  * Hears each notification the Person presses and hands what it is about to `open`, once the
  * navigator can go there. A press that started the app is read once, at that moment, and cleared
  * so it is not opened again; later presses arrive as they happen.
  */
-export const listenForPresses = (open: (thread: Option.Option<ThreadId>) => void) => {
+export const listenForPresses = (open: (opens: NotificationOpens) => void) => {
   Option.map(
     Option.flatMap(Option.fromNullOr(Notifications.getLastNotificationResponse()), pressedOf),
-    (thread) => {
+    (opens) => {
       Notifications.clearLastNotificationResponse()
-      open(thread)
+      open(opens)
     },
   )
   const heard = Notifications.addNotificationResponseReceivedListener((response) => {

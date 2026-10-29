@@ -140,7 +140,11 @@ async function journey(state, id, directory, { run, capture }) {
   const notifications = Result.getOrThrow(decodeShown(await run(['eval', shown])))
   await json(directory + '/notifications.json', notifications)
   const mine = notifications.find((n) => n.title === TITLE)
-  NodeAssert.equal(mine.data.threadId, away, 'The notification names the Thread it is about')
+  NodeAssert.deepEqual(
+    mine.data.opens,
+    { _tag: 'Thread', threadId: away },
+    'The notification opens the Thread it is about',
+  )
   await capture('notified')
 
   // Turning off removes the target and the subscription; a reload stays off.
