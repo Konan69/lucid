@@ -19,7 +19,7 @@ import { modelText } from './views.ts'
 const what = text('What is owed, exactly as the Person names it.', 240)
 const from = text('Who owes it, as the Person names them. Never invent a party.', 120)
 const nextStep = text('The next agreed step about this commitment.', 240)
-const localTime = v.pipe(
+export const localTime = v.pipe(
   text(
     'Resolve the Person’s date words using the response clock into YYYY-MM-DDTHH:mm:ss in their context time zone. Never invent a date or time.',
     19,
@@ -29,7 +29,7 @@ const localTime = v.pipe(
 
 /** Resolve wall time in the response's context zone (`Scope`), never the host zone or an invented
  * UTC fallback. */
-const instant = Effect.fn('OwedTools.instant')(function* (local: string) {
+export const instant = Effect.fn('OwedTools.instant')(function* (local: string) {
   const { timezone } = yield* Scope
   if (timezone.length === 0)
     return yield* new InvalidRequest({
