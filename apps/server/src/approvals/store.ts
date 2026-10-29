@@ -21,6 +21,7 @@ import {
   DatabaseFailure,
   NotFound,
   InvalidRequest,
+  ActionReceipt,
   ActionTarget,
   PersonId,
   ProposedAction,
@@ -54,6 +55,14 @@ import {
   ActionRunner,
 } from './gate.ts'
 import { actionDigest, auditAction } from './action.ts'
+import {
+  Claim,
+  claim as claimOperation,
+  operationOf,
+  release,
+  resultDigest,
+  settle,
+} from '../actions/journal.ts'
 import { approvals } from './tables.ts'
 import { Signal, encodeSignal } from './signal.ts'
 import { replaySignals, type SignalWriter } from './replay.ts'
@@ -181,7 +190,12 @@ const stateOf = (
     unknown: (value) =>
       personSummary(people, value.decidedBy).pipe(
         Effect.map((decidedBy) =>
-          ApprovalState.cases.OutcomeUnknown.make({ decidedBy, finishedAt: value.finishedAt }),
+          ApprovalState.cases.OutcomeUnknown.make({
+            decidedBy,
+            finishedAt: value.finishedAt,
+            // The decision journaled its action under the Approval's own operation (`decide`).
+            operationId: operationOf.approval(value.id),
+          }),
         ),
       ),
     denied: (value) =>
@@ -448,6 +462,54 @@ const finish = Effect.fn('Approvals.finish')(function* (
   return yield* returned(rows, 'Approval outcome')
 })
 
+/**
+ * Runs the approved action under the action journal, named by the Approval. The claim is written
+ * first, so the operation exists before anything is sent. The exact act whose earlier send is still
+ * unresolved in this Thread is not sent: the Approval fails with that reason. The runner's ending is
+ * the adapter's word: `Succeeded` is a `Completed` receipt, `Unknown` an `Unknown` one, and a
+ * failure, which sent nothing that took effect, releases the claim.
+ */
+const runJournaled = Effect.fn('Approvals.runJournaled')(function* <E, R>(
+  row: typeof Row.Type,
+  run: Effect.Effect<ActionOutcome, E, R>,
+) {
+  const operationId = operationOf.approval(row.id)
+  const claimed = yield* claimOperation({
+    id: operationId,
+    threadId: row.threadId,
+    runId: row.runId,
+    approvalId: row.id,
+    target: row.action.target,
+  }).pipe(
+    Effect.asSome,
+    Effect.catchTag('ActionReconciliationRequired', () => Effect.succeedNone),
+  )
+  if (Option.isNone(claimed))
+    return ActionOutcome.cases.Failed.make({
+      reason:
+        'The same action was sent before in this Thread and its result is not known yet, so it was not sent again.',
+    })
+  if (Claim.guards.Answered(claimed.value))
+    return ActionReceipt.guards.Unknown(claimed.value.receipt)
+      ? ActionOutcome.cases.Unknown.make({})
+      : ActionOutcome.cases.Succeeded.make({ result: 'This exact action was already done.' })
+  const outcome = yield* run
+  const now = yield* Clock.currentTimeMillis
+  yield* ActionOutcome.match(outcome, {
+    Succeeded: ({ result }) =>
+      settle(
+        ActionReceipt.cases.Completed.make({
+          operationId,
+          completedAt: now,
+          resultDigest: resultDigest(result),
+        }),
+      ),
+    Failed: () => release(operationId),
+    Unknown: () => settle(ActionReceipt.cases.Unknown.make({ operationId, observedAt: now })),
+  })
+  return outcome
+})
+
 /** Denials settle immediately; approvals execute the stored action exactly once after the SQL claim. */
 const decide = Effect.fn('Approvals.decide')(function* (
   actor: Actor,
@@ -467,15 +529,18 @@ const decide = Effect.fn('Approvals.decide')(function* (
   if (ApprovalDecision.guards.AlwaysAllow(request.decision)) {
     yield* (yield* RuleStore).allow(decisionActor, row.action.summary)
   }
-  const outcome = yield* (yield* ActionRunner).run({
-    person: actor.person,
-    workspace: actor.workspace,
-    action: row.action,
-    origin:
-      row.runId === null
-        ? ActionOrigin.cases.RuntimeThread.make({ threadId: row.threadId })
-        : ActionOrigin.cases.Run.make({ threadId: row.threadId, runId: row.runId }),
-  })
+  const outcome = yield* runJournaled(
+    row,
+    (yield* ActionRunner).run({
+      person: actor.person,
+      workspace: actor.workspace,
+      action: row.action,
+      origin:
+        row.runId === null
+          ? ActionOrigin.cases.RuntimeThread.make({ threadId: row.threadId })
+          : ActionOrigin.cases.Run.make({ threadId: row.threadId, runId: row.runId }),
+    }),
+  )
   const settled = yield* finish(actor, row, outcome)
   yield* changed(actor, Topic.thread(row.threadId))
   yield* audit.record(

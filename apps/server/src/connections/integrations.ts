@@ -20,7 +20,7 @@ import { requireAdmin, type Actor } from '../auth/access.ts'
 import { ConnectionAddress, type ConnectionAddressInvalid, publicAddress } from './address.ts'
 import { IMPORTED } from './logo.ts'
 import { ConnectionStore, ToolDiscovery } from './store.ts'
-import { useTool } from './tools.ts'
+import { useUnkeyedTool } from './tools.ts'
 import { namedAccounts } from './names.ts'
 import { stateOf, type ConnectionRecord } from './records.ts'
 import { testInput } from './probe.ts'
@@ -422,7 +422,7 @@ export const testIntegration = Effect.fn('Connections.testIntegration')(
         reason: 'no read-only tool can be tested without extra input',
       })
     const { tool, input } = selectedProbe
-    const outcome = yield* useTool(actor, {
+    const outcome = yield* useUnkeyedTool(actor, {
       connectionId: row.id,
       tool: tool.name,
       input,
@@ -431,6 +431,9 @@ export const testIntegration = Effect.fn('Connections.testIntegration')(
     })
     return ToolOutcome.match<TestIntegrationOutcome>(outcome, {
       Completed: () =>
+        TestIntegrationOutcome.cases.Tested.make({ account, tools: names, tool: tool.name }),
+      // The test call is a read, which the journal never answers in place of sending.
+      Repeated: () =>
         TestIntegrationOutcome.cases.Tested.make({ account, tools: names, tool: tool.name }),
       ApprovalRequired: ({ approvalId, summary }) =>
         TestIntegrationOutcome.cases.ApprovalRequired.make({ approvalId, summary }),
@@ -459,6 +462,11 @@ export const testIntegration = Effect.fn('Connections.testIntegration')(
   (effect) =>
     effect.pipe(
       Effect.catchTag('ServiceUnavailable', () =>
+        Effect.succeed(TestIntegrationOutcome.cases.Unreachable.make({})),
+      ),
+      // The test call is a read and reads are never journaled, so this refusal cannot be met here;
+      // it is still answered as a call that did not run rather than left to the caller.
+      Effect.catchTag('ActionReconciliationRequired', () =>
         Effect.succeed(TestIntegrationOutcome.cases.Unreachable.make({})),
       ),
     ),

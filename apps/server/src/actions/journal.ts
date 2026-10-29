@@ -1,0 +1,372 @@
+import * as NodeCrypto from 'node:crypto'
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm'
+import * as Clock from 'effect/Clock'
+import * as Context from 'effect/Context'
+import * as Effect from 'effect/Effect'
+import * as Layer from 'effect/Layer'
+import * as Option from 'effect/Option'
+import * as Schema from 'effect/Schema'
+import {
+  ActionAbsence,
+  ActionApplied,
+  ActionOperation,
+  ActionOperationId,
+  ActionPhase,
+  ActionReceipt,
+  ActionReconciliation,
+  ActionReconciliationRequired,
+  ActionTarget,
+  NotFound,
+  type ApprovalId,
+  type PersonId,
+  type ReconcileActionResponse,
+  type RunId,
+  type ThreadId,
+  type ToolCallId,
+} from '@vivid/contracts'
+import { canonical } from '../approvals/action.ts'
+import { Database, decodeStored, encodeStored } from '../database/client.ts'
+import { requireThread } from '../threads/access.ts'
+import { actions } from './tables.ts'
+
+type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
+type Row = typeof actions.$inferSelect
+
+const encodeTarget = encodeStored(ActionTarget, 'Action target')
+const decodeTarget = decodeStored(ActionTarget, 'Action target')
+const encodeReceipt = encodeStored(ActionReceipt, 'Action receipt')
+const decodeReceipt = decodeStored(ActionReceipt, 'Action receipt')
+const encodeReconciliation = encodeStored(ActionReconciliation, 'Action reconciliation')
+const decodeReconciliation = decodeStored(ActionReconciliation, 'Action reconciliation')
+const isApplied = Schema.is(ActionApplied)
+
+/**
+ * The trusted keys an operation is named by. A direct call is named by the runtime's own call
+ * identity inside its Thread, so the runtime retrying the call finds the same row. An Approval's
+ * action is named by the Approval, which runs once. A call from a program has no identity that
+ * survives a retry (programs are never replayed), so it gets a fresh one.
+ */
+export const operationOf = {
+  call: (threadId: ThreadId, call: ToolCallId) =>
+    ActionOperationId.make(`call-${threadId}-${call}`),
+  approval: (id: ApprovalId) => ActionOperationId.make(`approval-${id}`),
+  program: () => ActionOperationId.make(`program-${NodeCrypto.randomUUID()}`),
+}
+
+/**
+ * What makes two sends the same act: the Integration, tool and exact input, or the exact Computer
+ * action. The account's label is left out: renaming "Gmail (Work)" does not make a send new.
+ */
+const fingerprintOf = Effect.fn('Actions.fingerprint')(function* (target: ActionTarget) {
+  const encoded = yield* encodeTarget(target)
+  const essential = ActionTarget.match<Schema.Json>(target, {
+    Connection: ({ connectionId, tool, input }) => ({
+      kind: 'Connection',
+      connectionId,
+      tool,
+      input,
+    }),
+    Browser: () => encoded,
+    Desktop: () => encoded,
+  })
+  return NodeCrypto.createHash('sha256').update(canonical(essential)).digest('hex')
+})
+
+/** The digest a `Completed` receipt carries in place of the provider's answer. */
+export const resultDigest = (result: Schema.Json) =>
+  NodeCrypto.createHash('sha256').update(canonical(result)).digest('hex')
+
+/** A row's phase: being sent until its one receipt is written. */
+const phaseOf = Effect.fn('Actions.phase')(function* (row: Row) {
+  if (row.receipt === null) return ActionPhase.cases.Dispatching.make({ claimedAt: row.claimedAt })
+  return ActionPhase.cases.Settled.make({ receipt: yield* decodeReceipt(row.receipt) })
+})
+
+const viewOf = Effect.fn('Actions.view')(function* (row: Row) {
+  return ActionOperation.make({
+    id: row.id,
+    threadId: row.threadId,
+    runId: row.runId,
+    approvalId: row.approvalId,
+    target: yield* decodeTarget(row.target),
+    phase: yield* phaseOf(row),
+  })
+})
+
+/**
+ * An operation whose effect is not known: still marked as being sent (in flight, or the server died
+ * while sending) or settled `Unknown`, and not since shown either way by reconciliation.
+ */
+const unresolved = and(
+  or(isNull(actions.receipt), sql`${actions.receipt}->>'_tag' = 'Unknown'`),
+  sql`${actions.reconciliation}->>'_tag' not in ('Applied', 'NotApplied')`,
+)
+
+/**
+ * What a send of `target` under `id` must answer instead of sending, if anything.
+ *
+ * - The same operation again (a retried call): its own receipt, or `Unknown` while it has none.
+ * - An unresolved operation of the same fingerprint in this Thread: refused until reconciled.
+ * - The newest same-fingerprint operation reconciled `Applied`: its receipt; it already happened.
+ *
+ * `retryOf` is the newest same-fingerprint operation proven `NotApplied`, which a fresh send names.
+ */
+const answerFor = Effect.fn('Actions.answerFor')(function* (
+  tx: Transaction,
+  input: {
+    readonly id: ActionOperationId
+    readonly threadId: ThreadId
+    readonly fingerprint: string
+  },
+) {
+  const now = yield* Clock.currentTimeMillis
+  const [same] = yield* tx.select().from(actions).where(eq(actions.id, input.id))
+  if (same !== undefined) {
+    const phase = yield* phaseOf(same)
+    const receipt = ActionPhase.match(phase, {
+      Dispatching: () =>
+        ActionReceipt.cases.Unknown.make({ operationId: same.id, observedAt: now }),
+      Settled: ({ receipt: settled }) => settled,
+    })
+    return { answer: Option.some(receipt), retryOf: Option.none<ActionOperationId>() }
+  }
+  const scope = and(
+    eq(actions.threadId, input.threadId),
+    eq(actions.fingerprint, input.fingerprint),
+  )
+  const [open] = yield* tx.select({ id: actions.id }).from(actions).where(and(scope, unresolved))
+  if (open !== undefined) return yield* new ActionReconciliationRequired({ operationId: open.id })
+  const reconciled = yield* tx
+    .select()
+    .from(actions)
+    .where(and(scope, sql`${actions.reconciliation}->>'_tag' in ('Applied', 'NotApplied')`))
+    .orderBy(sql`${actions.claimedAt} desc`)
+    .limit(1)
+  const [newest] = reconciled
+  if (newest === undefined)
+    return { answer: Option.none<ActionReceipt>(), retryOf: Option.none<ActionOperationId>() }
+  const reconciliation = yield* decodeReconciliation(newest.reconciliation)
+  return ActionReconciliation.guards.Applied(reconciliation)
+    ? { answer: Option.some<ActionReceipt>(reconciliation.receipt), retryOf: Option.none() }
+    : { answer: Option.none<ActionReceipt>(), retryOf: Option.some(newest.id) }
+})
+
+/** Serializes every send of one act in one Thread; unrelated work in the Thread does not wait. */
+const lockAct = (tx: Transaction, threadId: ThreadId, fingerprint: string) =>
+  tx.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended(${`${threadId}:${fingerprint}`}, 0))`,
+  )
+
+/**
+ * Asks before the Gate whether this send must be answered without sending, so an unresolved act is
+ * refused before an Approval is raised for it too. Read-only; `claim` decides again under the lock.
+ */
+export const answerBefore = Effect.fn('Actions.answerBefore')(function* (input: {
+  readonly id: ActionOperationId
+  readonly threadId: ThreadId
+  readonly target: ActionTarget
+}) {
+  const database = yield* Database
+  const fingerprint = yield* fingerprintOf(input.target)
+  const found = yield* database.transaction((tx) =>
+    answerFor(tx, { id: input.id, threadId: input.threadId, fingerprint }),
+  )
+  return found.answer
+})
+
+/** Whether the caller may send now, or must answer with what was already recorded. */
+export const Claim = Schema.TaggedUnion({
+  Fresh: {},
+  Answered: { receipt: ActionReceipt },
+})
+export type Claim = typeof Claim.Type
+
+/**
+ * The conditional dispatch claim: one row per operation, written before anything is sent. Under the
+ * act's lock, a repeat or an unresolved same act is answered or refused instead (`answerFor`). A
+ * crash after this leaves the row `Dispatching`, which every later reader takes as uncertain.
+ */
+export const claim = Effect.fn('Actions.claim')(function* (input: {
+  readonly id: ActionOperationId
+  readonly threadId: ThreadId
+  readonly runId: RunId | null
+  readonly approvalId: ApprovalId | null
+  readonly target: ActionTarget
+}) {
+  const database = yield* Database
+  const fingerprint = yield* fingerprintOf(input.target)
+  const target = yield* encodeTarget(input.target)
+  const unchecked = yield* encodeReconciliation(ActionReconciliation.cases.Unchecked.make({}))
+  const now = yield* Clock.currentTimeMillis
+  return yield* database.transaction((tx) =>
+    Effect.gen(function* () {
+      yield* lockAct(tx, input.threadId, fingerprint)
+      const found = yield* answerFor(tx, { id: input.id, threadId: input.threadId, fingerprint })
+      if (Option.isSome(found.answer))
+        return Claim.cases.Answered.make({ receipt: found.answer.value })
+      yield* tx.insert(actions).values({
+        id: input.id,
+        threadId: input.threadId,
+        runId: input.runId,
+        approvalId: input.approvalId,
+        target,
+        fingerprint,
+        retryOf: Option.getOrNull(found.retryOf),
+        claimedAt: now,
+        receipt: null,
+        reconciliation: unchecked,
+      })
+      return Claim.cases.Fresh.make({})
+    }),
+  )
+})
+
+/** Writes the one receipt of a claimed operation; a second settlement changes nothing. */
+export const settle = Effect.fn('Actions.settle')(function* (receipt: ActionReceipt) {
+  const database = yield* Database
+  yield* database.run(
+    database
+      .update(actions)
+      .set({ receipt: yield* encodeReceipt(receipt) })
+      .where(and(eq(actions.id, receipt.operationId), isNull(actions.receipt))),
+  )
+})
+
+/**
+ * Removes a claim whose send the provider definitely refused, or that never reached it. Nothing
+ * outward happened, so there is no effect to keep a receipt of and no reason to hold a retry.
+ */
+export const release = Effect.fn('Actions.release')(function* (id: ActionOperationId) {
+  const database = yield* Database
+  yield* database.run(
+    database.delete(actions).where(and(eq(actions.id, id), isNull(actions.receipt))),
+  )
+})
+
+/** An operation of a Run whose effect is not known, and since when that is so. */
+export interface Unresolved {
+  readonly operationId: ActionOperationId
+  readonly observedAt: number
+}
+
+/**
+ * The unresolved operation of each listed Run, for the Run's outcome; one per Run is enough. A
+ * settled `Unknown` dates from when its answer was lost; one still `Dispatching` from its claim.
+ */
+export const unresolvedOf = Effect.fn('Actions.unresolvedOf')(function* (
+  runIds: ReadonlyArray<RunId>,
+) {
+  const found = new Map<RunId, Unresolved>()
+  if (runIds.length === 0) return found
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .select()
+      .from(actions)
+      .where(and(inArray(actions.runId, [...runIds]), unresolved)),
+  )
+  for (const row of rows) {
+    if (row.runId === null) continue
+    const phase = yield* phaseOf(row)
+    const observedAt = ActionPhase.match(phase, {
+      Dispatching: ({ claimedAt }) => claimedAt,
+      Settled: ({ receipt }) =>
+        ActionReceipt.guards.Unknown(receipt) ? receipt.observedAt : row.claimedAt,
+    })
+    found.set(row.runId, { operationId: row.id, observedAt })
+  }
+  return found
+})
+
+/**
+ * What a provider's own lookup says about one operation. `Unsupported` when the provider offers no
+ * way to look an operation up, which is every Integration today; that can never prove absence.
+ */
+export const Lookup = Schema.TaggedUnion({
+  Found: { receipt: ActionApplied },
+  Absent: {},
+  Unsupported: {},
+})
+export type Lookup = typeof Lookup.Type
+
+/** The read-only provider check behind reconciliation. It must never send the operation. */
+export class ActionLookup extends Context.Service<
+  ActionLookup,
+  { readonly look: (operation: ActionOperation) => Effect.Effect<Lookup> }
+>()('vivid/ActionLookup') {}
+
+/** No Integration or Computer exposes a lookup by operation yet, so every check is inconclusive. */
+export const actionLookupLayer = Layer.succeed(
+  ActionLookup,
+  ActionLookup.of({ look: () => Effect.succeed(Lookup.cases.Unsupported.make({})) }),
+)
+
+/** Settled with a receipt that says it happened: no provider needs asking. */
+const appliedReceipt = (phase: ActionPhase) =>
+  ActionPhase.match(phase, {
+    Dispatching: () => Option.none<ActionApplied>(),
+    Settled: ({ receipt }) => (isApplied(receipt) ? Option.some(receipt) : Option.none()),
+  })
+
+/**
+ * A Person who can see the Thread asks whether an operation took effect. A definite earlier answer
+ * stands; otherwise the provider's lookup is asked, read-only. Nothing is sent again here, and an
+ * operation the lookup cannot place stays blocked from retry.
+ */
+export const reconcile = Effect.fn('Actions.reconcile')(function* (
+  personId: PersonId,
+  operationId: ActionOperationId,
+) {
+  const database = yield* Database
+  const [row] = yield* database.run(
+    database.select().from(actions).where(eq(actions.id, operationId)),
+  )
+  if (row === undefined) return yield* new NotFound({ message: 'Action not found' })
+  yield* requireThread(row.threadId, personId)
+  const action = yield* viewOf(row)
+  const recorded = yield* decodeReconciliation(row.reconciliation)
+  const settled = appliedReceipt(action.phase)
+  if (Option.isSome(settled))
+    return {
+      action,
+      reconciliation: ActionReconciliation.cases.Applied.make({ receipt: settled.value }),
+    }
+  if (ActionReconciliation.isAnyOf(['Applied', 'NotApplied'])(recorded))
+    return { action, reconciliation: recorded }
+  const checkedAt = yield* Clock.currentTimeMillis
+  const found = yield* (yield* ActionLookup).look(action)
+  const reconciliation = Lookup.match<ActionReconciliation>(found, {
+    Found: ({ receipt }) => ActionReconciliation.cases.Applied.make({ receipt }),
+    Absent: () =>
+      ActionReconciliation.cases.NotApplied.make({
+        checkedAt,
+        evidence: ActionAbsence.cases.ProviderLookup.make({}),
+      }),
+    Unsupported: () => ActionReconciliation.cases.Inconclusive.make({ checkedAt }),
+  })
+  const [written] = yield* database.run(
+    database
+      .update(actions)
+      .set({ reconciliation: yield* encodeReconciliation(reconciliation) })
+      .where(
+        and(
+          eq(actions.id, operationId),
+          sql`${actions.reconciliation}->>'_tag' not in ('Applied', 'NotApplied')`,
+        ),
+      )
+      .returning({ id: actions.id }),
+  )
+  if (written !== undefined) return { action, reconciliation } satisfies ReconcileActionResponse
+  // A concurrent check reached a definite answer first; that stored answer stands.
+  const [current] = yield* database.run(
+    database
+      .select({ reconciliation: actions.reconciliation })
+      .from(actions)
+      .where(eq(actions.id, operationId)),
+  )
+  if (current === undefined) return yield* new NotFound({ message: 'Action not found' })
+  return {
+    action,
+    reconciliation: yield* decodeReconciliation(current.reconciliation),
+  } satisfies ReconcileActionResponse
+})
