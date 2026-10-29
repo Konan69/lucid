@@ -197,7 +197,8 @@ const definitions: ReadonlyArray<{
     mount: ({ runTool }) => owedTools(runTool),
   },
   {
-    description: 'The person has their own to-do list, which is theirs, not your work: add to it with add_todo when they ask or clearly commit to doing something themselves, tick a to-do off with complete_todo only on evidence it was done (they say so, or you saw it), and drop it with drop_todo when they no longer mean to do it. Never say what is or is not on the list from memory: read it with list_todos first, and when they ask to add something, call add_todo even if you think it is there already. They see it on their Feed.',
+    description:
+      'The person has their own to-do list, which is theirs, not your work: add to it with add_todo when they ask or clearly commit to doing something themselves, tick a to-do off with complete_todo only on evidence it was done (they say so, or you saw it), and drop it with drop_todo when they no longer mean to do it. Never say what is or is not on the list from memory: read it with list_todos first, and when they ask to add something, call add_todo even if you think it is there already. They see it on their Feed.',
     requirement: 'Product',
     mount: ({ runTool }) => todoTools(runTool),
   },
