@@ -3,12 +3,15 @@
     "name": "Vivid",
     "slug": "vivid",
     "scheme": "vivid",
-    "version": "0.4.11",
-    "runtimeVersion": "0.3.17",
+    "version": "0.4.12",
+    "runtimeVersion": "0.3.18",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "work.vivid.mobile"
+      "bundleIdentifier": "work.vivid.mobile",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "work.vivid.mobile",
@@ -74,6 +77,12 @@
     "web": {
       "bundler": "metro"
     },
-    "icon": "./assets/icon.png"
+    "icon": "./assets/icon.png",
+    "extra": {
+      "eas": {
+        "projectId": "ffe4ecc2-76eb-43ec-be2d-d26bf33337bd"
+      }
+    },
+    "owner": "konan69"
   }
 }

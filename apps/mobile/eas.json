@@ -1,0 +1,29 @@
+{
+  "cli": {
+    "version": ">= 27.1.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "testflight": {
+      "distribution": "store",
+      "environment": "production",
+      "autoIncrement": true,
+      "node": "24.14.1",
+      "pnpm": "12.4.2",
+      "env": {
+        "SENTRY_DISABLE_AUTO_UPLOAD": "true"
+      },
+      "ios": {
+        "image": "latest"
+      }
+    }
+  },
+  "submit": {
+    "testflight": {
+      "ios": {
+        "appleTeamId": "4Q5T56FN73",
+        "ascAppId": "6828524576"
+      }
+    }
+  }
+}
