@@ -2,6 +2,7 @@ import { Schema } from 'effect'
 import { Approval } from './approvals.js'
 import { PersonId, PersonSummary, ProjectId, RunId, ThreadId } from './identity.js'
 import { InputRequest } from './inputs.js'
+import { ChildRun, RunFailure } from './runs.js'
 
 /** The image formats accepted by the conversation gateway and served inline to every client. */
 export const PictureMediaType = Schema.Literals([
@@ -189,32 +190,10 @@ export const RunOrigin = Schema.TaggedUnion({
   Decision: { person: PersonSummary },
   /** An Integration event a Watch subscribed to, named by the Watch. */
   Watch: { person: PersonSummary, watchName: Schema.String },
+  /** A helper this Thread's Vivid started finished, and its result came back (`runs.ts`). */
+  ChildResult: { person: PersonSummary },
 })
 export type RunOrigin = typeof RunOrigin.Type
-
-/**
- * Why a Run failed, in the terms a Person would act on. Waiting helps with `RateLimited`; trying
- * again helps with `TimedOut` and `NoAnswer` (the model returned nothing at all); `ModelUnavailable`
- * needs whoever runs this Vivid. `Unexplained` is the honest remainder: the runtime reported a
- * failure Vivid has no name for, and it is never used to hide one of the others.
- */
-export const RunFailure = Schema.Literals([
-  'Delivery',
-  'RateLimited',
-  'ModelUnavailable',
-  'NoAnswer',
-  'TimedOut',
-  'Unexplained',
-])
-export type RunFailure = typeof RunFailure.Type
-
-/** The model-specific Run reasons shared by typed provider failures and telemetry's allowlist. */
-export const ModelFailureReason = RunFailure.pick([
-  'RateLimited',
-  'ModelUnavailable',
-  'NoAnswer',
-  'TimedOut',
-])
 
 /**
  * Where a Run stands. `Unknown` is an honest state: the runtime stopped reporting and the outcome
@@ -274,6 +253,8 @@ export const ThreadDetail = Schema.Struct({
   approvals: Schema.Array(Approval),
   /** Every Input request raised in this Thread. */
   requests: Schema.Array(InputRequest),
+  /** The helpers Vivid started in this Thread, oldest first. Never part of `runs`. */
+  children: Schema.Array(ChildRun),
 }).annotate({ identifier: 'ThreadDetail', title: 'Thread detail' })
 export interface ThreadDetail extends Schema.Schema.Type<typeof ThreadDetail> {}
 
@@ -295,6 +276,8 @@ export const SignalType = Schema.Literals([
   'first-conversation',
   // An Integration event a Watch subscribed to (`watches.ts`), delivered into a background Thread.
   'event',
+  // A helper's result returning to the Thread that started it (`runs.ts`).
+  'child-result',
 ] as const)
 export type SignalType = typeof SignalType.Type
 
