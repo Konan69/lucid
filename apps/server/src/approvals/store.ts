@@ -49,7 +49,7 @@ import { Notifier } from '../notifications/notifier.ts'
 import { RuleStore } from '../rules/store.ts'
 import { readableBy, requireThread } from '../threads/access.ts'
 import { notifiesFrom } from '../threads/place.ts'
-import { threads } from '../threads/tables.ts'
+import { runs, threads } from '../threads/tables.ts'
 import { Conversation } from '../threads/conversation.ts'
 import { artifacts } from '../artifacts/tables.ts'
 import { connections } from '../connections/tables.ts'
@@ -331,17 +331,35 @@ const requireDecisionAuthority = Effect.fn('Approvals.requireDecisionAuthority')
 })
 
 type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
-type PendingRow = typeof Row.cases.pending.Type
 
 /**
- * What the binding depended on that is no longer true, if anything.
+ * What the binding depended on that is no longer true, if anything: the Integration's sign-in, the
+ * documents whose text the action carries, and the Run that asked, which must not have been
+ * stopped.
  *
- * The Integration and the documents are read under share locks, taken before the claim locks the
- * Approval's own row. Every write that changes one of them locks its own record first and the
- * Approvals second (`stale.ts`), so both sides take locks in the same order and a claim racing a
- * change waits for it instead of deadlocking with it.
+ * Each is read under a share lock, taken before the Approval's own row is locked or written.
+ * Every write that changes one of them locks its own record first and the Approvals second
+ * (`stale.ts`), so both sides take locks in the same order and a claim or a raise racing a change
+ * waits for it instead of deadlocking with it.
  */
-const drift = Effect.fn('Approvals.drift')(function* (tx: Transaction, row: PendingRow) {
+const drift = Effect.fn('Approvals.drift')(function* (
+  tx: Transaction,
+  row: {
+    readonly action: ProposedAction
+    readonly binding: ApprovalBinding
+    readonly runId: RunId | null
+  },
+) {
+  if (row.runId !== null) {
+    const runId = row.runId
+    const [run] = yield* tx
+      .select({ state: runs.state })
+      .from(runs)
+      .where(eq(runs.id, runId))
+      .for('share')
+    if (run !== undefined && run.state === 'stopped')
+      return Option.some(ApprovalInvalidation.cases.RunStopped.make({ runId }))
+  }
   if (ActionTarget.guards.Connection(row.action.target)) {
     const connectionId = row.action.target.connectionId
     const [current] = yield* tx
@@ -622,7 +640,10 @@ const raise = Effect.fn('Approvals.raise')(function* (
         )
         .limit(1)
       const previous = existing[0]
-      if (previous !== undefined) return { row: previous, inserted: false }
+      if (previous !== undefined) return { row: previous, inserted: false, stale: false }
+      // What the action was prepared from may have changed before this commits; checked here, under
+      // the same locks a claim takes, so no card ever shows stale text as waiting.
+      const changedBy = yield* drift(tx, { action, binding: bound, runId })
       const rows = yield* tx
         .insert(approvals)
         .values({
@@ -639,13 +660,18 @@ const raise = Effect.fn('Approvals.raise')(function* (
           createdAt: now,
         })
         .returning()
+      const inserted = yield* returned(rows, 'Approval')
       yield* announceFeed(tx, [threadId])
-      return { row: yield* returned(rows, 'Approval'), inserted: true }
+      if (Option.isNone(changedBy)) return { row: inserted, inserted: true, stale: false }
+      yield* invalidatePending(tx, eq(approvals.id, inserted.id), changedBy.value)
+      const closed = yield* tx.select().from(approvals).where(eq(approvals.id, inserted.id))
+      return { row: yield* returned(closed, 'Approval'), inserted: true, stale: true }
     }),
   )
   const approval = yield* returned(yield* view([result.row]), 'Approval')
   if (!result.inserted) return approval
   yield* changed(actor, Topic.thread(threadId))
+  if (result.stale) return approval
   // An approval raised in a Background Thread is shown by the Feed, never as a notification.
   if (!notifiesFrom(thread.place)) return approval
   yield* (yield* Notifier).notify({
