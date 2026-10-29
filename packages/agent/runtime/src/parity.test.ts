@@ -340,21 +340,24 @@ describe('main runtime parity on Pi', () => {
         expect(prefix.length).toBeLessThan(text.length)
         yield* link.leave
         yield* Scope.close(first, Exit.void)
-        const requests: Array<ReadonlyArray<Message>> = []
+        const attempts: Array<ReadonlyArray<Message>> = []
         given.faux.setResponses([
           (context) => {
-            requests.push(context.messages)
+            attempts.push(context.messages)
             return fauxAssistantMessage(continuation)
           },
         ])
         const after = yield* start(given)
         const ending = yield* settled(after, ada, THREAD, receipt.submissionId)
         const recovered = yield* read(after)
-        const assistant = requests[0]?.findLast((message) => message.role === 'assistant')
-        const supplied = assistant?.content
+        const [request] = attempts
+        if (request === undefined) expect.fail('recovered request')
+        const assistant = request.findLast((message) => message.role === 'assistant')
+        if (assistant === undefined) expect.fail('interrupted answer in recovered request')
+        const supplied = assistant.content
           .flatMap((block) => (block.type === 'text' ? [block.text] : []))
           .join('')
-        expect(supplied?.startsWith(prefix)).toBe(true)
+        expect(supplied.startsWith(prefix)).toBe(true)
         expect(recovered.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
         expect(
           recovered.messages
@@ -363,7 +366,8 @@ describe('main runtime parity on Pi', () => {
         ).toHaveLength(1)
         expect(words(recovered).startsWith(prefix)).toBe(true)
         expect(words(recovered).endsWith(continuation)).toBe(true)
-        expect(ending).toMatchObject({ _tag: 'Done', reply: words(recovered) })
+        if (!RuntimeSettlement.guards.Done(ending)) expect.fail('completed recovered reply')
+        expect(ending.reply).toBe(words(recovered))
       }),
     ),
   )

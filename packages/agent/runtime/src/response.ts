@@ -194,12 +194,10 @@ const measure = Effect.fn('Response.measure')(function* (
     ),
   )
   return {
-    reply: text
-      .map(
-        (part, index) =>
-          (index > 0 && text[index - 1]?.continued !== true ? '\n\n' : '') + part.text,
-      )
-      .join(''),
+    reply: text.reduce((reply, part, index) => {
+      const before = text[index - 1]
+      return reply + (before !== undefined && !before.continued ? '\n\n' : '') + part.text
+    }, ''),
     startedAt: opened === undefined ? Option.none<number>() : Option.some(opened.timestamp),
     model: Option.map(
       Option.fromUndefinedOr(messages.at(-1)),
