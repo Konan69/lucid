@@ -226,12 +226,16 @@ describe('main runtime parity on Pi', () => {
   it.effect('does not resend earlier tool payloads while a later reply settles', () =>
     scenario((given, runtime) =>
       Effect.gen(function* () {
+        // suggest_replies is the last thing in a reply and ends the turn, so the first turn is its
+        // words plus that call, and the next model request belongs to the second turn.
         given.faux.setResponses([
           fauxAssistantMessage(
-            fauxToolCall('suggest_replies', { replies: ['UNIQUE_OLD_TOOL_PAYLOAD'] }),
+            [
+              fauxText('first reply'),
+              fauxToolCall('suggest_replies', { replies: ['UNIQUE_OLD_TOOL_PAYLOAD'] }),
+            ],
             { stopReason: 'toolUse' },
           ),
-          fauxAssistantMessage('first reply'),
           fauxAssistantMessage('second reply'),
         ])
         const first = yield* admit(runtime, ada, delivery(THREAD, 'first'))

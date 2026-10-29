@@ -270,7 +270,6 @@ describe('the runtime over HTTP', () => {
             [fauxText('The draft is ready.'), fauxToolCall('suggest_replies', { replies })],
             { stopReason: 'toolUse' },
           ),
-          fauxAssistantMessage('Ready when you are.'),
         ])
         const receipt = yield* admit(runtime, ada, delivery('thread-1', 'suggestions'))
         expect(yield* settled(runtime, ada, 'thread-1', receipt.submissionId)).toMatchObject({
