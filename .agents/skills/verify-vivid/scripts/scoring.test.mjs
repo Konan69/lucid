@@ -82,5 +82,34 @@ NodeTest.test(
       )
     NodeAssert.ok(result.provenance.unsupported.some((item) => item.value === '2032-12-19'))
     NodeAssert.equal(result.effects.readBack[0].pass, true)
+    const emptyEffects = { mail: [], calendar: [], readBack: [] }
+    const readsOnly = { ...checks, mailSent: 0 }
+    const priorMail = {
+      messages: [
+        {
+          role: 'assistant',
+          id: 'read-only',
+          submissionId: 'read-turn',
+          parts: [
+            {
+              type: 'text',
+              text: 'You sent a reply yesterday. It was scheduled before this conversation.',
+            },
+          ],
+        },
+      ],
+    }
+    NodeAssert.equal(score(priorMail, [], emptyEffects, readsOnly).effects.pass, true)
+    const claimed = {
+      messages: [
+        {
+          role: 'assistant',
+          id: 'claim',
+          submissionId: 'claim-turn',
+          parts: [{ type: 'text', text: 'I sent your reply.' }],
+        },
+      ],
+    }
+    NodeAssert.equal(score(claimed, [], emptyEffects, readsOnly).effects.pass, false)
   },
 )

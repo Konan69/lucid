@@ -33,12 +33,12 @@ const patterns = {
       '\\s+\\d{1,2}(?:st|nd|rd|th)?(?:,?\\s+\\d{4})?\\b',
     'gi',
   ),
-  time: /\b\d{1,2}:\d{2}(?::\d{2})?(?:\s*[ap]\.?m\.?)?|\b\d{1,2}\s*[ap]\.?m\.?/gi,
+  time: /(?<![\d:])(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s*[ap]\.?m\.?)?|\b\d{1,2}\s*[ap]\.?m\.?/gi,
   name: /\b[A-Z][\p{L}'’-]+(?:[ \t]+[A-Z][\p{L}'’-]+)*/gu,
 }
 // UI words and ordinary sentence starters are not identity claims. Unknown proper nouns remain candidates.
 const ordinary = new Set(
-  'a an the i i’m i’ve i’d you your we our my me it its this that these those hi hello dear thanks thank best regards send sent email mail calendar reply draft subject to from cc book booking booked choose pick select selected confirm confirmed cancel back next previous not now none no yes here there please let have has will would can could should do done all any action actions needed need needs review open read unread inbox important urgent overdue payment paid unpaid invoice balance total amount status pending receipt received due date time today tomorrow yesterday monday tuesday wednesday thursday friday saturday sunday mon tue wed thu fri sat sun january february march april may june july august september october november december jan feb mar apr jun jul aug sep oct nov dec am pm wat utc gmt work personal meeting event available availability busy free slot slots option options connect connected connection integration message messages thread details summary notes ready still only both for on at in as and or but with without is are be before after already check found finding looking checking thirty minutes minute new re rsvp meet dinner'.split(
+  'a an the i im ive id you your we our my me it its this that these those hi hello dear thanks thank best regards send sent email mail calendar reply draft subject to from cc book booking booked choose pick select selected confirm confirmed cancel back next previous not now none no yes here there please let have has will would can could should do done all any action actions needed need needs review open read unread inbox important urgent overdue payment paid unpaid invoice balance total amount status pending receipt received due date time today tomorrow yesterday monday tuesday wednesday thursday friday saturday sunday mon tue wed thu fri sat sun january february march april may june july august september october november december jan feb mar apr jun jul aug sep oct nov dec am pm wat utc gmt work personal meeting event available availability busy free slot slots option options connect connected connection integration message messages thread details summary notes ready still only both for on at in as and or but with without is are be before after already check found finding looking checking thirty minutes minute new re rsvp meet dinner morning well early'.split(
     ' ',
   ),
 )
@@ -57,7 +57,11 @@ function textOf(value) {
 function drawnText(value) {
   if (Predicate.isString(value)) return value
   if (!value || !Predicate.isObjectOrArray(value)) return ''
-  if (value.type === 'element') return drawnText(value.props)
+  if (value.type === 'element')
+    return Object.entries(value.props)
+      .filter(([key]) => key !== 'action')
+      .map(([, prop]) => drawnText(prop))
+      .join('\n')
   return Object.values(value).map(drawnText).join('\n')
 }
 const normalize = (text) =>
@@ -83,7 +87,7 @@ function sourceForms(text) {
   for (const match of text.matchAll(
     /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})/g,
   )) {
-    forms.push(match[0].slice(0, 10), match[0].slice(11, 16))
+    forms.push(match[0].slice(0, 10), match[0].slice(11, 16), match[0].slice(11, 19))
     const date = new Date(match[0])
     if (!Number.isFinite(date.valueOf())) continue
     for (const timeZone of zones) {
@@ -128,14 +132,14 @@ function provenance(text, source, location) {
         kind === 'name'
           ? match[0]
               .split(/\s+/)
-              .filter((word) => !ordinary.has(word.toLowerCase()))
+              .filter((word) => !ordinary.has(word.toLowerCase().replace(/['’]/g, '')))
               .join(' ')
           : match[0],
     })),
   )
   for (const { kind, value } of candidates) {
     if (!value || checked.some((item) => item.kind === kind && item.value === value)) continue
-    const escaped = normalize(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const escaped = normalize(value.replace(/['’]s\b/g, '')).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     checked.push({
       kind,
       value,
@@ -210,6 +214,7 @@ function display(program, location, source) {
       errors,
       pass: errors.length === 0,
       wiring: wiring(parsed),
+      visible: drawnText(drawn),
       provenance: provenance(drawnText(drawn) + '\n' + literals, source, location),
     }
   } catch (error) {
@@ -218,6 +223,7 @@ function display(program, location, source) {
       errors: [{ code: 'parser-or-evaluation', message: error.message }],
       pass: false,
       wiring: { applicable: false, pass: true },
+      visible: '',
       provenance: provenance(program.replace(/\b\w+\(/g, ''), source, location),
     }
   }
@@ -249,9 +255,12 @@ function tools(parts) {
 
 /** Compare explicit claims with read-back effects, separately from private scenario expectations. */
 function effectClaims(reply, effects) {
-  const sentClaim = /\b(?:i(?:'ve| have)?\s+)?(?:sent|emailed|replied)\b/i.test(reply)
+  const sentClaim =
+    /\bi(?:['’]ve| have)?\s+(?:just\s+)?(?:sent|emailed|replied)\b|(?:^|\n)\s*(?:sent to|emailed|replied to)\b|\b(?:your|the) (?:email|reply|message) (?:has been|was|is) sent\b/i.test(
+      reply,
+    )
   const createdClaim =
-    /\b(?:i(?:'ve| have)?\s+)?(?:booked|scheduled|created (?:the |an? )?(?:event|meeting))\b/i.test(
+    /\bi(?:['’]ve| have)?\s+(?:just\s+)?(?:booked|scheduled|created (?:the |an? )?(?:event|meeting))\b|(?:^|\n)\s*(?:booked|scheduled)\b/i.test(
       reply,
     )
   return {
@@ -377,7 +386,10 @@ export function score(page, turns, effects, checks) {
       .filter((message) => message.role === 'assistant')
       .flatMap((message) => message.parts),
   )
-  const claims = effectClaims(reply.replace(fences, ''), effects)
+  const claims = effectClaims(
+    reply.replace(fences, '') + '\n' + displays.map((item) => item.visible).join('\n'),
+    effects,
+  )
   return {
     provenance: {
       checked: provenanceChecks.length,
@@ -387,7 +399,7 @@ export function score(page, turns, effects, checks) {
     display: {
       count: displays.length,
       replies: [...replies.values()],
-      programs: displays.map(({ provenance: _provenance, ...item }) => item),
+      programs: displays.map(({ provenance: _provenance, visible: _visible, ...item }) => item),
       pass: displays.every((item) => item.pass),
     },
     wiring: {
