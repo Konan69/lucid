@@ -72,34 +72,6 @@ export function keyedAddress(address: URL) {
   return Object.values(keyedCatalog).find((service) => service.address.href === address.href)
 }
 
-/**
- * Services Vivid does not offer at all. A refused host is refused by name and by every
- * subdomain, wherever it appears: a pasted address, a redirect, a catalogue entry, a
- * Connection made before the refusal.
- *
- * GitHub Copilot (Konan, 16 Oct 2026: "copilot? remove that and blacklist it"). GitHub's
- * remote MCP server is served from Copilot's host, so this also removes the GitHub entry that
- * used that endpoint.
- */
-export const refusedHosts = ['githubcopilot.com']
-
-/** Catalogue identities whose only endpoint is a refused host. */
-export const refusedServices = ['curated/github-com-mcp']
-
-/** Whether a host is a refused one or below it; a terminal DNS dot names the same host. */
-export function refusedHost(host: string) {
-  const name = host.toLowerCase().replace(/\.$/u, '')
-  return refusedHosts.some((refused) => name === refused || name.endsWith(`.${refused}`))
-}
-
-/** Address-added Connections store their service as `url:<address>`; catalogue ones their id. */
-export function refusedService(service: string) {
-  if (refusedServices.includes(service)) return true
-  if (!service.startsWith('url:')) return false
-  const address = URL.parse(service.slice('url:'.length))
-  return address !== null && refusedHost(address.hostname)
-}
-
 const decodeCuration = Schema.decodeUnknownEffect(CurationDocument)
 
 /** The checked-in judgements failed to decode; the page says so instead of listing everything. */

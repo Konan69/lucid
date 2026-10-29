@@ -51,6 +51,7 @@ const missing = {
   code: 'No disposable Person Computer authority',
   library: 'No browser ingestion recipe yet',
   discord: 'No browser recipe for the Discord Key form and Allow card yet',
+  github: 'No browser recipe for the GitHub Key form yet',
 }
 const recipes = {
   reading: { check: 'reading' },

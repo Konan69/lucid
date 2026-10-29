@@ -21,6 +21,7 @@ Read the touched feature before launching. A verdict belongs to the recorded com
 - [Read reporting](reading.md).
 - [Settings and Integration purpose groups](settings.md).
 - [Discord Integration](discord.md).
+- [GitHub Integration](github.md).
 - [Notes](notes.md).
 - [Desktop app](desktop.md).
 
