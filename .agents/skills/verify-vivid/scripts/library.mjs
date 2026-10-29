@@ -14,7 +14,7 @@ export async function libraryFile(directory) {
   const name = project + '.txt'
   const text = `${project} fieldwork handbook\nThe fieldwork meeting point for ${project} is ${answer}.\n`
   const file = directory + '/' + name
-  const prompt = `What is the fieldwork meeting point for ${project} in my Library file ${name}? Search the Library and cite the source filename in your answer.`
+  const prompt = `What is the fieldwork meeting point for ${project} in my Library file ${name}? Search the Library and cite the source as [${name}] in your answer.`
   await NodeFSP.writeFile(file, text)
   const fixture = { name, file, text, project, answer, prompt }
   await json(directory + '/fixture.json', fixture)
