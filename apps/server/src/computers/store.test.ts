@@ -1652,12 +1652,26 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
               updatedAt: 0,
             }),
           )
+          // A handoff is handed over from a Run, which its row references.
+          const runId = RunId.make(NodeCrypto.randomUUID())
+          yield* database.run(
+            database.insert(runs).values({
+              id: runId,
+              threadId,
+              personId: first.id,
+              turn: 1,
+              state: 'working',
+              origin: encodeRunOrigin(StoredRunOrigin.cases.Message.make({})),
+              startedAt: 0,
+              admittedAt: 0,
+            }),
+          )
           const id = NodeCrypto.randomUUID()
           yield* database.run(
             database.insert(handoffs).values({
               id,
               threadId,
-              runId: RunId.make(NodeCrypto.randomUUID()),
+              runId,
               personId: first.id,
               summary: 'Sign in',
               request: Definition.cases.Screen.make({ kind: 'Captcha' }),

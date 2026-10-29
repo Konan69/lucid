@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm'
 import { index, jsonb, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core'
-import { threads } from '../threads/tables.ts'
+import { runs, threads } from '../threads/tables.ts'
 import { personTable } from '../auth/tables.ts'
 import { epoch, personColumn } from '../database/owner.ts'
 import { storedNone } from '../approvals/signal.ts'
@@ -73,7 +73,9 @@ export const handoffs = pgTable(
     threadId: text('thread_id')
       .notNull()
       .references(() => threads.id, { onDelete: 'cascade' }),
-    runId: text('run_id').notNull(),
+    runId: text('run_id')
+      .notNull()
+      .references(() => runs.id, { onDelete: 'cascade' }),
     personId: personColumn().notNull(),
     summary: text('summary').notNull(),
     request: jsonb('request').notNull(),
