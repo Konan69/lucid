@@ -2,7 +2,13 @@ import * as NodeCrypto from 'node:crypto'
 import * as NodeAssert from 'node:assert/strict'
 import * as NodeFSP from 'node:fs/promises'
 import { Redacted, Schema } from 'effect'
-import { ConnectionState, ConnectionStep, WatchState, RunOrigin } from '@vivid/contracts'
+import {
+  ConnectionState,
+  ConnectionStep,
+  WatchState,
+  WatchCondition,
+  RunOrigin,
+} from '@vivid/contracts'
 import { observe } from './observation.mjs'
 import { decodeText } from './receipts.mjs'
 import { rpc, chat, history, settled, json } from './wire.mjs'
@@ -17,6 +23,8 @@ const rowSchemas = {
     id: Schema.String,
     state: Schema.String,
     callback_url: Schema.String,
+    condition: Schema.optionalKey(WatchCondition),
+    state_data: Schema.optionalKey(Schema.NullOr(WatchState)),
   }),
   vivid_runs: Schema.Struct({
     id: Schema.String,
@@ -364,6 +372,7 @@ export async function watch(state, id, directory) {
 async function completion(state, { id, integration }, directory) {
   const marker = 'Until ' + crypto.randomUUID().slice(0, 8)
   const path = directory + '/completion'
+  await NodeFSP.mkdir(path, { recursive: true })
   await chat(
     state,
     id,
@@ -404,6 +413,10 @@ async function completion(state, { id, integration }, directory) {
     'after',
   )
   NodeAssert.equal(completed.state, 'Completed')
+  NodeAssert.ok(WatchCondition.guards.Until(completed.condition))
+  NodeAssert.ok(completed.state_data && WatchState.guards.Completed(completed.state_data))
+  NodeAssert.equal(completed.state_data.runId, detail.runs[0].id)
+  NodeAssert.ok(completed.state_data.evidence.length > 0)
   const status = await removedDelivery(
     { watch: watching.id },
     { callback: row.callback_url, receipt: crypto.randomUUID() },
