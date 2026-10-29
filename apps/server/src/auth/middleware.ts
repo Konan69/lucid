@@ -10,7 +10,7 @@ import { ServerConfig } from '../config.ts'
 import { Database } from '../database/client.ts'
 import { observeFailures } from '../observability/failure.ts'
 import { Auth } from './provider.ts'
-import { authenticate, authenticateVivid } from './session.ts'
+import { authenticate, authenticateHelper, authenticateVivid } from './session.ts'
 
 /**
  * Decides who is calling, once, for every product call.
@@ -53,10 +53,16 @@ export const rpcAuthMiddlewareLayer = Layer.effect(
   }),
 )
 
-/** Vivid acting for a Person when both headers are present; otherwise the bare runtime. */
+/**
+ * Vivid acting for a Person when both headers are present, a helper Run when the helper header
+ * is there too; otherwise the bare runtime.
+ */
 const runtimeIdentity = (headers: Headers.Headers) => {
   const thread = Headers.get(headers, runtimeHeaders.thread)
   const actor = Headers.get(headers, runtimeHeaders.actor)
   if (Option.isNone(thread) || Option.isNone(actor)) return Effect.succeed(AuthState.Runtime())
+  const helper = Headers.get(headers, runtimeHeaders.helper)
+  if (Option.isSome(helper))
+    return authenticateHelper({ thread: thread.value, actor: actor.value, helper: helper.value })
   return authenticateVivid({ thread: thread.value, actor: actor.value })
 }

@@ -47,6 +47,8 @@ export const StoredRunOrigin = Schema.TaggedUnion({
   Decision: {},
   /** An Integration event a Watch subscribed to woke Vivid in a background Thread. */
   Watch: { watchName: Schema.String },
+  /** A helper ended and its result came back to the Thread (`runs/store.ts`). */
+  ChildResult: { childRunId: RunId },
 })
 export type StoredRunOrigin = typeof StoredRunOrigin.Type
 

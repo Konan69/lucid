@@ -302,7 +302,12 @@ describe.skipIf(!testDatabaseConfigured)('Rule transaction announcements', () =>
     it.effect('R8 missing Vivid Thread attribution writes and announces nothing', () =>
       Effect.gen(function* () {
         const test = yield* fixture()
-        const actor: Actor = { ...test.personal, by: 'vivid', threadId: Option.none() }
+        const actor: Actor = {
+          ...test.personal,
+          by: 'vivid',
+          threadId: Option.none(),
+          helper: Option.none(),
+        }
         const before = yield* stored(test)
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
         expect(

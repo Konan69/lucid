@@ -41,6 +41,7 @@ export const codeAuthorityLayer = Layer.effect(
             workspace: auth.workspace,
             by: 'vivid',
             threadId: Option.some(auth.threadId),
+            helper: Option.none(),
           })),
           Effect.catchTags({
             NotFound: () => Effect.fail(new CodeAuthorityRevoked({})),

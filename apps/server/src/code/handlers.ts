@@ -5,7 +5,7 @@ import {
   type RunDisplayCodeRequest,
 } from '@vivid/contracts'
 import { Effect } from 'effect'
-import { requirePerson, requireVivid } from '../auth/access.ts'
+import { requirePerson, requireVivid, requireRun } from '../auth/access.ts'
 import { CodeCalls } from './calls.ts'
 import { readPage } from './pages.ts'
 import { CodeProcess } from './process.ts'
@@ -35,7 +35,7 @@ export const codeHandlers = {
     )
   }),
   ReadPage: Effect.fn('Rpc.ReadPage')(function* (request: ReadPageRequest) {
-    yield* requireVivid()
+    yield* requireRun()
     return yield* readPage(request)
   }),
 }

@@ -90,6 +90,7 @@ const setup = Effect.fn('LibraryPrivacy.setup')(function* () {
     ...actor,
     by: 'vivid',
     threadId: Option.some(threadId),
+    helper: Option.none(),
   })
   return {
     mine,

@@ -20,6 +20,7 @@ export const draftHandlers = {
       workspace: auth.workspace,
       by: 'person',
       threadId: Option.none(),
+      helper: Option.none(),
     }
     return yield* (yield* DraftStore).save(actor, request)
   }),

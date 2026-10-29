@@ -81,6 +81,7 @@ const fixture = Effect.fn('FirstThread.test.fixture')(function* () {
     workspace: Workspace.cases.Personal.make({}),
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   }
   const company = Company.make({ id: companyId, name: 'Arrival test', slug: companyId })
   const workspace = Workspace.cases.Company.make({ company, role: 'member' })

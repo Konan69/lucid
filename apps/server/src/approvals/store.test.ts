@@ -83,7 +83,12 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             )
             const store = yield* ApprovalStore
             const approval = yield* store.raise(
-              { ...test.owner, by: 'vivid', threadId: Option.some(test.companyId) },
+              {
+                ...test.owner,
+                by: 'vivid',
+                threadId: Option.some(test.companyId),
+                helper: Option.none(),
+              },
               connectionAction,
             )
             expect(yield* store.inbox(test.owner)).toEqual([approval])
@@ -138,7 +143,12 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           )
           const store = yield* ApprovalStore
           const approval = yield* store.raise(
-            { ...test.owner, by: 'vivid', threadId: Option.some(test.companyId) },
+            {
+              ...test.owner,
+              by: 'vivid',
+              threadId: Option.some(test.companyId),
+              helper: Option.none(),
+            },
             connectionAction,
           )
           expect(yield* store.inbox(test.owner)).toEqual([approval])

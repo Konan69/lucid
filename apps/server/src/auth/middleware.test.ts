@@ -87,6 +87,7 @@ const handlers = probes.toLayer({
     const caller = AuthState.$match(auth, {
       Person: (person) => Caller.cases.Person.make({ personId: person.person.id }),
       Vivid: () => Caller.cases.Vivid.make({}),
+      Helper: () => Caller.cases.Vivid.make({}),
       Runtime: () => Caller.cases.Runtime.make({}),
     })
     return ProbeResult.make({ caller, pids: yield* authBackends() })

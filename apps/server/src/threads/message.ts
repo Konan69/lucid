@@ -11,6 +11,13 @@ export const signalAttributes = (message: DeliveryMessage, speaker: string, turn
         turn: String(turn),
         name: message.attributes.name,
       })
+    // A helper is named to the model by its number in the Thread, never by its id.
+    if (message.type === 'child-result' && message.attributes.helper !== undefined)
+      return DeliveryMessage.cases.Signal.fields.attributes.make({
+        from: speaker,
+        turn: String(turn),
+        helper: message.attributes.helper,
+      })
     if (message.type === 'approval' && message.attributes.outcome !== undefined)
       return DeliveryMessage.cases.Signal.fields.attributes.make({
         from: speaker,

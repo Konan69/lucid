@@ -18,6 +18,7 @@ const ruleActor = Effect.fn('Rules.person')(function* () {
     workspace: auth.workspace,
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   } satisfies Actor
 })
 
