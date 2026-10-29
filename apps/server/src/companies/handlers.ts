@@ -11,8 +11,11 @@ import {
   type InvitationId,
   type InviteMembershipRequest,
   type MembershipId,
+  type PersonName,
+  Unauthenticated,
 } from '@vivid/contracts'
 import {
+  findPerson,
   requireActor,
   requireAdmin,
   requireCompany,
@@ -20,15 +23,27 @@ import {
   type Actor,
 } from '../auth/access.ts'
 import { sessionWorkspace } from '../auth/session.ts'
+import { changed } from '../live/changes.ts'
 import { live } from '../live/query.ts'
 import { Notifier } from '../notifications/notifier.ts'
+import { renamePerson } from '../auth/person.ts'
 import { CompanyStore } from './store.ts'
 
-/** The signed-in Person, where they are working, and everywhere else they could be. */
+/**
+ * The signed-in Person, where they are working, and everywhere else they could be.
+ *
+ * The Person is read again rather than taken from the Actor. A live query keeps the Person it was
+ * opened with (`live/query.ts` reads only the workspace again), so `WatchMe` kept answering with
+ * the old name after the Person changed it in Settings; this read is what moves the name on every
+ * open screen.
+ */
 const me = Effect.fn('Companies.me')(function* (actor: Pick<Actor, 'person' | 'workspace'>) {
   const store = yield* CompanyStore
+  const person = yield* findPerson(actor.person.id)
+  if (Option.isNone(person))
+    return yield* new Unauthenticated({ message: 'Person no longer exists' })
   return new MeResponse({
-    person: actor.person,
+    person: person.value,
     workspace: actor.workspace,
     companies: yield* store.memberships(actor.person.id),
   })
@@ -68,6 +83,18 @@ export const companyHandlers = {
     return yield* me(yield* requireActor())
   }),
   WatchMe: () => live('WatchMe', [], me),
+  /** Only the Person names themselves; Vivid reads the name and never changes it. */
+  SetPersonName: Effect.fn('Rpc.SetPersonName')(function* ({
+    name,
+  }: {
+    readonly name: PersonName
+  }) {
+    const auth = yield* requirePerson()
+    yield* renamePerson(auth.person.id, name)
+    // The Person's own topic reopens `WatchMe` on every device; a Company's moves its People list.
+    yield* changed(auth)
+    return yield* meAfter(auth)
+  }),
   /**
    * A Company exists because a Person asked for one by name. Nothing else in the product creates
    * one: not signing up, not inviting someone, not sharing a Thread.

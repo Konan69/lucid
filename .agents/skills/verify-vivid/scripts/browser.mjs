@@ -13,6 +13,7 @@ import { deviceBrowser } from './devicebrowser.mjs'
 import { readBrowser } from './readbrowser.mjs'
 import { settingsBrowser } from './settingsbrowser.mjs'
 import { learningBrowser, memoryBrowser } from './memorybrowser.mjs'
+import { nameBrowser } from './namebrowser.mjs'
 import { feedBrowser } from './feedbrowser.mjs'
 import { owedBrowser } from './owedbrowser.mjs'
 import { todosBrowser } from './todosbrowser.mjs'
@@ -60,6 +61,7 @@ const recipes = {
   stop: { check: 'stop' },
   reading: { check: 'reading' },
   settings: { check: 'settings' },
+  name: { check: 'name' },
   memory: { check: 'memory' },
   learning: { check: 'learning' },
   devices: { check: 'devices' },
@@ -152,6 +154,10 @@ const specialRecipes = {
     drive: readBrowser,
     scope:
       'One web session, 52 Threads, repeat suppression, eviction after 50 remembered standings, unchanged standing after rename, real offscreen reply and one read on return. See scope.json for blocked subcases.',
+  },
+  name: {
+    drive: nameBrowser,
+    scope: 'Web Settings name form, the name after reload, and Vivid answering with it in a Thread. See scope.json for phone and shared-Thread subcases.',
   },
   settings: {
     drive: settingsBrowser,
@@ -371,7 +377,7 @@ async function journey(state, feature) {
     evidence: directory,
   }
   const reason =
-    ['memory', 'question', 'approve', 'deny', 'changed', 'owed', 'todos'].includes(feature) &&
+    ['memory', 'question', 'approve', 'deny', 'changed', 'owed', 'todos', 'name'].includes(feature) &&
     state.modelKind !== 'real'
       ? feature + ' requires a real model.'
       : missing[feature]

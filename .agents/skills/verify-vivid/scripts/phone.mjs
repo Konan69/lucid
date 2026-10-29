@@ -57,7 +57,33 @@ async function thread(state, id, ui) {
   await ui.capture('feed')
 }
 
+/** The phone uses a different name from the HTTP and browser recipes on their shared account. */
+async function naming(state, _id, ui) {
+  const name = 'Tobenna Ruiz'
+  const before = await rpc(state, 'Me', undefined, ui.directory, 'me-before')
+  await ui.menu()
+  await ui.press('Settings')
+  await ui.visible('Your name')
+  await ui.capture('settings-before')
+  await ui.press('Your name')
+  await ui.visible('Save')
+  // Android exposes this labelled field as "Text field"; the name sheet has exactly one input.
+  const snapshot = await ui.run(['snapshot', '-i', '--force-full'])
+  const fields = snapshot.split('\n').filter((line) => line.includes('[text-field]'))
+  NodeAssert.equal(fields.length, 1, 'Expected one text field\n' + snapshot)
+  await ui.run(['fill', fields[0].match(/@e\d+(?:~s\d+)?/u)[0], name, '--settle'])
+  await ui.capture('name-sheet')
+  await ui.press('Save')
+  await ui.visible(name)
+  const after = await ui.capture('settings-renamed')
+  NodeAssert.ok(!after.includes('[text-field]'), 'The name sheet must close after Save')
+  const me = await rpc(state, 'Me', undefined, ui.directory, 'me-after')
+  NodeAssert.equal(me.person.id, before.person.id)
+  NodeAssert.equal(me.person.name, name)
+}
+
 const recipes = {
+  name: naming,
   thread,
   send: flows.send,
   tool: flows.tool,
@@ -94,7 +120,7 @@ async function journey(state, name, ui, native) {
       return { verdict: 'blocked', journey: name }
     }
     await ui.run(['open', 'work.vivid.mobile', '--foreground'])
-    if (name !== 'thread')
+    if (name !== 'thread' && name !== 'name')
       NodeAssert.equal(state.modelKind, 'real', 'Phone journey requires a real model')
     id = await ui.create('Phone ' + name + ' ' + crypto.randomUUID().slice(0, 8))
     await recipes[name](state, id, ui, native.adb)
@@ -111,7 +137,7 @@ async function journey(state, name, ui, native) {
   await json(ui.directory + '/verdict.json', {
     ...verdict,
     journey: name,
-    feature: 'features/phone.md',
+    feature: name === 'name' ? 'features/name.md' : 'features/phone.md',
     head: state.head,
     dirty: state.dirty,
     tree: state.tree,
