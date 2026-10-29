@@ -133,7 +133,7 @@ const definitions = [
   {
     runtimeName: 'learn-how-we-do-this',
     displayName: 'Learn how we do this',
-    about: 'Turns work you have verified into a reusable procedure for you to review and keep.',
+    about: 'Learns a task from work you verified or a walkthrough you give, and does it your way next time.',
     starter: true,
     needs: ['save_skill', 'read_skill', 'search_memory', 'ask_person', 'find_tools', 'connect'],
     connections: [],
