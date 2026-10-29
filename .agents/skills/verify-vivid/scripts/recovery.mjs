@@ -7,7 +7,7 @@ import { phoneCleanup } from './phonecleanup.mjs'
 /** The retained manifest grants cleanup authority only for canonical paths and the exact run name.
  * A forged/corrupt record cannot direct deletion at another directory, container or the app DB. */
 export async function owned(state) {
-  if (!/^flue-\d{17}-[a-f0-9]{8}$/.test(state.run))
+  if (!/^pi-\d{17}-[a-f0-9]{8}$/.test(state.run))
     throw new Error('Invalid verification run identity')
   const evidence = cache + '/' + state.run
   if (
@@ -16,21 +16,12 @@ export async function owned(state) {
     state.container !== 'vivid-verify-' + state.run
   )
     throw new Error('Verification ownership mismatch')
-  if (
-    state.helixContainer !== undefined &&
-    state.helixContainer !== 'vivid-verify-helix-' + state.run
-  )
-    throw new Error('Helix ownership mismatch')
-  if (
-    state.executorContainer !== undefined &&
-    state.executorContainer !== 'vivid-verify-executor-' + state.run
-  )
-    throw new Error('Executor ownership mismatch')
-  if (
-    state.executorExporter !== undefined &&
-    state.executorExporter !== 'vivid-verify-exporter-' + state.run
-  )
-    throw new Error('Executor exporter ownership mismatch')
+  for (const [field, prefix] of [
+    ['executorContainer', 'vivid-verify-executor-'],
+    ['executorExporter', 'vivid-verify-exporter-'],
+  ])
+    if (state[field] !== undefined && state[field] !== prefix + state.run)
+      throw new Error('Container ownership mismatch')
   if ((await NodeFSP.realpath(evidence)) !== evidence)
     throw new Error('Evidence directory is a symlink')
   const scratch = await NodeFSP.lstat(state.scratch).catch((error) => {
@@ -139,6 +130,8 @@ export async function recover(state) {
       'browser-tunnel',
       'web',
       'runtime',
+      'runtime-peer',
+      'bucket',
       'server',
       'database-events',
       'catalog',
@@ -151,12 +144,9 @@ export async function recover(state) {
   }
   const names = (await command(['docker', 'ps', '-a', '--format', '{{.Names}}'])).split('\n')
   let container = 'absent'
-  for (const name of [
-    state.container,
-    state.helixContainer,
-    state.executorContainer,
-    state.executorExporter,
-  ].filter(Boolean)) {
+  for (const name of [state.container, state.executorContainer, state.executorExporter].filter(
+    Boolean,
+  )) {
     if (names.includes(name)) {
       const label = await command([
         'docker',
@@ -210,7 +200,7 @@ export async function dependenciesCleanup() {
   // The link is shared by this checkout's runs. Cleaning retained evidence cannot revoke
   // module resolution while another captured supervisor still owns an active instance.
   for (const name of await NodeFSP.readdir(cache)) {
-    if (!name.startsWith('flue-')) continue
+    if (!name.startsWith('pi-')) continue
     const state = JSON.parse(await NodeFSP.readFile(cache + '/' + name + '/state.json', 'utf8'))
     await owned(state)
     if (!state.cleaned && (await supervisorAlive(state))) return
@@ -221,7 +211,7 @@ export async function dependenciesCleanup() {
       if (error.code === 'ENOENT' || error.code === 'EINVAL') return null
       throw error
     })) ===
-    root + '/apps/server/node_modules'
+    root + '/packages/agent/runtime/node_modules'
   )
     await NodeFSP.unlink(link)
 }
@@ -231,7 +221,7 @@ export async function dependenciesCleanup() {
 export async function recoverPrevious(cache) {
   const names = (await command(['docker', 'ps', '-a', '--format', '{{.Names}}'])).split('\n')
   for (const name of await NodeFSP.readdir(cache)) {
-    if (!name.startsWith('flue-')) continue
+    if (!name.startsWith('pi-')) continue
     const state = JSON.parse(await NodeFSP.readFile(cache + '/' + name + '/state.json', 'utf8'))
     await owned(state)
     const scratch = await NodeFSP.lstat(state.scratch).catch((error) => {
@@ -240,9 +230,10 @@ export async function recoverPrevious(cache) {
     })
     const containers = [
       state.container,
-      state.helixContainer,
       state.executorContainer,
       state.executorExporter,
+      state.bucketSetup,
+      state.bucketContainer,
     ].filter(Boolean)
     if (state.cleaned && !scratch && containers.every((container) => !names.includes(container)))
       continue

@@ -22,6 +22,16 @@ workspace source + shared rules/configs → Turbo task hash
 
 ## The gate
 
+Devbox gates require Node 24, the repository's pinned pnpm, Docker, and celld 0.6.2 on PATH.
+Install celld with its official installer before running the build stage.
+
+```sh
+curl -fsSL https://celld.dev/install.sh -o /tmp/celld-install.sh
+CELLD_VERSION=v0.6.2 sh /tmp/celld-install.sh
+export PATH="$HOME/.local/bin:$PATH"
+celld --version
+```
+
 `pnpm gate` (`scripts/gate.mjs`) is the one definition of the checks. Its stages are in `scripts/gate/stages.mjs`, the lint ratchets in `scripts/gate/ratchets.mjs`; the push hook, a run on another machine and each GitHub job select stages from it.
 
 ```text
@@ -30,7 +40,7 @@ checks lane: lint, format, typecheck, build          one Turbo task at a time
 tests lane:  tooling, test per package               beside the checks lane
 ```
 
-- The `build` stage selects `@vivid/web#build`, `@vivid/agent-runtime#build`, and `@vivid/mobile#build:updates`. The first is the server image's `vite build`. The runtime image and gate call the same `packages/agent/runtime/scripts/build.mjs`, including its checks for uncompiled workspace imports and a bundled second copy of Effect. The phone task clears its private `.cache/updates` output and calls the image's existing `updates` publisher through `apps/mobile/scripts/export.mjs`. It exports both native platforms with metadata and public Expo config. It does not use the generic phone build.
+- The `build` stage selects `@vivid/web#build` and `@vivid/mobile#build:updates`. The first is the server image's `vite build`. The Pi runtime image executes source through tsx and has no bundle task. Its production entry and persistence are exercised by the runtime integration suites. The phone task clears its private `.cache/updates` output and calls the image's existing `updates` publisher through `apps/mobile/scripts/export.mjs`. It exports both native platforms with metadata and public Expo config. It does not use the generic phone build.
 - Build tasks hash shared production source through `checkinputs`, the root TypeScript config, patches, source-map upload script, and build environment. Their outputs include the web and runtime `dist` directories and the phone's `.cache/updates`. The web's package-local Turbo override repeats the root inputs, outputs, and environment. `scripts/build.test.mjs` runs the actual gate and Turbo against small artifact writers to verify restoration, shared-source invalidation, exact package selection, and failure reporting.
 - Tests run through Turbo, one task per package. A test task hashes its package, its dependencies' production source (`checkinputs`), the explicit integration edges, and every test setting except the database address; it needs no build. A package nothing reached is replayed with its counts, so the verdict always reports the whole suite.
 - A task for one package replaces the generic task, and so does a package's own `turbo.json`; Turbo merges neither. Each such task repeats the generic inputs, outputs and environment, and `scripts/gate.test.mjs` fails when one drifts. Before this, the server, runtime, skills and mobile lint did not rerun when the lint configuration changed.
@@ -198,7 +208,7 @@ On 20 October 2026, U4 ran the shipping tasks on the eight-core, 15-GiB `cloudbo
 | Unchanged final implementation                 |              0.0 s |          0.2 s |                   3/3 | `mvh1puvmd1b98a` |
 | Comment added only to the runtime build script |              1.1 s |          1.4 s |                   2/3 | `mvh1qbqx7d9a84` |
 
-Task time sums executed shipping tasks, as the gate reports it. A cache hit restores outputs and replays logs. Gate wall time excludes the client connection and upload, which took total command time to 147.9, 2.9, and 4.6 seconds respectively. The changed-input probe appended `// U4 cache invalidation proof.` to `packages/agent/runtime/scripts/build.mjs`, ran the command above, and restored the file. Only the runtime task missed. The regression in `scripts/build.test.mjs` also deletes the fixture artifacts before a cache hit and requires their contents to be restored.
+Task time sums executed shipping tasks, as the gate reports it. A cache hit restores outputs and replays logs. Gate wall time excludes the client connection and upload, which took total command time to 147.9, 2.9, and 4.6 seconds respectively. The changed-input probe appended `// U4 cache invalidation proof.` to the former Flue bundle script, removed by the Pi port, ran the command above, and restored the file. Only the runtime task missed. The regression in `scripts/build.test.mjs` also deletes the fixture artifacts before a cache hit and requires their contents to be restored.
 
 The historical proof used an archive of `6be77f79^` with its own frozen dependencies on the same host. After `pnpm install --frozen-lockfile --filter @vivid/workspace --filter @vivid/web...`, `pnpm --filter @vivid/web build` exited 1 and printed 275 `unstableApiUsage` warnings. `pnpm --filter @vivid/web typecheck` exited 0. This reproduces the production failure that the former typecheck-only gate missed. The new stage runs that actual web build command, and its regression requires a failed bundler to fail the stage and name its package.
 

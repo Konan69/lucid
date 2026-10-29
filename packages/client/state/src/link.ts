@@ -42,10 +42,9 @@ export function makeLink() {
      * The first opening is not a return: nothing was following anything before it.
      *
      * Whatever cut the socket (a deploy replacing the server, a network that changed, a device
-     * that slept) cut every conversation stream with it. A stream left alone notices only after
-     * ninety silent seconds (`@flue/sdk` 2.2.2 `STALE_STREAM_TIMEOUT_MS`); the socket notices
-     * within fifteen (`@vivid/rpc` `layerLive`). So each client has its open conversations catch
-     * up from here, on web, phone and desktop alike.
+     * that slept) cut every subscription on it, conversations included. The socket notices within
+     * fifteen seconds (`@vivid/rpc` `layerLive`), so each client has what it follows asked for
+     * again from here, on web, phone and desktop alike.
      */
     reopened: (wake: () => void) => {
       returning.add(wake)

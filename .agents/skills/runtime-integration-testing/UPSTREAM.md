@@ -12,17 +12,23 @@
 
 The owner rule is preserved: test a real runtime seam, and do not use a mock to prove runtime behavior. The 21 October 2026 policy puts state invariants in the Effect Machine or the type model and removes pure unit tests.
 
-Everything specific to the owner's platform was replaced. The owner skill is written for Cloudflare Workers, workerd and Durable Objects. Vivid's skill is written for PostgreSQL, the Effect RPC server and HTTP routes, mounted Better Auth, the Flue runtime boundary, and Integrations transport. It is a deliberate adaptation, not a vendor copy, so there is no owner conflict to resolve on refresh.
+Everything specific to the owner's platform was replaced. The owner skill is written for Cloudflare Workers, workerd and Durable Objects. Vivid's skill covers product PostgreSQL, the Effect RPC server and HTTP routes, mounted Better Auth, the Pi/celld runtime boundary, and Integrations transport. It is a deliberate adaptation, not a vendor copy, so there is no owner conflict to resolve on refresh.
 
 ## Seams the skill now names
 
-`SKILL.md` is the authority; this is the short list of what the 2026-10-04 rewrite verified by reading source. Version numbers are not repeated here: `AGENTS.md` owns the pins and `SKILL.md` lists what was verified.
+`SKILL.md` is authoritative. The list below records the 2026-10-04 source review. Runtime findings from that review are historical and do not prove Pi/celld integration. Version numbers are not repeated here: `AGENTS.md` owns the pins and `SKILL.md` lists what was verified.
 
 - **Pins.** The workspace catalog, the lockfile and the installed packages agree for Effect, `@effect/platform-node`, `@effect/sql-pg`, `@effect/vitest`, Vitest, Better Auth, Flue, pi-ai and Drizzle. `@effect/vitest` remains a direct dev dependency of packages with retained Effect integration tests, including the server and runtime.
-- **Database.** `apps/server/tests/template.ts` (one migrated template per Vitest invocation, through Drizzle Kit) and `apps/server/tests/setup.ts` (one clone per test file). `apps/server/src/database/testdb.ts` exports `testDatabaseConfigured`, `testConfigLayer` and `testDatabaseLayer`. Only `VIVID_TEST_DATABASE_URL` is read as input; `DATABASE_URL` is written from it by the template's migration child, the runtime worker setup and `testConfigLayer`, and never read back. The supplied database is administration-only for the server project; the runtime's `desktopDatabase` fixture creates and drops its own schema inside it.
+- **Database.** `apps/server/tests/template.ts` (one migrated template per Vitest invocation, through Drizzle Kit) and `apps/server/tests/setup.ts` (one clone per test file). `apps/server/src/database/testdb.ts` exports `testDatabaseConfigured`, `testConfigLayer` and `testDatabaseLayer`. Only `VIVID_TEST_DATABASE_URL` is read as input; Product `DATABASE_URL` is written from it by the template's migration child and `testConfigLayer`, and never read back. The supplied database is administration-only for the server project. The runtime's custom PG adapter is being deleted; it is not a future test backend.
 - **Server.** There is no `HttpApi` in the repository. Product calls are `VividRpc` over `RpcServer`; `apps/server/src/http/router.ts` exports `routerLayer`. Tests use `RpcTest.makeClient`, `HttpRouter.toHttpEffect`, or `NodeHttpServer.layerTest` with `HttpRouter.serve`. All four symbols exist in the installed Effect source.
 - **Better Auth.** `authEffect` in `apps/server/src/auth/provider.ts` reads `ServerConfig` from context, so it follows the test configuration.
-- **Runtime.** `packages/agent/runtime/tests/setup.ts`, registered by the runtime Vitest config as `setupFiles`, maps a non-empty test URL to `DATABASE_URL` before test imports. It deletes inherited `DATABASE_URL` when the test variable is absent and rejects an empty test variable. `src/tools/computer.test.ts` holds the one `Effect.runPromise` in a Vitest file: the Promise-returning `transaction` callback of Flue's public `PostgresRunner`, exempted by an inline lint disable on that line. Prove tools through the real runtime and a real HTTP RPC server, as in `src/routes.test.ts` and `src/tools/scope.test.ts`. The deterministic model is pi-ai's faux provider from `@earendil-works/pi-ai/providers/faux`, registered at import by `src/providers/rehearsal.ts`.
+- **Runtime.** The chosen host is one celld Person cell with a native Pi Durable Harness over
+  Durable Object SQLite, defined in [Runtime cells](../../../docs/27-runtime-cells.md). The
+  existing integration is Pi 1.2.0; the target uses Pi 1.4.0 and celld 0.6.2. Pi owns tasks,
+  queues, deduplication, wait, abort, restart, and `onWake`/alarm scheduling. celld owns activation,
+  ownership, and idle lifecycle. Cell host, Notes, infrastructure, and verification integration
+  are in progress and unproven. The existing verifier still launches the old Node host and calls
+  a runtime PG migration command; cell-backed journeys are blocked until that wiring is replaced.
 - **Commands.** Both packages run `vitest run`; root `pnpm test` is `turbo run test`.
 
 ## Corrections to the earlier notes
@@ -36,8 +42,8 @@ These are the skill's "Missing capabilities", unchanged by this file:
 - No in-process composed server: nothing builds `routerLayer` whole or exports the Layer graph of `main.ts`.
 - No in-process signup or cookie test; mounted signup is exercised only against a running stack.
 - Isolation is per test file plus per-case row cleanup, not per test case.
-- The runtime project has no per-file clone and no test that mounts its Hono app.
+- The cell-backed runtime fixture and verifier launcher are not yet integrated.
 - No test proves that a new operating-system process recovers work owed by one that stopped. `apps/server/src/library/extraction.test.ts` does launch the production command as a real process and proves its exit; restart recovery is proven with a fresh Layer over the same database.
 - `vitest-evals` is not a workspace dependency.
 
-Nothing was executed by the writers of the 2026-10-04 rewrite or of this file: no test, lint, typecheck, build, server or database. Re-verify against installed source when a pin moves.
+The 2026-10-04 review ran no tests, lint, typecheck, build, server, or database. This host-transition update read Pi 1.4.0 and celld 0.6.2 source but ran no runtime proof. Re-verify installed source when a pin moves.

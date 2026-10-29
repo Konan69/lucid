@@ -156,7 +156,7 @@ export const ratchets = [
     label: 'state set after a wait',
     plugin: 'vivid',
     rule: 'react-no-state-after-wait',
-    ceiling: 102,
+    ceiling: 96,
   },
   { label: 'design-system raw colors', plugin: 'shadcn', rule: 'no-raw-colors', ceiling: 0 },
   {

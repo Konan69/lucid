@@ -1,59 +1,69 @@
+import { Following } from './conversation.js'
+import { Predicate } from 'effect'
+import { LiveState } from './live.js'
+
 /**
- * What a conversation's stream is doing, read from what Flue's hook reports about it.
+ * What a conversation's link is doing, read from the conversation's own live query
+ * (`conversation.ts`).
  *
- * A conversation arrives over Flue's own stream, not the app's socket, and Flue's hook reports
- * every interruption of it through one `error` field: a connection it is already reopening by
- * itself, and one it has given up on. Drawn as they come, a deploy, a phone that slept or a
- * change of network each put Flue's own sentence on the screen ("Agent conversation stream
- * stalled: no activity for 90000ms.") for a fault that mends in a second. Production on
- * 13 October 2026 cut every open stream twelve times in two days, once per deploy.
+ * A conversation arrives over the app's socket as a `WatchConversation` subscription, and every
+ * interruption of it mends by itself: the subscription is opened again and begins with the
+ * conversation whole. Said as they come, a deploy, a phone that slept or a change of network
+ * would each put a sentence on the screen for a fault that is over in a second. Production on
+ * 13 October 2026 cut every open conversation twelve times in two days, once per deploy.
  *
  * - `Flowing`: nothing is wrong.
- * - `CatchingUp`: the stream broke and Flue is opening it again (`@flue/sdk` 2.2.2 `observe`,
- *   `scheduleRetry`: phase `connecting` with the error kept, retried after 1, 2, 4 ... 30
- *   seconds). Nothing is lost: the stream resumes from where it stopped.
- * - `Cut`: Flue stopped trying (`@flue/react` 2.2.2 `local_observation`, phase `error`: a
- *   refused request or three refused sign-ins in a row), or this client's own send failed. Only
- *   opening it again by hand moves it.
+ * - `CatchingUp`: the link ended or broke and is being opened again (`Following.Behind`). What
+ *   was last known is still drawn, and nothing is lost: the next link begins with the state
+ *   whole.
+ * - `Cut`: the server refused the conversation in a way asking again cannot change, or this
+ *   client's own words did not arrive. Only the Person moves it: by opening it again, or by
+ *   sending the words again.
  */
 export type Reading = 'Flowing' | 'CatchingUp' | 'Cut'
 
 /**
- * The stream's reading from what Flue's hook reports. The status is the one Flue's own reducer
- * sets to `error` when it has stopped; any other status beside an error is a retry in progress.
- *
- * The hook raises the same `error` and `error` status for a third thing that is not the stream's
- * at all: the last message sent from this client ended in a failed Run (`@flue/react` 2.2.2
- * `converge`, `failedSettlement`). The stream is fine then, and the Run's own ending says what
- * happened from the server's record of it, so that case reads as `Flowing`.
+ * Whether the server refused a conversation for its size (`ConversationTooLarge`,
+ * `@vivid/contracts`). It reads as `Cut` like any refusal, and is said in its own words: the
+ * server can be reached, and opening it again would be refused the same way.
  */
-export const readingOf = (agent: {
-  readonly status: 'idle' | 'connecting' | 'submitted' | 'streaming' | 'error'
-  /** Flue's hook is holding an error, whatever it says. */
-  readonly broken: boolean
-  /** The newest settlement the hook holds is a failed one. */
-  readonly settledBadly: boolean
-}): Reading => {
-  if (!agent.broken) return 'Flowing'
-  if (agent.status !== 'error') return 'CatchingUp'
-  return agent.settledBadly ? 'Flowing' : 'Cut'
-}
+export const isTooLong = (conversation: LiveState<Following>): boolean =>
+  LiveState.$is('Failed')(conversation) &&
+  Predicate.isTagged(conversation.failure, 'ConversationTooLarge')
+
+/** What a Person is told about a conversation that is too long to open, on every surface. */
+export const TOO_LONG = 'This thread is too long to open. Start a new thread to carry on.'
+
+/** A failed send and a failed conversation link both read as `Cut`, so every client shows
+ * the same interruption state when words drawn ahead did not reach the server. */
+export const readingOf = (
+  conversation: LiveState<Following>,
+  at: { readonly unsent: boolean },
+): Reading =>
+  LiveState.$match(conversation, {
+    Loading: (): Reading => (at.unsent ? 'Cut' : 'Flowing'),
+    Failed: (): Reading => 'Cut',
+    Ready: ({ value }): Reading => {
+      if (at.unsent) return 'Cut'
+      return Following.$is('Behind')(value) ? 'CatchingUp' : 'Flowing'
+    },
+  })
 
 /**
- * How long a stream may be catching up before a screen says so while the app's own socket is
- * open. Flue retries a failed request for ever (`scheduleRetry`: only a 400 or three refused
- * sign-ins stop it), so a conversation endpoint that stays broken would otherwise never be
- * said. Twenty seconds is past a deploy, the longest ordinary break: production's replaced
- * runtime refused streams for about ten seconds (13 October 2026, 12:08:04 to 12:08:16 UTC),
- * which Flue's retries after 1, 2, 4 and 8 seconds cover.
+ * How long a link may be catching up before a screen says so while the app's own socket is
+ * open. A lost link is opened again for ever (`following`, `conversation.ts`: only a refusal
+ * that asking cannot change stops it), so a conversation that stays out of reach would otherwise
+ * never be said. Twenty seconds is past a deploy, the longest ordinary break: production's
+ * replaced runtime refused conversations for about ten seconds (13 October 2026, 12:08:04 to
+ * 12:08:16 UTC).
  */
 export const QUIET_MS = 20_000
 
 /**
- * Whether a screen says anything about the stream. A stream that is catching up is said when
- * the app's own socket is down as well, since then the server really is out of reach, or when it
- * has been catching up for longer than `QUIET_MS` (`lasting`). Before that the break is the
- * stream's alone and is usually over before a sentence could be read.
+ * Whether a screen says anything about the link. A link that is catching up is said when the
+ * app's own socket is down as well, since then the server really is out of reach, or when it has
+ * been catching up for longer than `QUIET_MS` (`lasting`). Before that the break is usually over
+ * before a sentence could be read.
  */
 export const streamSaid = (
   reading: Reading,

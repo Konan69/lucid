@@ -1,4 +1,19 @@
-# Set up an Android devbox
+# Set up the Android host
+
+## The PC (preferred)
+
+The PC runs the Android emulator on Windows with `-gpu host`, so the guest composes through the emulator's GLES translator on the real GPU. Devbox emulators have only software renderers, and the QEMU host render thread crashed there as soon as the thinking orb drew. WSL uses mirrored networking, so Windows and WSL share localhost: the WSL adb server sees the Windows emulator and `adb reverse` lands on the WSL proof stack. Run only the WSL adb (`~/android_sdk/platform-tools/adb`, server port 5037); a second Windows adb server fights over the port.
+
+Start the AVD headless from WSL (no window on the desktop):
+
+```sh
+powershell.exe -NoProfile -Command 'Start-Process -WindowStyle Hidden -FilePath "$env:LOCALAPPDATA\Android\Sdk\emulator\emulator.exe" -ArgumentList "-avd Vivid_Android_Studio -no-window -gpu host -no-snapshot -no-audio -no-boot-anim -port 5580 -memory 3072 -cores 4"'
+.agents/skills/verify-vivid/verify android attach pc emulator-5580
+```
+
+Attach installs the cached phone tools below, requires the serial in adb's inventory, `sys.boot_completed`, and a SurfaceFlinger GLES line that is not SwiftShader, llvmpipe or lavapipe. It zeroes the animation scales and writes `device.json` with `_tag: pc`, the serial, adb port and renderer. The run owns neither the emulator nor adb: liveness is adb answering the boot property, phone cleanup removes only its reverse mapping and agent-device daemon, and the emulator stays up for the next phone command without re-attaching. Stop it yourself only if you started it. `verify android status pc` prints the receipt and lease. The PC's SDK in `~/android_sdk` builds the APK.
+
+## A devbox
 
 Run `~/bin/devbox-pick` on the PC. Use its selected alias with the provision command. Only cloudbox-konan, cloudbox-konan2 and cloudbox-konan3 are accepted, and the remote Boat sandbox id must match `../scripts/hosts.mjs`. The current hostname is recorded rather than used as permanent identity: Boat changes it on restart. The production Computer is refused.
 
@@ -10,7 +25,7 @@ Run `~/bin/devbox-pick` on the PC. Use its selected alias with the provision com
 
 Provision requires SSH, Python 3 with pidfd, curl, unzip, flock, JDK 17 and writable `/dev/kvm` on the box. It checks load and available memory before heavy work. If KVM is inaccessible, restore the host's KVM access before retrying. A missing prerequisite is a failure.
 
-The provisioner installs checksum-pinned Android command-line tools, the SDK package set in `../scripts/android.py`, and the API 35 Google APIs x86_64 AVD `Vivid_API_35`. It boots headless with `-gpu guest`, two cores and 3 GiB memory. It chooses a free emulator port pair, waits on adb and `sys.boot_completed`, then reads the actual adb inventory. Never assume a serial. A bounded boot-property wait exists because Android exposes no blocking boot-completed API.
+The provisioner installs checksum-pinned Android command-line tools, the SDK package set in `../scripts/android.py`, and the API 35 Google APIs x86_64 AVD `Vivid_API_35`. It boots headless with `-gpu swiftshader`, two cores and 3 GiB memory. API 35 rejected guest rendering and silently selected lavapipe; the supported SwiftShader mode is explicit. It chooses a free emulator port pair, waits on adb and `sys.boot_completed`, then reads the actual adb inventory. Never assume a serial. A bounded boot-property wait exists because Android exposes no blocking boot-completed API.
 
 The SDK lives in `~/android_sdk` and the AVD in `~/vivid-emulator`. The provisioner retains these exclusions in `~/.boxignore`; this is the one intentional write outside the skill. Boat snapshots must exclude live disks and dependency caches. A restore can empty these directories. Repeating provision reconstructs missing packages and AVD state. A healthy running device takes the fast path.
 
@@ -40,7 +55,7 @@ The APK cache verifies bytes against SHA-256 before reuse. A tooling-only commit
 
 The pool uses [AGP finalizeDsl](https://developer.android.com/reference/tools/gradle-api/8.13/com/android/build/api/variant/AndroidComponentsExtension) and [CMake job pools](https://cmake.org/cmake/help/v3.22/variable/CMAKE_JOB_POOLS.html), without patching SDK internals.
 
-The test APK uses `http://127.0.0.1:19278` only inside the disposable emulator. `adb reverse` points that address at the run's random web port. No host URL or runtime token enters product source. The dedicated adb server uses port 15037, leaving the host's ordinary adb server alone.
+The test APK uses `http://127.0.0.1:19278` only inside the disposable emulator. `adb reverse` points that address at the run's random web port. No host URL or runtime token enters product source. On a devbox the dedicated adb server uses port 15037, leaving the host's ordinary adb server alone; on the PC the receipt names the PC's adb port.
 
 ## Inspect through agent-device
 
@@ -65,3 +80,5 @@ Invoke the pinned launcher at `~/.cache/vivid-android/tools/node_modules/agent-d
 A durable host lease prevents another checkout from taking an emulator left by a killed phone worker. SDK provision and stop refuse that lease; recover it with `verify cleanup` in the owning checkout.
 
 Always finish with `verify cleanup` and, for provision-only runs, the PC's `verify android stop <alias>`. Inspect the saved process receipts and `ps` output. Stop uses PID, Linux start ticks and boot identity, so a recycled PID grants no authority.
+
+Provision sets animator_duration_scale, transition_animation_scale and window_animation_scale to zero before Vivid starts. It reads each value back into the private cache motion receipt; the phone command retains that receipt as phone/motion.json. The Send journey captures consecutive reduced-orb frames before checking the reply stream. A missing frame after an emulator exit cannot confirm that the asynchronous orb hook reached its static branch.

@@ -5,20 +5,52 @@ import { boot } from './process.mjs'
 
 export const authSecret = 'Verify-Auth!0123456789-ABCDefghijklmnop'
 
-import { hosts } from './hosts.mjs'
+import { hosts, pc } from './hosts.mjs'
+
+/** One host is selected explicitly: VIVID_VERIFY_HOST=pc or a devbox-pick alias in
+ * VIVID_VERIFY_DEVBOX. Each is checked against a stable identity; production and unknown hosts
+ * are refused. `devbox` stays the selected alias that phone and doctor receipts compare. */
 export async function host() {
+  if (process.env.VIVID_VERIFY_HOST !== undefined) return pcHost()
   const devbox = process.env.VIVID_VERIFY_DEVBOX
   if (!Object.hasOwn(hosts, devbox) || hosts[devbox] !== process.env.BOAT_ID)
     throw new Error(
       'Selected devbox does not match this Boat sandbox; production and unknown hosts refused',
     )
   return {
+    hostKind: 'devbox',
     devbox,
     sandbox: process.env.BOAT_ID,
     hostname: os.hostname(),
     hostBoot: boot,
     hostSelection: 'devbox-pick; Boat sandbox id verified',
   }
+}
+
+/** A Boat sandbox never passes as the PC, even if its disk was forked from one. */
+async function pcHost() {
+  if (process.env.VIVID_VERIFY_HOST !== pc.alias || process.env.VIVID_VERIFY_DEVBOX !== undefined)
+    throw new Error('Set VIVID_VERIFY_HOST=pc alone, or VIVID_VERIFY_DEVBOX alone')
+  if (process.env.BOAT_ID !== undefined) throw new Error('PC host mode refused on a Boat sandbox')
+  const release = await fs.readFile('/proc/sys/kernel/osrelease', 'utf8')
+  const machineId = (await fs.readFile('/etc/machine-id', 'utf8')).trim()
+  if (!release.includes('microsoft-standard-WSL2') || machineId !== pc.machineId)
+    throw new Error('This machine is not the registered PC; unknown hosts refused')
+  return {
+    hostKind: 'pc',
+    devbox: pc.alias,
+    machineId,
+    hostname: os.hostname(),
+    hostBoot: boot,
+    hostSelection: 'VIVID_VERIFY_HOST=pc; WSL machine id verified',
+  }
+}
+
+/** Child commands re-run host(); they inherit the run's own selection, not the caller's shell. */
+export function selection(state) {
+  return state.hostKind === 'pc'
+    ? { VIVID_VERIFY_HOST: pc.alias, VIVID_VERIFY_DEVBOX: undefined }
+    : { VIVID_VERIFY_DEVBOX: state.devbox, VIVID_VERIFY_HOST: undefined }
 }
 
 /** Credentials require an explicit file or environment; other tools' auth stores are never read. */
@@ -58,11 +90,9 @@ export async function provider() {
       : 'OPENCODE_API_KEY'
   if (!model.startsWith('rehearsal/') && !env[key])
     throw new Error('Missing provider key for selected model')
-  // The server's memory and title model takes ExpLabs by default and OpenRouter when told
-  // (`serverModelGateway` in apps/server/src/config.ts), including rehearsal runs.
   if (!env.EXPLABS_API_KEY && !env.OPENROUTER_API_KEY)
     throw new Error(
-      'EXPLABS_API_KEY or OPENROUTER_API_KEY is required by the real server memory and title model, including rehearsal runs',
+      'EXPLABS_API_KEY or OPENROUTER_API_KEY is required by the server memory and title model, including rehearsal runs',
     )
   if (!env.EXPLABS_API_KEY) env.VIVID_SERVER_MODEL_PROVIDER = 'openrouter'
   return { model, source: sources.join(', ') || 'process environment', env }

@@ -5,6 +5,7 @@ import { alive, ownsPort, command, checkout } from './process.mjs'
 import { owned, sameBoot } from './recovery.mjs'
 import { readPhone, readApk } from './phonewire.mjs'
 import { equivalent } from './apk.mjs'
+import { cellSnapshot } from './cells.mjs'
 
 const ExecutorInspections = Schema.Array(
   Schema.Struct({
@@ -38,16 +39,6 @@ export async function doctor(state) {
     const current = await checkout()
     return { ok: current.tree === state.tree && current.diffHash === state.diffHash, ...current }
   })
-  await check('disposable Helix', async () => {
-    const value = JSON.parse(await command(['docker', 'inspect', state.helixContainer]))[0]
-    const binding = value.NetworkSettings.Ports['8080/tcp']
-    return {
-      ok:
-        value.State.Running &&
-        value.Config.Labels['vivid.verify'] === state.run &&
-        binding.some((b) => b.HostIp === '127.0.0.1' && Number(b.HostPort) === state.ports.helix),
-    }
-  })
   await check('disposable Executor', async () => {
     const [value] = decodeText(
       ExecutorInspections,
@@ -61,7 +52,7 @@ export async function doctor(state) {
         value.HostConfig.NetworkMode === 'host',
     }
   })
-  for (const role of ['supervisor', 'server', 'web', 'runtime'])
+  for (const role of ['supervisor', 'server', 'web', 'runtime', 'runtime-peer'])
     await check(role + ' process', async () => ({
       ok: currentBoot && (await alive(state.processes[role])),
       process: state.processes[role],
@@ -97,12 +88,13 @@ export async function doctor(state) {
     ])
     return { ok: output.includes('accepting connections'), output }
   })
-  await check('Flue selected runtime', async () => {
+  await nativeCells(state, check)
+  await check('native Worker health', async () => {
     if (!currentBoot || !(await ownsPort(state.processes.runtime, state.ports.runtime)))
       return { ok: false, reason: 'No owned runtime listener' }
     const { status } = await import('./wire.mjs')
     const value = await status(state)
-    return { ok: value.model === state.model && value.status === 'ok', status: value }
+    return { ok: value.service === 'vivid-cells' && value.status === 'ok', status: value }
   })
   await check('single-origin health', async () => {
     if (!currentBoot || !(await ownsPort(state.processes.web, state.ports.web)))
@@ -162,4 +154,26 @@ async function phoneIdentity(state, check) {
     }
   })
   return phone
+}
+
+/** Person activation must traverse the real product gateway after native deployment. */
+async function nativeCells(state, check) {
+  await check('disposable fleet bucket', async () => {
+    if (!(await ownsPort(state.processes.bucket, state.ports.bucket)))
+      return { ok: false, reason: 'No owned native MinIO listener' }
+    const response = await fetch(`http://127.0.0.1:${state.ports.bucket}/minio/health/live`, {
+      signal: AbortSignal.timeout(5000),
+    })
+    return { ok: response.ok, status: response.status }
+  })
+  await check('native cell deployment', async () => ({
+    ok: true,
+    fleet: await cellSnapshot(state),
+  }))
+  await check('native Person activation', async () => {
+    if (!state.cellProbe) return { ok: false, reason: 'No native Person activation receipt' }
+    const { history } = await import('./wire.mjs')
+    const page = await history(state, state.cellProbe, state.evidence, 'doctor-cell-history')
+    return { ok: page.messages.length === 0, thread: state.cellProbe }
+  })
 }

@@ -1,28 +1,37 @@
+import { unbound } from './action.ts'
 import * as Layer from 'effect/Layer'
 import { describe, expect, layer } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
 import * as Ref from 'effect/Ref'
+import { eq } from 'drizzle-orm'
 import {
   ActionTarget,
   AuditEvent,
   BrowserAction,
   BrowseTarget,
+  ConnectionId,
+  FeedItem,
   ProposedAction,
   RuleScope,
 } from '@vivid/contracts'
 import { refusalLogs } from '../observability/testlogger.ts'
 import { loadAudit } from '../audit/store.ts'
+import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
+import { readFeed } from '../feed/read.ts'
 import { RuleStore } from '../rules/store.ts'
+import { StoredRunOrigin } from '../threads/conversation.ts'
+import { threads } from '../threads/tables.ts'
 import { Gate, GateDecision } from './gate.ts'
 import { Review } from './policy.ts'
 import { ApprovalStore } from './store.ts'
 import {
+  actionThrough,
   desktopAction,
-  connectionAction,
   fixture,
   JudgmentMode,
   Observation,
+  recordRuns,
   trustTestServices,
 } from './testing.ts'
 
@@ -30,6 +39,114 @@ import {
 /** Share only PostgreSQL; each case builds its own recording ports and captured stores. */
 layer(testDatabaseLayer)((it) => {
   describe.skipIf(!testDatabaseConfigured)('Trust gate precedence and defaults', () => {
+    const reviewed = Review.cases.Reviewed.make({ asked: 0.95, beyond: 0.1, contained: 0.1 })
+    const watch = StoredRunOrigin.cases.Watch.make({ watchName: 'New mail' })
+    const message = StoredRunOrigin.cases.Message.make({})
+    const decision = StoredRunOrigin.cases.Decision.make({})
+    const unreviewed = Review.cases.Unreviewed.make({})
+    const contained = Review.cases.Reviewed.make({ asked: 0.95, beyond: 0.1, contained: 0.95 })
+    for (const [name, place, origin, review, effect, allowRule, expected] of [
+      ['background send', 'Background', watch, reviewed, 'write', false, 'ApprovalRequired'],
+      ['watched send', 'Conversation', message, reviewed, 'write', false, 'Allowed'],
+      [
+        'unreviewed background send',
+        'Background',
+        watch,
+        unreviewed,
+        'write',
+        false,
+        'ApprovalRequired',
+      ],
+      ['contained background write', 'Background', watch, contained, 'write', false, 'Allowed'],
+      [
+        'background send with Allow',
+        'Background',
+        watch,
+        reviewed,
+        'write',
+        true,
+        'ApprovalRequired',
+      ],
+      [
+        'background delete with Allow',
+        'Background',
+        watch,
+        contained,
+        'destructive',
+        true,
+        'ApprovalRequired',
+      ],
+      [
+        'expiry continuation',
+        'Background',
+        decision,
+        unreviewed,
+        'write',
+        false,
+        'ApprovalRequired',
+      ],
+      [
+        'unresolved runtime origin',
+        'Background',
+        null,
+        unreviewed,
+        'write',
+        false,
+        'ApprovalRequired',
+      ],
+      ['unreviewed watched send', 'Conversation', message, unreviewed, 'write', false, 'Allowed'],
+    ] as const) {
+      it.effect(`${name} is ${expected}`, () =>
+        Effect.gen(function* () {
+          const context = yield* Layer.build(trustTestServices)
+          return yield* Effect.gen(function* () {
+            const observed = yield* Observation
+            const gate = yield* Gate
+            const action = ProposedAction.make({
+              ...actionThrough(ConnectionId.make('test-connection')),
+              summary: 'Send the signed NDA to Dami at dami@example.test',
+              target: ActionTarget.cases.Connection.make({
+                connectionId: ConnectionId.make('test-connection'),
+                account: 'Work mail',
+                tool: 'send_email',
+                input: { to: 'dami@example.test', body: 'Here is the signed NDA.' },
+              }),
+            })
+            const test = yield* fixture()
+            const database = yield* Database
+            yield* database.run(
+              database.update(threads).set({ place }).where(eq(threads.id, test.personalId)),
+            )
+            if (origin !== null)
+              yield* recordRuns(test.personalId, [
+                { id: 'acting', personId: test.personal.person.id, origin, working: true },
+              ])
+            if (allowRule)
+              yield* (yield* RuleStore).create(test.personal, {
+                action: 'Send email',
+                decision: 'Allow',
+                scope: RuleScope.cases.Personal.make({}),
+              })
+            yield* Ref.set(observed.review, review)
+            const proposed = ProposedAction.make({ ...action, effect })
+            const decision = yield* gate.check(test.vivid, proposed, 'Ordinary', unbound)
+            expect(decision._tag).toBe(expected)
+            const approvals = yield* (yield* ApprovalStore).inThread(test.personalId)
+            expect(approvals).toHaveLength(expected === 'ApprovalRequired' ? 1 : 0)
+            if (GateDecision.guards.ApprovalRequired(decision)) {
+              expect(approvals.map((approval) => approval.action)).toEqual([proposed])
+              const feed = yield* readFeed(database, test.personal.person.id)
+              expect(feed.items).toHaveLength(1)
+              expect(feed.items.filter(FeedItem.guards.Waiting).map((item) => item.asking)).toEqual(
+                [['approval']],
+              )
+            }
+            expect(yield* Ref.get(observed.notices)).toEqual([])
+          }).pipe(Effect.scoped, Effect.provide(context))
+        }),
+      )
+    }
+
     /** A Never is counted at its Gate, with no rule prose in telemetry. */
     it.effect('records the Gate refusal once with only action kinds', () => {
       const logs = refusalLogs()
@@ -42,7 +159,12 @@ layer(testDatabaseLayer)((it) => {
             decision: 'Never',
             scope: RuleScope.cases.Personal.make({}),
           })
-          const outcome = yield* (yield* Gate).check(test.vivid, connectionAction, 'Ordinary')
+          const outcome = yield* (yield* Gate).check(
+            test.vivid,
+            test.connectionAction,
+            'Ordinary',
+            unbound,
+          )
           expect(GateDecision.guards.Blocked(outcome)).toBe(true)
           const recorded = logs.recorded()
           expect(recorded).toHaveLength(1)
@@ -76,7 +198,7 @@ layer(testDatabaseLayer)((it) => {
             const test = yield* fixture()
             const gate = yield* Gate
             yield* Ref.set((yield* Observation).review, Review.cases.Unreviewed.make({}))
-            expect(yield* gate.check(test.vivid, browserWrite, 'Ordinary')).toEqual(
+            expect(yield* gate.check(test.vivid, browserWrite, 'Ordinary', unbound)).toEqual(
               GateDecision.cases.Allowed.make({}),
             )
             expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toHaveLength(0)
@@ -86,12 +208,13 @@ layer(testDatabaseLayer)((it) => {
                   test.vivid,
                   ProposedAction.make({ ...browserWrite, effect: 'destructive' }),
                   'Ordinary',
+                  unbound,
                 ),
               ),
             ).toBe(true)
             expect(
               GateDecision.guards.ApprovalRequired(
-                yield* gate.check(test.vivid, browserWrite, 'PersonalInShared'),
+                yield* gate.check(test.vivid, browserWrite, 'PersonalInShared', unbound),
               ),
             ).toBe(true)
             yield* (yield* RuleStore).create(test.personal, {
@@ -100,7 +223,9 @@ layer(testDatabaseLayer)((it) => {
               scope: RuleScope.cases.Personal.make({}),
             })
             expect(
-              GateDecision.guards.Blocked(yield* gate.check(test.vivid, browserWrite, 'Ordinary')),
+              GateDecision.guards.Blocked(
+                yield* gate.check(test.vivid, browserWrite, 'Ordinary', unbound),
+              ),
             ).toBe(true)
           }).pipe(Effect.scoped, Effect.provide(context))
         }),
@@ -123,7 +248,12 @@ layer(testDatabaseLayer)((it) => {
               const test = yield* fixture()
               const observed = yield* Observation
               yield* Ref.set(observed.review, review)
-              const decision = yield* (yield* Gate).check(test.vivid, browserWrite, 'Ordinary')
+              const decision = yield* (yield* Gate).check(
+                test.vivid,
+                browserWrite,
+                'Ordinary',
+                unbound,
+              )
               expect(decision._tag).toBe(asks ? 'ApprovalRequired' : 'Allowed')
               expect(yield* Ref.get(observed.reviewCalls)).toHaveLength(1)
             }).pipe(Effect.scoped, Effect.provide(context))
@@ -154,7 +284,12 @@ layer(testDatabaseLayer)((it) => {
               JudgmentMode.cases.PersonalFailure.make({}),
             )
             expect(
-              yield* (yield* Gate).check(test.companyVivid, connectionAction, 'Ordinary'),
+              yield* (yield* Gate).check(
+                test.companyVivid,
+                test.connectionAction,
+                'Ordinary',
+                unbound,
+              ),
             ).toEqual(GateDecision.cases.Blocked.make({ rule: 'Never update projects' }))
             expect(yield* (yield* ApprovalStore).inThread(test.companyId)).toEqual([])
           }).pipe(Effect.scoped, Effect.provide(context))
@@ -182,7 +317,12 @@ layer(testDatabaseLayer)((it) => {
             const observed = yield* Observation
             yield* Ref.set(observed.judgment, JudgmentMode.cases.Hostile.make({}))
             expect(
-              yield* (yield* Gate).check(test.companyVivid, connectionAction, 'Ordinary'),
+              yield* (yield* Gate).check(
+                test.companyVivid,
+                test.connectionAction,
+                'Ordinary',
+                unbound,
+              ),
             ).toEqual(GateDecision.cases.Blocked.make({ rule: company.action }))
             expect(yield* Ref.get(observed.judgeCalls)).toEqual([[company], [personal]])
             expect(yield* (yield* ApprovalStore).inThread(test.companyId)).toEqual([])
@@ -208,8 +348,9 @@ layer(testDatabaseLayer)((it) => {
           })
           const decision = yield* (yield* Gate).check(
             test.companyVivid,
-            connectionAction,
+            test.connectionAction,
             'Ordinary',
+            unbound,
           )
           expect(GateDecision.guards.ApprovalRequired(decision)).toBe(true)
           expect(yield* (yield* ApprovalStore).inThread(test.companyId)).toHaveLength(1)
@@ -240,8 +381,9 @@ layer(testDatabaseLayer)((it) => {
           })
           const decision = yield* (yield* Gate).check(
             test.companyVivid,
-            connectionAction,
+            test.connectionAction,
             'Ordinary',
+            unbound,
           )
           expect(decision).toEqual(
             GateDecision.cases.Blocked.make({ rule: 'Never update projects' }),
@@ -271,7 +413,7 @@ layer(testDatabaseLayer)((it) => {
             })
             yield* Ref.set((yield* Observation).judgment, JudgmentMode.cases.Failed.make({}))
             // An unjudged Allow can only loosen: the default stays in force and nothing asks.
-            expect(yield* gate.check(test.vivid, desktopAction, 'Ordinary')).toEqual(
+            expect(yield* gate.check(test.vivid, desktopAction, 'Ordinary', unbound)).toEqual(
               GateDecision.cases.Allowed.make({}),
             )
             yield* rules.create(test.personal, {
@@ -279,7 +421,7 @@ layer(testDatabaseLayer)((it) => {
               decision: 'Ask',
               scope: RuleScope.cases.Personal.make({}),
             })
-            const decision = yield* gate.check(test.vivid, desktopAction, 'Ordinary')
+            const decision = yield* gate.check(test.vivid, desktopAction, 'Ordinary', unbound)
             expect(GateDecision.guards.ApprovalRequired(decision)).toBe(true)
           }).pipe(Effect.scoped, Effect.provide(context))
         }),
@@ -295,8 +437,11 @@ layer(testDatabaseLayer)((it) => {
             decision: 'Allow',
             scope: RuleScope.cases.Personal.make({}),
           })
-          const destructive = ProposedAction.make({ ...connectionAction, effect: 'destructive' })
-          const decision = yield* (yield* Gate).check(test.vivid, destructive, 'Ordinary')
+          const destructive = ProposedAction.make({
+            ...test.connectionAction,
+            effect: 'destructive',
+          })
+          const decision = yield* (yield* Gate).check(test.vivid, destructive, 'Ordinary', unbound)
           expect(GateDecision.guards.ApprovalRequired(decision)).toBe(true)
         }).pipe(Effect.scoped, Effect.provide(context))
       }),
@@ -316,10 +461,10 @@ layer(testDatabaseLayer)((it) => {
               action: BrowserAction.cases.Open.make({ address: 'https://example.test' }),
             }),
           })
-          expect(yield* gate.check(test.vivid, desktopAction, 'Ordinary')).toEqual(
+          expect(yield* gate.check(test.vivid, desktopAction, 'Ordinary', unbound)).toEqual(
             GateDecision.cases.Allowed.make({}),
           )
-          expect(yield* gate.check(test.vivid, browser, 'Ordinary')).toEqual(
+          expect(yield* gate.check(test.vivid, browser, 'Ordinary', unbound)).toEqual(
             GateDecision.cases.Allowed.make({}),
           )
           expect((yield* loadAudit(test.personal)).entries).toEqual([])
@@ -338,7 +483,7 @@ layer(testDatabaseLayer)((it) => {
             const gate = yield* Gate
             expect(
               GateDecision.guards.ApprovalRequired(
-                yield* gate.check(test.vivid, connectionAction, 'Ordinary'),
+                yield* gate.check(test.vivid, test.connectionAction, 'Ordinary', unbound),
               ),
             ).toBe(true)
             yield* (yield* RuleStore).create(test.personal, {
@@ -346,9 +491,9 @@ layer(testDatabaseLayer)((it) => {
               decision: 'Allow',
               scope: RuleScope.cases.Personal.make({}),
             })
-            expect(yield* gate.check(test.vivid, connectionAction, 'Ordinary')).toEqual(
-              GateDecision.cases.Allowed.make({}),
-            )
+            expect(
+              yield* gate.check(test.vivid, test.connectionAction, 'Ordinary', unbound),
+            ).toEqual(GateDecision.cases.Allowed.make({}))
             const entries = (yield* loadAudit(test.personal)).entries
             expect(
               entries
@@ -377,8 +522,8 @@ layer(testDatabaseLayer)((it) => {
               observed.review,
               Review.cases.Reviewed.make({ asked: 0.97, beyond: 0.1, contained: 0.02 }),
             )
-            const send = ProposedAction.make({ ...connectionAction, effect: 'destructive' })
-            expect(yield* (yield* Gate).check(test.vivid, send, 'Ordinary')).toEqual(
+            const send = ProposedAction.make({ ...test.connectionAction, effect: 'destructive' })
+            expect(yield* (yield* Gate).check(test.vivid, send, 'Ordinary', unbound)).toEqual(
               GateDecision.cases.Allowed.make({}),
             )
             expect(yield* Ref.get(observed.reviewCalls)).toEqual([send])
@@ -401,13 +546,16 @@ layer(testDatabaseLayer)((it) => {
           const test = yield* fixture()
           const gate = yield* Gate
           yield* Ref.set((yield* Observation).review, Review.cases.Unreviewed.make({}))
-          expect(yield* gate.check(test.vivid, connectionAction, 'Ordinary')).toEqual(
+          expect(yield* gate.check(test.vivid, test.connectionAction, 'Ordinary', unbound)).toEqual(
             GateDecision.cases.Allowed.make({}),
           )
-          const destructive = ProposedAction.make({ ...connectionAction, effect: 'destructive' })
+          const destructive = ProposedAction.make({
+            ...test.connectionAction,
+            effect: 'destructive',
+          })
           expect(
             GateDecision.guards.ApprovalRequired(
-              yield* gate.check(test.vivid, destructive, 'Ordinary'),
+              yield* gate.check(test.vivid, destructive, 'Ordinary', unbound),
             ),
           ).toBe(true)
           // Switching decisions off loosens the default only: an Ask rule is still honoured.
@@ -418,7 +566,7 @@ layer(testDatabaseLayer)((it) => {
           })
           expect(
             GateDecision.guards.ApprovalRequired(
-              yield* gate.check(test.vivid, connectionAction, 'Ordinary'),
+              yield* gate.check(test.vivid, test.connectionAction, 'Ordinary', unbound),
             ),
           ).toBe(true)
         }).pipe(Effect.scoped, Effect.provide(context))
@@ -440,9 +588,9 @@ layer(testDatabaseLayer)((it) => {
             observed.review,
             Review.cases.Reviewed.make({ asked: 1, beyond: 0.1, contained: 0.95 }),
           )
-          expect(yield* (yield* Gate).check(test.vivid, connectionAction, 'Ordinary')).toEqual(
-            GateDecision.cases.Blocked.make({ rule: 'Never update projects' }),
-          )
+          expect(
+            yield* (yield* Gate).check(test.vivid, test.connectionAction, 'Ordinary', unbound),
+          ).toEqual(GateDecision.cases.Blocked.make({ rule: 'Never update projects' }))
           expect(yield* Ref.get(observed.reviewCalls)).toEqual([])
         }).pipe(Effect.scoped, Effect.provide(context))
       }),
@@ -454,9 +602,9 @@ layer(testDatabaseLayer)((it) => {
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
           const observed = yield* Observation
-          expect(yield* (yield* Gate).check(test.vivid, desktopAction, 'Ordinary')).toEqual(
-            GateDecision.cases.Allowed.make({}),
-          )
+          expect(
+            yield* (yield* Gate).check(test.vivid, desktopAction, 'Ordinary', unbound),
+          ).toEqual(GateDecision.cases.Allowed.make({}))
           expect(yield* Ref.get(observed.reviewCalls)).toEqual([])
         }).pipe(Effect.scoped, Effect.provide(context))
       }),
@@ -468,19 +616,19 @@ layer(testDatabaseLayer)((it) => {
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
           const gate = yield* Gate
-          const read = ProposedAction.make({ ...connectionAction, effect: 'read' })
+          const read = ProposedAction.make({ ...test.connectionAction, effect: 'read' })
           yield* (yield* RuleStore).create(test.personal, {
             action: 'Use this account',
             decision: 'Never',
             scope: RuleScope.cases.Personal.make({}),
           })
-          expect(yield* gate.check(test.vivid, read, 'Ordinary')).toEqual(
+          expect(yield* gate.check(test.vivid, read, 'Ordinary', unbound)).toEqual(
             GateDecision.cases.Allowed.make({}),
           )
           yield* Ref.set((yield* Observation).judgment, JudgmentMode.cases.None.make({}))
           expect(
             GateDecision.guards.ApprovalRequired(
-              yield* gate.check(test.companyVivid, read, 'PersonalInShared'),
+              yield* gate.check(test.companyVivid, read, 'PersonalInShared', unbound),
             ),
           ).toBe(true)
         }).pipe(Effect.scoped, Effect.provide(context))

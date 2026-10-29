@@ -32,6 +32,8 @@ const Asked = Schema.Struct({
   title: text,
   question: text,
   site: text,
+  /** What is owed, or what to do, on the steps that keep the Person's waiting-on and to-do lists. */
+  what: text,
 })
 type Asked = typeof Asked.Type
 
@@ -47,7 +49,6 @@ const Answered = Schema.Struct({
   changed: Schema.OptionFromOptionalKey(Schema.Boolean),
   results: list,
   tools: list,
-  memories: list,
   watches: list,
   message: text,
 })
@@ -110,11 +111,12 @@ const UNKNOWN: Step = {
 
 const STEPS = {
   // These tools already render as unknown steps. Total coverage must preserve those words.
-  read_note: UNKNOWN,
-  write_note: UNKNOWN,
-  delete_note: UNKNOWN,
+  read_memory: UNKNOWN,
+  list_memory: UNKNOWN,
+  search_memory: UNKNOWN,
+  write_memory: UNKNOWN,
+  delete_memory: UNKNOWN,
   make_integration: UNKNOWN,
-  task: UNKNOWN,
   search_library: {
     said: {
       running: 'Searching the Library',
@@ -159,25 +161,6 @@ const STEPS = {
       failed: 'Could not offer the integration',
     },
     detail: (asked) => [said(asked.service)],
-  },
-  recall: {
-    said: {
-      running: 'Checking what it remembers',
-      done: 'Checked what it remembers',
-      failed: 'Could not reach its memory',
-    },
-    detail: (asked, answered) => [
-      quoted(asked.query),
-      counted(answered.memories, 'thing remembered', 'things remembered'),
-    ],
-  },
-  remember: {
-    said: {
-      running: 'Remembering',
-      done: 'Remembered',
-      failed: 'Could not remember that',
-    },
-    detail: (asked) => [said(asked.content)],
   },
   read_skill: {
     said: {
@@ -418,6 +401,70 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.title)],
   },
+  track_owed: {
+    said: {
+      running: 'Keeping track of it',
+      done: 'Keeping track of it',
+      failed: 'Could not keep track of it',
+    },
+    detail: (asked) => [said(asked.what)],
+  },
+  update_owed: {
+    said: {
+      running: 'Updating what you are waiting on',
+      done: 'Updated what you are waiting on',
+      failed: 'Could not update what you are waiting on',
+    },
+    detail: (asked) => [said(asked.what)],
+  },
+  resolve_owed: {
+    said: {
+      running: 'Marking it received',
+      done: 'Marked it received',
+      failed: 'Could not mark it received',
+    },
+    detail: (asked) => [said(asked.what)],
+  },
+  drop_owed: {
+    said: {
+      running: 'Letting it go',
+      done: 'Stopped waiting on it',
+      failed: 'Could not stop waiting on it',
+    },
+    detail: (asked) => [said(asked.what)],
+  },
+  list_todos: {
+    said: {
+      running: 'Checking your list',
+      done: 'Checked your list',
+      failed: 'Could not read your list',
+    },
+    detail: nothing,
+  },
+  add_todo: {
+    said: {
+      running: 'Adding it to your list',
+      done: 'Added it to your list',
+      failed: 'Could not add it to your list',
+    },
+    detail: (asked) => [said(asked.what)],
+  },
+  complete_todo: {
+    said: {
+      running: 'Ticking it off',
+      done: 'Ticked it off',
+      failed: 'Could not tick it off',
+    },
+    detail: (asked) => [said(asked.what)],
+  },
+  drop_todo: {
+    said: {
+      running: 'Taking it off your list',
+      done: 'Took it off your list',
+      failed: 'Could not take it off your list',
+    },
+    detail: (asked) => [said(asked.what)],
+  },
 } satisfies Record<ToolName, Step>
 
 /** Old histories and newer runtimes can name tools this client no longer describes. */
@@ -438,12 +485,12 @@ const NOTHING_ASKED: Asked = {
   title: Option.none(),
   question: Option.none(),
   site: Option.none(),
+  what: Option.none(),
 }
 
 const NOTHING_ANSWERED: Answered = {
   results: Option.none(),
   tools: Option.none(),
-  memories: Option.none(),
   watches: Option.none(),
   ok: Option.none(),
   created: Option.none(),

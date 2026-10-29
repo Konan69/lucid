@@ -2,9 +2,9 @@ import { SUGGESTED_REPLIES_MOST, SUGGESTED_REPLY_LONGEST, Tool } from '@vivid/co
 import { Array as Arr, Option, Schema } from 'effect'
 
 /**
- * The fields of one conversation message that hold Vivid's suggested replies. The shape is Flue's
- * `FlueConversationMessage` (`@flue/sdk` 2.2.2, `dist/index.d.mts`), named structurally so this
- * package reads a message without depending on Flue; each part is read by the schema below.
+ * The fields of one conversation message that hold Vivid's suggested replies. The shape is
+ * `ConversationMessage` (`@vivid/contracts`), named structurally; each part is read by the schema
+ * below.
  */
 export interface Offering {
   readonly role: 'user' | 'assistant' | 'system'
@@ -13,7 +13,7 @@ export interface Offering {
 
 /**
  * One `suggest_replies` call the runtime accepted (`tools/follow.ts` in `@vivid/agent-runtime`),
- * as Flue keeps it in the conversation: its input is the replies. A call still arriving, or one
+ * as the conversation keeps it: its input is the replies. A call still arriving, or one
  * the runtime refused, has no output and is not an offer. The limits are the runtime's own, so a
  * reply that would not have been accepted is not drawn either.
  */

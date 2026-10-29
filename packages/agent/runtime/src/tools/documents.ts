@@ -1,4 +1,4 @@
-import { defineTool } from '@flue/runtime'
+import { defineTool } from './tool.ts'
 import {
   Tool,
   DocumentToolCallId,
@@ -64,7 +64,7 @@ export function documentTools(runTool: RunTool) {
         body: text('The whole document as Markdown.', 200_000),
         note: v.optional(text('One sentence saying what changed.', 200)),
       }),
-      /** Flue supplies the call identity outside the model input, even when deliveries join a response. */
+      /** Pi supplies call identity outside model input, including when deliveries join a response. */
       run({ data, signal, toolCallId }) {
         return runTool(
           Effect.gen(function* () {

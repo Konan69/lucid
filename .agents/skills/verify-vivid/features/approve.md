@@ -1,19 +1,13 @@
 # Allow an action
 
-Model requirement: needs a real model. Rehearsal proves plumbing only.
+Model requirement: real model. Rehearsal cannot prove this journey.
 
-## Sub-features
+Run `verify feature approve <run>` and `verify browser approve <run>` after Launch and worthy Doctor on the same unchanged head. Cleanup follows.
 
-The saved digest-bound Approval succeeds, the external disposable system changes exactly once and a successor Decision Run settles.
+The recipe connects the disposable Verify Pulse Integration and creates a personal Ask rule through public RPC. It asks the real model to discover and invoke emit using find_tools and use_tool. The first completed Run must leave one Pending Approval bound to that Connection and receipt. A quiesced Executor export must contain no matching event before the Person decides.
 
-## How to get to it (user POV)
+HTTP submits the Approval id and digest through DecideApproval. Browser presses **Allow** in the actual card. Both require Succeeded, with exactly one provider event, and one completed successor Decision Run. Browser reloads after deciding and checks the pending card has gone. Finally removes the owned rule and Connection, including after failure.
 
-Open a Thread with a real pending action from a disposable Integration. Review the oldest pending Approval above the composer and choose Allow. Always allow is a separate option with destructive-action and shared-Thread restrictions.
+Evidence stays in `approve/` and `browser/approve/`. It includes the pending action, decision, successor, safe provider exports and verdict. Browser also retains commands, snapshots and screenshots.
 
-## Driving it with verify-vivid
-
-Run `.agents/skills/verify-vivid/verify feature approve` after Launch and Doctor, then run `verify browser approve`. Both commands currently return blocked before exercising the journey. Inspect `approve/verdict.json` and `browser/approve/verdict.json`; no action transcript, settlement, history or SQL is produced. A missing browser recipe exits unsuccessfully with `no browser recipe`; it cannot prove this feature. A blocked recipe exits unsuccessfully and names its missing prerequisite.
-
-## Gotchas
-
-Both recipes are blocked regardless of model credentials. The proposed proof needs a connected disposable Integration and an implemented action recipe. Product Approvals can also address Browser or Desktop actions. Do not substitute a private Gate proposal and call that the Person journey. Controls live above the composer in screen/thread/Allow.tsx; history retains the outcome.
+Always allow, destructive effects, shared Threads and native clients remain unproved. One emitted event establishes the provider outcome; it does not count internal execution attempts hidden by provider deduplication.

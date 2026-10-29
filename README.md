@@ -5,7 +5,7 @@ One person, one Vivid—simple alone and organizational by design.
 Vivid watches Integration events and posts useful updates to the Feed.
 
 Vivid is an AI teammate for everyday work, reached through a Thread. This repository holds the
-whole product: web, mobile, desktop, application server, Flue runtime, shared contracts, tests,
+whole product: web, mobile, desktop, application server, conversation runtime, shared contracts, tests,
 and design documents. Backend product logic lives in `apps/server`, organized by domain.
 
 ## Start
@@ -21,11 +21,13 @@ pnpm infra:verify
 pnpm infra:dev
 ```
 
-Alchemy provisions PostgreSQL 18 on port `55433`, applies the server's auth migrations then
-product migrations, and starts the runtime (`5173`), server (`8787`), and web (`5178`). Flue
-migrates its own PostgreSQL storage at runtime startup. Nothing is deployed; remote targets are
-disabled. Keep the real local database and Alchemy state read/copy only during tests and audits.
-Tests that need persistence require a disposable database through `VIVID_TEST_DATABASE_URL`.
+Alchemy owns the local stack, including product PostgreSQL 18 on port `55433`, server (`8787`),
+and web (`5178`). Product migrations run auth then product. Runtime startup is transitioning to
+[Person cells](docs/27-runtime-cells.md); the existing Node/PG wiring is not a working cell launch.
+Cell host, Notes, infrastructure, and verification integration are in progress and unproven.
+Keep the real local database, cell storage, and Alchemy state read/copy only during tests and
+audits. Product database tests require disposable PostgreSQL through `VIVID_TEST_DATABASE_URL`;
+runtime proofs require disposable cells with native Pi SQLite.
 
 The separate [mobile app](apps/mobile/README.md) uses Expo; the [desktop app](apps/desktop/README.md)
 is an Electron shell around the web renderer. Both connect to the same application server.
@@ -52,7 +54,10 @@ graphs or a typecheck alongside a build.
 
 ## Runtime and persistence
 
-Flue `2.2.2` with pi `0.87.1` owns conversation transport, history, and runtime lifecycle.
+The chosen runtime is one celld cell per Person with a native Pi Durable Harness over Durable
+Object SQLite. celld owns activation, ownership, and idle lifecycle. Pi owns conversation
+execution, history, tasks, queues, deduplication, wait, abort, and restart. The existing Pi `1.2.0`
+integration is moving to `1.4.0`. Vivid serves projected conversation state through its gateway.
 Product metadata, authorization, Routines, Library, and other product records belong to the
 server. Tools in `packages/agent/runtime/src/tools` call the server's schema-derived `VividRpc`
 contract. Shared clients live in `packages/client/rpc`, and shared view logic in
@@ -62,10 +67,11 @@ Vivid's replies use OpenCode Go (`OPENCODE_API_KEY`,
 `packages/agent/runtime/src/providers/opencode.ts`); the default is `opencode-go/glm-5.3-flash`.
 Memory, embeddings and decisions use the Experiential Labs gateway (`EXPLABS_API_KEY`).
 Vivid has no model retry or fallback layer of its own; the gateway fails over upstreams and
-Flue handles transient retries.
+Pi handles generation retries.
 
-PostgreSQL stores product records and Flue state. Memory uses HelixDB; Integrations use Executor;
-the Computer uses Boat, proven against real Boat on 3 October 2026. All of them are required: the
+PostgreSQL stores product records, including auth, Company/Membership, Thread metadata, Runs,
+and Library. Conversations and Notes belong to the Person cell's SQLite. HelixDB holds the
+knowledge graph and embeddings. Integrations use Executor; the Computer uses Boat, proven against real Boat on 3 October 2026. All of them are required: the
 server does not start without their settings (`apps/server/README.md`, "External capabilities").
 The hosted stack runs HelixDB and Executor itself; Boat is an outside service. Code and
 contracts call an authorized service relationship a `Connection`; every Person-facing string

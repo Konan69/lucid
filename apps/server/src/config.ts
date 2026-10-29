@@ -70,7 +70,8 @@ export const ObservabilityConfiguration = Data.taggedEnum<ObservabilityConfigura
 export interface ServerConfigService {
   readonly DATABASE_URL: Redacted.Redacted
   readonly AUTH_SECRET: Redacted.Redacted
-  readonly RUNTIME_URL: URL
+  /** Private celld ingress nodes in failover order. One URL is valid for local development. */
+  readonly RUNTIME_URLS: readonly [URL, ...URL[]]
   readonly RUNTIME_TOKEN: Redacted.Redacted
   readonly PORT: number
   readonly PUBLIC_URL: URL
@@ -109,7 +110,7 @@ export const settingSecret = Schema.RedactedFromValue(settingText)
  * absence or a malformed value stops launch with the variable named. The supplied value is never
  * carried: it may be a credential pasted into the wrong variable.
  *
- * Adapters that own a required setting (the Computer provider, memory) read it through this, so
+ * Adapters that own a required setting (the Computer provider, Thread titles) read it through this, so
  * "not configured" is a server that did not start and never a state a running server is in.
  */
 export const requiredSetting = <A>(
@@ -128,23 +129,23 @@ export const optionalSetting = <A>(
     Effect.mapError(() => configError(name, expected)),
   )
 
-/** One explicit provider choice governs the server's text, embedding and decision requests.
- * This is independent of Flue's VIVID_MODEL. Selecting OpenRouter never reads the ExpLabs key. */
+/** One explicit provider choice governs the server's title and decision requests.
+ * This is independent of the runtime's VIVID_MODEL. Selecting OpenRouter never reads the ExpLabs key. */
 export const ModelProvider = Schema.Literals(['explabs', 'openrouter'])
 const modelProviders = {
   explabs: {
     url: 'https://api.experientiallabs.ai/v1',
     keyVariable: 'EXPLABS_API_KEY',
-    memoryModel: 'glm-5.3-flash',
+    titleModel: 'glm-5.3-flash',
   },
   openrouter: {
     url: 'https://openrouter.ai/api/v1',
     keyVariable: 'OPENROUTER_API_KEY',
-    memoryModel: 'z-ai/glm-5.3-flash',
+    titleModel: 'z-ai/glm-5.3-flash',
   },
 } satisfies Record<
   typeof ModelProvider.Type,
-  { readonly url: string; readonly keyVariable: string; readonly memoryModel: string }
+  { readonly url: string; readonly keyVariable: string; readonly titleModel: string }
 >
 
 /** Resolve defaults and the selected credential once in each owning Layer; invalid settings
@@ -152,11 +153,11 @@ const modelProviders = {
 export const serverModelGateway = Effect.gen(function* () {
   const provider = Option.getOrElse(
     yield* optionalSetting('VIVID_SERVER_MODEL_PROVIDER', ModelProvider, 'explabs or openrouter'),
-    () => 'explabs' as const,
+    () => 'openrouter' as const,
   )
   const selected = modelProviders[provider]
   const key = yield* requiredSetting(selected.keyVariable, settingSecret, 'the model provider key')
-  return { provider, url: selected.url, memoryModel: selected.memoryModel, key }
+  return { provider, url: selected.url, titleModel: selected.titleModel, key }
 }).pipe(Effect.withSpan('ServerConfig.modelGateway'))
 
 const loadDatabaseUrl = Effect.fn('ServerConfig.loadDatabaseUrl')(function* () {
@@ -289,10 +290,15 @@ const loadConfig = Effect.fn('loadServerConfig')(function* (): Effect.fn.Return<
     yield* optionalSetting('PUBLIC_URL', Schema.URLFromString, 'an absolute URL'),
     () => new URL('http://localhost:3000'),
   )
+  const [runtime, ...peers] = yield* Config.Array(Schema.URLFromString, 'VIVID_RUNTIME_URL').pipe(
+    Effect.mapError(() => configError('VIVID_RUNTIME_URL', 'comma-separated absolute cell URLs')),
+  )
+  if (runtime === undefined)
+    return yield* configError('VIVID_RUNTIME_URL', 'at least one absolute cell URL')
   return {
     DATABASE_URL: yield* loadDatabaseUrl(),
     AUTH_SECRET: loadedAuthSecret,
-    RUNTIME_URL: yield* requiredSetting('VIVID_RUNTIME_URL', Schema.URLFromString),
+    RUNTIME_URLS: [runtime, ...peers],
     RUNTIME_TOKEN: yield* requiredSetting('VIVID_RUNTIME_TOKEN', secret),
     PORT: port,
     // Listener and static-root inputs belong to launch; domain test Layers need no HTTP host.

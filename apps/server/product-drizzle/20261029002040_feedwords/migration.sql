@@ -1,0 +1,1 @@
+ALTER TABLE "vivid_feed_cards" ALTER COLUMN "words" DROP NOT NULL;

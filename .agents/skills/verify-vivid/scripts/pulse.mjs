@@ -1,5 +1,6 @@
 import * as NodeHttp from 'node:http'
 import { Ready } from './receipts.mjs'
+import { worldApps } from './world.mjs'
 
 /** A real catalogue source installs a fresh public Integration through Executor's normal copy path.
  * The event mutation is invoked outside Vivid. Its receipt is also Executor's deduplication id.
@@ -22,8 +23,9 @@ export default defineApp(requirements, { tools: router({ emit }) });`,
   },
 ]
 
-/** Serve only the two published feed documents. No product endpoint or source is replaced. */
+/** Generate the private app sources once, before serving the supported catalogue documents. */
 if (process.argv[1] === new URL(import.meta.url).pathname) {
+  const world = await worldApps(process.env.VIVID_VERIFY_WORLD)
   const server = NodeHttp.createServer((request, response) => {
     const documents = {
       '/index.json': {
@@ -38,9 +40,11 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
             icons: [],
             source: 'apps/verify-pulse.json',
           },
+          ...world.map((app) => app.entry),
         ],
       },
       '/apps/verify-pulse.json': { package: '@verify/pulse', files },
+      ...Object.fromEntries(world.map((app) => ['/' + app.entry.source, app.document])),
     }
     const document = documents[request.url]
     response.writeHead(document ? 200 : 404, { 'content-type': 'application/json' })

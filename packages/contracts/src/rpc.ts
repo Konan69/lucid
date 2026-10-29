@@ -2,7 +2,13 @@ import * as Schema from 'effect/Schema'
 import * as Rpc from 'effect/rpc/Rpc'
 import * as RpcGroup from 'effect/rpc/RpcGroup'
 import * as RpcMiddleware from 'effect/rpc/RpcMiddleware'
-import { ApprovalResponse, DecideApprovalRequest } from './approvals.js'
+import { ConversationFrame } from './conversation.js'
+import {
+  ApprovalChanged,
+  ApprovalExpired,
+  ApprovalResponse,
+  DecideApprovalRequest,
+} from './approvals.js'
 import {
   ArtifactChanged,
   ArtifactDetail,
@@ -17,7 +23,13 @@ import {
 } from './artifacts.js'
 import { AuditListResponse } from './audit.js'
 import { ServerBuild } from './build.js'
-import { FeedResponse, MarkFeedCardRequest, PostOutcome, PostRequest } from './feed.js'
+import {
+  FeedDisplayInvalid,
+  FeedResponse,
+  MarkFeedCardRequest,
+  PostOutcome,
+  PostRequest,
+} from './feed.js'
 import {
   NotifyPersonOutcome,
   NotifyPersonRequest,
@@ -141,7 +153,6 @@ import {
   LibraryFolderId,
   LibraryItemId,
   MembershipId,
-  MemoryId,
   RuleId,
   SkillId,
   ThreadId,
@@ -161,12 +172,12 @@ import {
 } from './library.js'
 import {
   CorrectMemoryRequest,
-  MemoryBrief,
-  MemoryListResponse,
-  MemoryResponse,
-  RecallRequest,
-  RecallResponse,
-  RememberRequest,
+  ForgetMemoryRequest,
+  MemoryAddress,
+  MemoryIndex,
+  MemoryListing,
+  MemoryPage,
+  SavedMemory,
 } from './memory.js'
 import {
   NotificationListResponse,
@@ -174,6 +185,22 @@ import {
   ReadNotificationsRequest,
 } from './notifications.js'
 import { CreateProjectRequest, Project, ProjectListResponse } from './projects.js'
+import {
+  Owed,
+  OwedListResponse,
+  TrackOwedRequest,
+  UpdateOwedRequest,
+  NudgedOwedRequest,
+  ResolveOwedRequest,
+  DropOwedRequest,
+} from './owed.js'
+import {
+  Todo,
+  TodoListResponse,
+  AddTodoRequest,
+  CompleteTodoRequest,
+  DropTodoRequest,
+} from './todos.js'
 import { ComputerInventory } from './applications.js'
 import { CreateRuleRequest, RuleListResponse, RuleResponse } from './rules.js'
 import { SearchRequest, SearchResponse, SuggestionListResponse } from './search.js'
@@ -196,6 +223,15 @@ import {
   PresenceRequest,
   ShareThreadRequest,
   ThreadDetail,
+  ConversationTooLarge,
+  SendToThreadRequest,
+  CarryOnRequest,
+  SendToThreadResponse,
+  UnsupportedAttachment,
+  InvalidAttachment,
+  AttachmentTooLarge,
+  TooManyAttachments,
+  PicturesRequirePrivateThread,
   ThreadListResponse,
   ThreadResponse,
   ThreadTitleHistoryUnavailable,
@@ -208,7 +244,7 @@ import {
 /**
  * Every product call a Vivid client makes to the application server, declared once.
  *
- * The server implements this group; web, mobile, desktop and the Flue runtime's tools all derive
+ * The server implements this group; web, mobile, desktop and the runtime's tools all derive
  * their client from it with `RpcClient.make(VividRpc)`. No client writes a path, a method, a
  * response type or a status check by hand, so a changed payload or a renamed call is a compile
  * error in every consumer.
@@ -222,13 +258,14 @@ import {
  * Only three kinds of route stay plain HTTP, because a browser or a third party calls them
  * without our client: Better Auth (`/api/auth/*`), the address a provider or an outside service
  * calls back to, and byte transfer (Library upload and download). The conversation itself is
- * Flue's stream, which the server proxies at `/api/vivid/*`.
+ * runtime state, which the server proxies at `/api/vivid/*`.
  */
 
 export { InvalidRequest, RuntimeUnavailable, ServiceUnavailable } from './failures.js'
 
 /** Every failure a product call can return. Clients branch on `_tag`, never on a message. */
 export const RpcFailure = Schema.Union([
+  ConversationTooLarge,
   Unauthenticated,
   Forbidden,
   NotFound,
@@ -272,7 +309,12 @@ const NotifyPerson = Rpc.make('NotifyPerson', {
 const ListFeed = Rpc.make('ListFeed', { ...call, success: FeedResponse })
 const WatchFeed = Rpc.make('WatchFeed', { ...live, success: FeedResponse })
 const MarkFeedCard = Rpc.make('MarkFeedCard', { ...call, payload: MarkFeedCardRequest })
-const Post = Rpc.make('Post', { ...call, payload: PostRequest, success: PostOutcome })
+const Post = Rpc.make('Post', {
+  ...call,
+  error: Schema.Union([RpcFailure, FeedDisplayInvalid]),
+  payload: PostRequest,
+  success: PostOutcome,
+})
 
 // ── The signed-in Person and where they are working ────────────────────────
 const Me = Rpc.make('Me', { ...call, success: MeResponse })
@@ -355,6 +397,30 @@ const WatchThread = Rpc.make('WatchThread', {
   ...live,
   payload: { id: ThreadId },
   success: ThreadDetail,
+})
+/** A Thread's conversation: one `Whole` on every subscription, then its changes. */
+const WatchConversation = Rpc.make('WatchConversation', {
+  ...live,
+  payload: { threadId: ThreadId },
+  success: ConversationFrame,
+})
+/** One send from a Person's client; it answers once the runtime admitted the delivery. */
+const SendToThread = Rpc.make('SendToThread', {
+  payload: SendToThreadRequest,
+  success: SendToThreadResponse,
+  error: Schema.Union([
+    RpcFailure,
+    UnsupportedAttachment,
+    InvalidAttachment,
+    AttachmentTooLarge,
+    TooManyAttachments,
+    PicturesRequirePrivateThread,
+  ]),
+})
+/** A connection card's continuation uses the same authenticated socket as ordinary sends. */
+const CarryOnThread = Rpc.make('CarryOnThread', {
+  ...call,
+  payload: CarryOnRequest,
 })
 const CreateThread = Rpc.make('CreateThread', {
   ...call,
@@ -448,9 +514,9 @@ const ReadDocument = Rpc.make('ReadDocument', {
 const GetInbox = Rpc.make('GetInbox', { ...call, success: Inbox })
 const WatchInbox = Rpc.make('WatchInbox', { ...live, success: Inbox })
 const DecideApproval = Rpc.make('DecideApproval', {
-  ...call,
   payload: DecideApprovalRequest,
   success: ApprovalResponse,
+  error: Schema.Union([RpcFailure, ApprovalChanged, ApprovalExpired]),
 })
 /** Withdraws an Approval the Person no longer wants decided, leaving the action undone. */
 const WithdrawApproval = Rpc.make('WithdrawApproval', { ...call, payload: { id: ApprovalId } })
@@ -586,6 +652,26 @@ const CreateProject = Rpc.make('CreateProject', {
   payload: CreateProjectRequest,
   success: Project,
 })
+
+// ── Waiting on ────────────────────────────────────────────────────────────
+const ListOwed = Rpc.make('ListOwed', { ...call, success: OwedListResponse })
+const WatchOwed = Rpc.make('WatchOwed', { ...live, success: OwedListResponse })
+const TrackOwed = Rpc.make('TrackOwed', { ...call, payload: TrackOwedRequest, success: Owed })
+const UpdateOwed = Rpc.make('UpdateOwed', { ...call, payload: UpdateOwedRequest, success: Owed })
+const NudgedOwed = Rpc.make('NudgedOwed', { ...call, payload: NudgedOwedRequest, success: Owed })
+const ResolveOwed = Rpc.make('ResolveOwed', { ...call, payload: ResolveOwedRequest, success: Owed })
+const DropOwed = Rpc.make('DropOwed', { ...call, payload: DropOwedRequest, success: Owed })
+
+// ── The Person's to-do list ───────────────────────────────────────────────
+const ListTodos = Rpc.make('ListTodos', { ...call, success: TodoListResponse })
+const WatchTodos = Rpc.make('WatchTodos', { ...live, success: TodoListResponse })
+const AddTodo = Rpc.make('AddTodo', { ...call, payload: AddTodoRequest, success: Todo })
+const CompleteTodo = Rpc.make('CompleteTodo', {
+  ...call,
+  payload: CompleteTodoRequest,
+  success: Todo,
+})
+const DropTodo = Rpc.make('DropTodo', { ...call, payload: DropTodoRequest, success: Todo })
 
 // ── Library (metadata; bytes travel over plain HTTP) ───────────────────────
 const ListLibrary = Rpc.make('ListLibrary', {
@@ -738,22 +824,18 @@ const OfferConnection = Rpc.make('OfferConnection', {
 })
 
 // ── Memory ─────────────────────────────────────────────────────────────────
-const ListMemory = Rpc.make('ListMemory', { ...call, success: MemoryListResponse })
-const WatchMemory = Rpc.make('WatchMemory', { ...live, success: MemoryListResponse })
-/** The page Vivid reads when a Run starts. */
-const GetMemoryBrief = Rpc.make('GetMemoryBrief', { ...call, success: MemoryBrief })
-const Recall = Rpc.make('Recall', { ...call, payload: RecallRequest, success: RecallResponse })
-const Remember = Rpc.make('Remember', {
-  ...call,
-  payload: RememberRequest,
-  success: MemoryResponse,
-})
+// The acting Person's own memory, read from and written to their cell.
+/** What Vivid reads every response: the standing pages whole and the newest lines. */
+const GetMemoryIndex = Rpc.make('GetMemoryIndex', { ...call, success: MemoryIndex })
+/** Older lines than the index shows, newest first, one layer or all. */
+const ListMemory = Rpc.make('ListMemory', { ...call, payload: MemoryListing, success: MemoryPage })
+const ReadMemory = Rpc.make('ReadMemory', { ...call, payload: MemoryAddress, success: SavedMemory })
 const CorrectMemory = Rpc.make('CorrectMemory', {
   ...call,
   payload: CorrectMemoryRequest,
-  success: MemoryResponse,
+  success: SavedMemory,
 })
-const ForgetMemory = Rpc.make('ForgetMemory', { ...call, payload: { id: MemoryId } })
+const ForgetMemory = Rpc.make('ForgetMemory', { ...call, payload: ForgetMemoryRequest })
 
 // ── Skills ─────────────────────────────────────────────────────────────────
 const ListSkills = Rpc.make('ListSkills', { ...call, success: SkillListResponse })
@@ -963,6 +1045,9 @@ export const VividRpc = RpcGroup.make(
   WatchThreads,
   GetThread,
   WatchThread,
+  WatchConversation,
+  SendToThread,
+  CarryOnThread,
   CreateThread,
   OpenFirstThread,
   PatchThread,
@@ -1012,6 +1097,18 @@ export const VividRpc = RpcGroup.make(
   ListProjects,
   WatchProjects,
   CreateProject,
+  ListOwed,
+  WatchOwed,
+  TrackOwed,
+  UpdateOwed,
+  NudgedOwed,
+  ResolveOwed,
+  DropOwed,
+  ListTodos,
+  WatchTodos,
+  AddTodo,
+  CompleteTodo,
+  DropTodo,
   ListLibrary,
   WatchLibrary,
   GetLibraryItem,
@@ -1039,11 +1136,9 @@ export const VividRpc = RpcGroup.make(
   UseTool,
   UseDisplayTool,
   OfferConnection,
+  GetMemoryIndex,
   ListMemory,
-  WatchMemory,
-  GetMemoryBrief,
-  Recall,
-  Remember,
+  ReadMemory,
   CorrectMemory,
   ForgetMemory,
   ListSkills,

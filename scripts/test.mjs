@@ -45,7 +45,7 @@ function contentReader() {
 
 /**
  * Everything one module loads, from Vitest's own transform of it: static and dynamic imports as
- * Vite resolved them, so aliases, package exports and plugin-made modules (Flue's Markdown) are
+ * Vite resolved them, so aliases, package exports and plugin-made modules are
  * followed exactly as the test run follows them. This is the walk `vitest --changed` does
  * (vitest 5.0.1 dist/chunks/index, `getAffectedModules`), kept forward instead of reversed.
  * Dependencies inside `node_modules` are not followed; the lockfile stands for them.

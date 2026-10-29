@@ -1,7 +1,7 @@
 import type { RuntimeMessage } from '../runtime/client.ts'
 import { DeliveryMessage } from './conversation.ts'
 
-/** The only metadata Flue may render. Project per signal kind rather than forwarding producers' ids. */
+/** The only metadata the runtime may render. Project per signal kind rather than forwarding producers' ids. */
 export const signalAttributes = (message: DeliveryMessage, speaker: string, turn: number) => {
   if (DeliveryMessage.guards.Signal(message)) {
     // A Watch is named to the model by the name their owner gave them.
@@ -22,7 +22,7 @@ export const signalAttributes = (message: DeliveryMessage, speaker: string, turn
 }
 
 /** Private words remain plain user turns; every shared/system signal names its speaker and Run turn. */
-export const flueMessage = (
+export const runtimeMessage = (
   audience: 'private' | 'people' | 'company',
   speaker: string,
   message: DeliveryMessage,

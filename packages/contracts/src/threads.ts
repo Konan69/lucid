@@ -12,7 +12,7 @@ export const PictureMediaType = Schema.Literals([
 ] as const)
 export type PictureMediaType = typeof PictureMediaType.Type
 
-/** Flue's image wire shape. The gateway also checks decoded size and the bytes' signature. */
+/** The image wire shape. The gateway also checks decoded size and the bytes' signature. */
 export const MessageAttachment = Schema.Struct({
   type: Schema.Literal('image'),
   data: Schema.String,
@@ -33,17 +33,36 @@ export const SendMessageRequest = Schema.Struct({
 export interface SendMessageRequest extends Schema.Schema.Type<typeof SendMessageRequest> {}
 
 /**
- * A card telling Vivid to go on after something it waited for has happened ("GitHub is
- * connected"). It reaches Vivid as a `carry-on` signal, not a user turn, so no client draws it as
- * words the Person said: the owner, 29 October 2026, "it shouldn't act like I prompted it".
+ * One send from a Person's client, whichever runtime holds the Thread. `key` is made once per
+ * send by the client and comes back on the message in the conversation, so the client that drew
+ * the words at once recognises them when they arrive. Words, pictures or both; never neither.
  */
+export const SendToThreadRequest = Schema.Struct({
+  threadId: ThreadId,
+  text: SendMessageRequest.fields.body,
+  pictures: Schema.Array(MessageAttachment),
+  key: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
+}).check(
+  Schema.makeFilter((request) => request.text.trim().length > 0 || request.pictures.length > 0, {
+    message: 'A send carries words, pictures or both',
+  }),
+)
+export interface SendToThreadRequest extends Schema.Schema.Type<typeof SendToThreadRequest> {}
+
+/** A card resumes Vivid without presenting its nudge as words the Person said. */
 export const CarryOnRequest = Schema.Struct({
-  kind: Schema.Literal('signal'),
-  type: Schema.Literal('carry-on'),
+  threadId: ThreadId,
   body: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(2000)),
-  idempotencyKey: SendMessageRequest.fields.idempotencyKey,
+  key: SendToThreadRequest.fields.key,
 })
 export interface CarryOnRequest extends Schema.Schema.Type<typeof CarryOnRequest> {}
+
+/** A conversation whose whole state is larger than the relay sends cannot open on any device. */
+export class ConversationTooLarge extends Schema.TaggedError<ConversationTooLarge>()(
+  'ConversationTooLarge',
+  { threadId: ThreadId, limit: Schema.Int },
+  { title: 'Thread conversation exceeds the relay limit' },
+) {}
 
 /** Invalid formats and mismatched signatures need the Person to choose another image. */
 export class UnsupportedAttachment extends Schema.TaggedError<UnsupportedAttachment>()(
@@ -73,7 +92,7 @@ export class TooManyAttachments extends Schema.TaggedError<TooManyAttachments>()
   { title: 'Too many pictures' },
 ) {}
 
-/** Flue cannot preserve attachments on the attributed signals used by shared Threads. */
+/** Shared Threads accept text-only attributed signals. */
 export class PicturesRequirePrivateThread extends Schema.TaggedError<PicturesRequirePrivateThread>()(
   'PicturesRequirePrivateThread',
   { threadId: ThreadId, message: Schema.String },
@@ -221,6 +240,12 @@ export type RunState = typeof RunState.Type
 /** One bounded attempt by Vivid to advance a Thread. */
 export const Run = Schema.Struct({
   id: RunId,
+  /**
+   * The runtime's name for the delivery that started this Run, which is how the conversation
+   * refers to it. Absent until the runtime admitted it. Pi Durable numbers deliveries per Person,
+   * so the name means nothing outside its Thread's creator; product ids stay globally unique.
+   */
+  submissionId: Schema.optional(Schema.String),
   threadId: ThreadId,
   /**
    * The Run's place in its Thread, counted from one. It is what the delivery that started the Run
@@ -234,6 +259,10 @@ export const Run = Schema.Struct({
 }).annotate({ identifier: 'Run', title: 'Run' })
 export interface Run extends Schema.Schema.Type<typeof Run> {}
 
+/** A send answers once admitted, with the product Run it started or joined. */
+export const SendToThreadResponse = Schema.Struct({ run: Run })
+export interface SendToThreadResponse extends Schema.Schema.Type<typeof SendToThreadResponse> {}
+
 /** Someone with a Thread open right now, and whether they are writing. */
 export const Presence = Schema.Struct({
   person: PersonSummary,
@@ -243,7 +272,7 @@ export interface Presence extends Schema.Schema.Type<typeof Presence> {}
 
 /**
  * Everything beside the conversation itself that a client needs to draw one Thread: who is in it,
- * who sent what (Runs carry the attribution Flue's history does not), and who is here now.
+ * who sent what (Runs carry the attribution conversation history does not), and who is here now.
  */
 export const ThreadDetail = Schema.Struct({
   thread: Thread,
@@ -266,10 +295,7 @@ export const PresenceRequest = Schema.Struct({
 })
 export interface PresenceRequest extends Schema.Schema.Type<typeof PresenceRequest> {}
 
-/**
- * The signal types the server delivers into a Thread. Flue keeps them in its own history, so the
- * vocabulary is fixed here once for the server, the runtime and every client that renders them.
- */
+/** One signal vocabulary for the server, runtime history and every client that draws it. */
 export const SignalType = Schema.Literals([
   'message',
   'approval',
@@ -282,14 +308,8 @@ export const SignalType = Schema.Literals([
 ] as const)
 export type SignalType = typeof SignalType.Type
 
-/**
- * Who a delivery is for: the Person Vivid acts for.
- *
- * This is never written into the conversation. Flue shows a delivery's attributes to the model as
- * text, so anything put there is something the model can read, repeat to the people in a shared
- * Thread, or be talked into changing. The scope travels beside the conversation instead, from the
- * server to the runtime, and reaches the tools through a Layer.
- */
+/** The Person Vivid acts for. Scope travels from server to runtime beside model-visible
+ * text and reaches tools through a Layer. The model cannot read or alter this authority. */
 export const DeliveryScope = Schema.Struct({
   acting: PersonId,
 }).annotate({ identifier: 'DeliveryScope', title: 'Delivery scope' })
@@ -302,13 +322,8 @@ export const DeliveryScopeRequest = Schema.Struct({
 })
 export interface DeliveryScopeRequest extends Schema.Schema.Type<typeof DeliveryScopeRequest> {}
 
-/**
- * One server-owned request for Flue to accept a Run without owning product state.
- *
- * `body` and `attributes` are what the model reads, so they hold words only: who is speaking by
- * name, what woke Vivid, and the delivery's `turn`. `scope` is what the runtime acts with and the
- * model never sees.
- */
+/** A server-owned runtime admission request. Body and attributes contain model-visible
+ * words; scope carries the authority the model never sees. Product state stays on the server. */
 export const RuntimeRunRequest = Schema.Struct({
   threadId: ThreadId,
   idempotencyKey: Schema.String,
@@ -318,17 +333,21 @@ export const RuntimeRunRequest = Schema.Struct({
   attributes: Schema.Record(Schema.String, Schema.String),
   turn: Schema.Finite,
   scope: DeliveryScope,
+  /**
+   * The key the sending client made (`SendToThreadRequest.key`), passed through so the
+   * conversation gives it back on that message. It is not the idempotency key and is never shown
+   * to the model. Absent on deliveries the server makes itself.
+   */
+  clientKey: Schema.optionalKey(SendToThreadRequest.fields.key),
 })
 export interface RuntimeRunRequest extends Schema.Schema.Type<typeof RuntimeRunRequest> {}
 
-/** Flue's durable receipt for one accepted Run. */
+/** Durable runtime admission receipt for one accepted Run. */
 export const RuntimeRunResponse = Schema.Struct({ submissionId: Schema.String })
 export interface RuntimeRunResponse extends Schema.Schema.Type<typeof RuntimeRunResponse> {}
 
-/**
- * What the runtime is told about a Thread when its Flue instance is created, and never again:
- * where it lives and who started it. Evolving facts come with each delivery instead.
- */
+/** Thread location and creator supplied when its conversation is created.
+ * Evolving facts travel with each delivery. */
 export const ThreadOrigin = Schema.Struct({
   creator: PersonId,
   creatorName: Schema.String,

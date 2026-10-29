@@ -1,6 +1,13 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
-import { CompanyId, PersonId, RunId, ThreadId } from '@vivid/contracts'
+import {
+  CarryOnRequest,
+  CompanyId,
+  PersonId,
+  RunId,
+  RuntimeSubmissionId,
+  ThreadId,
+} from '@vivid/contracts'
 import { and, eq } from 'drizzle-orm'
 import {
   Context,
@@ -12,6 +19,7 @@ import {
   Predicate,
   PubSub,
   Queue,
+  Schema,
   Stream,
 } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
@@ -29,6 +37,9 @@ import { Conversation, DeliveryMessage, type Delivery } from './conversation.ts'
 import { gatewayRoutes } from './gateway.ts'
 import { threads } from './tables.ts'
 import { authLayer } from '../auth/provider.ts'
+import { authenticate } from '../auth/session.ts'
+import { AuthContext, AuthState } from '@vivid/contracts/auth'
+import { carryOnThread } from './relay.ts'
 
 /**
  * The change bus in memory. `watching` hears every subscription, so a test that must act after
@@ -133,13 +144,13 @@ const removeSession = Effect.fn('GatewayTest.removeSession')(function* (test: Fi
 
 const hello = new TextEncoder().encode('data: hello\n\n')
 
-/** Flue's updates stream as the runtime hands it over: one event, then open for good. */
+/** One runtime state frame followed by an open stream. */
 const updates = () =>
   HttpClientResponse.fromWeb(
     HttpClientRequest.get('http://runtime.test'),
     new Response(
       new ReadableStream<Uint8Array>({ start: (controller) => controller.enqueue(hello) }),
-      { headers: { 'content-type': 'text/event-stream' } },
+      { headers: { 'content-type': 'image/png' } },
     ),
   )
 
@@ -170,7 +181,7 @@ const requestRead = Effect.fn('GatewayTest.requestRead')(function* (
       Effect.provideService(
         HttpServerRequest.HttpServerRequest,
         HttpServerRequest.fromWeb(
-          new Request(`http://gateway.test/api/vivid/${test.threadId}?view=updates`, {
+          new Request(`http://gateway.test/api/vivid/${test.threadId}/attachments/picture`, {
             headers: { authorization: `Bearer ${test.token}`, host: 'gateway.test' },
           }),
         ),
@@ -309,46 +320,30 @@ layer(foundation)((it) => {
   })
 })
 
-/**
- * Posts one body through the real route, authentication and access check, as a client's send.
- * The runtime is not reached: `admit` keeps what the gateway would have delivered.
- */
-const send = Effect.fn('GatewayTest.send')(function* (
-  test: Fixture,
-  body: Readonly<Record<string, string>>,
-) {
-  const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
+/** The real authenticated relay preserves a card's signal while admission captures its delivery. */
+const send = Effect.fn('GatewayTest.send')(function* (test: Fixture, body: string) {
+  const auth = yield* authenticate(new Headers({ authorization: `Bearer ${test.token}` }))
   const admitted = yield* Queue.unbounded<Delivery>()
-  const context = yield* Layer.build(
-    Layer.mock(Conversation, {
-      admit: (delivery) =>
-        Queue.offer(admitted, delivery).pipe(
-          Effect.as({
-            runId: RunId.make(NodeCrypto.randomUUID()),
-            offset: '0',
-            incarnation: 'test',
-          }),
-        ),
-    }).pipe(Layer.provideMerge(Layer.mock(Runtime, {}))),
-  )
-  const response = yield* handle.pipe(
-    Effect.provideService(
-      HttpServerRequest.HttpServerRequest,
-      HttpServerRequest.fromWeb(
-        new Request(`http://gateway.test/api/vivid/${test.threadId}`, {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${test.token}`,
-            host: 'gateway.test',
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify(body),
-        }),
-      ),
+  const request = yield* Schema.decodeEffect(CarryOnRequest)({
+    threadId: test.threadId,
+    body,
+    key: NodeCrypto.randomUUID(),
+  })
+  yield* carryOnThread(request).pipe(
+    Effect.provideService(AuthContext, AuthState.Person(auth)),
+    Effect.provide(
+      Layer.mock(Conversation, {
+        admit: (delivery) =>
+          Queue.offer(admitted, delivery).pipe(
+            Effect.as({
+              runId: RunId.make(NodeCrypto.randomUUID()),
+              submissionId: RuntimeSubmissionId.make(1),
+            }),
+          ),
+      }),
     ),
-    Effect.provide(context),
   )
-  return { status: response.status, delivery: yield* Queue.poll(admitted) }
+  return yield* Queue.take(admitted)
 })
 
 layer(foundation, { excludeTestServices: true })((it) => {
@@ -358,17 +353,9 @@ layer(foundation, { excludeTestServices: true })((it) => {
       Effect.gen(function* () {
         const test = yield* fixture()
         const body = 'GitHub is connected. Carry on.'
-        const sent = yield* send(test, {
-          kind: 'signal',
-          type: 'carry-on',
-          body,
-          idempotencyKey: NodeCrypto.randomUUID(),
-        })
-        expect(sent.status).toBe(202)
-        expect(Option.map(sent.delivery, (delivery) => delivery.message)).toEqual(
-          Option.some(
-            DeliveryMessage.cases.Signal.make({ type: 'carry-on', body, attributes: {} }),
-          ),
+        const sent = yield* send(test, body)
+        expect(sent.message).toEqual(
+          DeliveryMessage.cases.Signal.make({ type: 'carry-on', body, attributes: {} }),
         )
       }).pipe(Effect.scoped),
     )

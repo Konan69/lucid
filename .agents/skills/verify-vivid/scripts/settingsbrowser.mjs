@@ -16,7 +16,7 @@ const decodeText = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Strin
 
 /** Read only the open dialog's semantic groups. Hidden source and background Home cannot satisfy them. */
 async function groups(run) {
-  const expression = `Array.from(document.querySelectorAll('[role="dialog"] section')).filter(section => section.querySelector('h3') && section.querySelector('ul')).map(section => ({ purpose: section.querySelector('h3').innerText.trim(), names: Array.from(section.querySelectorAll('ul > li')).map(li => li.innerText.split('\\n')[0].trim()) }))`
+  const expression = `Array.from(document.querySelectorAll('[role="dialog"] section')).filter(section => section.querySelector('h3') && section.querySelector('h3').innerText.trim() !== 'Connected' && section.querySelector('ul')).map(section => ({ purpose: section.querySelector('h3').innerText.trim(), names: Array.from(section.querySelectorAll('ul > li')).map(li => li.innerText.split('\\n')[0].trim()) }))`
   return Result.getOrThrow(decodeGroups(await run(['eval', 'JSON.stringify(' + expression + ')'])))
 }
 
@@ -39,40 +39,43 @@ function assertCatalog(actual, services, query) {
     )
 }
 
-/** The empty knowledge copy distinguishes searchable facts from Vivid's own notes, including after reload. */
+/** The sentence the Memory section shows while the Person's cell remembers nothing listed. */
+const EMPTY_MEMORY = 'When you tell Vivid something that matters later, it shows up here.'
+
+/** Earlier model journeys may have taught this Person. Compare Settings with its actual index,
+ * rather than requiring an unused account after the full-product run has already exchanged words. */
 async function memory(state, context, browser) {
   const { id, directory } = context
   const { run, capture } = browser
-  const knowledge = await rpc(state, 'ListMemory', undefined, directory, 'empty-knowledge')
-  NodeAssert.deepEqual(knowledge.memories, [], 'Recipe needs an unused disposable knowledge base')
-  NodeAssert.equal(knowledge.brief.text.trim(), '')
+  const index = await rpc(state, 'GetMemoryIndex', undefined, directory, 'memory-index')
+  const expected =
+    index.lines.length === 0 ? [EMPTY_MEMORY] : index.lines.map((line) => line.description)
   await run(['open', state.web + '/t/' + id + '?settings=memory'])
-  for (const stage of ['knowledge', 'knowledge-reloaded']) {
+  const section = `Array.from(document.querySelectorAll('[role="dialog"] section')).find(section => section.querySelector('h3')?.innerText.trim() === 'What Vivid remembers')`
+  for (const stage of ['memory', 'memory-reloaded']) {
     await run([
       'wait',
       '--fn',
-      `Boolean(document.querySelector('[role="dialog"]')?.innerText.includes('Nothing saved yet.'))`,
+      `Boolean(${section}) && ${JSON.stringify(expected)}.every(words => ${section}.innerText.includes(words))`,
     ])
-    const value = Result.getOrThrow(
+    const headings = Result.getOrThrow(
       decodeText(
-        await run(['eval', `JSON.stringify(document.querySelector('[role="dialog"]').innerText)`]),
+        await run([
+          'eval',
+          `JSON.stringify(Array.from(document.querySelectorAll('[role="dialog"] h3')).map(node => node.innerText).join(' '))`,
+        ]),
       ),
     )
-    for (const words of [
-      'A summary of the saved knowledge below.',
-      'Nothing yet. Facts Vivid saves for reference are summed up here.',
-      'Facts Vivid can look up. Correct what is wrong, or remove what it should not keep.',
-      'Vivid’s own notes are not shown here.',
-    ])
-      NodeAssert.ok(value.includes(words), 'Missing visible knowledge wording ' + words)
+    NodeAssert.ok(!/saved knowledge|\bnotes?\b/iu.test(headings), 'Obsolete Memory section heading')
     await capture(stage)
-    if (stage === 'knowledge') await run(['reload'])
+    if (stage === 'memory') await run(['reload'])
   }
 }
 
 /** Drive the actual Settings tabs and catalog search, without starting any external authorization. */
 export async function settingsBrowser(state, id, directory, browser) {
   const { run, capture } = browser
+  const before = await rpc(state, 'ListConnections', undefined, directory, 'before-browsing')
   await memory(state, { id, directory }, browser)
   const navigation = Result.getOrThrow(
     decodeNavigation(
@@ -156,7 +159,7 @@ export async function settingsBrowser(state, id, directory, browser) {
   await json(directory + '/search-groups.json', results)
   await capture('catalog-search')
   const connections = await rpc(state, 'ListConnections', undefined, directory, 'after-browsing')
-  NodeAssert.deepEqual(connections.connections, [], 'Browsing started an external connection')
+  NodeAssert.deepEqual(connections.connections, before.connections, 'Browsing changed a connection')
   await json(directory + '/scope.json', {
     modelCalls: 0,
     blocked: settingsLimits,
@@ -164,6 +167,6 @@ export async function settingsBrowser(state, id, directory, browser) {
   })
   return {
     scope:
-      'Personal Settings groups, empty saved knowledge before and after reload, popular Integration groups and Gmail search. See scope.json for unproved groups and native entry points.',
+      'Personal Settings groups, the empty memory list before and after reload, popular Integration groups and Gmail search. See scope.json for unproved groups and native entry points.',
   }
 }

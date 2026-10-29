@@ -58,10 +58,10 @@ function checkStages(tasks, scripts) {
 /** Turbo replaces generic tasks with package overrides, so omitted hash fields silently lose checks. */
 function checkOverrides(tasks) {
   for (const [name, task] of Object.entries(tasks)) {
-    if (!/^@vivid\/[\w-]+#(lint|typecheck|test)$/u.test(name)) continue
+    if (!/^@vivid\/[\w-]+#(lint|typecheck|test|build)$/u.test(name)) continue
     const generic = tasks[name.slice(name.indexOf('#') + 1)]
     assert.notEqual(generic, undefined, `turbo.json: declare the generic task for ${name}`)
-    for (const field of ['inputs', 'outputs'])
+    for (const field of ['inputs', 'outputs', 'env', 'passThroughEnv'])
       if (generic[field] !== undefined)
         assert.deepEqual(task[field], generic[field], `turbo.json: ${name} must repeat ${field}`)
     for (const dependency of generic.dependsOn ?? [])
@@ -97,7 +97,7 @@ function checkTestEnvironment(tasks) {
 /** Shipping overrides keep the production hash while excluding source-map upload authority. */
 function checkBuild(tasks) {
   const web = read(Turbo, '../apps/web/turbo.json').tasks.build
-  for (const task of [tasks['@vivid/agent-runtime#build'], web]) {
+  for (const task of [web]) {
     for (const field of ['inputs', 'outputs', 'passThroughEnv'])
       assert.deepEqual(
         task[field],
@@ -135,4 +135,11 @@ checkOverrides(tasks)
 checkTestEnvironment(tasks)
 checkBuild(tasks)
 checkWorkflow()
+// The runtime library and its native cell entry both participate in the generic checks.
+const runtime = read(Manifest, '../packages/agent/runtime/package.json')
+for (const task of ['types', 'typecheck', 'lint', 'test'])
+  assert.notEqual(runtime.scripts[task], undefined, `runtime: missing gate task ${task}`)
+const cells = read(Manifest, '../apps/cells/package.json')
+for (const task of ['build', 'typecheck', 'lint'])
+  assert.notEqual(cells.scripts[task], undefined, `cells: missing gate task ${task}`)
 console.log('Task policy passed')

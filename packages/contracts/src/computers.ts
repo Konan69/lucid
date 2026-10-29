@@ -16,7 +16,7 @@ export const ComputerScreen = Schema.TaggedUnion({
 export type ComputerScreen = typeof ComputerScreen.Type
 
 /** The viewer always rechecks the signed-in Person; no provider URL, token or owner selector
- * travels in a Thread tool receipt. Flue's enclosing submission supplies its Thread/Run linkage.
+ * travels in a Thread tool receipt. The enclosing submission supplies its Thread/Run linkage.
  */
 export const computerScreenAddress = '/api/computer/screen/websockify'
 export const ComputerSession = Schema.Struct({

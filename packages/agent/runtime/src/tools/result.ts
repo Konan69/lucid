@@ -16,7 +16,12 @@ import type * as RpcClientError from 'effect/rpc/RpcClientError'
 import { modelText } from './views.ts'
 import type { NameMissing, NameAmbiguous } from './names.ts'
 import type { NobodyToActFor } from '../client.ts'
-import type { NoteMissing, NotesUnavailable, NotesAtCapacity } from '../notes.ts'
+import type {
+  MemoryConflict,
+  MemoryMissing,
+  MemoryUnavailable,
+  MemorySearchInvalid,
+} from '../memory.ts'
 
 export interface ToolResult {
   readonly output: Schema.Json
@@ -31,9 +36,10 @@ export type ToolFailure =
   | NameAmbiguous
   | RpcFailure
   | NobodyToActFor
-  | NoteMissing
-  | NotesUnavailable
-  | NotesAtCapacity
+  | MemoryConflict
+  | MemoryMissing
+  | MemoryUnavailable
+  | MemorySearchInvalid
   | RpcClientError.RpcClientError
   | Config.ConfigError
 
@@ -42,15 +48,20 @@ interface BoundedOutput {
   readonly truncated: boolean
 }
 
+/** Existing model-visible text budget; memory reads page to this limit instead of limiting storage. */
+export const TOOL_TEXT_LIMIT = 4000
+/** Existing list output budget; retrieval pages must fit without losing their continuation. */
+export const TOOL_LIST_LIMIT = 25
+
 /** Each nested list and text is bounded; its containing object records any lost content. */
 function bounded(value: Schema.Json): BoundedOutput {
   if (Predicate.isString(value))
-    return { value: value.slice(0, 4000), truncated: value.length > 4000 }
+    return { value: value.slice(0, TOOL_TEXT_LIMIT), truncated: value.length > TOOL_TEXT_LIMIT }
   if (isList(value)) {
-    const items = value.slice(0, 25).map(bounded)
+    const items = value.slice(0, TOOL_LIST_LIMIT).map(bounded)
     return {
       value: items.map((item) => item.value),
-      truncated: value.length > 25 || items.some((item) => item.truncated),
+      truncated: value.length > TOOL_LIST_LIMIT || items.some((item) => item.truncated),
     }
   }
   if (!isObject(value)) return { value, truncated: false }
@@ -131,7 +142,7 @@ const session = Result.getOrThrow(
   ),
 )
 
-/** Only a successful Computer operation proves an active session. Flue's enclosing submission
+/** Only a successful Computer operation proves an active session. Pi's enclosing submission
  * identifies the Thread/Run; the receipt adds no owner handle or provider authority. The relay
  * checks the viewer's own cookie again, including when this receipt is read in a shared Thread.
  */
@@ -182,17 +193,21 @@ export const settle = Effect.fn('Tools.settle')(function* (
         failure('Vivid cannot reach its server right now; try again in a moment.'),
       ConfigError: () => failure('Vivid cannot reach its server right now; try again in a moment.'),
       NobodyToActFor: () => failure('There is no person behind this message to act for.'),
-      NoteMissing: ({ file }) =>
+      MemoryConflict: ({ address, actual }) =>
         failure(
-          `You have no note called ${file}; use a file name from the list of what you remember.`,
+          `The ${address.layer}/${address.file} revision changed to ${actual}. Read it before replacing or retracting it.`,
         ),
-      NotesAtCapacity: () =>
+      MemoryMissing: ({ address, revision }) =>
         failure(
-          'Your notes are busy right now; try again in a moment, and do not claim it is saved.',
+          `You have no entry at ${address.layer}/${address.file}. Its current revision is ${revision}; use this revision only if intentionally creating it.`,
         ),
-      NotesUnavailable: () =>
+      MemoryUnavailable: () =>
         failure(
-          'Your notes cannot be read or changed right now; say so, and do not claim it is saved.',
+          'Your memory cannot be read or changed right now; say so, and do not claim it is saved.',
+        ),
+      MemorySearchInvalid: () =>
+        failure(
+          'The memory search expression is invalid. Use FTS5 words, quoted phrases or prefix* and correct any unmatched quotes.',
         ),
       NotFound: () => failure('It does not exist or the person cannot see it.'),
       Forbidden: () => failure('The person is not allowed to do that here.'),

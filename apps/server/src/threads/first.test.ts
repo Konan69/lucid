@@ -27,10 +27,8 @@ import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { silentChangesLayer } from '../live/changes.ts'
-import { silentLearningLayer } from '../memory/testing.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { Runtime, runtimeLayer } from '../runtime/client.ts'
-import { submissionId } from '../runtime/identity.ts'
 import { Conversation } from './conversation.ts'
 import { conversationLayer } from './delivery.ts'
 import { threadHandlers } from './handlers.ts'
@@ -122,14 +120,16 @@ const harness = Effect.fn('FirstThread.test.harness')(function* () {
       yield* Ref.update(deliveries, (all) => [...all, delivery])
       // A missing receipt exercises the production RuntimeUnavailable path after reservation.
       if (yield* Ref.getAndSet(refuseAdmission, false))
-        return HttpClientResponse.fromWeb(request, new Response('{}', { status: 503 }))
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response('{"error":"InvalidRequest"}', { status: 400 }),
+        )
       return HttpClientResponse.fromWeb(
         request,
         new Response(
           JSON.stringify({
-            submissionId: submissionId(delivery.threadId, delivery.idempotencyKey),
-            offset: '1',
-            uid: 'first-test',
+            submissionId: delivery.turn,
+            repeated: false,
           }),
           { headers: { 'content-type': 'application/json' }, status: 202 },
         ),
@@ -140,6 +140,7 @@ const harness = Effect.fn('FirstThread.test.harness')(function* () {
     runtimeLayer.pipe(
       Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
       Layer.provide(testConfigLayer),
+      Layer.provide(Layer.succeed(Database, yield* Database)),
     ),
   )
   const transport = yield* Runtime.pipe(Effect.provideContext(transportContext))
@@ -159,7 +160,6 @@ const harness = Effect.fn('FirstThread.test.harness')(function* () {
     Layer.succeed(RunStore, controlledRuns),
     Layer.succeed(Runtime, runtime),
     silentChangesLayer,
-    silentLearningLayer,
     Layer.mock(ThreadTitles, { afterRun: () => Effect.void }),
     Layer.succeed(Notifier, Notifier.of({ notify: () => Effect.void })),
     Layer.mock(Presence, { watching: () => Effect.succeed(true) }),
@@ -213,7 +213,7 @@ layer(stores)((it) => {
       }).pipe(Effect.scoped),
     )
 
-    it.effect('the no-Run guard retains a failed unadmitted reservation after a Flue refusal', () =>
+    it.effect('the no-Run guard keeps a failed unadmitted reservation after runtime refusal', () =>
       Effect.gen(function* () {
         const test = yield* harness()
         yield* Ref.set(test.refuseAdmission, true)

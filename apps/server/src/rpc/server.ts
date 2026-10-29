@@ -19,9 +19,11 @@ import { feedHandlers } from '../feed/handlers.ts'
 import { feedStoreLayer } from '../feed/store.ts'
 import { inputHandlers } from '../inputs/handlers.ts'
 import { libraryHandlers } from '../library/handlers.ts'
-import { memoryHandlers } from '../memory/handlers.ts'
+import { memoryHandlers } from '../runtime/handlers.ts'
 import { notificationHandlers } from '../notifications/handlers.ts'
 import { projectHandlers } from '../projects/handlers.ts'
+import { owedHandlers } from '../owed/handlers.ts'
+import { todoHandlers } from '../todos/handlers.ts'
 import { pushHandlers } from '../push/handlers.ts'
 import { ruleHandlers } from '../rules/handlers.ts'
 import { searchHandlers } from '../search/handlers.ts'
@@ -29,6 +31,7 @@ import { settingsHandlers } from '../settings/handlers.ts'
 import { skillHandlers } from '../skills/handlers.ts'
 import { threadHandlers } from '../threads/handlers.ts'
 import { watchHandlers } from '../watches/handlers.ts'
+import { requestProtocolLayer } from './requests.ts'
 import { liveProtocolLayer } from './link.ts'
 
 /**
@@ -51,6 +54,8 @@ export const rpcHandlersLayer = VividRpc.toLayer({
   ...notificationHandlers,
   ...pushHandlers,
   ...projectHandlers,
+  ...owedHandlers,
+  ...todoHandlers,
   ...libraryHandlers,
   ...connectionHandlers,
   ...draftHandlers,
@@ -77,11 +82,10 @@ const liveLayer = RpcServer.layer(VividRpc).pipe(
  * The same calls over plain HTTP, for callers that want one answer and no socket: the runtime's
  * tools, scripts, and a client whose socket is down.
  */
-const requestLayer = RpcServer.layerHttp({
-  group: VividRpc,
-  path: '/api/rpc',
-  protocol: 'http',
-}).pipe(Layer.provide(RpcSerialization.layerNdjson))
+const requestLayer = RpcServer.layer(VividRpc).pipe(
+  Layer.provide(requestProtocolLayer),
+  Layer.provide(RpcSerialization.layerNdjson),
+)
 
 export const rpcServerLayer = Layer.mergeAll(liveLayer, requestLayer).pipe(
   Layer.provide(rpcHandlersLayer),

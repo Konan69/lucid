@@ -1,5 +1,6 @@
 import { Machine } from '@typeonce/effect-machine'
 import { AtomMachine } from '@typeonce/effect-machine/reactivity'
+import { PictureMediaType } from '@vivid/contracts'
 import { Context, Effect, type Layer, Option, Schema } from 'effect'
 import { Atom } from 'effect/reactivity'
 
@@ -27,10 +28,13 @@ export const Chosen = Schema.Struct({
 })
 export interface Chosen extends Schema.Schema.Type<typeof Chosen> {}
 
-/** A picture as a message carries it: its bytes in base64 and what kind of image they are. */
+/**
+ * A picture as a message carries it (`MessageAttachment`, `@vivid/contracts`): its bytes in
+ * base64 and which of the kinds of image a message can carry they are.
+ */
 export const Picture = Schema.Struct({
   type: Schema.Literal('image'),
-  mimeType: Schema.String,
+  mimeType: PictureMediaType,
   data: Schema.String,
   filename: Schema.String,
 })

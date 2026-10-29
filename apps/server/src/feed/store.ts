@@ -4,6 +4,8 @@ import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import {
+  FeedDisplayInvalid,
+  FeedPost,
   NotFound,
   PostOutcome,
   type MarkFeedCardRequest,
@@ -12,11 +14,22 @@ import {
   type ThreadId,
   type FeedCardId,
 } from '@vivid/contracts'
+import { stretches } from '@vivid/contracts/display'
 import { Database, returned } from '../database/client.ts'
 import { announce, Topic } from '../live/changes.ts'
 import { readableThread } from '../threads/access.ts'
 import { cardIdOf, readFeed } from './read.ts'
 import { feedCards } from './tables.ts'
+
+/**
+ * Whether a display draws: OpenUI finds exactly one whole program in it, found the way drawing
+ * finds one (`stretches`, as `code/source.ts` reads a reply). A bare `Card([...])` with no
+ * `root =` is words to it, so the card would show an empty band.
+ */
+const draws = (display: string) => {
+  const [only, ...rest] = stretches(display)
+  return rest.length === 0 && only !== undefined && only.kind === 'display' && only.whole
+}
 
 /** Every Feed write moves only the Person's Feed, so open Thread lists do not reload for it. */
 const feedTopic = (person: PersonId) => [Topic.part('feed')(Topic.person(person))]
@@ -52,8 +65,12 @@ const makeStore = (database: Database['Service']) => {
     readonly thread: ThreadId
     readonly request: typeof PostRequest.Type
   }) {
+    // Every caller posts through here, so a display that draws nothing never reaches a card.
+    if (FeedPost.guards.Drawn(input.request) && !draws(input.request.display))
+      return yield* new FeedDisplayInvalid({ reason: 'NoRoot' })
     const now = yield* Clock.currentTimeMillis
     const id = cardIdOf(input.thread)
+    const columns = columnsOf(input.request)
     return yield* database.transaction((tx) =>
       Effect.gen(function* () {
         const rows = yield* tx
@@ -62,10 +79,7 @@ const makeStore = (database: Database['Service']) => {
             id,
             personId: input.person,
             threadId: input.thread,
-            title: input.request.title,
-            words: input.request.words,
-            display: input.request.display,
-            actions: input.request.actions,
+            ...columns,
             state: 'new',
             postedAt: now,
             updatedAt: now,
@@ -73,10 +87,7 @@ const makeStore = (database: Database['Service']) => {
           .onConflictDoUpdate({
             target: feedCards.threadId,
             set: {
-              title: input.request.title,
-              words: input.request.words,
-              display: input.request.display,
-              actions: input.request.actions,
+              ...columns,
               state: 'new',
               updatedAt: now,
             },
@@ -133,3 +144,13 @@ export const feedStoreLayer = Layer.effect(
     return FeedStore.of(makeStore(yield* Database))
   }),
 )
+
+/**
+ * A card's columns: a drawn card keeps no words or buttons, a said one no drawing. The read side
+ * (`postOf` in `read.ts`) tells them apart by the drawing, so each column holds only its own case.
+ */
+const columnsOf = (post: typeof PostRequest.Type) => {
+  if (FeedPost.guards.Drawn(post))
+    return { title: post.title, words: null, display: post.display, actions: [] }
+  return { title: post.title, words: post.words, display: null, actions: post.actions }
+}

@@ -17,8 +17,8 @@ Open a new desktop installation. Enter the server address and choose Connect. Ch
 Run on the selected devbox after normal Launch and Doctor. Additional prerequisites: Xvfb, xdg-open, the pinned Electron binary and its Linux libraries, and Chrome. If dependency installation restored Electron without its binary, run `node apps/desktop/node_modules/electron/install.js`. No physical display is used. Select a usable shipped model explicitly at Launch when the default provider cannot authenticate; for example, `VIVID_VERIFY_MODEL=openrouter/z-ai/glm-5.3-flash`. A provider rejection remains blocked, never verified.
 
 ```sh
-.agents/skills/verify-vivid/verify desktop flue-<id>
-.agents/skills/verify-vivid/verify cleanup flue-<id>
+.agents/skills/verify-vivid/verify desktop pi-<id>
+.agents/skills/verify-vivid/verify cleanup pi-<id>
 ```
 
 Use a new Launch for each repetition. The command runs the shipped desktop bundler with scratch outputs and the web assets Launch built. Only output locations and module resolution change. The Windows Computer release download is omitted: Linux cannot execute those binaries. It starts Xvfb with an allocated display, the actual app entry, and private app/default-browser profiles. The OS opener is xdg-open with a run-owned Chrome default. CDP drives mouse/text input and reads DOM and the public pages subscription. Main, the Device, browser executor and auth session are real.

@@ -1,16 +1,16 @@
-import type { FlueConversationMessage } from '@flue/sdk'
-import { PersonId, ThreadId } from '@vivid/contracts'
+import { ConversationMessage, PersonId, ThreadId } from '@vivid/contracts'
+import { conversationIn, isLive, LiveState, type Following } from '@vivid/state'
 import { Option, Record, Schema } from 'effect'
 
 /**
  * What was last said in a Thread, kept on the phone so the Thread is drawn with its words on the
  * first frame.
  *
- * A Thread's conversation is Flue's: its history is one request, begun when the screen that
- * reads it has been drawn. So every opening of a Thread, at launch and from the list, drew grey
- * rows first and the words a round trip later, and asked for the whole history again (156 KB,
- * three times in forty seconds, in production's log of one phone on 10 October 2026). To the
- * Person that is the app loading something it was showing a moment ago.
+ * A Thread's conversation arrives whole once the screen that reads it has subscribed to it, which
+ * is after that screen has been drawn. So every opening of a Thread, at launch and from the list,
+ * drew grey rows first and the words a round trip later, and asked for the whole history again
+ * (156 KB, three times in forty seconds, in production's log of one phone on 10 October 2026).
+ * To the Person that is the app loading something it was showing a moment ago.
  *
  * The web keeps a Thread's conversation open in memory after its screen closes
  * (`apps/web/src/data/conversation.ts`). A phone cannot: it suspends the app and ends it when it
@@ -28,77 +28,9 @@ export const TAIL = 40
 /** How many Threads are kept: the ones opened most recently. */
 export const THREADS = 8
 
-const Progress = Schema.Literals(['streaming', 'done'] as const)
-
-/**
- * One part of a message, as Flue's `FlueConversationPart` has it (`@flue/sdk` 's
- * `index.d.mts`). It is written out here because the SDK publishes the type and no decoder, and
- * text read back from a file is unknown until it has been decoded.
- */
-const Part = Schema.Union([
-  Schema.Struct({ type: Schema.Literal('text'), text: Schema.String, state: Progress }),
-  Schema.Struct({ type: Schema.Literal('reasoning'), text: Schema.String, state: Progress }),
-  Schema.Struct({
-    type: Schema.Literal('file'),
-    mediaType: Schema.String,
-    id: Schema.optional(Schema.String),
-    size: Schema.optional(Schema.Finite),
-    url: Schema.optional(Schema.String),
-    filename: Schema.optional(Schema.String),
-  }),
-  Schema.Struct({
-    type: Schema.Literal('dynamic-tool'),
-    toolName: Schema.String,
-    toolCallId: Schema.String,
-    state: Schema.Literal('input-available'),
-    input: Schema.Unknown,
-  }),
-  Schema.Struct({
-    type: Schema.Literal('dynamic-tool'),
-    toolName: Schema.String,
-    toolCallId: Schema.String,
-    state: Schema.Literal('output-available'),
-    input: Schema.Unknown,
-    output: Schema.Unknown,
-    durationMs: Schema.optional(Schema.Finite),
-  }),
-  Schema.Struct({
-    type: Schema.Literal('dynamic-tool'),
-    toolName: Schema.String,
-    toolCallId: Schema.String,
-    state: Schema.Literal('output-error'),
-    input: Schema.Unknown,
-    errorText: Schema.String,
-    durationMs: Schema.optional(Schema.Finite),
-  }),
-  Schema.Struct({ type: Schema.TemplateLiteral(['data-', Schema.String]), data: Schema.Unknown }),
-])
-
-/** One message, as Flue's `FlueConversationMessage` has it. */
-const Message = Schema.Struct({
-  id: Schema.String,
-  role: Schema.Literals(['user', 'assistant', 'system'] as const),
-  purpose: Schema.Literals(['user', 'assistant', 'dispatch', 'advisory'] as const),
-  display: Schema.Literals(['visible', 'hidden', 'diagnostic'] as const),
-  submissionId: Schema.optional(Schema.String),
-  turnId: Schema.optional(Schema.String),
-  signal: Schema.optional(
-    Schema.Struct({
-      tagName: Schema.optional(Schema.String),
-      attributes: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-    }),
-  ),
-  settlement: Schema.optional(
-    Schema.Struct({ outcome: Schema.Literals(['failed', 'aborted'] as const) }),
-  ),
-  timestamp: Schema.optional(Schema.String),
-  parts: Schema.mutable(Schema.Array(Part)),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-})
-
 /**
  * One Thread's kept words, the submissions among them that had ended (`settled`, the ids of
- * Flue's settlements, whatever the outcome), and when they were kept, which orders the Threads.
+ * runtime settlements, whatever the outcome), and when they were kept, which orders the Threads.
  * The words and the endings are one reading: a reply drawn without its ending would show its
  * displays as still arriving until the conversation is read again.
  *
@@ -108,7 +40,7 @@ const Message = Schema.Struct({
  */
 const Said = Schema.Struct({
   at: Schema.Finite,
-  messages: Schema.Array(Message),
+  messages: Schema.Array(ConversationMessage),
   settled: Schema.Array(Schema.String),
 })
 
@@ -130,9 +62,9 @@ export const decodeHeard = Schema.decodeUnknownOption(HeardText)
 /** The file's text for what is kept. */
 export const encodeHeard = Schema.encodeOption(HeardText)
 
-/** A conversation as Flue has it: what was said, and which submissions have ended. */
+/** A conversation as the runtime has it: what was said, and which submissions have ended. */
 export interface Conversation {
-  readonly messages: ReadonlyArray<FlueConversationMessage>
+  readonly messages: ReadonlyArray<ConversationMessage>
   readonly settlements: ReadonlyArray<{ readonly submissionId: string }>
 }
 
@@ -141,12 +73,12 @@ export interface Conversation {
  * which submissions among them had ended. Kept, written and read back as one pair.
  */
 export interface Kept {
-  readonly messages: ReadonlyArray<FlueConversationMessage>
+  readonly messages: ReadonlyArray<ConversationMessage>
   readonly settled: ReadonlyArray<string>
 }
 
 /** Whether a message is still being written: some of its words are still arriving. */
-const arriving = (message: FlueConversationMessage) =>
+const arriving = (message: ConversationMessage) =>
   message.parts.some(
     (part) => (part.type === 'text' || part.type === 'reasoning') && part.state === 'streaming',
   )
@@ -156,8 +88,8 @@ const arriving = (message: FlueConversationMessage) =>
  * still saying. A half-written answer kept and drawn later would look like Vivid working when it
  * is not.
  *
- * A message of a submission is whole only once Flue has settled that submission, whatever the
- * outcome: Flue closes a text part when a step begins, so a reply with every part finished can
+ * A message of a submission is whole only once the runtime has settled that submission, whatever the
+ * outcome: the runtime closes a text part when a step begins, so a reply with every part finished can
  * still be half a reply, and a failed or stopped reply that has ended is as finished as a
  * completed one. Each message is asked about its own submission, not the last one's: input queued
  * behind a reply still being written ends the conversation in a submission of its own, and the
@@ -167,7 +99,7 @@ const arriving = (message: FlueConversationMessage) =>
  */
 export const settledOf = ({ messages, settlements }: Conversation): Kept => {
   const ended = new Set(settlements.map((settlement) => settlement.submissionId))
-  const said = (message: FlueConversationMessage) => {
+  const said = (message: ConversationMessage) => {
     if (message.role === 'user') return true
     if (message.submissionId === undefined) return !arriving(message)
     return ended.has(message.submissionId)
@@ -189,8 +121,8 @@ const sameWhose = (one: Whose, other: Whose) =>
 /**
  * What was last said in a Thread and which of its replies had ended, when it is kept and is this
  * Person's on this server. The kept lists are handed out as they stand, so a screen is given the
- * same lists until something new is kept. A decoded message is Flue's message and nothing less:
- * typecheck fails here when the SDK's type gains something the schema above does not have, which
+ * same lists until something new is kept. A decoded message satisfies the shared wire contract:
+ * typecheck fails here when that contract gains something the schema above does not have, which
  * is when it must be read again.
  */
 export const heardAt = (
@@ -223,4 +155,28 @@ export const withHeard = (
     .sort(([, one], [, other]) => other.at - one.at)
     .slice(0, THREADS)
   return { whose, threads: Record.fromEntries(newest) }
+}
+
+/** Draw words and endings from one reading, withholding device history after a server refusal. */
+export const drawnFrom = (reading: LiveState<Following>, kept: Option.Option<Kept>) => {
+  if (LiveState.$is('Failed')(reading))
+    return { messages: [], settled: [], ready: false, live: false }
+  return Option.match(conversationIn(reading), {
+    onSome: (state) => ({
+      messages: state.messages,
+      settled: state.settlements.map((ended) => ended.submissionId),
+      ready: true,
+      live: isLive(reading),
+    }),
+    onNone: () =>
+      Option.match(kept, {
+        onNone: () => ({ messages: [], settled: [], ready: false, live: false }),
+        onSome: (saved) => ({
+          messages: saved.messages,
+          settled: saved.settled,
+          ready: true,
+          live: false,
+        }),
+      }),
+  })
 }

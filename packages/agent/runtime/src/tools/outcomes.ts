@@ -149,7 +149,7 @@ export function browseOutcome(outcome: BrowseOutcome): ToolResult {
   })
 }
 
-/** Picture bytes use Flue's image content, never bounded JSON text or an invented file URL. */
+/** Picture bytes use image content rather than bounded JSON text or invented URLs. */
 export function desktopOutcome(outcome: DesktopOutcome): ToolResult {
   return DesktopOutcome.match(outcome, {
     Completed: ({ view }) => ({

@@ -6,7 +6,7 @@ import { ThreadStore } from './store.ts'
 
 /**
  * Only the transaction's creator admits a Run. Its constant key belongs to this unique Thread;
- * Conversation persists Run attribution and Flue keeps all conversation words. Neither a
+ * Conversation persists Run attribution and the runtime keeps all conversation words. Neither a
  * repeated call nor an older Person's arrival submits a message or a signal.
  */
 export const openFirstThread = Effect.fn('Threads.openFirst')(function* (actor: Actor) {

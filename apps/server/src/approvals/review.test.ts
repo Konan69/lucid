@@ -7,14 +7,7 @@ import { Runtime } from '../runtime/client.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
 import { Review } from './policy.ts'
 import { Reviewer, reviewerLayer } from './review.ts'
-import {
-  connectionAction,
-  delivery,
-  fixture,
-  history,
-  recordRuns,
-  storeServices,
-} from './testing.ts'
+import { delivery, fixture, history, recordRuns, storeServices } from './testing.ts'
 
 /** A hand-answered history or decision boundary establishes entry before the deadline moves. */
 const stalled = (
@@ -66,7 +59,7 @@ layer(testDatabaseLayer)((it) => {
               const context = yield* Layer.build(stalled(test.personalId, entered, phase))
               return yield* (yield* Reviewer.pipe(Effect.provide(context))).review(
                 test.vivid,
-                connectionAction,
+                test.connectionAction,
               )
             })
             const pending = yield* review().pipe(Effect.forkChild)

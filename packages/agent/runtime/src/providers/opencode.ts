@@ -5,8 +5,7 @@ import {
   type StreamOptions,
 } from '@earendil-works/pi-ai'
 import { Option } from 'effect'
-import { setProvider } from '@flue/runtime'
-import { budgeted } from './budget.ts'
+import { witnessed } from './budget.ts'
 
 /**
  * Vivid's model provider: OpenCode Go, the subscription gateway to open models
@@ -75,9 +74,9 @@ const forSession = <Given extends Sessioned>(options: Option.Option<Given>) =>
 
 const requests: ProviderStreams = {
   stream: (model, context, options) =>
-    budgeted.stream(model, context, forSession(Option.fromUndefinedOr(options))),
+    witnessed.stream(model, context, forSession(Option.fromUndefinedOr(options))),
   streamSimple: (model, context, options) =>
-    budgeted.streamSimple(model, context, forSession(Option.fromUndefinedOr(options))),
+    witnessed.streamSimple(model, context, forSession(Option.fromUndefinedOr(options))),
 }
 
 /** The same production provider is exercised through its public streaming seam in tests. */
@@ -89,5 +88,3 @@ export const provider = createProvider({
   models: [glm('glm-5.3-flash', 'GLM 5.3 Flash'), glm('glm-5.3', 'GLM 5.3')],
   api: requests,
 })
-
-setProvider(provider)

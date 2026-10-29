@@ -1,0 +1,23 @@
+{
+  "name": "@vivid/cells",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "deploy": "node scripts/build.mjs deploy",
+    "typecheck": "node ../../scripts/types.mjs tsconfig.json",
+    "lint": "node ../../scripts/lint.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "catalog:",
+    "@earendil-works/pi-durable": "catalog:",
+    "@vivid/agent-runtime": "workspace:*",
+    "@vivid/contracts": "workspace:*",
+    "@vivid/skills": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "esbuild": "catalog:"
+  }
+}

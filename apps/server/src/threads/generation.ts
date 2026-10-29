@@ -6,8 +6,8 @@ import {
   ThreadTitleOutputInvalid,
 } from '@vivid/contracts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
-import { readConversationHistory, textOf } from '../memory/history.ts'
-import { MemoryModel } from '../memory/model.ts'
+import { readConversationHistory, textOf } from '../runtime/history.ts'
+import { TitleModel } from './model.ts'
 import { Runtime } from '../runtime/client.ts'
 import { findThread, requireThread, type StoredThread } from './access.ts'
 import { ThreadStore } from './store.ts'
@@ -44,15 +44,13 @@ export interface ThreadTitlesService {
   ) => Effect.Effect<string, TitleFailure | DatabaseInfrastructureError | NotFound>
 }
 
-/** Thread naming owns generation policy. The store owns guarded writes and publication; Flue and MemoryModel own I/O. */
+/** Thread naming owns generation policy. The store owns guarded writes and publication; the runtime and TitleModel own I/O. */
 export class ThreadTitles extends Context.Service<ThreadTitles, ThreadTitlesService>()(
   'vivid/ThreadTitles',
 ) {}
 
-/** T3 apps/server/src/orchestration/Layers/ProviderCommandReactor.ts#formatThreadTitleContext adapted to Flue purposes: scheduled/approval
- * dispatches are not Person messages. Shared Person messages are dispatches tagged message, and a
- * Person's answer to one of Vivid's questions is a dispatch tagged answer: in the Thread Vivid
- * opens itself those answers are the only Person words there are, so they must count. */
+/** T3's formatThreadTitleContext adapted to conversation purposes. Routine and approval
+ * dispatches are not Person messages. Shared messages and answers to Vivid's questions are. */
 function titleMessages(
   history: Effect.Success<ReturnType<typeof readConversationHistory>>,
 ): ReadonlyArray<TitleMessage> {
@@ -76,13 +74,14 @@ export const threadTitlesLayer = Layer.effect(
   Effect.gen(function* () {
     const database = yield* Database
     const runtime = yield* Runtime
-    const model = yield* MemoryModel
+    const model = yield* TitleModel
     const threads = yield* ThreadStore
     const withDatabase = Effect.provideService(Database, database)
 
     /** History failures never fall back to a partial or invented conversation. */
     const contents = Effect.fn('ThreadTitles.contents')(function* (thread: ThreadId) {
       const history = yield* readConversationHistory(runtime, thread).pipe(
+        withDatabase,
         Effect.scoped,
         Effect.timeout('5 seconds'),
         Effect.mapError(() => ThreadTitleHistoryUnavailable.make({ thread })),
@@ -90,7 +89,7 @@ export const threadTitlesLayer = Layer.effect(
       return titleMessages(history)
     })
 
-    /** Share memory's provider/schema protocol; invalid JSON or extra keys are a distinct failure. */
+    /** Use the title provider/schema protocol; invalid JSON or extra keys are a distinct failure. */
     const generate = Effect.fn('ThreadTitles.generate')(function* (
       thread: ThreadId,
       message: string,

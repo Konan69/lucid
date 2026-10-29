@@ -5,20 +5,21 @@ import { AppState, type View } from 'react-native'
 /**
  * Coming back to the app.
  *
- * A phone suspends an app it is not showing, and a conversation's stream does not survive that.
- * The live queries reconnect on their own (`@vivid/state`), but a conversation is Flue's stream
- * and has to be told to catch up. This is the one subscription that does it, held for the life of
+ * A phone suspends an app it is not showing, and the app's socket does not survive that. The live
+ * queries open again on their own once the socket is found dead (`@vivid/state`), which can take
+ * a quarter of a minute; a conversation the Person has just come back to should not wait for
+ * that. This is the one subscription that has it asked for again at once, held for the life of
  * the app; a screen only says what to do while it is on screen.
  */
 
 const waiting = new Set<() => void>()
 
 /**
- * What each mounted screen does to catch its conversation up (`onCatchUp`). It is run when the app comes back
- * to the front and when the app's own socket reopens after a loss (`reconnected`): a network that
- * changed or a server that was replaced cuts Flue's stream as surely as a suspended app does, and
- * left alone the stream only notices after ninety silent seconds (`@flue/sdk` 2.2.2
- * `STALE_STREAM_TIMEOUT_MS`). The socket notices within fifteen (`@vivid/rpc` `layerLive`).
+ * What each mounted screen does to catch its conversation up (`onCatchUp`). It is run when the
+ * app comes back to the front and when the app's own socket reopens after a loss
+ * (`reconnected`): the conversation is subscribed to again, which begins with it whole
+ * (`conversations`, `@vivid/state`), instead of after the moment a lost link waits before it
+ * opens the next.
  */
 const catching = new Set<() => void>()
 
@@ -34,7 +35,7 @@ AppState.addEventListener('change', (state) => {
 
 /**
  * The app's socket opened again after it was lost. Every screen that follows a conversation
- * opens its stream again now, from where it stopped, instead of waiting out Flue's own timer.
+ * subscribes to it again now.
  */
 export const reconnected = () => {
   for (const wake of catching) wake()

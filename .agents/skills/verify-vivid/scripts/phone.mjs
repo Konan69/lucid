@@ -1,14 +1,21 @@
 import { Result } from 'effect'
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeOS from 'node:os'
+import * as NodeChildProcess from 'node:child_process'
 import * as NodeAssert from 'node:assert/strict'
-import { command, json, alive } from './process.mjs'
+import { command, json, identity, alive } from './process.mjs'
+import { adbPort, reachable } from './device.mjs'
 import { host } from './settings.mjs'
 import { control } from './socket.mjs'
 import { apk, phoneEnvironment, phoneOrigin } from './apk.mjs'
 import { phoneCleanup } from './phonecleanup.mjs'
-import { readAccount, readDevice, readState } from './phonewire.mjs'
-import { rpc } from './wire.mjs'
+import { stopCaptured } from './recovery.mjs'
+import { Device, readAccount, readDevice, readState } from './phonewire.mjs'
+import { rpc, history } from './wire.mjs'
+import { phoneUI } from './phoneui.mjs'
+import * as flows from './phoneflow.mjs'
+import { approval } from './phoneapproval.mjs'
+import { memory, settingsMemory, learning } from './phonememory.mjs'
 
 const cache = NodeOS.homedir() + '/.cache/vivid-android'
 const cli = [
@@ -16,66 +23,136 @@ const cli = [
   cache + '/tools/node_modules/agent-device/bin/agent-device.mjs',
 ]
 
-/** Re-snapshot before every interaction. Refs are selected from the current accessibility tree,
- * never remembered across a transition or guessed from screen coordinates. */
-async function target(run, label) {
-  await run(['wait', 'text', label, '60000'])
-  const snapshot = await run(['snapshot', '-i'])
-  const lines = snapshot
-    .split('\n')
-    .filter((line) => line.includes(label) && /@e\d+ \[(button|text-field)\]/u.test(line))
-  NodeAssert.equal(lines.length, 1, 'Expected one interactive ref for ' + label + '\n' + snapshot)
-  return lines[0].match(/@e\d+/u)[0]
-}
-
-/** The ordinary email controls authenticate the same disposable Person the public proof uses.
- * agent-device state stays private because its journal can include synthetic form values. */
-async function enter(state, run) {
+/** Authenticate through Android's email form using this run's synthetic Person. */
+async function enter(state, ui) {
   const account = Result.getOrThrow(
     readAccount(await NodeFSP.readFile(state.scratch + '/account.json', 'utf8')),
   )
-  await run(['press', await target(run, 'Log in')])
-  // Android's interactive snapshot names the input by its visible placeholder.
-  await run(['fill', await target(run, 'name@example.com'), account.email])
-  await run(['press', await target(run, 'Continue')])
-  await run(['fill', await target(run, 'Password'), account.password], [account.password])
-  await run(['press', await target(run, 'Sign in')])
-  await run(['wait', 'text', 'Open menu', '60000'])
+  await ui.run(['open', 'work.vivid.mobile', '--relaunch'])
+  await ui.press('Log in')
+  await ui.fill('name@example.com', account.email)
+  await ui.press('Continue')
+  await ui.fill('Password', account.password, [account.password])
+  await ui.press('Sign in')
+  await ui.visible('Open menu')
   return account
 }
 
-/** Idle Thread navigation isolates Android rendering and authentication from model behaviour.
- * A public CreateThread/GetThread receipt seeds and confirms the same Thread selected in the UI. */
-async function journey(state, run, directory) {
-  const id = crypto.randomUUID()
-  const title = 'Phone verification ' + state.run.slice(-8)
-  await rpc(state, 'CreateThread', { id, title, projectId: null }, directory, 'create-thread')
-  await run(['open', 'work.vivid.mobile', '--relaunch'])
-  const account = await enter(state, run)
-  await run(['press', await target(run, 'Open menu')])
-  await run(['wait', 'text', title, '60000'])
-  await run(['snapshot', '-i'])
-  await run(['screenshot', directory + '/threads.png'])
-  // The scroll container repeats descendant text; only its button grants an actionable ref.
-  // Settle waits for the drawer transition before the composer's background text can count.
-  await run(['press', await target(run, title), '--settle'])
-  await run(['wait', 'text', 'Message Vivid', '60000'])
-  const opened = await run(['snapshot', '-i'])
-  NodeAssert.ok(!opened.includes('"Close menu"'), 'The drawer must close after selection')
-  await run(['screenshot', directory + '/thread.png'])
-  const detail = await rpc(state, 'GetThread', { id }, directory, 'idle-thread')
+/** Idle navigation proves the actual phone's held BePresent, separately from model journeys. */
+async function thread(state, id, ui) {
+  const account = Result.getOrThrow(
+    readAccount(await NodeFSP.readFile(state.scratch + '/account.json', 'utf8')),
+  )
+  await ui.menu()
+  await ui.capture('threads')
+  await ui.visit(id)
+  await ui.capture('thread')
+  const detail = await rpc(state, 'GetThread', { id }, ui.directory, 'idle-thread')
   NodeAssert.equal(detail.thread.id, id)
-  NodeAssert.equal(detail.runs.length, 0, 'The idle journey must not start model work')
-  // Chat.Top deliberately omits the title. The real phone's held BePresent call proves which
-  // Thread is on top (data/live.ts presentIn), beyond merely tapping a correctly labelled row.
+  NodeAssert.equal(detail.runs.length, 0)
   NodeAssert.ok(detail.present.some((seen) => seen.person.id === account.person))
-  return { id, title }
+  await ui.menu()
+  await ui.press('Feed')
+  await ui.visible('Message Vivid')
+  await ui.capture('feed')
+}
+
+const recipes = {
+  thread,
+  send: flows.send,
+  tool: flows.tool,
+  replies: flows.replies,
+  question: flows.question,
+  approve: (state, id, ui) => approval(state, id, ui, true),
+  deny: (state, id, ui) => approval(state, id, ui, false),
+  stop: flows.stop,
+  picture: flows.picture,
+  document: flows.document,
+  memory,
+  'settings-memory': settingsMemory,
+  learning,
+  feed: flows.feed,
+  move: flows.move,
+}
+
+/** Each recipe gets its own evidence, even when an earlier recipe or native renderer fails. */
+async function journey(state, name, ui, native) {
+  let verdict
+  let id
+  try {
+    if (!(await reachable(native.device))) {
+      await json(ui.directory + '/verdict.json', {
+        verdict: 'blocked',
+        journey: name,
+        head: state.head,
+        run: state.run,
+        model: state.model,
+        reason: 'Captured emulator exited during an earlier journey',
+        evidence: ui.directory,
+      })
+      return { verdict: 'blocked', journey: name }
+    }
+    await ui.run(['open', 'work.vivid.mobile', '--foreground'])
+    if (name !== 'thread')
+      NodeAssert.equal(state.modelKind, 'real', 'Phone journey requires a real model')
+    id = await ui.create('Phone ' + name + ' ' + crypto.randomUUID().slice(0, 8))
+    await recipes[name](state, id, ui, native.adb)
+    verdict = { verdict: 'proved', thread: id }
+  } catch (error) {
+    verdict = { verdict: 'failed', thread: id, error: error.stack }
+    if (id) {
+      await rpc(state, 'GetThread', { id }, ui.directory, 'failed-thread').catch(() => {})
+      await history(state, id, ui.directory, 'failed-history').catch(() => {})
+    }
+    if (await reachable(native.device)) await ui.capture('failure').catch(() => {})
+    else await json(ui.directory + '/emulator-exited.json', native.device)
+  }
+  await json(ui.directory + '/verdict.json', {
+    ...verdict,
+    journey: name,
+    feature: 'features/phone.md',
+    head: state.head,
+    dirty: state.dirty,
+    tree: state.tree,
+    diffHash: state.diffHash,
+    model: state.model,
+    modelKind: state.modelKind,
+    alias: state.devbox,
+    hostKind: native.device._tag,
+    hostname: state.hostname,
+    run: state.run,
+    evidence: ui.directory,
+    claim: name === 'thread' ? 'idle native navigation; no model behaviour' : 'Android ' + name,
+  })
+  return verdict
+}
+
+/** A captured collector preserves guest logs before a renderer failure can remove the serial.
+ * Post-crash adb reads wait indefinitely, so cleanup stops this already-recording generation. */
+async function logcat(state, { adb, serial, env, directory }) {
+  const log = await NodeFSP.open(directory + '/logcat.log', 'a', 0o600)
+  try {
+    const collector = NodeChildProcess.spawn(
+      adb,
+      ['-s', serial, 'logcat', '-v', 'threadtime', '*:W', 'ReactNativeJS:V'],
+      { env, stdio: ['ignore', log.fd, log.fd], detached: true },
+    )
+    const recording = await identity(collector.pid)
+    await control(state, { action: 'capture', process: recording })
+    return recording
+  } finally {
+    await log.close()
+  }
 }
 
 /** One phone command owns the host lease until finally has closed its session and stopped the
  * captured emulator. A killed worker leaves acquisition receipts for verify cleanup. */
 export async function phone(state, feature) {
-  NodeAssert.equal(feature, 'thread', 'No phone recipe for ' + feature)
+  const chosen = feature === 'all' ? Object.keys(recipes) : [feature]
+  NodeAssert.ok(
+    chosen.every((name) => Object.hasOwn(recipes, name)),
+    'No phone recipe for ' + feature,
+  )
   await host()
   NodeAssert.equal(state.dirty, false, 'Phone APK proof requires a clean committed checkout')
   const directory = state.evidence + '/phone'
@@ -85,8 +162,8 @@ export async function phone(state, feature) {
   )
   NodeAssert.equal(device.hostname, state.hostname)
   NodeAssert.equal(device.alias, state.devbox)
-  NodeAssert.ok(await alive(device.emulator), 'Run verify android provision before phone')
-  NodeAssert.ok(await alive(device.adb), 'Owned adb is not alive')
+  NodeAssert.ok(await reachable(device), 'Run verify android provision or attach before phone')
+  if (Device.guards.devbox(device)) NodeAssert.ok(await alive(device.adb), 'Owned adb is not alive')
   const lease = cache + '/lease.json'
   const prior = await NodeFSP.stat(lease).catch((error) => {
     if (error.code === 'ENOENT') return null
@@ -103,13 +180,19 @@ export async function phone(state, feature) {
   await json(lease, receipt)
   await json(state.scratch + '/phone.json', receipt)
   await json(directory + '/receipt.json', receipt)
-  const env = { ...phoneEnvironment, AGENT_DEVICE_STATE_DIR: receipt.stateDir }
+  await NodeFSP.copyFile(cache + '/motion.json', directory + '/motion.json')
+  const env = {
+    ...phoneEnvironment,
+    ANDROID_ADB_SERVER_PORT: adbPort(device),
+    AGENT_DEVICE_STATE_DIR: receipt.stateDir,
+  }
   let count = 0
+  let logDirectory = directory
   const execute = (argv, redactions = []) =>
     command(argv, {
       env,
       redactions,
-      log: directory + '/' + String(++count).padStart(3, '0') + '.json',
+      log: logDirectory + '/' + String(++count).padStart(3, '0') + '.json',
       record: (process) => control(state, { action: 'capture', process }),
     })
   const run = (args, redactions) =>
@@ -127,16 +210,35 @@ export async function phone(state, feature) {
       redactions,
     )
   let verdict
+  let recording
   try {
     const artifact = await apk(state, (process) => control(state, { action: 'capture', process }))
     await json(directory + '/apk.json', artifact)
     const adb = device.sdk + '/platform-tools/adb'
-    await execute([adb, '-s', device.serial, 'install', '-r', artifact.file])
+    // apksigner 36 writes a v4 .idsig beside the APK, and adb then installs incrementally. On the
+    // PC's host-GPU emulator that install starts the app so slowly that Android kills it with
+    // "failed to complete startup" (r5, 29 October 2026); a streamed install starts in 29 s.
+    await execute([adb, '-s', device.serial, 'install', '--no-incremental', '-r', artifact.file])
     await execute([adb, '-s', device.serial, 'shell', 'pm', 'clear', 'work.vivid.mobile'])
     await execute([adb, '-s', device.serial, 'reverse', 'tcp:19278', 'tcp:' + state.ports.web])
     await execute([...cli, 'doctor', '--platform', 'android'])
-    const thread = await journey(state, run, directory)
-    verdict = { verdict: 'proved', thread, apk: artifact }
+    const adbRun = (args) => execute([adb, '-s', device.serial, ...args])
+    recording = await logcat(state, { adb, serial: device.serial, env, directory })
+    await enter(state, phoneUI(state, run, directory))
+    const journeys = []
+    for (const name of chosen) {
+      logDirectory = directory + '/' + name
+      await NodeFSP.mkdir(logDirectory, { recursive: true })
+      journeys.push(
+        await journey(state, name, phoneUI(state, run, logDirectory), { adb: adbRun, device }),
+      )
+    }
+    verdict = {
+      verdict: journeys.every((entry) => entry.verdict === 'proved') ? 'proved' : 'failed',
+      journeys,
+      apk: artifact,
+    }
+    if (verdict.verdict !== 'proved') process.exitCode = 1
   } catch (error) {
     verdict = { verdict: 'failed', error: error.stack }
     throw error
@@ -150,13 +252,19 @@ export async function phone(state, feature) {
       diffHash: state.diffHash,
       model: state.model,
       modelKind: state.modelKind,
-      claim: 'idle native navigation; no model behaviour',
+      claim:
+        feature === 'thread'
+          ? 'idle native navigation; no model behaviour'
+          : 'Android journeys; see per-journey verdicts',
       alias: state.devbox,
+      hostKind: device._tag,
       hostname: state.hostname,
       serial: device.serial,
       origin: phoneOrigin,
       evidence: directory,
     })
+    if (recording) await stopCaptured(recording, true)
+    if (await reachable(device)) await run(['close', 'work.vivid.mobile']).catch(() => {})
     await phoneCleanup(state)
   }
 }

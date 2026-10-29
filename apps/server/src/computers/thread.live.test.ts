@@ -30,11 +30,11 @@ const Typed = Schema.Struct({
 })
 
 const decodeInput = Schema.decodeUnknownEffect(Input)
-// Native Browse results with no picture project as their single JSON text block in Flue 2.2.2.
+// Browse results without a picture project as their single JSON text block.
 const decodeOutput = Schema.decodeUnknownEffect(Schema.fromJsonString(Output))
 const typedInput = Schema.decodeUnknownOption(Typed)
 
-/** Flue 2.2.2 keeps the PNG attachment ref beside native tool metadata in public output. */
+/** The expected screenshot receipt names its PNG attachment beside native tool metadata. */
 const DesktopReceipt = Schema.Tuple([
   Schema.Struct({
     type: Schema.Literal('text'),
@@ -63,11 +63,8 @@ const DesktopReceipt = Schema.Tuple([
 ])
 const decodeDesktop = Schema.decodeUnknownEffect(DesktopReceipt)
 
-/**
- * Fetch the native attachment through Flue's public, cookie-authenticated projection, not SQL
- * or a guessed canonical id. Size/digest prove these are the receipt's stored bytes; PNG header,
- * dimensions and terminal chunk prove a real full-size image accompanied successful metadata.
- */
+/** Fetch the receipt's attachment through the public, cookie-authenticated gateway.
+ * Size, digest and PNG structure prove the receipt names complete image bytes. */
 const desktopPicture = Effect.fn('ThreadProof.desktopPicture')(function* (
   fixture: ChainFixture,
   receipt: typeof DesktopReceipt.Type,

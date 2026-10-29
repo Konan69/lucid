@@ -4,7 +4,7 @@ Model requirement: needs a real model. Rehearsal proves plumbing only.
 
 ## Sub-features
 
-Vivid may end a reply with one to three short replies the Person can tap instead of typing (`suggest_replies` in `packages/agent/runtime/src/tools/follow.ts`). Flue stores the call in the conversation; the clients read it with `offeredReplies` in `packages/client/state/src/offered.ts` and draw it only under the newest reply while Vivid is not working. A tap sends the words as the Person's next message.
+Vivid may end a reply with one to three short replies the Person can tap instead of typing (`suggest_replies` in `packages/agent/runtime/src/tools/follow.ts`). Pi stores the call in the conversation; the clients read it with `offeredReplies` in `packages/client/state/src/offered.ts` and draw it only under the newest reply while Vivid is not working. A tap sends the words as the Person's next message.
 
 ## How to get to it (user POV)
 

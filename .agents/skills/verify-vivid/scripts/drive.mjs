@@ -1,17 +1,25 @@
+import { approve, changed, deny } from './approval.mjs'
+import { question as realQuestion } from './question.mjs'
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeAssert from 'node:assert/strict'
-import { chat, history, rpc, request, settled, json } from './wire.mjs'
+import { admit, chat, conversation, history, rpc, settled, json } from './wire.mjs'
 import { command } from './process.mjs'
+import { createRequire } from 'node:module'
 import { assertTable } from './table.mjs'
 import { devices } from './devices.mjs'
 import { reading } from './reading.mjs'
 import { settingsProof } from './settingsproof.mjs'
 import { watch } from './watch.mjs'
-import { notes } from './notes.mjs'
+import { memory } from './memory.mjs'
 import { feed } from './feed.mjs'
+import { owed } from './owed.mjs'
+import { todos } from './todos.mjs'
 import { offer } from './offer.mjs'
 import { discordProof, discordBlocked } from './discord.mjs'
 import { githubProof, githubBlocked } from './github.mjs'
+const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
+const { pictureAddress } = await import(web.resolve('@vivid/state'))
+
 export const features = [
   'first',
   'reload',
@@ -20,6 +28,7 @@ export const features = [
   'question',
   'approve',
   'deny',
+  'changed',
   'stop',
   'picture',
   'code',
@@ -27,14 +36,16 @@ export const features = [
   'watch',
   'library',
   'feed',
+  'owed',
+  'todos',
   'devices',
   'reading',
   'settings',
-  'notes',
+  'memory',
   'discord',
   'github',
 ]
-const png =
+export const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
 const words = (page) =>
   page.messages
@@ -70,7 +81,7 @@ async function rows(state, thread, directory) {
     await json(directory + '/' + table + '.json', JSON.parse(output))
   }
 }
-/** Main's default Thread is Flue. Capture its identity before the first Person message. */
+/** Capture the Thread identity before the first Person message. */
 async function thread(state, directory, title) {
   const id = crypto.randomUUID()
   await rpc(state, 'CreateThread', { id, title, projectId: null }, directory)
@@ -143,8 +154,80 @@ async function reload(state, id, directory) {
   const last = page.messages.filter((m) => m.role === 'assistant').at(-1)
   NodeAssert.match(words({ messages: [last] }), /amber-orchid/i)
 }
+/** A long ordinary reply supplies real streamed words to interrupt, without holding a tool.
+ * Pi's abort commits the partial and settles its submission; cancelling our observer does not
+ * stop work (Pi Durable 1.2/1.4 spec sections 2.2 and 5.4). An early answer fails this recipe. */
+export async function stop(state, id, directory, browser) {
+  NodeAssert.equal(state.modelKind, 'real', 'Stop requires a real model')
+  const phrase =
+    'Write a detailed 10000-word guide to planning a community garden, covering site selection, soil, irrigation, planting, maintenance and harvest. Write the guide directly in this reply as plain paragraphs. Do not create a document or ask questions.'
+  if (browser) {
+    await browser.capture('before')
+    await browser.run(['find', 'label', 'Message Vivid', 'fill', phrase])
+    await browser.run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
+  } else await admit(state, id, phrase, directory)
+  for await (const active of conversation(state, id, { directory, name: 'active-stream' })) {
+    NodeAssert.equal(active.settlements.length, 0, 'Run ended before Stop could be exercised')
+    if (
+      !active.working ||
+      !active.messages.some(
+        (message) =>
+          message.purpose === 'assistant' &&
+          message.parts.some(
+            (part) => part.type === 'text' && part.state === 'streaming' && part.text.trim(),
+          ),
+      )
+    )
+      continue
+    const detail = await rpc(state, 'GetThread', { id }, directory, 'active-thread')
+    NodeAssert.equal(detail.runs.length, 1)
+    const run = detail.runs[0]
+    NodeAssert.equal(run.state._tag, 'Working', 'Captured Run is already terminal')
+    NodeAssert.ok(run.submissionId, 'Active Run has no runtime submission')
+    const partial = words({
+      messages: active.messages.filter(
+        (message) => message.purpose === 'assistant' && message.submissionId === run.submissionId,
+      ),
+    })
+    NodeAssert.ok(partial.trim(), 'Streaming reply does not belong to the captured Run')
+    await json(directory + '/active.json', { run, page: active, partial })
+    if (browser) await browser.run(['find', 'role', 'button', 'click', '--name', 'Stop', '--exact'])
+    else await rpc(state, 'StopThread', { id }, directory)
+    const ended = await settled(state, id, 1, 'Stopped', directory)
+    NodeAssert.equal(ended.runs[0].id, run.id, 'Stop settled a different Run')
+    const page = await history(state, id, directory)
+    NodeAssert.equal(page.working, false, 'Conversation is still working after Stop')
+    NodeAssert.equal(page.queued, 0)
+    NodeAssert.deepEqual(page.settlements, [{ submissionId: run.submissionId, outcome: 'aborted' }])
+    NodeAssert.ok(
+      page.messages.every((message) => message.parts.every((part) => part.state !== 'streaming')),
+      'A reply part is still streaming after Stop',
+    )
+    NodeAssert.ok(
+      words({
+        messages: page.messages.filter((message) => message.purpose === 'assistant'),
+      }).startsWith(partial),
+      'Stop lost the streamed partial reply',
+    )
+    const reopened = await history(state, id, directory, 'reloaded-history')
+    NodeAssert.equal(reopened.working, false, 'Reload restarted the conversation')
+    NodeAssert.equal(reopened.queued, 0)
+    NodeAssert.deepEqual(reopened.settlements, page.settlements)
+    // Timing metadata is written after Pi settles; message identity and content are durable now.
+    NodeAssert.deepEqual(
+      reopened.messages.map((message) => ({ id: message.id, parts: message.parts })),
+      page.messages.map((message) => ({ id: message.id, parts: message.parts })),
+    )
+    const reloaded = await rpc(state, 'GetThread', { id }, directory, 'reloaded-thread')
+    NodeAssert.deepEqual(reloaded.runs, ended.runs, 'Reload changed or restarted the stopped Run')
+    await rows(state, id, directory)
+    return page
+  }
+  throw new Error('No active streamed reply to stop')
+}
 /** All three current question shapes are answered together through the Person RPC. */
 async function question(state, id, directory) {
+  if (state.modelKind === 'real') return realQuestion(state, id, directory)
   await chat(state, id, 'ask me', directory)
   const detail = await settled(state, id, 1, 'Completed', directory)
   NodeAssert.equal(detail.requests.length, 1)
@@ -200,7 +283,7 @@ async function document(state, id, directory) {
     directory,
     'revise',
   )
-  await completed(state, id, directory, 2)
+  const revision = await completed(state, id, directory, 2)
   const revised = await rpc(
     state,
     'ListArtifacts',
@@ -209,7 +292,30 @@ async function document(state, id, directory) {
     'revised-artifacts',
   )
   NodeAssert.equal(revised.artifacts[0].id, artifact.id)
-  NodeAssert.equal(revised.artifacts[0].version, 2)
+  // Vivid may revise more than once in one Run (29 October 2026: it added a comma, then restored
+  // the Person's wording, ending on version 3). Each new version must be one of that Run's own
+  // write_document receipts, so no version appears from anywhere else.
+  const latest = revised.artifacts[0].version
+  const writes = revision.page.messages
+    .filter(
+      (message) =>
+        message.role === 'assistant' &&
+        message.submissionId === revision.detail.runs[1].submissionId,
+    )
+    .flatMap((message) => message.parts)
+    .filter(
+      (part) =>
+        part.type === 'dynamic-tool' &&
+        part.toolName === 'write_document' &&
+        part.state === 'output-available' &&
+        part.output.changed === true,
+    )
+  NodeAssert.ok(latest >= 2, 'The revision made no new version')
+  NodeAssert.deepEqual(
+    writes.map((part) => part.output.version),
+    Array.from({ length: latest - 1 }, (_, index) => index + 2),
+    'Each new version must be a write_document receipt of the revision Run',
+  )
   await chat(
     state,
     id,
@@ -221,7 +327,10 @@ async function document(state, id, directory) {
   )
   const { page, detail } = await completed(state, id, directory, 3)
   const read = page.messages
-    .filter((message) => message.role === 'assistant' && message.submissionId === detail.runs[2].id)
+    .filter(
+      (message) =>
+        message.role === 'assistant' && message.submissionId === detail.runs[2].submissionId,
+    )
     .flatMap((message) => message.parts)
     .find(
       (part) =>
@@ -231,8 +340,8 @@ async function document(state, id, directory) {
     )
   NodeAssert.ok(read, 'Third Run did not execute read_document')
   NodeAssert.equal(read.output.ok, true)
-  NodeAssert.equal(read.output.version, 2)
-  NodeAssert.match(read.output.body, /Ready for review\./)
+  NodeAssert.equal(read.output.version, latest)
+  NodeAssert.match(read.output.body, /Ready for review/)
   const v1 = await rpc(
     state,
     'GetArtifact',
@@ -243,16 +352,16 @@ async function document(state, id, directory) {
   const v2 = await rpc(
     state,
     'GetArtifact',
-    { id: artifact.id, version: 2 },
+    { id: artifact.id, version: latest },
     directory,
-    'version-2',
+    'version-' + latest,
   )
   NodeAssert.equal(v1.shown.number, 1)
-  NodeAssert.equal(v2.shown.number, 2)
+  NodeAssert.equal(v2.shown.number, latest)
   NodeAssert.notEqual(v1.body, v2.body)
-  NodeAssert.match(v2.body, /Ready for review\./)
+  NodeAssert.match(v2.body, /Ready for review/)
 }
-/** Main's image attachment follows Flue's wire format. Compare exact reloaded private bytes. */
+/** Send a picture through the public contract and compare exact reloaded private bytes. */
 async function picture(state, id, directory) {
   await NodeFSP.writeFile(directory + '/sent.png', Buffer.from(png, 'base64'))
   await chat(state, id, 'Hello Vivid with a picture', directory, 'chat', [
@@ -263,7 +372,7 @@ async function picture(state, id, directory) {
     .flatMap((message) => message.parts)
     .find((part) => part.type === 'file')
   NodeAssert.ok(part, 'No saved picture part')
-  const url = new URL(part.url, state.web)
+  const url = new URL(pictureAddress(id, part.url), state.web)
   NodeAssert.equal(url.origin, state.web)
   NodeAssert.ok(url.pathname.startsWith(`/api/vivid/${id}/attachments/`))
   const account = JSON.parse(await NodeFSP.readFile(state.scratch + '/account.json', 'utf8'))
@@ -284,14 +393,20 @@ async function picture(state, id, directory) {
 const recipes = {
   first,
   reload,
+  stop,
   tool,
   replies: offer,
   question,
+  approve,
+  deny,
+  changed,
   picture,
   document,
   devices,
   feed,
-  notes,
+  memory,
+  owed,
+  todos,
   watch,
   reading,
   settings: settingsProof,
@@ -300,18 +415,10 @@ const recipes = {
 }
 const blocked = {
   code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
-  stop: 'No reproducible active Run recipe is implemented. A real model alone does not prove Stop during an active Run; no held tool or fabricated response is installed.',
-  approve:
-    'Needs an actual pending proposal from a connected disposable Integration. Synthetic Gate proposals do not prove the Person journey.',
-  deny: 'Needs an actual pending proposal from a connected disposable Integration.',
   library:
     'HTTP ingestion and browser Library recipes have not been implemented; the full product worker is mounted.',
   ...discordBlocked(),
   ...githubBlocked(),
-}
-const realBlocked = {
-  ...blocked,
-  question: 'Question HTTP recipe is rehearsal-only; real-model question recipe is blocked',
 }
 /** Every feature gets an independent Thread and retained verdict; failure never skips the rest. */
 export async function drive(state, feature) {
@@ -319,8 +426,17 @@ export async function drive(state, feature) {
   if (chosen.some((name) => !features.includes(name))) throw new Error('Unknown feature ' + feature)
   const unavailable =
     state.modelKind === 'real'
-      ? realBlocked
-      : { ...blocked, notes: 'Notes requires a real model; rehearsal cannot prove Notes tools.' }
+      ? blocked
+      : {
+          ...blocked,
+          approve: 'Approval requires a real model.',
+          deny: 'Denial requires a real model.',
+          changed: 'A stale ask requires a real model.',
+          stop: 'Stop requires a real model; rehearsal cannot prove interruption.',
+          memory: 'Memory requires a real model; rehearsal cannot prove the memory tools.',
+          owed: 'Tracking requires a real model; rehearsal cannot prove it.',
+          todos: 'The list requires a real model; rehearsal cannot prove it.',
+        }
   let failed = false
   for (const name of chosen) {
     const directory = state.evidence + '/' + name
@@ -401,9 +517,7 @@ export async function manual(state, action, args) {
   } else if (action === 'history')
     console.log(JSON.stringify(await history(state, id, directory), null, 2))
   else if (action === 'stop')
-    console.log(
-      await request(state, `/api/vivid/${id}/abort`, { method: 'POST', directory, name: 'abort' }),
-    )
+    console.log(await rpc(state, 'StopThread', { id }, directory, 'abort'))
   else throw new Error('Unknown helper ' + action)
 }
 if (process.argv[1] === new URL(import.meta.url).pathname)

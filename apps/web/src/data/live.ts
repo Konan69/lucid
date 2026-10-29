@@ -4,6 +4,7 @@ import {
   LiveState,
   liveStateOf,
   makeSeenThread,
+  remembering,
   type LiveQuery,
   type LiveResult,
 } from '@vivid/state'
@@ -53,7 +54,6 @@ export const live = {
   channels: one((client) => client.WatchChannels()),
   rules: one((client) => client.WatchRules()),
   audit: one((client) => client.WatchAudit()),
-  memory: one((client) => client.WatchMemory()),
   computer: one((client) => client.WatchComputer()),
   /** What egress is doing for the Person right now (`screen/settings/Egress.tsx`). */
   egress: one((client) => client.WatchEgress()),
@@ -62,9 +62,19 @@ export const live = {
   devices: one((client) => client.WatchDevices()),
   /** What Vivid's own work in background Threads brings the Person: the Feed (`screen/Feed.tsx`). */
   feed: one((client) => client.WatchFeed()),
+  /** Who owes the Person what, which Vivid keeps and chases (`screen/feed/Owed.tsx`). */
+  owed: one((client) => client.WatchOwed()),
+  /** The Person's own to-do list, which Vivid adds to and ticks off (`screen/feed/Todos.tsx`). */
+  todos: one((client) => client.WatchTodos()),
   /** What the Person has typed and not sent, on any device, where they are working. */
   drafts: kept((client) => client.WatchDrafts()),
 }
+
+/**
+ * What Vivid remembers about the Person, read from their cell. There is no watch on it: each
+ * opening of Settings begins a new reading (`warm.ts`), and the Memory section draws it.
+ */
+export const memory = remembering.make(engine)
 
 /** What the Person has typed into the catalog search. Empty asks for the most-used services. */
 export const serviceSearch = Atom.make('')

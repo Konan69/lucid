@@ -90,7 +90,7 @@ export interface VividRpcClientService extends RpcClient.RpcClient<
   RpcClientError.RpcClientError
 > {}
 
-/** Schema-derived product client shared by web, mobile, desktop, and the Flue runtime. */
+/** Schema-derived product client shared by web, mobile, desktop, and the runtime. */
 export class VividRpcClient extends Context.Service<VividRpcClient, VividRpcClientService>()(
   'vivid/VividRpcClient',
 ) {

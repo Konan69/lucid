@@ -7,7 +7,6 @@ import { ChannelProvider, ChannelRecipientMissing } from './provider.ts'
 import { eq } from 'drizzle-orm'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { silentLearningLayer } from '../memory/testing.ts'
 import {
   Conversation,
   DeliveryMessage,
@@ -16,7 +15,7 @@ import {
 } from '../threads/conversation.ts'
 import { RunStore } from '../threads/runs.ts'
 import { ThreadStore } from '../threads/store.ts'
-import { submissionId } from '../runtime/identity.ts'
+import { deliveryRunId } from '../threads/key.ts'
 import { ChannelReceiver } from './inbound.ts'
 import { ChannelReplies, channelRepliesLayer } from './replies.ts'
 import { ChannelStore } from './store.ts'
@@ -60,7 +59,7 @@ const started = Effect.fn('Channels.test.started')(function* (
 
 /** Inbound queues and recorded admissions belong to one case, including its restart probe. */
 describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
-  layer(Layer.merge(testDatabaseLayer, silentLearningLayer))((it) => {
+  layer(testDatabaseLayer)((it) => {
     it.effect(
       'a crash after the outbound claim and before the send leaves unknown and never resends',
       () =>
@@ -214,7 +213,7 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
         }).pipe(Effect.scoped),
       ),
     )
-    it.effect('two quick texts sharing a Flue response send that response exactly once', () =>
+    it.effect('two quick texts sharing a runtime response send that response exactly once', () =>
       withChannels(
         Effect.gen(function* () {
           const test = yield* linked()
@@ -230,7 +229,7 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
             responseId: first.run.id,
           })
           yield* control.finish(first.run.id, response)
-          yield* control.finish(submissionId(first.threadId, second.idempotencyKey), response)
+          yield* control.finish(deliveryRunId(first.threadId, second.idempotencyKey), response)
           yield* Queue.take(control.endings)
           yield* Queue.take(control.endings)
           expect((yield* Ref.get(control.sends)).map((send) => send.text)).toEqual([
@@ -283,7 +282,7 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
               projectId: null,
             })
             yield* store.attach(test.actor, found.value, thread.id)
-            const runId = submissionId(thread.id, 'before-restart')
+            const runId = deliveryRunId(thread.id, 'before-restart')
             yield* (yield* ChannelLedger).route({
               runId,
               threadId: thread.id,
@@ -356,13 +355,13 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
             message: DeliveryMessage.cases.Said.make({ body: 'app text' }),
             idempotencyKey: key,
           })
-          yield* test.finish(submissionId(first.threadId, key), 'App result')
+          yield* test.finish(deliveryRunId(first.threadId, key), 'App result')
           expect(yield* Ref.get((yield* ChannelControl).sends)).toEqual([])
         }).pipe(Effect.scoped),
       ),
     )
   })
-  layer(Layer.merge(testDatabaseLayer, silentLearningLayer))(
+  layer(testDatabaseLayer)(
     'Clock for a hung send times out with unknown evidence and never retries',
     (it) => {
       it.effect('a hung send times out with unknown evidence and never retries', () =>

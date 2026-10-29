@@ -3,8 +3,6 @@ import { DeviceRegistry } from '../computers/device.ts'
 import { ThreadTitles } from './generation.ts'
 import * as NodeCrypto from 'node:crypto'
 import * as NodeBuffer from 'node:buffer'
-import { createFlueClient } from '@flue/sdk'
-import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import {
   InputAnswer,
@@ -17,6 +15,7 @@ import {
   WindowAction,
   WindowResult,
   Conflict,
+  DatabaseUnavailable,
   PersonId,
   Company,
   Workspace,
@@ -24,10 +23,14 @@ import {
   RunState,
   RuntimeUnavailable,
   RuntimeRunRequest,
+  RuntimeSubmissionId,
+  RuntimeSettlement,
+  SendToThreadRequest,
   ThreadId,
 } from '@vivid/contracts'
 import { eq, inArray } from 'drizzle-orm'
 import {
+  Clock,
   Deferred,
   Effect,
   Fiber,
@@ -38,16 +41,24 @@ import {
   Result,
   Option,
   Predicate,
+  Match,
   Schema,
   Stream,
 } from 'effect'
+import * as TestClock from 'effect/testing/TestClock'
 import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
 import * as HttpClient from 'effect/http/HttpClient'
-import * as HttpServer from 'effect/http/HttpServer'
+import { AuthContext, AuthState } from '@vivid/contracts/auth'
+import { authenticate } from '../auth/session.ts'
+import { requireThread } from './access.ts'
+import { messagePictures, IncomingMessage } from './pictures.ts'
+import { requestProtocolLayer } from '../rpc/requests.ts'
+import * as RpcSerialization from 'effect/rpc/RpcSerialization'
+import { sendToThread } from './relay.ts'
 import { findPerson, type Actor } from '../auth/access.ts'
 import { InputStore, inputStoreLayer } from '../inputs/store.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
@@ -55,7 +66,6 @@ import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { Changes, Topic, silentChangesLayer } from '../live/changes.ts'
-import { silentLearningLayer } from '../memory/testing.ts'
 import { Notifier, type Notice } from '../notifications/notifier.ts'
 import { Message } from '../observability/messages.ts'
 import {
@@ -66,7 +76,7 @@ import {
   Settlement,
   runtimeLayer,
 } from '../runtime/client.ts'
-import { submissionId } from '../runtime/identity.ts'
+import { deliveryRunId } from '../threads/key.ts'
 import {
   Conversation,
   DeliveryMessage,
@@ -170,6 +180,7 @@ type RuntimeInput = Parameters<Runtime['Service']['admit']>[0]
 const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
   const admitted = yield* Ref.make<ReadonlyArray<RuntimeInput>>([])
   const requests = yield* Ref.make<ReadonlyArray<RuntimeInput>>([])
+  const attempted = yield* Queue.unbounded<void>()
   const failure = yield* Ref.make(Option.none<AdmissionRefused | AdmissionUncertain>())
   const reads = yield* Ref.make(0)
   const readHeaders = yield* Ref.make({
@@ -182,9 +193,10 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
   const runtime = Runtime.of({
     admit: Effect.fn('Delivery.test.admit')(function* (input) {
       yield* Ref.update(requests, (all) => [...all, input])
-      const rejected = yield* Ref.getAndSet(failure, Option.none())
+      yield* Queue.offer(attempted, undefined)
+      const rejected = yield* Ref.get(failure)
       if (Option.isSome(rejected)) return yield* rejected.value
-      const id = submissionId(input.threadId, input.idempotencyKey)
+      const id = deliveryRunId(input.threadId, input.idempotencyKey)
       const repeated = settlements.has(id)
       if (!repeated) {
         settlements.set(id, yield* Deferred.make<Settlement>())
@@ -192,8 +204,7 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
       }
       return Admission.make({
         runId: id,
-        offset: repeated ? '-1' : String(input.turn),
-        incarnation: 'test',
+        submissionId: RuntimeSubmissionId.make(input.turn),
         repeated,
       })
     }),
@@ -206,6 +217,7 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
       })
     }),
     stop: Effect.fn('Delivery.test.stop')(() => Effect.succeed(false)),
+    watch: () => Stream.never,
     read: Effect.fn('Delivery.test.read')(function* () {
       yield* Ref.update(reads, (count) => count + 1)
       return HttpClientResponse.fromWeb(
@@ -227,7 +239,18 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
   })
   const finish = (id: RunId) =>
     settle(id, Settlement.cases.Completed.make({ reply: 'Finished', responseId: id }))
-  return { runtime, admitted, requests, finish, settle, failure, reads, readHeaders, observers }
+  return {
+    runtime,
+    admitted,
+    requests,
+    attempted,
+    finish,
+    settle,
+    failure,
+    reads,
+    readHeaders,
+    observers,
+  }
 })
 
 /** Real RunStore methods also expose typed receipts so tests never sleep or poll for background work. */
@@ -276,7 +299,6 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
         subscribe: () => Effect.succeed(Stream.never),
       }),
     ),
-    silentLearningLayer,
     Layer.mock(ThreadTitles, { afterRun: () => Effect.void }),
     Layer.succeed(
       Notifier,
@@ -392,20 +414,53 @@ const privateThread = Effect.fn('Gateway.test.private')(function* (test: Harness
   )
 })
 
-/** Tests send precisely the JSON and session a web or mobile client would use. */
-const post = (test: Harness, body: Schema.JsonObject) =>
-  gateway(
-    test,
-    new Request(`http://gateway.test/api/vivid/${test.threadId}`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${test.token}`,
-        host: 'gateway.test',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    }),
+const decodeIncoming = Schema.decodeUnknownEffect(IncomingMessage)
+const decodeSend = Schema.decodeEffect(SendToThreadRequest)
+
+/** The handler receives contract-decoded input and the authenticated Person, as RPC dispatch does.
+ * Invalid wire pictures exercise the shared validator before they can become typed RPC input. */
+const post = Effect.fn('Relay.test.send')(function* (test: Harness, body: Schema.JsonObject) {
+  const auth = yield* authenticate(new Headers({ authorization: `Bearer ${test.token}` }))
+  const context = AuthState.Person(auth)
+  const sent = yield* decodeIncoming(body)
+  const thread = yield* requireThread(test.threadId, auth.person.id)
+  const input = yield* messagePictures(sent, thread).pipe(Effect.result)
+  if (Result.isFailure(input)) {
+    return HttpServerResponse.jsonUnsafe(
+      { error: { _tag: input.failure._tag, message: input.failure.message } },
+      { status: Predicate.isTagged(input.failure, 'AttachmentTooLarge') ? 413 : 400 },
+    )
+  }
+  const request = yield* decodeSend({
+    threadId: test.threadId,
+    text: sent.body,
+    pictures: input.success,
+    key: sent.idempotencyKey === undefined ? NodeCrypto.randomUUID() : sent.idempotencyKey,
+  }).pipe(Effect.result)
+  if (Result.isFailure(request))
+    return HttpServerResponse.jsonUnsafe(
+      { error: { message: 'A message needs text or a picture' } },
+      { status: 400 },
+    )
+  const result = yield* sendToThread(request.success).pipe(
+    Effect.provideService(AuthContext, context),
+    Effect.provideService(Conversation, test.conversation),
+    Effect.result,
   )
+  if (Result.isSuccess(result))
+    return HttpServerResponse.jsonUnsafe(result.success, { status: 202 })
+  const error = result.failure
+  return HttpServerResponse.jsonUnsafe(
+    { error: { message: error.message } },
+    {
+      status: Match.value(error).pipe(
+        Match.tag('Conflict', () => 409),
+        Match.tag('InvalidRequest', () => 400),
+        Match.orElse(() => 503),
+      ),
+    },
+  )
+})
 
 /** Stable tags and Person-facing sentences are observable without decoding internal Effect errors. */
 const expectPictureRefusal = (
@@ -546,7 +601,7 @@ layer(
           ])
           const admitted = (yield* Ref.get(test.admitted))[0]
           if (admitted === undefined) expect.fail('Missing answer delivery')
-          yield* test.finish(submissionId(test.threadId, admitted.idempotencyKey))
+          yield* test.finish(deliveryRunId(test.threadId, admitted.idempotencyKey))
           yield* post(test, { kind: 'user', body: 'Continue.', idempotencyKey: 'after-answer' })
           expect(
             (yield* test.inputs.inThread(test.threadId)).find((input) => input.id === request.id),
@@ -600,7 +655,7 @@ layer(
           Option.some(
             AdmissionRefused.make({
               threadId: test.threadId,
-              runId: submissionId(test.threadId, delivery.idempotencyKey),
+              runId: deliveryRunId(test.threadId, delivery.idempotencyKey),
               reason: 'Rejected',
             }),
           ),
@@ -608,6 +663,7 @@ layer(
         const refused = yield* Effect.result(test.conversation.admit(delivery))
         expect(Result.isFailure(refused) && refused.failure._tag).toBe('RuntimeUnavailable')
         expect(yield* test.inputs.inThread(test.threadId)).toEqual([waiting])
+        yield* Ref.set(test.failure, Option.none())
         yield* test.conversation.admit(said(test.threadId, test.ada))
         const busy = yield* Effect.result(test.conversation.admit(said(test.threadId, test.ben)))
         expect(Result.isFailure(busy) && busy.failure._tag).toBe('Conflict')
@@ -749,6 +805,114 @@ layer(
           }),
         ),
     )
+    layer(
+      databaseLayer.pipe(
+        Layer.provideMerge(silentChangesLayer),
+        Layer.provideMerge(testConfigLayer),
+      ),
+    )('Settlement clock', (clockIt) => {
+      clockIt.effect('database read failures leave a Run working until the runtime settles', () =>
+        Effect.gen(function* () {
+          const test = yield* harness()
+          const database = yield* Database
+          const failed = yield* Queue.unbounded<void>()
+          const waiting = yield* Deferred.make<void>()
+          const settled = yield* Deferred.make<void>()
+          let reads = 0
+          // The first address read and first receipt read lose their connection, the way a pool
+          // reset or failover answers; the server must keep the Run working and read again.
+          const interruptedReads = Layer.succeed(
+            Database,
+            Database.of({
+              _: database._,
+              query: database.query,
+              $with: database.$with,
+              $cache: database.$cache,
+              $count: database.$count.bind(database),
+              with: database.with.bind(database),
+              select: database.select.bind(database),
+              selectDistinct: database.selectDistinct.bind(database),
+              selectDistinctOn: database.selectDistinctOn.bind(database),
+              insert: database.insert.bind(database),
+              update: database.update.bind(database),
+              delete: database.delete.bind(database),
+              refreshMaterializedView: database.refreshMaterializedView.bind(database),
+              execute: database.execute.bind(database),
+              transaction: (operation) => database.transaction(operation),
+              run: (operation) =>
+                Effect.suspend(() => {
+                  reads += 1
+                  if (reads !== 1 && reads !== 3) return database.run(operation)
+                  return Queue.offer(failed, undefined).pipe(
+                    Effect.andThen(
+                      Effect.fail(new DatabaseUnavailable({ message: 'Database is unavailable' })),
+                    ),
+                  )
+                }),
+            }),
+          )
+          const http = HttpClient.make((request) =>
+            Deferred.succeed(waiting, undefined).pipe(
+              Effect.andThen(Deferred.await(settled)),
+              Effect.as(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    JSON.stringify(
+                      RuntimeSettlement.cases.Done.make({
+                        answeredBy: RuntimeSubmissionId.make(1),
+                        reply: 'Finished',
+                        toolCalls: 0,
+                      }),
+                    ),
+                    { headers: { 'content-type': 'application/json' } },
+                  ),
+                ),
+              ),
+            ),
+          )
+          const context = yield* Layer.build(
+            runtimeLayer.pipe(
+              Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
+              Layer.provide(testConfigLayer),
+              Layer.provide(interruptedReads),
+            ),
+          )
+          const runtime = yield* Runtime.pipe(Effect.provideContext(context))
+          const observing = yield* Layer.build(
+            conversationLayer.pipe(
+              Layer.provide(silentChannelRepliesLayer),
+              Layer.provide(
+                Layer.merge(
+                  test.services,
+                  Layer.succeed(Runtime, { ...test.runtime, settled: runtime.settled }),
+                ),
+              ),
+            ),
+          )
+          const conversation = yield* Conversation.pipe(Effect.provideContext(observing))
+          const receipt = yield* conversation.admit(said(test.threadId, test.ben))
+          const store = yield* RunStore
+          for (let failure = 0; failure < 2; failure += 1) {
+            yield* Queue.take(failed)
+            expect((yield* store.list(test.threadId)).map((run) => run.state._tag)).toEqual([
+              'Working',
+            ])
+            yield* TestClock.adjust('1 second')
+          }
+          yield* Deferred.await(waiting)
+          expect((yield* store.list(test.threadId)).map((run) => run.state._tag)).toEqual([
+            'Working',
+          ])
+          yield* Deferred.succeed(settled, undefined)
+          expect(yield* Queue.take(test.ended)).toBe(receipt.runId)
+          expect((yield* store.list(test.threadId)).map((run) => run.state._tag)).toEqual([
+            'Completed',
+          ])
+        }).pipe(Effect.scoped),
+      )
+    })
+
     // Both precise Runtime failures retain this slice's existing Conversation error and state assertions.
     const admissionFailures = [
       {
@@ -778,21 +942,35 @@ layer(
                   const test = yield* harness()
                   // The error names the Run its request would have started, as the real client's does.
                   const message = said(test.threadId, test.ada)
-                  const runId = submissionId(test.threadId, message.idempotencyKey)
+                  const runId = deliveryRunId(test.threadId, message.idempotencyKey)
                   yield* Ref.set(test.failure, Option.some(failure.make(test.threadId, runId)))
-                  const rejected = yield* Effect.result(test.conversation.admit(message))
+                  const rejecting = yield* test.conversation
+                    .admit(message)
+                    .pipe(Effect.result, Effect.forkChild)
+                  if (failure.name === 'uncertain') {
+                    yield* Queue.take(test.attempted)
+                    yield* TestClock.adjust('1 second')
+                    expect(yield* Ref.get(test.requests)).toHaveLength(2)
+                    yield* TestClock.adjust('2 seconds')
+                  }
+                  const rejected = yield* Fiber.join(rejecting)
                   expect(Result.isFailure(rejected) && rejected.failure).toBeInstanceOf(
                     RuntimeUnavailable,
                   )
                   const recorded = yield* (yield* RunStore).list(test.threadId)
                   expect(recorded.map((run) => run.state)).toEqual([
-                    RunState.cases.Failed.make({ finishedAt: 0, reason: 'Delivery' }),
+                    RunState.cases.Failed.make({
+                      finishedAt: yield* Clock.currentTimeMillis,
+                      reason: 'Delivery',
+                    }),
                   ])
-                  expect(yield* Ref.get(test.requests)).toHaveLength(1)
+                  const attempts = failure.name === 'uncertain' ? 3 : 1
+                  expect(yield* Ref.get(test.requests)).toHaveLength(attempts)
                   expect(yield* Ref.get(test.admitted)).toEqual([])
+                  yield* Ref.set(test.failure, Option.none())
                   yield* test.conversation.admit(said(test.threadId, test.ben))
                   expect(yield* Ref.get(test.admitted)).toHaveLength(1)
-                  expect(yield* Ref.get(test.requests)).toHaveLength(2)
+                  expect(yield* Ref.get(test.requests)).toHaveLength(attempts + 1)
                 }),
               )
             }
@@ -815,7 +993,7 @@ layer(
         expect(yield* (yield* RunStore).list(test.threadId)).toHaveLength(1)
         yield* test.finish(ada.runId)
         const ben = yield* test.conversation.admit(message)
-        expect(ben.offset).toBe('2')
+        expect(ben.submissionId).toBe(2)
         expect((yield* Ref.get(test.admitted)).map((delivery) => delivery.scope.acting)).toEqual([
           test.ada,
           test.ben,
@@ -866,7 +1044,7 @@ layer(
       }).pipe(Effect.scoped),
     )
 
-    it.effect('names the decider as speaker while Flue acts for the original Person', () =>
+    it.effect('names the decider as speaker while Vivid acts for the original Person', () =>
       Effect.gen(function* () {
         const test = yield* harness()
         const delivery: SignalDelivery = {
@@ -946,14 +1124,14 @@ layer(
                 Effect.forkScoped,
               )
               expect(yield* Queue.take(test.blocked)).toBe(
-                submissionId(test.threadId, delivery.idempotencyKey),
+                deliveryRunId(test.threadId, delivery.idempotencyKey),
               )
               expect(yield* Ref.get(test.admitted)).toHaveLength(1)
               const busy = yield* Fiber.join(pending)
               expect(Result.isFailure(busy) && busy.failure).toBeInstanceOf(Conflict)
               yield* test.finish(ada.runId)
               const admitted = yield* test.conversation.deliver(delivery)
-              expect(admitted.id).toBe(submissionId(test.threadId, delivery.idempotencyKey))
+              expect(admitted.id).toBe(deliveryRunId(test.threadId, delivery.idempotencyKey))
               expect(RunState.guards.Working(admitted.state)).toBe(true)
               expect((yield* Ref.get(test.admitted)).map((input) => input.scope.acting)).toEqual([
                 test.ada,
@@ -985,31 +1163,8 @@ layer(
       () =>
         Effect.gen(function* () {
           const test = yield* harness()
-          const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
-          const send = Effect.fn('Gateway.test.send')(function* () {
-            return yield* handle.pipe(
-              Effect.provideService(Conversation, test.conversation),
-              Effect.provideService(Runtime, test.runtime),
-              Effect.provideService(
-                HttpServerRequest.HttpServerRequest,
-                HttpServerRequest.fromWeb(
-                  new Request(`http://gateway.test/api/vivid/${test.threadId}`, {
-                    method: 'POST',
-                    headers: {
-                      authorization: `Bearer ${test.token}`,
-                      host: 'gateway.test',
-                      'content-type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                      kind: 'user',
-                      body: 'Please help',
-                      idempotencyKey: 'lost-http-response',
-                    }),
-                  }),
-                ),
-              ),
-            )
-          })
+          const send = () =>
+            post(test, { kind: 'user', body: 'Please help', idempotencyKey: 'lost-http-response' })
           const first = yield* send()
           // Discarding the first response represents admission succeeding before HTTP delivery fails.
           const repeated = yield* send()
@@ -1029,25 +1184,7 @@ layer(
       Effect.gen(function* () {
         const test = yield* harness()
         yield* test.conversation.admit(said(test.threadId, test.ada))
-        const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
-        const response = yield* handle.pipe(
-          Effect.provideService(Conversation, test.conversation),
-          Effect.provideService(Runtime, test.runtime),
-          Effect.provideService(
-            HttpServerRequest.HttpServerRequest,
-            HttpServerRequest.fromWeb(
-              new Request(`http://gateway.test/api/vivid/${test.threadId}`, {
-                method: 'POST',
-                headers: {
-                  authorization: `Bearer ${test.token}`,
-                  host: 'gateway.test',
-                  'content-type': 'application/json',
-                },
-                body: JSON.stringify({ kind: 'user', body: 'Please help' }),
-              }),
-            ),
-          ),
-        )
+        const response = yield* post(test, { kind: 'user', body: 'Please help' })
         expect(response.status).toBe(409)
         expect(response.body).toHaveProperty(
           'text',
@@ -1084,9 +1221,8 @@ layer(
                 request,
                 new Response(
                   JSON.stringify({
-                    submissionId: submissionId(delivery.threadId, delivery.idempotencyKey),
-                    offset: '1',
-                    uid: 'test',
+                    submissionId: delivery.turn,
+                    repeated: false,
                   }),
                   { status: 202, headers: { 'content-type': 'application/json' } },
                 ),
@@ -1097,6 +1233,7 @@ layer(
             runtimeLayer.pipe(
               Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
               Layer.provide(testConfigLayer),
+              Layer.provide(Layer.succeed(Database, yield* Database)),
             ),
           )
           const transport = yield* Runtime.pipe(Effect.provideContext(runtimeContext))
@@ -1123,53 +1260,22 @@ layer(
           ])
         }).pipe(Effect.scoped),
     )
-    it.effect(
-      'accepts the installed Flue client’s image wire shape through the private gateway',
-      () =>
-        Effect.gen(function* () {
-          const test = yield* harness()
-          yield* privateThread(test)
-          const serverContext = yield* Layer.build(NodeHttpServer.layerTest)
-          const server = yield* HttpServer.HttpServer.pipe(Effect.provideContext(serverContext))
-          const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
-          yield* server
-            .serve(
-              handle.pipe(
-                Effect.provideService(Conversation, test.conversation),
-                Effect.provideService(Runtime, test.runtime),
-              ),
-            )
-            .pipe(Effect.provideContext(serverContext))
-          const url = new URL(HttpServer.formatAddress(server.address))
-          url.hostname = '127.0.0.1'
-          url.pathname = `/api/vivid/${test.threadId}`
-          const client = createFlueClient({
-            url: url.href,
-            token: test.token,
-          })
-          const receipt = yield* Effect.tryPromise(() =>
-            client.send({
-              message: {
-                kind: 'user',
-                body: 'Look',
-                attachments: [
-                  {
-                    type: 'image',
-                    mimeType: png.mimeType,
-                    data: png.data,
-                    filename: png.filename,
-                  },
-                ],
-              },
-            }),
-          )
-          expect(yield* (yield* RunStore).list(test.threadId)).toMatchObject([
-            { id: receipt.submissionId },
-          ])
-          expect((yield* Ref.get(test.admitted))[0]).toMatchObject({
-            message: { kind: 'user', attachments: [png] },
-          })
-        }).pipe(Effect.scoped),
+    it.effect('the sending key survives a private picture-only RPC send', () =>
+      Effect.gen(function* () {
+        const test = yield* harness()
+        yield* privateThread(test)
+        const response = yield* post(test, {
+          kind: 'user',
+          body: '',
+          attachments: [png],
+          idempotencyKey: 'picture-key',
+        })
+        expect(response.status).toBe(202)
+        expect((yield* Ref.get(test.admitted))[0]).toMatchObject({
+          clientKey: 'picture-key',
+          message: { kind: 'user', body: '', attachments: [png] },
+        })
+      }).pipe(Effect.scoped),
     )
     it.effect('accepts four pictures and a picture exactly at the decoded 5 MB limit', () =>
       Effect.gen(function* () {
@@ -1379,9 +1485,14 @@ layer(
           body,
           duplex: 'half' as const,
         }
-        const response = yield* gateway(
-          test,
-          new Request(`http://gateway.test/api/vivid/${test.threadId}`, requestOptions),
+        const handle = yield* HttpRouter.toHttpEffect(
+          requestProtocolLayer.pipe(Layer.provide(RpcSerialization.layerNdjson)),
+        )
+        const response = yield* handle.pipe(
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            HttpServerRequest.fromWeb(new Request('http://gateway.test/api/rpc', requestOptions)),
+          ),
         )
         expect(response.status).toBe(413)
         expect(reads).toBe(0)

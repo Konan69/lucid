@@ -1,0 +1,11 @@
+{
+  "name": "vivid-cells",
+  "main": "src/main.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "rules": [{ "type": "Text", "globs": ["**/*.md", "**/*.sql"] }],
+  "durable_objects": {
+    "bindings": [{ "name": "PERSONS", "class_name": "Person" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Person"] }],
+}

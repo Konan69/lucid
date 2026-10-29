@@ -23,7 +23,7 @@ export const thisReader = (): Reader => {
 }
 
 /** The calendar day a moment falls on for a reader, as a count of days, so two can be compared. */
-const dayOf = (moment: number, reader: Reader) => {
+export const dayOf = (moment: number, reader: Reader) => {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: reader.timeZone,
     year: 'numeric',

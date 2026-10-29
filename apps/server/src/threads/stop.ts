@@ -1,5 +1,12 @@
 import { and, eq } from 'drizzle-orm'
-import { NotFound, type PersonId, type RunId, type ThreadId } from '@vivid/contracts'
+import {
+  ApprovalInvalidation,
+  NotFound,
+  type PersonId,
+  type RunId,
+  type ThreadId,
+} from '@vivid/contracts'
+import { askedBy, invalidatePending } from '../approvals/stale.ts'
 import { Clock, Effect, Option } from 'effect'
 import { Database } from '../database/client.ts'
 import { announceFeed } from '../feed/changes.ts'
@@ -42,6 +49,12 @@ export const stopPersonRun = Effect.fn('Threads.stopPersonRun')(function* (
         .where(and(eq(runs.id, runId), eq(runs.state, 'working')))
         .returning({ id: runs.id })
       if (changed.length === 0) return Option.none<ThreadId>()
+      // The Person stopped this Run, so what it was waiting to be allowed is no longer wanted.
+      yield* invalidatePending(
+        tx,
+        askedBy(runId),
+        ApprovalInvalidation.cases.RunStopped.make({ runId }),
+      )
       // Runtime settlement may now be a no-op. Date history and publish this Stop in its own write.
       yield* tx.update(threads).set({ updatedAt: now }).where(eq(threads.id, row.threadId))
       yield* announceFeed(tx, [row.threadId])

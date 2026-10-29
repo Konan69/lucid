@@ -1,3 +1,4 @@
+import { RuntimeSubmissionId } from '@vivid/contracts'
 import { expect } from '@effect/vitest'
 import {
   Person,
@@ -23,11 +24,10 @@ import { ExecutorEvents, type EventDefinition, type ExecutorEventsFailure } from
 import { conversationLayer as realConversationLayer } from '../threads/delivery.ts'
 import { RunStore, runStoreLayer } from '../threads/runs.ts'
 import { Runtime, Admission } from '../runtime/client.ts'
-import { submissionId } from '../runtime/identity.ts'
+import { deliveryRunId } from '../threads/key.ts'
 import { ThreadTitles } from '../threads/generation.ts'
 import { Presence } from '../threads/presence.ts'
 import { Notifier } from '../notifications/notifier.ts'
-import { silentLearningLayer } from '../memory/testing.ts'
 import { silentChannelRepliesLayer } from '../channels/replies.ts'
 import {
   Executor as ConnectionExecutor,
@@ -92,7 +92,7 @@ export const conversationLayer = Layer.effectContext(
     const admitted = yield* Ref.make<ReadonlyArray<RunId>>([])
     const runtime = Layer.mock(Runtime, {
       admit: Effect.fn('WatchTest.admit')(function* (input) {
-        const runId = submissionId(input.threadId, input.idempotencyKey)
+        const runId = deliveryRunId(input.threadId, input.idempotencyKey)
         expect(
           yield* Ref.get(admitted),
           'A retry must not reach runtime admission twice',
@@ -100,8 +100,7 @@ export const conversationLayer = Layer.effectContext(
         yield* Ref.update(admitted, (all) => [...all, runId])
         return Admission.make({
           runId,
-          offset: String(input.turn),
-          incarnation: 'test',
+          submissionId: RuntimeSubmissionId.make(input.turn),
           repeated: false,
         })
       }),
@@ -117,7 +116,6 @@ export const conversationLayer = Layer.effectContext(
             threadStoreLayer.pipe(Layer.provide(Layer.succeed(Database, database))),
             runtime,
             silentChangesLayer,
-            silentLearningLayer,
             silentChannelRepliesLayer,
             Layer.mock(ThreadTitles, { afterRun: () => Effect.void }),
             Layer.mock(Presence, { watching: () => Effect.succeed(false) }),

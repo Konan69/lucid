@@ -1,19 +1,11 @@
 # Questions
 
-Model requirement: real-model verification is blocked until the HTTP recipe supports model-generated questions. The existing fixed-label HTTP recipe is rehearsal-only and cannot produce a proved verdict. Browser controls have no recipe.
+Model requirement: real model. Rehearsal cannot prove model-generated questions.
 
-## Sub-features
+Run `verify feature question <run>` and `verify browser question <run>` after Launch and worthy Doctor on the same unchanged head. Cleanup follows the journeys.
 
-A Waiting Input request contains one to four questions with single-choice, multiple-choice or written answers. AnswerInput stores the ordered answers. Delivery joins work already underway or starts a successor Decision Run. The fixed Research/Writing, Brief and Evidence and next steps answers belong only to the rehearsal recipe.
+Both recipes ask Vivid to offer Cedar and Willow in one question card before writing a garden plan. The first Completed Run must leave one Waiting single-choice request. HTTP answers Cedar through AnswerInput. Browser clicks Cedar in the actual card. Both require the stored ordered answer, one completed successor Decision Run, and a reply using Cedar. Browser captures the waiting card and reply before and after reload, with durable message identities and content unchanged.
 
-## How to get to it (user POV)
+Evidence stays in `question/` and `browser/question/`. Each retains the question, answers, continuation, history and verdict. Browser also retains commands, snapshots and screenshots.
 
-Ask Vivid for a structured question when it needs information. Answer each question above the composer, then submit the answers together. The phrase ask me produces the fixed three-question scene only in rehearsal.
-
-## Driving it with verify-vivid
-
-For a plumbing rehearsal only, launch with VIVID_VERIFY_MODEL=rehearsal/script and run `.agents/skills/verify-vivid/verify feature question` after Launch and Doctor. A real-model run records a blocked verdict and exits unsuccessfully with the rehearsal-only reason. Inspect `question/verdict.json`, the action transcript, settlement, history and SQL. Then run `verify browser question`. A missing browser recipe exits unsuccessfully with `no browser recipe`; it cannot prove this feature. A blocked recipe exits unsuccessfully and names its missing prerequisite.
-
-## Gotchas
-
-The request now takes answers, an ordered tagged array, rather than answer, a string. Browser proof must visit every question and submit; HTTP proof alone does not prove those controls. Plain-text questions need no structured request. An ordinary message withdraws waiting questions. Selection, back navigation, written answers and withdrawal remain unproved.
+Multiple questions, multiple choice, written answers, back navigation and withdrawal remain unproved.

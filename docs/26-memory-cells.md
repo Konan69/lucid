@@ -1,161 +1,72 @@
-# Memory: one cell per Person on celld
+# Memory in the Person cell
 
-**Status:** design, 15 October 2026. Nothing is built. It replaces Vivid's instant memory, the
-notes in [Memory](25-memory.md) (AgentFS, one SQLite file per Person on the runtime's volume).
-Helix is not touched: it stays the deep layer, the knowledge graph and embeddings, cold storage
-that Vivid searches when it needs to. The cell is the always-on memory, in front of the model on
-every response, like Claude Code's.
+Status: chosen placement, integration in progress. [Runtime cells](27-runtime-cells.md) puts
+Notes beside the native Pi Harness in one celld Person cell. There is no separate `Memory`
+cell, `apps/memory` deployment, or server `MemoryCells` client. The approved layered-memory and behavior contracts are in
+[Assistant patterns](28-assistant-patterns.md). Cell-backed behavior and lifecycle are not yet proven.
 
-## The decision
+## Ownership
 
-1. **All of Vivid's memory of a Person lives in one memory cell.** A cell is a Durable Object on
-   [celld](https://github.com/denoland/celld) (self-hosted Durable Objects, 0.6.2): its own SQLite
-   database, its own alarm, replicated to an object-storage bucket.
-2. **celld runs beside the server on Railway, not on the Person's Computer.** The Computer is not
-   reliable enough yet to hold anything a Person cannot lose.
-3. **Any copy of the server or runtime can reach any Person's cell.** celld routes a request to the
-   node that owns the cell, so there is no volume lock and no single runtime process.
-4. **Memory keeps itself tidy by dreaming.** A cell's alarm asks the server to consolidate that
-   Person's memory a few hours after it last changed.
-5. **Two layers, each with one job.** The cell is near-instant memory (notes with provenance and a
-   version). Helix is the knowledge graph and embeddings, searched on demand.
+The Person cell's SQLite holds Notes separately from Pi's tables, using Pi's table prefix.
+The note tools read the acting Person's Notes directly when running in that Person's cell.
+A shared Thread lives in its creator's cell; another speaker's Notes still belong to that
+speaker and require an authorized cross-cell call through the server. Missing Notes authority
+must fail explicitly, never appear as an empty index.
 
-## What it replaces
+The chosen policy parks Helix for personal memory and keeps it mainly for Company knowledge.
+Personal memory uses the layers in [Assistant patterns](28-assistant-patterns.md#4-memory-in-layers).
+Existing Helix calls are pre-cutover implementation, not the personal-memory target. A response
+receives its standing context and bounded memory index once, frozen for that response.
 
-| Today                                                                                        | After                      |
-| -------------------------------------------------------------------------------------------- | -------------------------- |
-| `packages/agent/runtime/src/notes.ts`, `agentfs-sdk`, `VIVID_MEMORY_DIR`, the runtime volume | The cell's `notes` table   |
-| The single-runtime rule (one process owns every Person's file)                               | Gone: celld owns each cell |
+AgentFS files, `VIVID_MEMORY_DIR`, and a central runtime volume are the pre-cell implementation
+being replaced. Target conversation storage is native Pi Durable Object SQLite, and personal memory
+shares that cell. PostgreSQL remains the product database.
 
-## Why celld
+## Notes behavior
 
-The runtime is one Railway copy today because AgentFS locks each Person's file to one process.
-Scaling out needs every copy to reach every Person's memory with one writer per Person. That is
-what a Durable Object is, and celld runs them without the Cloudflare network. Postgres was rejected
-(the developer, 4 October: "no pg"). A git repository per Person was rejected as infrastructure we
-would have to run (15 October).
+Preserve `read_note`, `write_note`, and `delete_note`, the bounded index, correction of an
+existing note, and forgetting it on request. A Person's question must not rewrite their Notes.
+Tool receipts and recalled content are the observable proof, not a claim in the assistant's text.
 
-**Proof, 15 October, on `cloudbox-konan2`** (throwaway, MinIO as the bucket, two celld nodes):
+The chosen behavior is layered memory, not flat Notes: `self`, `soul`, `person`, `memory`,
+`days`, `bank`, `people`, `dreams`, `attention`, and `research`. Markdown remains its content
+format. Each entry records whether the Person said it or Vivid inferred it, its source and time.
+Updates are versioned. The prompt and memory layers drive behavior together; their full contract
+is [Assistant patterns](28-assistant-patterns.md), not a second design here.
+
+The Dreamer is chosen but unbuilt. It runs around 03:00 in the Person's time zone and after a
+substantial conversation goes quiet. It reads connected Integrations, Library, web and memory;
+it writes research and dreams, and reports findings to Vivid. It does not contact people, send,
+spend or use the Computer. Use Pi's native durable tasks and celld's shared wake/alarm lifecycle.
+Do not add another timer or scheduler. Product Watch schedules remain on the server.
+
+## Historical celld proof
+
+A memory-only prototype ran on `cloudbox-konan2` on 15 October 2026 with two celld nodes and a
+throwaway MinIO bucket. It showed:
 
 - A note written through one node was read through the other.
-- Two copies writing version 1 of one note at once: one `200`, one `409` conflict.
-- 200 Persons, one cell each: write p50 9.5 ms, p95 40.7 ms; read p50 2.3 ms, p95 2.6 ms.
+- Two concurrent writes against version 1 returned one `200` and one `409` conflict.
+- Across 200 Persons, writes measured p50 9.5 ms and p95 40.7 ms; reads measured p50 2.3 ms
+  and p95 2.6 ms.
 - The dream alarm fired.
-- Owner node killed with `kill -9`: every Person answered again through the other node after
-  10.9 s. That is the lease lifetime (`CELLD_TTL_MS`, 10 s); requests in that window fail.
-- Both nodes stopped and their disks wiped: a fresh node restored all 200 Persons from the bucket.
+- After the owner node was killed, reads resumed through the other node in 10.9 s, with a
+  10-second lease. Requests failed during that interval.
+- After both nodes stopped and their disks were wiped, a fresh node restored all 200 Persons
+  from the bucket and answered their reads in 1.9 s.
 
-**Not proven yet:** celld on Railway's private network, latency to the production bucket, and
-celld's maturity (0.x, released 7 October 2026).
+These are historical prototype measurements. They do not prove the Vivid cell runtime, real
+Notes tools, Railway placement, or production bucket latency. The prototype's disk wipe is
+not a product procedure or permission to alter live data.
 
-## The model
+## Required proof
 
-```ts
-// packages/contracts/src/memory.ts
-NoteFile // branded, /^[a-z0-9][a-z0-9-]{0,62}\.md$/ (unchanged)
-NoteVersion // branded positive integer; 0 means "no note yet" on write
-Source // { thread: ThreadId, message: MessageId, at: DateTime.Utc }
-Note // { file, kind: MemoryKind, description, body, sources: NonEmptyArray<Source>,
-//   version: NoteVersion, updated: DateTime.Utc }
-NoteLine // { file, kind, description } — the index line, as today
-```
+Use disposable celld storage on a devbox. Through the real server and shipped model, create a
+standing preference, recall it, correct the same note, recall the correction, and forget it.
+Require real tool receipts. Move or restart the cell and prove retained Notes, correct acting
+Person scope, and continued conversation history.
 
-- **Provenance on every note.** Each write cites the Thread and Message it came from. The model
-  never sees these identifiers: a tool shows sources as "source 1, source 2" and the server
-  resolves the number.
-- **Versions, not locks.** A write names the version it read. A stale write gets the current note
-  back as a `NoteConflict` and the model writes one version that keeps what is true in both.
-
-## The cell
-
-One Durable Object class, `Memory`, in a new app `apps/memory` (it deploys on its own). One cell
-per Person, named by `PersonId`. Its SQLite holds `notes` (one row per note, the fields above) and
-`dreams` (when each ran and what it changed).
-
-| Call                     | Does                                                                  |
-| ------------------------ | --------------------------------------------------------------------- |
-| `index`                  | Index lines, most recently changed first, within `INDEX_BUDGET`       |
-| `read(file)`             | One note, or `NoteMissing`                                            |
-| `write(note, expected)`  | Writes if the stored version is `expected`, else `NoteConflict`       |
-| `delete(file, expected)` | The same rule                                                         |
-| `changed()`              | Arms the dream alarm if none is armed (called after each settled Run) |
-| `dream.commit(batch)`    | All of a dream's writes in one transaction, each with its version     |
-
-Every call carries a shared token (`Redacted`, checked in the Worker); celld's public listener has
-no authentication of its own. Only the server's private network reaches it.
-
-## The server
-
-- `MemoryCells`, a `Context.Service` in `apps/server/src/memory`, is the only client of the cells.
-  It decodes every response with the contract schemas and fails with `MemoryUnavailable`,
-  `NoteMissing` or `NoteConflict`.
-- The runtime's note tools (`read_note`, `write_note`, `delete_note`) call the server over
-  `/api/rpc`, like every other tool. The runtime holds no memory and no volume.
-- The index is read once per response and put in front of the model, as today. An unreachable cell
-  is told to the model as `Unavailable`, never as "no notes".
-
-## Dreaming
-
-After a Run settles, the server calls `changed()`. The cell arms an alarm four hours out if none is
-armed. When it fires, the cell calls the server's private `dream(person)` route. The server runs one
-model loop over that Person's notes and the Messages since the last dream, with tools to list, read
-and write notes and to open a note's sources. It adds patterns, merges duplicates, removes what is
-no longer true, and settles contradictions against the source. All writes land in one
-`dream.commit`. If any note changed meanwhile, the whole dream is dropped and the next alarm tries
-again. The model credential stays on the server; the cell only keeps time.
-
-Helix's learning after each Run stays as it is: that feeds the knowledge graph, not the notes.
-
-## Infrastructure
-
-- **Two celld services on Railway**, `memory-a` and `memory-b`, image
-  `ghcr.io/denoland/celld:v0.6.2` (pinned), each with its own small volume for `CELLD_WATCH` and its
-  own private name (`memory-a.railway.internal`). Two nodes make a write finish when the second
-  node holds it, not after a bucket round trip. Declared in `infra/railway.ts` like the other
-  services.
-- **One Cloudflare R2 bucket** (decided 16 October, open to change): celld's release tests run
-  against R2, so it is the store celld is proven on. S3 and Tigris are also qualified. The bucket
-  must pass `celld diagnose` (conditional writes) before first use.
-- **The cell's code** deploys with `celld deploy apps/memory --bucket …` from a push that touches
-  `apps/memory`. Nodes take a new version without a restart.
-
-## How it scales
-
-Memory stops being the reason the server and runtime run as one copy each.
-
-- **Server and runtime copies.** Neither holds memory or a volume, so each can run as many copies
-  as load needs. Every copy reaches every Person's cell, and celld routes each call to the node
-  that owns that cell. The proof showed this: a note written through one node was read through
-  the other, and two copies writing one note at once got one `200` and one `409`. (The server
-  still runs as one replica for another reason, desktop presence; see
-  [Infrastructure](19-infrastructure.md).)
-- **celld nodes.** One more node is one more Railway service pointed at the same bucket, with no
-  other configuration: nodes find each other through the bucket and share the cells between
-  them. Cells nobody is using hibernate and cost only their bucket storage. A node's memory limit
-  decides how many cells it keeps resident.
-- **Per Person cost.** A Person is one small SQLite database. Measured with two nodes over 200
-  Persons: write p50 9.5 ms, p95 40.7 ms; read p50 2.3 ms, p95 2.6 ms. A Person's calls are
-  served by one cell, so one busy Person never slows another Person's memory.
-- **A node dies.** Its Persons move to the surviving node once its lease runs out. Measured
-  10.9 s with the 10 s default lease; calls in that window fail and the model is told its notes
-  are unavailable, never that it has none.
-- **Every node dies.** The bucket is the truth. With both disks wiped, a fresh node restored all
-  200 Persons and answered all 200 reads in 1.9 s.
-- **Two nodes, not one.** With one node every write waits for a bucket round trip (celld cites
-  about 90 ms to a region-local store); with two it finishes once the second node holds it.
-
-## Order of work
-
-1. Contracts: `Note` with `sources` and `version`, `NoteConflict`.
-2. `apps/memory`: the `Memory` class and its Worker, tested against `celld dev`.
-3. `MemoryCells` in the server; the note tools move behind `/api/rpc`.
-4. Railway: the two services and the bucket; the proof above re-run there.
-5. Dreaming.
-6. A one-off copy of every Person's AgentFS notes into their cell.
-7. Delete AgentFS, `VIVID_MEMORY_DIR` and the runtime's notes volume.
-
-## Open decisions
-
-- **Runtime placement** is now [one cell per Person](27-runtime-cells.md). If that lands, the
-  runtime runs in the Person's cell and the notes become tables in the same database, so the
-  separate `Memory` class and the server's `MemoryCells` client are not needed.
+The current `verify-vivid` launcher still starts the old Node host and invokes its PG migration
+command. Notes recipes are blocked until that integration uses the cell host. A browser reload,
+a disposable PG-adapter test, or a rehearsal model cannot establish cell-backed Notes durability
+or model behavior. No production reset, data-loss step, or live-data copy is authorized here.

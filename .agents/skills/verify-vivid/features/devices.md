@@ -17,9 +17,9 @@ Sign into the desktop app on a new installation. Open Feed or Settings > Devices
 After Launch and Doctor on the unchanged combined commit, run these commands with the explicit run id.
 
 ```sh
-.agents/skills/verify-vivid/verify feature devices flue-<id>
-.agents/skills/verify-vivid/verify browser devices flue-<id>
-.agents/skills/verify-vivid/verify cleanup flue-<id>
+.agents/skills/verify-vivid/verify feature devices pi-<id>
+.agents/skills/verify-vivid/verify browser devices pi-<id>
+.agents/skills/verify-vivid/verify cleanup pi-<id>
 ```
 
 The HTTP recipe enrols disposable installations through public RPC. It checks repeated enrolment, Pending while a separate allowed computer is Connected, Allow, revoke, Deny, and denied re-enrolment. `other-connected.json` records actual public-stream presence. `device-stream-cleanup.json` and `other-disconnected.json` record closure of the owned native stream.

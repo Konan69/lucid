@@ -7,7 +7,7 @@ import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts
 import { StoredRunOrigin } from '../threads/conversation.ts'
 import { answerKey } from '../inputs/answers.ts'
 import { inputRequests } from '../inputs/tables.ts'
-import { submissionId } from '../runtime/identity.ts'
+import { deliveryRunId } from '../threads/key.ts'
 import { EARLIER_CHARACTERS, REQUEST_CHARACTERS, personRequest } from './request.ts'
 import {
   delivery,
@@ -43,7 +43,7 @@ const answeredRequest = Effect.fn('RequestTest.answered')(function* (
       createdAt: 1,
     }),
   )
-  return submissionId(threadId, answerKey(id))
+  return deliveryRunId(threadId, answerKey(id))
 })
 
 /** The reviewer must read the request, never Vivid's account of it or somebody else's words. */
@@ -60,7 +60,7 @@ layer(testDatabaseLayer)((it) => {
           yield* record(thread, [
             { id: 'old', personId: me, origin: message, working: false },
             { id: 'done', personId: me, origin: message, working: false },
-            // Settled in Flue, but the row was never updated: its words were already acted on.
+            // The runtime settled it, but the row was never updated. Its words were already acted on.
             { id: 'stuck', personId: me, origin: message, working: true },
             { id: 'other', personId: test.other.person.id, origin: message, working: true },
             { id: 'now', personId: me, origin: message, working: true },

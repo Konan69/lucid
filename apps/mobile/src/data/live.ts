@@ -10,12 +10,15 @@ import {
 } from '@vivid/contracts'
 import {
   draftScopeOf,
+  following,
+  Following,
   LiveState,
   liveStateOf,
   makeLink,
   makeLive,
   makeSeenThread,
   makeSnapshots,
+  remembering,
   workspaceKey,
   type KeptQueries,
   type LiveQuery,
@@ -30,6 +33,7 @@ import { createContext, useContext } from 'react'
 import { followThemeAtom, themeAtom } from './appearance'
 import { makeDeviceDecisions } from './devices'
 import { makeConnecting } from './connecting'
+import { makeSending } from './sending'
 import { door } from './door'
 import { sessionExpiry } from './account'
 import { followDrafts, forgetDrafts } from './drafts'
@@ -40,7 +44,7 @@ import { dropAtom, sessionAtom } from './held'
 import { Session, type Outside, type SignedIn } from './session'
 import { bearerSocket } from './socket'
 import { launch, start } from './app'
-import { forgetHeard } from './hearing'
+import { forgetHeard, hearIn } from './hearing'
 import { forgetPlaces } from './placed'
 import { snapshotStore } from './snapshot'
 
@@ -245,8 +249,9 @@ function makeLiveData(session: SignedIn) {
   const kept = engine.kept
   const family = engine.family
 
+  const me = kept((client) => client.WatchMe())
   const live = {
-    me: kept((client) => client.WatchMe()),
+    me,
     settings: kept((client) => client.WatchSettings()),
     /** What Vivid is called and how its face is drawn where the Person is working. */
     appearance: kept((client) => client.WatchAppearance()),
@@ -266,6 +271,8 @@ function makeLiveData(session: SignedIn) {
           ),
         ),
     ),
+    /** Every Thread's conversation (`conversations`, `@vivid/state`), kept on the phone as it speaks (`hearIn`). */
+    conversation: followConversations(engine, session, me),
     projects: kept((client) => client.WatchProjects()),
     library: family(
       (shelf: LibraryShelf) => shelf,
@@ -289,7 +296,6 @@ function makeLiveData(session: SignedIn) {
     audit: one((client) => client.WatchAudit()),
     /** What finished or needs the Person while they were elsewhere, newest first. */
     notifications: kept((client) => client.WatchNotifications()),
-    memory: one((client) => client.WatchMemory()),
     /** What Vivid knows how to do: the procedures it ships with and the ones it was taught. */
     /** Where the Person's Computer stands: off, starting, running and who has the keyboard. */
     computer: one((client) => client.WatchComputer()),
@@ -298,6 +304,10 @@ function makeLiveData(session: SignedIn) {
     devices: one((client) => client.WatchDevices()),
     /** Vivid's own work, grouped into what needs the Person, what is going and what is handled. */
     feed: one((client) => client.WatchFeed()),
+    /** Who owes the Person what, which Vivid keeps and chases (`screen/Feed.tsx`). */
+    owed: one((client) => client.WatchOwed()),
+    /** The Person's own to-do list, which Vivid adds to and ticks off (`screen/Feed.tsx`). */
+    todos: one((client) => client.WatchTodos()),
     /** What the Person has typed and not sent, on any device, where they are working. */
     drafts: kept((client) => client.WatchDrafts()),
   }
@@ -415,6 +425,16 @@ function makeLiveData(session: SignedIn) {
     /** Connecting an Integration: the session's one machine (`data/connecting.ts`). */
     connecting,
     devices,
+    /**
+     * What Vivid remembers about the Person, read from their cell. There is no watch on it: the
+     * Memory screen begins a new reading each time it is opened (`screen/settings/Memory.tsx`).
+     */
+    memory: remembering.make(engine),
+    /**
+     * Sending in a Thread: one machine for each Thread of the session (`data/sending.ts`), made
+     * here for the reason `connecting` is: a delivery on its way outlives the screen that sent it.
+     */
+    sending: makeSending(engine),
     gone,
     seenThread,
     typingIn,
@@ -522,3 +542,22 @@ export const refusalOf = <Value, Failure extends { readonly message: string }>(
   Result.isFailure(result) ? Option.some(result.failure.message) : Option.none()
 
 export { LiveState }
+
+function followConversations(
+  engine: ReturnType<typeof makeLive>,
+  session: SignedIn,
+  me: LiveQuery<MeResponse>,
+) {
+  const keep = (thread: ThreadId, heard: Following) => {
+    const signedIn = engine.registry.get(me.atom)
+    if (!Following.$is('Live')(heard) || !AsyncResult.isSuccess(signedIn)) return
+    hearIn({ origin: session.server, person: signedIn.value.person.id }, thread, heard.state)
+  }
+  return engine.followed<ThreadId, Following>(
+    (id) => id,
+    (client, threadId, last, ready) =>
+      following(() => client.WatchConversation({ threadId }), last, ready).pipe(
+        Stream.tap((heard) => Effect.sync(() => keep(threadId, heard))),
+      ),
+  )
+}

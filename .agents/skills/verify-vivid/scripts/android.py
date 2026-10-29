@@ -179,7 +179,7 @@ def boot(receipt):
     assert port is not None, 'No emulator port pair available'
     receipt['serial'] = 'emulator-' + str(port)
     spawn('emulator', [str(SDK / 'emulator/emulator'), '-avd', NAME, '-port', str(port),
-                      '-no-window', '-gpu', 'guest', '-no-audio', '-no-snapshot',
+                      '-no-window', '-gpu', 'swiftshader', '-no-audio', '-no-snapshot',
                       '-no-boot-anim', '-cores', '2', '-memory', '3072'], receipt)
     ready(receipt)
 
@@ -196,6 +196,14 @@ def ready(receipt):
     assert receipt['serial'] + '\tdevice' in inventory, inventory
     receipt['inventory'] = inventory
     run([ADB, '-s', receipt['serial'], 'shell', 'input', 'keyevent', '82'])
+    # Configure accessibility before Vivid starts; the orb reads Android's reduced-motion state.
+    settings = ['animator_duration_scale', 'transition_animation_scale', 'window_animation_scale']
+    for setting in settings:
+        run([ADB, '-s', receipt['serial'], 'shell', 'settings', 'put', 'global', setting, '0'])
+    motion = {setting: output([ADB, '-s', receipt['serial'], 'shell', 'settings', 'get',
+                              'global', setting]) for setting in settings}
+    assert all(value == '0' for value in motion.values()), motion
+    write(CACHE / 'motion.json', dict(serial=receipt['serial'], boot=BOOT, settings=motion))
     write(CACHE / 'device.json', receipt)
 
 
@@ -232,7 +240,7 @@ def main():
                 if role in receipt:
                     stop(receipt[role])
             raise
-        receipt.update(alias=alias, hostname=socket.gethostname(), seconds=round(time.monotonic() - started, 3),
+        receipt.update(_tag='devbox', alias=alias, hostname=socket.gethostname(), seconds=round(time.monotonic() - started, 3),
                        installed=missing, sdk=str(SDK), avd=str(AVD), boot=BOOT)
         write(location, receipt)
         print(json.dumps(receipt))

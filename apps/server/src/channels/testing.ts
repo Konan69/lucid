@@ -1,4 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
+import { RuntimeSubmissionId } from '@vivid/contracts'
 import { expect } from '@effect/vitest'
 import { eq, inArray } from 'drizzle-orm'
 import {
@@ -19,10 +20,9 @@ import { type Actor } from '../auth/access.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseLayer } from '../database/testdb.ts'
 import { changesLayer } from '../live/changes.ts'
-import { silentLearningLayer } from '../memory/testing.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { Admission, Runtime, Settlement } from '../runtime/client.ts'
-import { submissionId } from '../runtime/identity.ts'
+import { deliveryRunId } from '../threads/key.ts'
 import { conversationLayer } from '../threads/delivery.ts'
 import { ThreadTitles } from '../threads/generation.ts'
 import { Presence } from '../threads/presence.ts'
@@ -136,15 +136,14 @@ const ports = Layer.effectContext(
     })
     const runtime = Runtime.of({
       admit: Effect.fn('Channels.test.admit')(function* (input) {
-        const id = submissionId(input.threadId, input.idempotencyKey)
+        const id = deliveryRunId(input.threadId, input.idempotencyKey)
         const repeated = settlements.has(id)
         if (!repeated) settlements.set(id, yield* Deferred.make<Settlement>())
         yield* Ref.update(admissions, (all) => [...all, input])
         yield* Queue.offer(admitted, input)
         return Admission.make({
           runId: id,
-          offset: String(input.turn),
-          incarnation: 'channels-test',
+          submissionId: RuntimeSubmissionId.make(input.turn),
           repeated,
         })
       }),
@@ -153,6 +152,7 @@ const ports = Layer.effectContext(
         return waiting === undefined ? Effect.never : Deferred.await(waiting)
       },
       stop: () => Effect.succeed(false),
+      watch: () => Stream.never,
       read: () =>
         Effect.succeed(
           HttpClientResponse.fromWeb(
@@ -169,9 +169,7 @@ const ports = Layer.effectContext(
   }),
 )
 
-const foundation = Layer.mergeAll(ports, silentLearningLayer).pipe(
-  Layer.provideMerge(testDatabaseLayer),
-)
+const foundation = ports.pipe(Layer.provideMerge(testDatabaseLayer))
 const stores = Layer.mergeAll(changesLayer, runStoreLayer, threadStoreLayer, auditLayer).pipe(
   Layer.provideMerge(foundation),
 )

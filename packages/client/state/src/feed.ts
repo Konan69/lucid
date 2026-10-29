@@ -6,7 +6,7 @@ import {
   ThreadId,
   FeedResponse as FeedResponseSchema,
 } from '@vivid/contracts'
-import { Context, Data, Effect, type Layer, Option, Predicate, Schema } from 'effect'
+import { Context, Data, Effect, type Layer, Option, Schema } from 'effect'
 import { Atom } from 'effect/reactivity'
 import { deviceWaiting, type DeviceList, type DeviceWaiting } from './devices.js'
 import type { FormState } from './display.js'
@@ -85,53 +85,10 @@ export const feedFace = (
 }
 
 /**
- * What the Person chose inside a card's display, and the words a card's button says with it.
- *
- * A card's buttons are the card's own, under the display, so the display only draws and lets the
- * Person choose. A button's words may name a choice: "Book $flight" says "Book Arik Air at 7:10"
- * once a flight is picked (`FeedAction`). The choices are OpenUI's renderer state, keyed `$name`:
- * the defaults the program declared (`ParseResult.stateDeclarations`), then what the Person
- * changed (`onStateUpdate`), whose values the renderer may hold bare or as a field (`{ value }`,
- * `unwrapFieldValue` in `@openuidev/react-lang` 1.0.0).
+ * What the Person chose inside a display, as OpenUI's renderer keeps it, keyed `$name`. The phone
+ * keeps a card's across being scrolled away, so a drawn card comes back as it was left.
  */
 export type Chosen = FormState
-
-/** One value a choice can hold: a word, a number, a tick, or several picked from a list. */
-const Plain = Schema.Union([
-  Schema.String,
-  Schema.Finite,
-  Schema.Boolean,
-  Schema.Array(Schema.Union([Schema.String, Schema.Finite])),
-])
-/** A value as the renderer keeps it: bare, or inside the field that holds it. */
-const Held = Schema.Union([Plain, Schema.Struct({ value: Plain })])
-const readHeld = Schema.decodeUnknownOption(Held)
-
-/** A choice's value as words. A tick is "yes" or "no"; several picks are listed. */
-const wordsOf = (value: typeof Plain.Type): string => {
-  if (Predicate.isBoolean(value)) return value ? 'yes' : 'no'
-  if (Predicate.isString(value) || Predicate.isNumber(value)) return String(value).trim()
-  return value.map(String).join(', ')
-}
-
-/** The words a choice holds, when it holds any. */
-export const chosenWords = (chosen: Chosen, name: string): Option.Option<string> =>
-  Option.filter(
-    Option.map(readHeld(chosen[name]), (held) =>
-      wordsOf(Predicate.isObject(held) && 'value' in held ? held.value : held),
-    ),
-    (words) => words.length > 0,
-  )
-
-/** A `$name` in a button's words: OpenUI Lang's own spelling of a state variable. */
-const NAMED = /\$[A-Za-z_][A-Za-z0-9_]*/gu
-
-/**
- * A button's words with every `$name` replaced by what the Person chose under that name. A name
- * nothing was chosen under is left as written: it is Vivid's mistake to see, not one to hide.
- */
-export const fill = (action: string, chosen: Chosen): string =>
-  action.replace(NAMED, (name) => Option.getOrElse(chosenWords(chosen, name), () => name))
 
 /** How a press settles a card: by saying its words in the card's Thread, or by closing it. */
 const SettlingSchema = Schema.TaggedUnion({
@@ -261,7 +218,7 @@ export interface SendingService {
   readonly send: (delivery: Delivery) => Effect.Effect<void, SendRefused>
 }
 
-/** Sends words through Flue or marks a card done using the current surface's transport. */
+/** Sends words into the Thread or marks a card done using the current surface's transport. */
 export class Sending extends Context.Service<Sending, SendingService>()(
   '@vivid/state/feed/Sending',
 ) {}

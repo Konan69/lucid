@@ -22,7 +22,7 @@ export const testConfigLayer = Layer.unwrap(
       Layer.succeed(ServerConfig, {
         DATABASE_URL: databaseUrl,
         AUTH_SECRET: Redacted.make('test-Auth_secret-0123456789-ABCDEFG'),
-        RUNTIME_URL: new URL('http://127.0.0.1:1'),
+        RUNTIME_URLS: [new URL('http://127.0.0.1:1')],
         RUNTIME_TOKEN: Redacted.make('test-runtime-token'),
         PORT: 8787,
         PUBLIC_URL: new URL('http://127.0.0.1:8787'),

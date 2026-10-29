@@ -1,5 +1,5 @@
 import { useAtomValue } from '@effect/atom-react'
-import { createFlueClient } from '@flue/sdk'
+import { VividRpcClient } from '@vivid/client-runtime'
 import { FeedItem, type FeedCardId } from '@vivid/contracts'
 import { feed } from '@vivid/state'
 import { Effect, Layer, Option, Result } from 'effect'
@@ -19,7 +19,7 @@ import { engine } from './runtime'
  * not at once. Until it does, the card is folded away where it stood, so the press is answered on
  * the frame it happened in (`feed.Press`, `@vivid/state`).
  *
- * Each card owns a shared press machine. This adapter supplies only Flue and RPC delivery;
+ * Each card owns a shared press machine. This adapter supplies only its two calls to the server;
  * the machine owns the in-flight work, refusals, retries, and replacement by a newer post.
  */
 
@@ -28,21 +28,21 @@ type Presses = { readonly presses: ReadonlyMap<FeedCardId, feed.Press> }
 /** Titles are notification context, not delivery state; the machine owns whether a send failed. */
 const closing = new Map<FeedCardId, string>()
 
-/** Flue owns message delivery and its idempotency receipt; RPC owns marking a card done. */
+/** `SendToThread` says a card's words under the press's key; `MarkFeedCard` closes a card. */
 const sending = Layer.succeed(feed.Sending, {
   send: Effect.fn('Feed.send')(function* ({ card, thread, pressed }: feed.Delivery) {
     please()
     yield* feed.Settling.$match(pressed.how, {
       Said: ({ words, key }) =>
-        Effect.tryPromise({
-          try: (signal) =>
-            createFlueClient({ url: `/api/vivid/${encodeURIComponent(thread)}` }).send({
-              message: { kind: 'user', body: words },
-              idempotencyKey: key,
-              signal,
-            }),
-          catch: () => new feed.SendRefused({ card }),
-        }).pipe(Effect.asVoid),
+        Effect.gen(function* () {
+          const sent = yield* engine.run(
+            VividRpcClient.use((client) =>
+              client.SendToThread({ threadId: thread, text: words, pictures: [], key }),
+            ),
+          )
+          if (Result.isFailure(sent)) return yield* new feed.SendRefused({ card })
+          return undefined
+        }),
       Done: () =>
         Effect.gen(function* () {
           const title = Option.fromUndefinedOr(closing.get(card))
@@ -109,7 +109,7 @@ const PLEASED_FOR_MS = 3500
 export const usePleased = create(() => ({ pleased: false }))
 let pleasedUntil: Option.Option<ReturnType<typeof setTimeout>> = Option.none()
 
-const please = () => {
+export const please = () => {
   Option.map(pleasedUntil, clearTimeout)
   pleasedUntil = Option.some(
     setTimeout(() => {
@@ -121,9 +121,9 @@ const please = () => {
 }
 
 /**
- * Says a card's button in its Thread, as the Person, through Flue's own client: the same send the
- * Thread screen and a new Thread's first words make (`data/threads.ts`). The words are the
- * button's with what the Person chose laid in (`feed.fill`).
+ * Says a card's button in its Thread, as the Person: the same send the Thread screen and a new
+ * Thread's first words make (`SendToThread`, `data/sending.ts`). The words are a said card's
+ * button, or what a drawn card's own Button says (`@ToAssistant`).
  *
  * A press while one is on its way for the same post is not taken. The same words pressed again
  * after a failed send keep that send's key (`feed.pressKey`), so a send whose answer was only lost

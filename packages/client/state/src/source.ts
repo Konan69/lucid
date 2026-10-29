@@ -1,21 +1,13 @@
+import type { ConversationMessage } from '@vivid/contracts'
 import { Data, Option } from 'effect'
 
 /**
- * The fields of one conversation message that say where it came from. The shape is Flue's
- * `FlueConversationMessage` (`@flue/sdk` 2.2.2, `dist/index.d.mts`), named structurally so this
- * package reads a message without depending on Flue. The absences are Flue's own: a message has
- * a `signal` only when its record carried a tag or attributes, and a `settlement` only on the
- * advisory the runtime appends when a submission ends without a reply.
+ * The fields of one conversation message that say where it came from
+ * (`ConversationMessage`, `@vivid/contracts`). A message has a `signal` only when it is a
+ * delivery the server made, and a `settlement` only on the advisory the runtime writes when a
+ * reply fails or is stopped.
  */
-export interface Sourced {
-  readonly role: 'user' | 'assistant' | 'system'
-  readonly display: 'visible' | 'hidden' | 'diagnostic'
-  readonly signal?: {
-    readonly tagName?: string
-    readonly attributes?: Readonly<Record<string, string>>
-  }
-  readonly settlement?: { readonly outcome: 'failed' | 'aborted' }
-}
+export type Sourced = Pick<ConversationMessage, 'role' | 'display' | 'signal' | 'settlement'>
 
 /**
  * Where a message in a Thread's conversation came from, which decides whether it is drawn and as
@@ -27,10 +19,9 @@ export interface Sourced {
  *   `turn` names the Run that says who they are and `from` their name, when the server gave them.
  * - `Wake`: a follow-up falling due, with its name when given.
  * - `Failed`: the runtime's word that a reply was not finished.
- * - `Plumbing`: everything else, which is never drawn. The runtime talking to itself or to the
- *   model (instructions reloaded, tools and skills changed, the environment restated, a stream
- *   resumed), a stopped submission, and the signals whose outcome a card already tells (an
- *   Approval's decision, an answer) or that only start Vivid speaking.
+ * - `Plumbing`: everything else, which is never drawn. A reply the Person stopped, and the
+ *   deliveries whose outcome a card already tells (an Approval's decision, an answer) or that
+ *   only start Vivid speaking.
  */
 export type Source = Data.TaggedEnum<{
   Person: {}
@@ -46,26 +37,24 @@ export const Source = Data.taggedEnum<Source>()
 const WAKES = new Map<string, 'follow-up'>([['follow-up', 'follow-up']])
 
 /**
- * Where a `system`-role message came from. Flue projects every signal record as one
- * (`conversation-projections.ts`, `classifySignal`, in `@flue/runtime` 2.2.2), all of them
- * `display: 'diagnostic'` but a resumed stream's, so `display` cannot tell the runtime's own
- * signals from the server's. What can:
+ * Where a `system`-role message came from. The runtime projects two things as one
+ * (`packages/agent/runtime/src/state/project.ts`): a delivery the server made, which carries the
+ * tag it was sent under (`signal`), and its own advisory about a reply that failed or was
+ * stopped (`settlement`). Both are `display: 'diagnostic'`, so `display` cannot tell which of
+ * them a Thread draws. What can:
  *
- * - `instructions` and `environment` carry neither tag nor attributes, so they have no `signal`.
- * - `resources` carries only `attributes.resource`, so it has a `signal` with no tag.
- * - `submission_interrupted` carries attributes too (the submission, its kind and reason), so
- *   the failure is read from `settlement` before the signal is looked at. Reading the signal
- *   first took it for an unknown signal and the notice was never drawn.
- * - The server's own deliveries always carry the tag they were sent under
- *   (`apps/server/src/threads/message.ts`, `flueMessage`), and only a known tag is drawn.
+ * - An advisory is read from `settlement` before anything else: a failed reply is said, a
+ *   stopped one is not.
+ * - A delivery is drawn only under a tag this reading knows
+ *   (`apps/server/src/threads/message.ts`, `runtimeMessage`).
+ * - A `system` message with neither is not drawn.
  */
 function signalSource(message: Sourced): Source {
   if (message.settlement !== undefined) {
     return message.settlement.outcome === 'failed' ? Source.Failed() : Source.Plumbing()
   }
-  if (message.signal === undefined || message.signal.tagName === undefined) return Source.Plumbing()
-  const { tagName } = message.signal
-  const attributes = message.signal.attributes === undefined ? {} : message.signal.attributes
+  if (message.signal === undefined) return Source.Plumbing()
+  const { tagName, attributes } = message.signal
   if (tagName === 'message') {
     return Source.Said({
       turn: Option.fromUndefinedOr(attributes.turn),
@@ -78,7 +67,7 @@ function signalSource(message: Sourced): Source {
     : Source.Wake({ reason, name: Option.fromUndefinedOr(attributes.name) })
 }
 
-/** Where one message came from. A user turn or a reply Flue marks hidden is plumbing too. */
+/** Where one message came from. A user turn or a reply marked hidden is plumbing too. */
 export function sourceOf(message: Sourced): Source {
   if (message.role === 'system') return signalSource(message)
   if (message.display === 'hidden') return Source.Plumbing()
