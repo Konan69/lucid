@@ -1,4 +1,6 @@
 import * as NodeAssert from 'node:assert/strict'
+import * as NodeFSP from 'node:fs/promises'
+import * as NodePath from 'node:path'
 import { history, json, rpc } from './wire.mjs'
 import { MemorySource } from '@vivid/contracts'
 
@@ -57,7 +59,12 @@ async function preference(state, id, ui) {
   return { marker, entry }
 }
 
-/** A new Thread must recall the first Thread's memory through the renamed read_memory tool. */
+/**
+ * A new Thread must answer from the first Thread's memory. A new Thread has no other source for
+ * the project's meeting time, so the answer is the proof. The prompt tells Vivid to use an index
+ * line directly when it is enough and to call read_memory only when it is not, so either path
+ * passes; the receipt records which one was taken.
+ */
 export async function memory(state, id, ui) {
   const { marker, entry } = await preference(state, id, ui)
   const next = await ui.create('Recall ' + marker)
@@ -65,11 +72,12 @@ export async function memory(state, id, ui) {
   const recalled = await ui.completed(next, 1, 'recalled')
   NodeAssert.match(recalled.reply, /noon/iu)
   NodeAssert.match(recalled.reply, /writ/iu)
-  NodeAssert.ok(
-    calls(recalled.page, recalled.detail.runs[0], 'read_memory').some(
-      (call) => call.output.file === entry.file && call.output.layer === entry.layer,
-    ),
-    'Recall did not read the same entry through read_memory',
+  const read = calls(recalled.page, recalled.detail.runs[0], 'read_memory').some(
+    (call) => call.output.file === entry.file && call.output.layer === entry.layer,
+  )
+  await NodeFSP.writeFile(
+    NodePath.join(ui.directory, 'recall-path.json'),
+    JSON.stringify({ path: read ? 'read_memory' : 'index', file: entry.file }, null, 2),
   )
   await ui.visible('noon')
   await ui.capture('recalled')

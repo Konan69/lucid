@@ -215,7 +215,10 @@ export async function phone(state, feature) {
     const artifact = await apk(state, (process) => control(state, { action: 'capture', process }))
     await json(directory + '/apk.json', artifact)
     const adb = device.sdk + '/platform-tools/adb'
-    await execute([adb, '-s', device.serial, 'install', '-r', artifact.file])
+    // apksigner 36 writes a v4 .idsig beside the APK, and adb then installs incrementally. On the
+    // PC's host-GPU emulator that install starts the app so slowly that Android kills it with
+    // "failed to complete startup" (r5, 29 October 2026); a streamed install starts in 29 s.
+    await execute([adb, '-s', device.serial, 'install', '--no-incremental', '-r', artifact.file])
     await execute([adb, '-s', device.serial, 'shell', 'pm', 'clear', 'work.vivid.mobile'])
     await execute([adb, '-s', device.serial, 'reverse', 'tcp:19278', 'tcp:' + state.ports.web])
     await execute([...cli, 'doctor', '--platform', 'android'])
