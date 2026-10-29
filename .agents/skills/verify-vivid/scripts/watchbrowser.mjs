@@ -8,25 +8,22 @@ import { grant, turnOn, shown, waitShown, decodeShown, decodeTabs } from './push
 
 /**
  * Real Settings controls own Connect, notifications and Disconnect; the browser composer owns the
- * Watch request. The grant is held for the whole journey (`grant`, `push.mjs`).
+ * Watch request. The notification grant is held from after Connect to the end (`grant`,
+ * `push.mjs`): with its DevTools connection open, agent-browser lost the page's session inside
+ * the Connect dialog on every run of 29 October 2026.
  */
 export async function watchBrowser(state, id, directory, browser) {
+  const integration = await connect(state, directory, browser)
   const granted = await grant(state, browser.run)
   try {
-    await journey(state, id, directory, browser)
+    await journey(state, { id, integration }, directory, browser)
   } finally {
     granted.close()
   }
 }
 
-/**
- * The Feed post the event makes reaches this browser through the push service: the app's tab is
- * put behind another while the provider emits, and the worker must show the `posted` notice,
- * opening the Feed. Headless Chrome draws no notification to press, so the press itself is not
- * driven: the page is handed the payload the worker would hand it (`worker/main.ts` `open`) and
- * must go to the Feed on its own.
- */
-async function journey(state, id, directory, { run, capture }) {
+/** Connects Verify Pulse through Settings, and answers the Integration Vivid made for it. */
+async function connect(state, directory, { run, capture }) {
   NodeAssert.equal(state.modelKind, 'real')
   await run(['open', state.web + '/?settings=connections'])
   await run(['wait', '[aria-label="Search integrations"]'])
@@ -48,9 +45,17 @@ async function journey(state, id, directory, { run, capture }) {
       candidate.service === 'verify-pulse' && ConnectionState.guards.Ready(candidate.state),
   )
   NodeAssert.ok(connection, 'UI Connect did not create a ready Integration')
-  const integration = await integrationOf(state, connection, directory)
-  // After Connect: with the worker registered first, agent-browser lost the page's CDP session in
-  // the Connect dialog on both runs of 29 October 2026.
+  return integrationOf(state, connection, directory)
+}
+
+/**
+ * The Feed post the event makes reaches this browser through the push service: the app's tab is
+ * put behind another while the provider emits, and the worker must show the `posted` notice,
+ * opening the Feed. Headless Chrome draws no notification to press, so the press itself is not
+ * driven: the page is handed the payload the worker would hand it (`worker/main.ts` `open`) and
+ * must go to the Feed on its own.
+ */
+async function journey(state, { id, integration }, directory, { run, capture }) {
   await turnOn(state, id, { run, capture })
   const marker = 'Browser pulse ' + crypto.randomUUID().slice(0, 8)
   await run(['open', state.web + '/t/' + id])
