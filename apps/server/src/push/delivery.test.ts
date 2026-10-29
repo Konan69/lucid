@@ -136,6 +136,26 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
           }),
         ),
     )
+    it.effect('takes a Chrome subscription at Google push and refuses any other host', () =>
+      withPush(
+        Effect.gen(function* () {
+          const owner = yield* fixture()
+          const keys = { p256dh: 'B'.repeat(87), auth: 'A'.repeat(22) }
+          const register = (endpoint: string) =>
+            pushHandlers
+              .RegisterPushTarget({
+                destination: PushDestination.cases.Browser.make({ endpoint, keys }),
+              })
+              .pipe(Effect.provideService(AuthContext, owner.auth), Effect.result)
+          const chrome = yield* register(
+            `https://jmt17.google.com/fcm/send/${NodeCrypto.randomUUID()}`,
+          )
+          expect(Result.isSuccess(chrome)).toBe(true)
+          const elsewhere = yield* register(`https://push.example.test/${NodeCrypto.randomUUID()}`)
+          expect(Result.isFailure(elsewhere) && elsewhere.failure._tag).toBe('InvalidRequest')
+        }),
+      ),
+    )
     it.effect(
       'sends once per target across concurrent retry and rebuilding the delivery Layer',
       () =>
