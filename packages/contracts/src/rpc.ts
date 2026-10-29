@@ -18,7 +18,13 @@ import {
 } from './artifacts.js'
 import { AuditListResponse } from './audit.js'
 import { ServerBuild } from './build.js'
-import { FeedResponse, MarkFeedCardRequest, PostOutcome, PostRequest } from './feed.js'
+import {
+  FeedDisplayInvalid,
+  FeedResponse,
+  MarkFeedCardRequest,
+  PostOutcome,
+  PostRequest,
+} from './feed.js'
 import {
   NotifyPersonOutcome,
   NotifyPersonRequest,
@@ -290,7 +296,12 @@ const NotifyPerson = Rpc.make('NotifyPerson', {
 const ListFeed = Rpc.make('ListFeed', { ...call, success: FeedResponse })
 const WatchFeed = Rpc.make('WatchFeed', { ...live, success: FeedResponse })
 const MarkFeedCard = Rpc.make('MarkFeedCard', { ...call, payload: MarkFeedCardRequest })
-const Post = Rpc.make('Post', { ...call, payload: PostRequest, success: PostOutcome })
+const Post = Rpc.make('Post', {
+  ...call,
+  error: Schema.Union([RpcFailure, FeedDisplayInvalid]),
+  payload: PostRequest,
+  success: PostOutcome,
+})
 
 // ── The signed-in Person and where they are working ────────────────────────
 const Me = Rpc.make('Me', { ...call, success: MeResponse })

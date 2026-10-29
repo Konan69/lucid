@@ -3,6 +3,7 @@ import { describe, expect, layer } from '@effect/vitest'
 import {
   Company,
   CompanyId,
+  FeedDisplayInvalid,
   FeedItem,
   MarkFeedCardRequest,
   Person,
@@ -227,6 +228,27 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
             asking: [],
           }),
         ])
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('a display with no root statement is refused and no card is made', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const store = yield* FeedStore
+        const thread = yield* background(test.ada, now - hour)
+        yield* TestClock.setTime(now)
+        const bare = PostRequest.make({
+          title: 'Reply to Dana',
+          words: null,
+          display: 'Card([Caption("To Dana"), Text("Friday works.", "sm")], "soft")',
+          actions: [],
+        })
+
+        const refused = yield* Effect.flip(store.post({ person: test.ada, thread, request: bare }))
+        expect(refused).toEqual(new FeedDisplayInvalid({ reason: 'NoRoot' }))
+        expect(
+          (yield* items(test.ada)).some((item) => item.thread === thread && item.post !== null),
+        ).toBe(false)
       }).pipe(Effect.scoped),
     )
 
