@@ -19,6 +19,7 @@ Read the touched feature before launching. A verdict belongs to the recorded com
 - [Library](library.md).
 - [Feed](feed.md).
 - [Waiting on](owed.md).
+- [To-dos](todos.md).
 - [Device permission requests](devices.md).
 - [Read reporting](reading.md).
 - [Settings and Integration purpose groups](settings.md).
