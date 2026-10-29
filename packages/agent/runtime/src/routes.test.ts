@@ -157,7 +157,7 @@ describe('the runtime over HTTP', () => {
     ),
   )
 
-  it.effect('stores long Markdown and reads every page through the entry tools', () =>
+  it.effect('creates and pages long Markdown without a revision', () =>
     scenario((given, runtime) =>
       Effect.gen(function* () {
         const body = '# Plan\n\n' + 'A lasting detail.\n'.repeat(400) + '\nThe final detail.'
@@ -167,7 +167,6 @@ describe('the runtime over HTTP', () => {
               summary: 'Remember the plan',
               layer: 'memory',
               file: 'plan.md',
-              expected_revision: 0,
               basis: 'said',
               kind: 'workstream',
               description: 'The complete plan',
