@@ -179,7 +179,8 @@ export const Pressable = defineComponent({
           padding: props.padding == null ? undefined : Math.max(0, props.padding) * 4,
           backgroundColor: filled,
           borderRadius: skin.radius(props.radius) ?? 16,
-          borderWidth: filled == null ? 0 : 1,
+          // Every tile carries the hairline, so an unpicked one still reads as something to press.
+          borderWidth: 1,
           borderColor: skin.border,
           opacity: pressed && filled == null ? 0.7 : 1,
         })}

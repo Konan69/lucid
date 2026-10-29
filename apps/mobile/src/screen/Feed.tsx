@@ -178,7 +178,6 @@ export function Feed() {
             Working: ({ item }) => (
               <Card
                 card={item.card}
-                from={item.from}
                 at={item.since}
                 post={Option.fromNullOr(item.post)}
                 ask={{ title: item.from, words: 'Vivid is working on this now.' }}
@@ -563,7 +562,6 @@ function Waiting({
       )}
       <Card
         card={item.card}
-        from={item.from}
         at={item.at}
         post={post}
         ask={{ title: item.from, words: feed.askedWords(item) }}
@@ -606,7 +604,6 @@ interface Reply {
  */
 function Card({
   card,
-  from,
   at,
   post,
   ask,
@@ -617,7 +614,6 @@ function Card({
 }: {
   /** The card whose post this is; its display's programs run only as that post wrote them. */
   card: FeedCardId
-  from: string
   at: number
   post: Option.Option<FeedPost>
   ask: { readonly title: string; readonly words: string }
@@ -662,20 +658,24 @@ function Card({
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 22 }}>
-        <Pressable
-          accessibilityRole="link"
-          accessibilityHint="Opens the conversation"
-          onPress={onOpen}
-          hitSlop={8}
-          style={({ pressed }) => ({ flex: 1, opacity: pressed ? 0.6 : 1 })}
-        >
-          <Label size="label" tone="ink-2" numberOfLines={1}>
-            {from}
-          </Label>
-        </Pressable>
-        <Label size="label" tone="ink-3" style={{ fontVariant: ['tabular-nums'] }}>
+        {/* No name of where it is from: the post or the title below already says it
+            (29 October 2026: "repeating"). A drawn card opens its Thread from "Open". */}
+        <Label size="label" tone="ink-3" style={{ flex: 1, fontVariant: ['tabular-nums'] }}>
           {when(at, now)}
         </Label>
+        {Option.exists(post, FeedPost.guards.Drawn) && (
+          <Pressable
+            accessibilityRole="link"
+            accessibilityHint="Opens the conversation"
+            onPress={onOpen}
+            hitSlop={10}
+            style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1 })}
+          >
+            <Label size="label" tone="ink-2" style={{ fontWeight: '600' }}>
+              Open
+            </Label>
+          </Pressable>
+        )}
         {Option.exists(post, FeedPost.guards.Drawn) && Option.isSome(reply) && (
           <Pressable
             accessibilityRole="button"
@@ -684,7 +684,7 @@ function Card({
             onPress={reply.value.onDone}
             hitSlop={10}
             style={({ pressed }) => ({
-              marginLeft: 4,
+              marginLeft: 12,
               opacity: pressed || reply.value.held ? 0.5 : 1,
             })}
           >
