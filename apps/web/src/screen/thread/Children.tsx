@@ -20,7 +20,9 @@ export function Children({ runs }: { runs: ReadonlyArray<ChildRun> }) {
   return (
     <div className="mt-3">
       <p className="text-meta font-meta text-ink-3">
-        {runs.length === 1 ? 'A helper' : `${runs.length} helpers`} working on parts of this
+        {runs.length === 1
+          ? 'A helper took part of this'
+          : `${runs.length} helpers took parts of this`}
       </p>
       <ul className="mt-1">
         {runs.map((run) => (

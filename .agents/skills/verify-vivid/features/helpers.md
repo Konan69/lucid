@@ -8,7 +8,7 @@ Vivid splits a request into helpers that work at the same time (`spawn_run`). Ea
 
 ## How to get to it (user POV)
 
-Ask for work with independent parts, such as comparing several pages. Under the step that started them the reply shows "2 helpers working on parts of this" and one row per helper with its brief and state. A row opens to its answer. While a helper works its row has its own Stop. The Thread stays Working in the list while any helper works.
+Ask for work with independent parts, such as comparing several pages. Under the step that started them the reply shows "2 helpers took parts of this" and one row per helper with its brief and state. A row opens to its answer. While a helper works its row has its own Stop. The Thread stays Working in the list while any helper works.
 
 ## Driving it with verify-vivid
 

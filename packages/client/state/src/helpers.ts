@@ -130,9 +130,21 @@ export const helperStatus = (run: ChildRun) =>
     Stopped: () => 'Stopped',
   })
 
-/** The helpers one tool call of Vivid started, in the order it started them. */
-export const startedBy = (children: ReadonlyArray<ChildRun>, toolCallId: string) =>
-  children.filter((run) => run.parentToolCallId === toolCallId)
+/**
+ * The helpers one reply of Vivid's started, drawn once, at its first `spawn_run` step: `calls`
+ * are that reply's tool calls in order. A reply that started none, and every later step of one
+ * that did, draws nothing.
+ */
+export const startedIn = (
+  children: ReadonlyArray<ChildRun>,
+  calls: ReadonlyArray<{ readonly toolName: string; readonly toolCallId: string }>,
+  at: string,
+) => {
+  const spawned = calls.filter((call) => call.toolName === 'spawn_run')
+  if (spawned[0] === undefined || spawned[0].toolCallId !== at) return []
+  const ids = new Set(spawned.map((call) => call.toolCallId))
+  return children.filter((run) => ids.has(run.parentToolCallId))
+}
 
 /** Which reading of a helper's result: its id and where it stood when it was asked. */
 export class ResultKey extends Data.Class<{ readonly id: RunId; readonly state: string }> {}

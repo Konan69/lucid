@@ -30,6 +30,22 @@ export const helperLimits = [
 
 const ACTIVE = new Set(['Reserved', 'Working', 'Stopping'])
 const ended = (run) => !ACTIVE.has(run.state._tag)
+const working = (detail) => detail.children.filter((child) => child.state._tag === 'Working')
+
+/**
+ * Watch from before the message is sent for the publication that shows two helpers Working at
+ * once, or for all of them ended without it (which fails the overlap claim). Started first, so
+ * a reply that waits on its helpers cannot hide their overlap.
+ */
+const overlapping = (state, id, directory) =>
+  watchUntil(
+    state,
+    id,
+    (detail) =>
+      working(detail).length >= 2 || (detail.children.length >= 2 && detail.children.every(ended)),
+    directory,
+    'overlap',
+  )
 
 /**
  * Follow the public WatchThread publication until `until` holds. Each published ThreadDetail is
@@ -87,13 +103,57 @@ export async function watchUntil(state, thread, until, directory, name) {
   }
 }
 
-/** Every helper and every Run has ended, and the newest Run answers the last result. */
-const allHeard = (count) => (detail) =>
+/** Every helper and every Run has ended and nothing in the Thread is at work. */
+const settledDown = (count) => (detail) =>
   detail.children.length >= count &&
   detail.children.every(ended) &&
   detail.runs.every((run) => run.state._tag !== 'Working') &&
-  detail.runs.at(-1)?.origin._tag === 'ChildResult' &&
   detail.thread.attention !== 'Working'
+
+/**
+ * How Vivid heard each helper: by a result delivery (`child-result`) or in a wait's answer
+ * (`wait_runs`). Each helper must be heard exactly once, whichever way.
+ */
+const hearings = (page, child) => {
+  const woken = page.messages.filter(
+    (message) =>
+      message.signal?.tagName === 'child-result' &&
+      message.signal.attributes.helper === String(child.number),
+  ).length
+  const waited = page.messages
+    .flatMap((message) => message.parts)
+    .filter(
+      (part) =>
+        part.type === 'dynamic-tool' &&
+        part.toolName === 'wait_runs' &&
+        part.state === 'output-available',
+    )
+    .flatMap((part) => part.output.results)
+    .filter((result) => result.helper === child.number && result.outcome !== 'working').length
+  return { woken, waited }
+}
+
+/**
+ * Wait until every helper was heard and Vivid answered after the last hearing. A result
+ * delivery starts a new Run, so the Thread can rest for a moment between a helper ending and
+ * its delivery arriving; the watch is taken up again until the history shows every hearing.
+ */
+async function heardAll(state, id, directory, count) {
+  for (let round = 0; ; round++) {
+    const detail = await watchUntil(state, id, settledDown(count), directory, 'heard-' + round)
+    const page = await history(state, id, directory, 'history-' + round)
+    const each = detail.children.map((child) => ({ child, ...hearings(page, child) }))
+    if (each.every(({ woken, waited }) => woken + waited >= 1)) return { detail, page, each }
+    NodeAssert.ok(round < 2 * count, 'A helper was never heard: ' + JSON.stringify(each))
+    await watchUntil(
+      state,
+      id,
+      (next) => next.runs.length > detail.runs.length,
+      directory,
+      'next-run-' + round,
+    )
+  }
+}
 
 /** Retain the helper rows from SQL beside the public evidence. Only a generated UUID reaches SQL. */
 async function rows(state, thread, directory) {
@@ -117,7 +177,7 @@ async function rows(state, thread, directory) {
   return stored
 }
 
-/** The result deliveries the Thread received, one per helper the parent did not read itself. */
+/** The result deliveries the Thread received. */
 const wakesIn = (page) =>
   page.messages.filter((message) => message.signal?.tagName === 'child-result')
 
@@ -129,22 +189,21 @@ export const COMPARE = `Have two helpers read these pages at the same time, one 
  */
 export async function helpers(state, id, directory) {
   NodeAssert.equal(state.modelKind, 'real', 'Helpers require a real model')
+  const overlap = overlapping(state, id, directory)
   await chat(state, id, COMPARE, directory)
-  const detail = await watchUntil(state, id, allHeard(2), directory, 'heard')
+  NodeAssert.ok(
+    working(await overlap).length >= 2,
+    'No publication shows two helpers working at once',
+  )
+  const { detail, page, each } = await heardAll(state, id, directory, 2)
   const children = detail.children
   NodeAssert.ok(children.length >= 2, 'Vivid started fewer than two helpers')
   for (const child of children) NodeAssert.equal(child.state._tag, 'Completed', child.brief)
   const stored = await rows(state, id, directory)
-  // Overlap from the server's own receipts: every helper started before any of them ended.
-  const started = stored.map((row) => row.receipt).filter(Boolean)
-  NodeAssert.equal(started.length, children.length, 'A helper has no runtime receipt')
-  const seen = JSON.parse(await NodeFSP.readFile(directory + '/heard-seen.json', 'utf8'))
-  NodeAssert.ok(
-    seen.some(
-      (publication) =>
-        publication.children.filter((child) => child.state._tag === 'Working').length >= 2,
-    ),
-    'No publication shows two helpers working at once',
+  NodeAssert.equal(
+    stored.filter((row) => row.receipt !== null).length,
+    children.length,
+    'A helper has no runtime receipt',
   )
   for (const child of children) {
     const opened = await rpc(
@@ -159,12 +218,11 @@ export async function helpers(state, id, directory) {
     NodeAssert.ok(opened.result.text.trim().length > 0, 'A helper answered nothing')
     NodeAssert.ok(opened.result.usage.totalTokens > 0, 'A helper measured no usage')
   }
-  const page = await history(state, id, directory)
-  const wakes = wakesIn(page)
-  NodeAssert.equal(wakes.length, children.length, 'Each helper result must reach the Thread once')
-  NodeAssert.deepEqual(
-    wakes.map((wake) => wake.signal.attributes.helper).sort(),
-    children.map((child) => String(child.number)).sort(),
+  for (const { child, woken, waited } of each)
+    NodeAssert.equal(woken + waited, 1, 'Helper ' + child.number + ' was heard more than once')
+  await json(
+    directory + '/hearings.json',
+    each.map(({ child, woken, waited }) => ({ helper: child.number, woken, waited })),
   )
   const last = page.messages.filter((message) => message.role === 'assistant').at(-1)
   NodeAssert.ok(last, 'No answer after the results came back')
@@ -172,11 +230,7 @@ export async function helpers(state, id, directory) {
     .filter((part) => part.type === 'text')
     .map((part) => part.text)
     .join(' ')
-  NodeAssert.match(
-    answer,
-    /2606|6761|example|\.test|localhost|invalid/i,
-    'The answer does not use the pages',
-  )
+  NodeAssert.match(answer, /2606|6761/i, 'The answer does not use the pages')
   await json(directory + '/scope.json', {
     kinds: [...new Set(children.map((child) => child.kind))],
     proved:
@@ -207,7 +261,7 @@ export async function helperstop(state, id, directory, stopper = stopByRpc) {
   )
   const target = slow(working)
   await stopper(state, id, directory, target)
-  const detail = await watchUntil(state, id, allHeard(2), directory, 'heard')
+  const { detail, page } = await heardAll(state, id, directory, 2)
   const stopped = detail.children.find((child) => child.id === target.id)
   NodeAssert.equal(stopped.state._tag, 'Stopped')
   NodeAssert.equal(stopped.state.by, 'Person')
@@ -219,7 +273,6 @@ export async function helperstop(state, id, directory, stopper = stopByRpc) {
   const opened = await rpc(state, 'GetChildRun', { id: target.id }, directory, 'stopped-helper')
   NodeAssert.equal(opened._tag, 'Ended')
   NodeAssert.equal(opened.result._tag, 'Stopped')
-  const page = await history(state, id, directory)
   const heard = wakesIn(page).filter(
     (wake) => wake.signal.attributes.helper === String(target.number),
   )
@@ -245,14 +298,19 @@ async function stopByRpc(state, id, directory, target) {
 
 /** The browser sends through the composer and waits for the helper rows it draws. */
 export async function helpersBrowser(state, id, directory, { run, capture }) {
+  const overlap = overlapping(state, id, directory)
   await run(['find', 'label', 'Message Vivid', 'fill', COMPARE])
   await run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
-  await run(['wait', '--text', 'helpers working on parts of this'])
+  await run(['wait', '--text', 'helpers took parts of this'])
   await capture('working')
-  const detail = await watchUntil(state, id, allHeard(2), directory, 'heard')
+  NodeAssert.ok(
+    working(await overlap).length >= 2,
+    'No publication shows two helpers working at once',
+  )
+  const { detail } = await heardAll(state, id, directory, 2)
   for (const stage of ['heard', 'reloaded']) {
     if (stage === 'reloaded') await run(['reload'])
-    await run(['wait', '--text', 'helpers working on parts of this'])
+    await run(['wait', '--text', 'helpers took parts of this'])
     const rows = JSON.parse(
       await run([
         'eval',
@@ -291,20 +349,19 @@ export async function helperstopBrowser(state, id, directory, browser) {
     'working',
   )
   const target = slow(working)
-  await run(['wait', '--text', 'helpers working on parts of this'])
+  await run(['wait', '--text', 'helpers took parts of this'])
   await capture('working')
   // The slow helper's own row's Stop, not the composer's.
   const stop = `li[data-helper="${target.id}"] button[aria-label="Stop this helper"]`
   await run(['wait', stop])
   await run(['click', stop])
-  const detail = await watchUntil(state, id, allHeard(2), directory, 'heard')
+  const { detail, page } = await heardAll(state, id, directory, 2)
   const stopped = detail.children.find((child) => child.id === target.id)
   NodeAssert.equal(stopped.state._tag, 'Stopped')
   NodeAssert.equal(stopped.state.by, 'Person')
   await run(['reload'])
   await run(['wait', '--text', 'Stopped'])
   await capture('reloaded')
-  const page = await history(state, id, directory)
   NodeAssert.equal(
     wakesIn(page).filter((wake) => wake.signal.attributes.helper === String(target.number)).length,
     1,
