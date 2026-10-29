@@ -72,13 +72,18 @@ const pass = (gate: Ref.Ref<Option.Option<Gate>>) =>
     Option.match({
       onNone: () => Effect.void,
       onSome: (held) =>
-        Deferred.succeed(held.entered, undefined).pipe(Effect.andThen(Deferred.await(held.release))),
+        Deferred.succeed(held.entered, undefined).pipe(
+          Effect.andThen(Deferred.await(held.release)),
+        ),
     }),
   )
 
 /** Arms a gate for the next call through it. */
 const arm = Effect.fn('HandoffTest.arm')(function* (gate: Ref.Ref<Option.Option<Gate>>) {
-  const held: Gate = { entered: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() }
+  const held: Gate = {
+    entered: yield* Deferred.make<void>(),
+    release: yield* Deferred.make<void>(),
+  }
   yield* Ref.set(gate, Option.some(held))
   return held
 })
@@ -291,9 +296,7 @@ layer(testDatabaseLayer)((it) => {
           if (password === undefined) return expect.unreachable('two fields')
           // The finish is clearing; the Person's second fill arrives in the middle of it.
           const clearing = yield* arm(recorder.clearGate)
-          const finishing = yield* completeHandoff(test.personal, handoff.id).pipe(
-            Effect.forkChild,
-          )
+          const finishing = yield* completeHandoff(test.personal, handoff.id).pipe(Effect.forkChild)
           yield* Deferred.await(clearing.entered)
           const late = yield* Effect.result(
             fillHandoff(test.personal, {

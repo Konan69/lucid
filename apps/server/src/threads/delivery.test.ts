@@ -10,6 +10,10 @@ import {
   Computer,
   ComputerId,
   ComputerState,
+  HandoffField,
+  HandoffFieldId,
+  HandoffFieldReceipt,
+  HandoffFieldResult,
   InputRequestState,
   InstallationId,
   SessionId,
@@ -64,6 +68,7 @@ import * as RpcSerialization from 'effect/rpc/RpcSerialization'
 import { sendToThread } from './relay.ts'
 import { findPerson, type Actor } from '../auth/access.ts'
 import { InputStore, inputStoreLayer } from '../inputs/store.ts'
+import { Definition } from '../inputs/handoff.ts'
 import { handoffs } from '../inputs/tables.ts'
 import { ComputerStore } from '../computers/store.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
@@ -448,7 +453,7 @@ const privateThread = Effect.fn('Gateway.test.private')(function* (test: Harness
 const openHandoff = Effect.fn('Delivery.test.handoff')(function* (test: Harness, runId: RunId) {
   const database = yield* Database
   const id = NodeCrypto.randomUUID()
-  const field = NodeCrypto.randomUUID()
+  const field = HandoffFieldId.make(NodeCrypto.randomUUID())
   yield* database.run(
     database.insert(handoffs).values({
       id,
@@ -456,15 +461,19 @@ const openHandoff = Effect.fn('Delivery.test.handoff')(function* (test: Harness,
       runId,
       personId: test.ben,
       summary: 'Sign in to Example.',
-      request: {
-        _tag: 'Form',
+      request: Definition.cases.Form.make({
         kind: 'SignIn',
-        fields: [{ id: field, label: 'Password', purpose: 'Password' }],
-      },
+        fields: [HandoffField.make({ id: field, label: 'Password', purpose: 'Password' })],
+      }),
       page: { origin: 'https://example.test', address: 'https://example.test/signin' },
       binding: { target: 'target', tab: 'tab', digest: 'digest' },
       status: 'ready',
-      receipts: [{ fieldId: field, result: { _tag: 'Filled' } }],
+      receipts: [
+        HandoffFieldReceipt.make({
+          fieldId: field,
+          result: HandoffFieldResult.cases.Filled.make({}),
+        }),
+      ],
       createdAt: 0,
     }),
   )
@@ -476,7 +485,9 @@ const handoffStatus = Effect.fn('Delivery.test.handoffStatus')(function* (id: st
   const rows = yield* database.run(
     database.select({ status: handoffs.status }).from(handoffs).where(eq(handoffs.id, id)),
   )
-  return rows[0]?.status
+  const [row] = rows
+  if (row === undefined) return expect.unreachable('the handoff row')
+  return row.status
 })
 
 const decodeIncoming = Schema.decodeUnknownEffect(IncomingMessage)

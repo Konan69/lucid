@@ -133,11 +133,10 @@ const fillOne = Effect.fn('Machine.boat.fields.fillOne')(function* (
       ActionReceipt,
     )
     .pipe(
-      Effect.map(
-        (receipt): HandoffFieldResult =>
-          uncertain(receipt)
-            ? HandoffFieldResult.cases.OutcomeUnknown.make({})
-            : HandoffFieldResult.cases.Filled.make({}),
+      Effect.map((receipt): HandoffFieldResult =>
+        uncertain(receipt)
+          ? HandoffFieldResult.cases.OutcomeUnknown.make({})
+          : HandoffFieldResult.cases.Filled.make({}),
       ),
       Effect.catch((failure) =>
         Effect.succeed(
@@ -238,12 +237,12 @@ export const clearFields = Effect.fn('Machine.boat.fields.clear')(function* (
   labels: ReadonlyArray<string>,
 ): Effect.fn.Return<ReadonlyArray<string>, MachineFailure> {
   const tabs = yield* holding(native, page)
-  const left = yield* Effect.forEach(labels, (label) =>
+  /** One label, emptied on every tab that may hold it, or itself when one is not proven. */
+  const left = (label: string) =>
     Effect.forEach(tabs, (at) =>
       emptied(native, at, page.digest, label).pipe(
         Effect.catchIf(isRefusal, () => Effect.succeed(false)),
       ),
-    ).pipe(Effect.map((done) => (done.every(Boolean) ? [] : [label]))),
-  )
-  return left.flat()
+    ).pipe(Effect.map((done) => (done.every(Boolean) ? [] : [label])))
+  return (yield* Effect.forEach(labels, left)).flat()
 })

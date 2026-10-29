@@ -212,10 +212,7 @@ const readAsks = Effect.fn('Feed.readAsks')(function* (
       .select({ thread: handoffs.threadId, at: handoffs.createdAt })
       .from(handoffs)
       .where(
-        and(
-          inArray(handoffs.threadId, [...ids]),
-          inArray(handoffs.status, openHandoffStatuses),
-        ),
+        and(inArray(handoffs.threadId, [...ids]), inArray(handoffs.status, openHandoffStatuses)),
       ),
   )
   const add = (kind: FeedAsk) => (row: { readonly thread: string; readonly at: number }) => {

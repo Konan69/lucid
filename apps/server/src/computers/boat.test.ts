@@ -124,7 +124,7 @@ interface EvidenceService {
   readonly active: Ref.Ref<boolean | null>
   readonly extraTab: Ref.Ref<boolean>
   readonly prepared: Ref.Ref<ReadonlySet<string>>
-  /** Every target and tab id pair a bind minted, as `target tab`: Cua mints fresh ones per bind. */
+  /** Every target and tab id pair a bind minted, as JSON: Cua mints fresh ones per bind. */
   readonly minted: Ref.Ref<ReadonlyArray<string>>
   /** The effect the next `browser_type` receipts report: the driver may be unsure what it typed. */
   readonly typeEffect: Ref.Ref<'unverifiable' | 'partial'>
@@ -484,7 +484,9 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
         return commandReply('{"status":"refused","refusal":{"code":"consent_required"}}')
       const address = yield* Ref.get(evidence.address)
       if (Object.hasOwn(args, 'snapshot_format')) {
-        if (!(yield* Ref.get(evidence.minted)).includes(`${args.target_id} ${args.tab_id}`))
+        if (
+          !(yield* Ref.get(evidence.minted)).includes(JSON.stringify([args.target_id, args.tab_id]))
+        )
           return commandReply('{"status":"refused","refusal":{"code":"browser_binding_stale"}}')
         const snapshot = yield* Ref.updateAndGet(evidence.snapshots, (count) => count + 1)
         return commandReply(
@@ -511,7 +513,7 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
       const bind = (yield* Ref.get(evidence.minted)).length
       const target = `fixture-target-${bind}`
       const tab = `fixture-tab-${bind}`
-      yield* Ref.update(evidence.minted, (minted) => [...minted, `${target} ${tab}`])
+      yield* Ref.update(evidence.minted, (minted) => [...minted, JSON.stringify([target, tab])])
       const tabs = [
         {
           tab_id: tab,
@@ -624,7 +626,9 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
         '{"effect":"refused","route":"trusted_input","escalation":{"reason":"route_unavailable","target":"page"}}',
       )
     case 'browser_type':
-      if (!(yield* Ref.get(evidence.minted)).includes(`${args.target_id} ${args.tab_id}`))
+      if (
+        !(yield* Ref.get(evidence.minted)).includes(JSON.stringify([args.target_id, args.tab_id]))
+      )
         return commandReply('{"status":"refused","refusal":{"code":"browser_binding_stale"}}')
       expect(args.ref).toBe(`p${yield* Ref.get(evidence.snapshots)}:2`)
       expect(args.replace).toBe(true)

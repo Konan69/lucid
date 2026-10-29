@@ -165,28 +165,39 @@ const completion = (row: Row, people: ReadonlyMap<PersonId, PersonSummary>) => {
 }
 
 /**
- * A form's state from its row: receipts exist exactly once a fill was typed.
- *
- * An ending that is claimed but not done (its fields are still being emptied, or could not be
- * shown empty) is still open to the Person: it reads as the step it was, and the Person's next
- * finish or withdraw resumes it. A withdrawal waiting on a fill reads as that fill.
+ * The status a row reads as. An ending that is claimed but not done (its fields are still being
+ * emptied, or could not be shown empty) is still open to the Person: it reads as the step it was,
+ * and the Person's next finish or withdraw resumes it. A withdrawal waiting on a fill reads as
+ * that fill.
  */
+const shownStatus = (row: Row) => {
+  switch (row.status) {
+    case 'draining':
+      return 'applying'
+    case 'completing':
+      return 'ready'
+    case 'withdrawing':
+      return row.receipts === null ? 'waiting' : 'ready'
+    case 'waiting':
+    case 'applying':
+    case 'ready':
+    case 'completed':
+    case 'withdrawn':
+      return row.status
+  }
+}
+
+/** A form's state from its row: receipts exist exactly once a fill was typed. */
 const formState = Effect.fn('Handoffs.formState')(function* (
   row: Row,
   people: ReadonlyMap<PersonId, PersonSummary>,
 ) {
-  switch (row.status) {
+  switch (shownStatus(row)) {
     case 'waiting':
       return HandoffFormState.cases.Waiting.make({})
     case 'applying':
-    case 'draining':
       return HandoffFormState.cases.Applying.make({})
-    case 'withdrawing':
-      return row.receipts === null
-        ? HandoffFormState.cases.Waiting.make({})
-        : HandoffFormState.cases.Ready.make({ fields: row.receipts })
     case 'ready':
-    case 'completing':
       if (row.receipts === null) return yield* corrupt()
       return HandoffFormState.cases.Ready.make({ fields: row.receipts })
     case 'completed':
@@ -206,13 +217,10 @@ const screenState = Effect.fn('Handoffs.screenState')(function* (
   row: Row,
   people: ReadonlyMap<PersonId, PersonSummary>,
 ) {
-  switch (row.status) {
+  switch (shownStatus(row)) {
     case 'waiting':
       return HandoffScreenState.cases.Waiting.make({})
-    // A claimed ending reads as the step still open, as a form's does.
     case 'ready':
-    case 'completing':
-    case 'withdrawing':
       return HandoffScreenState.cases.Ready.make({})
     case 'completed':
       return HandoffScreenState.cases.Completed.make(yield* completion(row, people))
@@ -220,7 +228,6 @@ const screenState = Effect.fn('Handoffs.screenState')(function* (
       if (row.settledAt === null) return yield* corrupt()
       return HandoffScreenState.cases.Withdrawn.make({ withdrawnAt: row.settledAt })
     case 'applying':
-    case 'draining':
       return yield* corrupt()
   }
 })
@@ -973,7 +980,13 @@ export const withdrawHandoff = Effect.fn('Handoffs.withdraw')(function* (
       return yield* finishWithdrawal(claimed)
     case 'completed':
       return yield* closed(id)
-    default:
+    // A fill still typing ends it (`draining`), or another call already did.
+    case 'draining':
+    case 'withdrawn':
+    case 'waiting':
+    case 'applying':
+    case 'ready':
+    case 'completing':
       return yield* current(id)
   }
 }, Effect.uninterruptible)
