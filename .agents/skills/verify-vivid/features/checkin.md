@@ -2,7 +2,7 @@
 
 Model requirement: a real model, provider keys and the disposable Executor installed by Launch.
 
-Run Launch, Doctor, `verify feature checkin`, `verify browser checkin`, then Cleanup at the committed head. The HTTP recipe is `scripts/checkin.mjs`. Browser rendering of check-in state belongs to the following UI unit and has no recipe here. A missing browser recipe is blocked, not verified.
+Run Launch, Doctor, `verify feature checkin`, `verify browser checkin`, then Cleanup at the committed head. The HTTP recipe is [checkin.mjs](../scripts/checkin.mjs). Browser rendering of check-in state belongs to the following UI unit and has no recipe here. A missing browser recipe is blocked, not verified.
 
 The HTTP journey asks Vivid to track an owed report and "check on this tomorrow at 9" in Africa/Lagos. It requires a Checkin Watch whose arming is Confirmed, with the actual timer operationKey and the requested nextAt. The saved `use_tool` result must carry that receipt. Subscription success or a sentence from the model is insufficient.
 
