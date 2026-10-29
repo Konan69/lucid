@@ -6,7 +6,6 @@ import {
   CapabilityReading,
   CapabilityFacts,
   ComputerInventory,
-  ConnectionState,
   DEFAULT_APPEARANCE,
   PersonName,
   type VividName,
@@ -31,7 +30,6 @@ export const emptyContext = VividContext.make({
   timezone: '',
   asOf: Option.none(),
   apps: [],
-  integrations: [],
   name: DEFAULT_APPEARANCE.name,
   person: Option.none(),
 })
@@ -92,25 +90,6 @@ const loadTimezone = Effect.fn('Context.loadTimezone')(
     return settings.timezone
   },
   Effect.orElseSucceed(() => ''),
-)
-
-/**
- * The names of the accounts this Person can use now, as the server names them ("Gmail (Work)",
- * "Gmail (ada@example.com)", `Connection.account`): the same names find_tools returns and
- * use_tool takes. It was the services' names, one for a service connected twice, so Vivid began a
- * response not knowing a Person had two accounts on one service. A Connection that still needs
- * authorization or has failed is left out, because naming it would promise tools that find_tools
- * will not return. A failed read names nothing rather than failing the response.
- */
-const loadIntegrations = Effect.fn('Context.loadIntegrations')(
-  function* (product: ProductService, acting: Option.Option<Acting>) {
-    const response = yield* asActing(product, acting, (client) => client.ListConnections())
-    const ready = response.connections.filter((connection) =>
-      ConnectionState.guards.Ready(connection.state),
-    )
-    return ready.map((connection) => connection.account)
-  },
-  Effect.orElseSucceed(() => []),
 )
 
 /** Failed server lookup stays explicitly unknown, independently of local Memory. */
@@ -216,16 +195,16 @@ export const loadContext = Effect.fn('Context.load')(function* (
       skills: loadSkills(product, acting),
       timezone: loadTimezone(product, acting),
       asOf: readClock(),
-      integrations: loadIntegrations(product, acting),
       name: loadName(product, acting),
       person: loadPerson(product, acting),
       apps: loadApps(product, acting),
     },
-    { concurrency: 9 },
+    { concurrency: 8 },
   )
+  const { facts, ...prepared } = loaded
   return VividContext.make({
-    ...loaded,
-    capabilities: sources.capabilities(loaded.facts, Remembered.guards.Memory(loaded.memory)),
+    ...prepared,
+    capabilities: sources.capabilities(facts, Remembered.guards.Memory(prepared.memory)),
   })
 })
 
@@ -236,7 +215,6 @@ export function contextInstruction(context: VividContext) {
     skills: views.skills(context.skills),
     timezone: context.timezone,
     apps: context.apps.map(views.modelText),
-    integrations: context.integrations.map(views.modelText),
   })
   return `Context for this response (saved facts may be stale; confirm current facts before acting):\n${JSON.stringify(output)}${remembered(context.memory)}${clock(context)}`
 }
