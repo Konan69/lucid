@@ -10,7 +10,9 @@ Launch owns disposable PostgreSQL, Helix and Executor beta.23. Its private catal
 
 The HTTP journey signs in with Launch's synthetic Person, finds Verify Pulse and completes Connect through public RPCs. It asks Vivid in a Thread to find events, create a Watch and post each pulse to Feed as a drawn card: the receipt in the card's display and no words beside it. The saved conversation must contain successful `find_events` and `watch` calls. The Watch must be Active before the provider operation is called directly on the disposable Executor.
 
-WatchFeed supplies the delivery signal. WatchThread then proves the background Run completed. The provider receipt, stable background Thread, Run and Feed item must agree. The item's `words` must be null and its `display` must hold the receipt. The browser journey separately connects through Settings, sends the request through the composer, checks the delivered Feed card shows no words under its title and reloads it, then clicks Disconnect in Settings.
+WatchFeed supplies the delivery signal. WatchThread then proves the background Run completed. The provider receipt, stable background Thread, Run and Feed item must agree. The item's `words` must be null and its `display` must hold the receipt. The post must then tell the Person: WatchNotifications must carry a `posted` notice about the background Thread, titled as the card, with an empty body (a drawn card has no words to quote) and opening the Feed.
+
+The browser journey separately connects through Settings and turns notifications on there (the [push](push.md) recipe's grant and Settings press), sends the request through the composer, and puts the app's tab behind a blank one just before the provider emits. Back on the app's tab, its service worker must be showing the `posted` notice, with the same notification id and a payload that opens the Feed. Headless Chrome draws no notification to press, so the press is not driven: the page is handed that payload as the worker hands it to a window it brings forward (`apps/web/src/worker/main.ts` `open`), and must go to the Feed by itself. There it checks the delivered Feed card shows no words under its title and reloads it, then clicks Disconnect in Settings.
 
 ## Prove removal
 
@@ -22,10 +24,10 @@ Require the Watch row to be gone through cascade deletion, its exact provider su
 
 ## Evidence
 
-The HTTP evidence is under `watch/`, browser evidence under `browser/watch/`. Each has its own verdict. `proof.json` records the first provider receipt, Watch id, background Run id, Feed card id and item. `provider-state.json` records the exact subscription, second event and deliveries. `post-removal.json` records every removal assertion. Browser snapshots and `feed.png` and `feed-reloaded.png` show the delivered card.
+The HTTP evidence is under `watch/`, browser evidence under `browser/watch/`. Each has its own verdict. `proof.json` records the first provider receipt, Watch id, background Run id, Feed card id, item and the posted notice's id; `posted-notifications.json` holds the notice list that carried it. The browser's `notifications.json` holds what the worker showed. `provider-state.json` records the exact subscription, second event and deliveries. `post-removal.json` records every removal assertion. Browser snapshots and `feed.png` and `feed-reloaded.png` show the delivered card.
 
 ## Boundaries
 
 Executor uses host networking and an explicit loopback HTTP policy. Vivid's `PUBLIC_URL` is the disposable web origin, which proxies the real callback. No public tunnel or production authority is needed. Launch verifies the selected alias against Boat's persistent `BOAT_ID`, rather than a replaceable VM hostname.
 
-This recipe does not prove native clients, conversational list/stop or made-Integration reminders. Those need separate journeys.
+This recipe does not prove native clients, pressing a drawn system notification, conversational list/stop or made-Integration reminders. Those need separate journeys.

@@ -1,5 +1,5 @@
 import * as NodeAssert from 'node:assert/strict'
-import { PushDestination, PushPayload } from '@vivid/contracts'
+import { NotificationOpens, PushDestination, PushPayload } from '@vivid/contracts'
 import { Result, Schema } from 'effect'
 import { json, rpc, chat, settled } from './wire.mjs'
 import { connect } from './cdp.mjs'
@@ -17,7 +17,7 @@ const Shown = Schema.Array(
     data: PushPayload,
   }),
 )
-const decodeShown = Schema.decodeUnknownResult(Schema.fromJsonString(Shown))
+export const decodeShown = Schema.decodeUnknownResult(Schema.fromJsonString(Shown))
 const decodeLabel = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.String))
 /** `agent-browser tab --json`: tabs carry stable ids like `t1`; positions are not accepted. */
 const Tabs = Schema.Struct({
@@ -25,7 +25,7 @@ const Tabs = Schema.Struct({
     tabs: Schema.Array(Schema.Struct({ tabId: Schema.String, active: Schema.Boolean })),
   }),
 })
-const decodeTabs = Schema.decodeUnknownResult(Schema.fromJsonString(Tabs))
+export const decodeTabs = Schema.decodeUnknownResult(Schema.fromJsonString(Tabs))
 
 /** This browser's targets among a list: the Person's phone may hold others. */
 const browsersIn = (list) =>
@@ -44,14 +44,14 @@ export async function pushProof(state, _id, directory) {
 const rowButton = `Array.from(document.querySelectorAll('[role="dialog"] div')).find(div => div.innerText === ${JSON.stringify(ROW)})?.parentElement?.parentElement?.querySelector('button')`
 
 /** Notifications every registration of this origin is showing, as plain values. */
-const shown = `navigator.serviceWorker.getRegistrations().then(all => Promise.all(all.map(r => r.getNotifications()))).then(lists => lists.flat().map(n => ({ title: n.title, body: n.body, tag: n.tag, data: n.data })))`
+export const shown = `navigator.serviceWorker.getRegistrations().then(all => Promise.all(all.map(r => r.getNotifications()))).then(lists => lists.flat().map(n => ({ title: n.title, body: n.body, tag: n.tag, data: n.data })))`
 
 /**
  * Grants this origin notifications through Chrome's own permission API, as a Person's Allow does.
  * Chrome keeps such a grant only while the DevTools connection that made it is open, so the
  * connection is handed back and closed when the journey ends.
  */
-async function grant(state, run) {
+export async function grant(state, run) {
   const address = (await run(['get', 'cdp-url'])).trim().replace(/^"|"$/gu, '')
   const browser = await connect(address)
   await browser.send('Browser.grantPermissions', {
@@ -75,9 +75,11 @@ export async function pushBrowser(state, id, directory, browser) {
   }
 }
 
-async function journey(state, id, directory, { run, capture }) {
-  const before = await rpc(state, 'ListPushTargets', undefined, directory, 'targets-before')
-  const browsersBefore = browsersIn(before).length
+/**
+ * Turns notifications on from Settings with a real press, after `grant`, and waits for the row to
+ * offer Turn off: the machine reads On only once the server holds the subscription.
+ */
+export async function turnOn(state, id, { run, capture }) {
   await run(['open', state.web + '/t/' + id + '?settings=general'])
   await run(['wait', '--fn', `Boolean(${rowButton})`])
   NodeAssert.equal(
@@ -95,6 +97,12 @@ async function journey(state, id, directory, { run, capture }) {
   // The machine reads On once the server has the subscription: the row then offers Turn off.
   await run(['wait', '--fn', `${rowButton}?.innerText === 'Turn off' && !${rowButton}.disabled`])
   await capture('row-on')
+}
+
+async function journey(state, id, directory, { run, capture }) {
+  const before = await rpc(state, 'ListPushTargets', undefined, directory, 'targets-before')
+  const browsersBefore = browsersIn(before).length
+  await turnOn(state, id, { run, capture })
   const after = await rpc(state, 'ListPushTargets', undefined, directory, 'targets-after')
   const browsers = browsersIn(after)
   NodeAssert.equal(browsers.length, browsersBefore + 1, 'Expected this browser registered once')
@@ -142,7 +150,7 @@ async function journey(state, id, directory, { run, capture }) {
   const mine = notifications.find((n) => n.title === TITLE)
   NodeAssert.deepEqual(
     mine.data.opens,
-    { _tag: 'Thread', threadId: away },
+    NotificationOpens.cases.Thread.make({ threadId: away }),
     'The notification opens the Thread it is about',
   )
   await capture('notified')
