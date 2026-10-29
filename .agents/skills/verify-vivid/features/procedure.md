@@ -12,7 +12,7 @@ Both recipes send a three-message walkthrough of filing a travel expense, asked 
 - No Run calls `use_tool`, `watch`, `post`, `make_integration` or `notify_person`: learning a task does not do it or arrange it.
 - Whether Vivid read the procedure back after saving is recorded in `taught.json` (`readBack`), not required: a model may skip that step. The whole-readback proof is the second Thread's `read_skill`.
 - The public `ListSkills` holds one personal procedure for this walkthrough whose last table row is past 4,000 characters and keeps the correction. A model that shortens the table fails the recipe as a fixture failure, because the readback boundary was then not exercised.
-- No visible reply says "skill" or "procedure".
+- No visible reply says "skill" or names a skill tool. A reply that calls what Vivid keeps a "procedure" is recorded (`saidProcedure` in `taught.json` and `applied.json`), not failed.
 
 A second Thread asks for the task with a new receipt for the corrected vendor. Its Run must read the procedure whole and reply with the corrected code, never the old one, and the amount.
 

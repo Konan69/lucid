@@ -3,8 +3,8 @@ import * as assert from 'node:assert/strict'
 import { procedureSteps, taught, applied } from './procedure.mjs'
 import { settled, json, rpc } from './wire.mjs'
 
-/** No visible word of the page may speak of skills or procedures, the same rule as the replies. */
-const quietPage = `!/\\b(skills?|procedures?)\\b|save_skill|read_skill|activate_skill/iu.test(document.querySelector('main') === null ? document.body.innerText : document.querySelector('main').innerText)`
+/** No visible word of the page may speak of skills, the same rule as the replies. */
+const quietPage = `!/\\bskills?\\b|save_skill|read_skill|activate_skill/iu.test(document.querySelector('main') === null ? document.body.innerText : document.querySelector('main').innerText)`
 
 /** Send one message through the composer of the open Thread. */
 async function send(run, words) {

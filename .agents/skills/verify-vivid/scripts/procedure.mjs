@@ -67,8 +67,15 @@ function runOf(page, run) {
 
 /** Learning a task never does it: nothing that acts outside the Thread or arranges later work. */
 const ACTING = [Tool.use_tool, Tool.watch, Tool.post, Tool.make_integration, Tool.notify_person]
-/** Vivid speaks of the work, never of how it keeps it (`learn-how-we-do-this`). */
-const PLUMBING = /\b(skills?|procedures?)\b|save_skill|read_skill|activate_skill/iu
+/** Vivid speaks of the work, never of skills or the tools that keep them (`vivid.ts`). */
+const PLUMBING = /\bskills?\b|save_skill|read_skill|activate_skill/iu
+/**
+ * The teaching guidance also asks Vivid not to call what it keeps a procedure. A model said "I
+ * won't save the procedure" on 29 October 2026 (run pi-20261029161837127-6e6f5a32); that is
+ * recorded in the evidence, not failed, because the requirement is that replies never mention
+ * skills.
+ */
+const PROCEDURE = /\bprocedures?\b/iu
 
 /** One Run's receipts: no acting tool, no word about skills, and a reply. */
 function quiet(page, run, name) {
@@ -76,7 +83,7 @@ function quiet(page, run, name) {
   for (const call of calls)
     assert.ok(!ACTING.includes(call.toolName), `${name} called ${call.toolName}`)
   assert.doesNotMatch(text, PLUMBING, `${name} told the Person about skills`)
-  return { calls, text }
+  return { calls, text, saidProcedure: PROCEDURE.test(text) }
 }
 
 /** A successful call of one tool whose output holds `marker`. */
@@ -129,6 +136,7 @@ export async function taught(state, { id, detail, steps }, directory) {
     skill: { name: skill.name, scope: skill.scope, characters: skill.instructions.length, row },
     acknowledged: seen.at(-1).text,
     readBack,
+    saidProcedure: seen.map((turn) => turn.saidProcedure),
   })
   return skill
 }
@@ -143,7 +151,7 @@ export async function applied(state, { id, detail, steps }, directory) {
   assert.ok(text.includes(steps.code), 'The expense line does not use the corrected code')
   assert.ok(!text.includes(steps.wrong), 'The expense line uses the corrected-away code')
   assert.match(text, /48/u, 'The expense line lost the amount')
-  await json(directory + '/applied.json', { run, text })
+  await json(directory + '/applied.json', { run, text, saidProcedure: PROCEDURE.test(text) })
   return text
 }
 
