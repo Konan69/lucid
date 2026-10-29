@@ -18,14 +18,14 @@ export interface Reply {
 }
 
 /**
- * One card of the Feed: the face of one background Thread. Under a quiet row of when, with Open
- * for a drawn card (a said card's title opens the Thread), the card is one of the post's two cases (`FeedPost`):
+ * One card of the Feed: the face of one background Thread. Under a quiet row of its title (which
+ * opens the Thread) and when, the card is one of the post's two cases (`FeedPost`):
  *
  * - `Drawn`: Vivid's display is the whole card, drawn by the renderer a reply uses, and its own
  *   Buttons answer in the Thread as a reply's do. Nothing of ours is written above or under it
  *   (29 October 2026: "why does it look like we're containing the model?"); the row's "Done" puts
  *   it away when the drawing has no way out of its own.
- * - `Said`: nothing to draw, so the title, a sentence or two, and the card's buttons, the way out
+ * - `Said`: nothing to draw, so a sentence or two under the title, and the card's buttons, the way out
  *   first and the answer last (v9 of the 13 October design: "yh buttons are better").
  *
  * With no post, the work's own state in words stands as a said card with no buttons.
@@ -56,7 +56,7 @@ export function Card({
 }) {
   const title = Option.match(post, { onNone: () => ask.title, onSome: (made) => made.title })
   const said = (words: string, actions: Option.Option<ReadonlyArray<FeedAction>>) => (
-    <Said title={title} words={words} actions={actions} reply={reply} onOpen={onOpen} />
+    <Said words={words} actions={actions} reply={reply} />
   )
   return (
     <article
@@ -64,15 +64,18 @@ export function Card({
       aria-label={title}
       className="overflow-hidden rounded-composer bg-surface-3 p-4 edge"
     >
-      {/* No name of where it is from: the post or the title below already says it, and
-          repeating it was the first thing read on every card (29 October 2026: "repeating"). */}
-      <div className="flex min-h-5.5 items-center gap-1 text-label">
-        <time className="me-auto shrink-0 text-ink-3 tabular-nums">{when(at, now)}</time>
-        {Option.exists(post, FeedPost.guards.Drawn) && (
-          <Button variant="ghost" size="xs" onClick={onOpen}>
-            Open
-          </Button>
-        )}
+      {/* What the card is about, which opens its Thread, then when, always at the trailing edge.
+          The post's own title says it once; the drawing and the words under it do not repeat it
+          (29 October 2026: "repeating", then "date on the right always", "you lost context"). */}
+      <div className="flex min-h-5.5 items-center gap-2 text-label">
+        <button
+          type="button"
+          onClick={onOpen}
+          className="min-w-0 cursor-pointer truncate rounded-row text-start font-strong text-ink-2 decoration-ink-4 underline-offset-4 hover:text-ink hover:underline focus-visible:outline-offset-2"
+        >
+          {title}
+        </button>
+        <time className="ms-auto shrink-0 text-ink-3 tabular-nums">{when(at, now)}</time>
         {Option.exists(post, FeedPost.guards.Drawn) && Option.isSome(reply) && (
           <Button
             variant="ghost"
@@ -107,36 +110,23 @@ export function Card({
 }
 
 /**
- * A card with nothing drawn: its title, which opens the Thread, what Vivid says, and on a waiting
- * post its buttons (`Answers`). The work's own state in words, with no post, has no buttons.
+ * A card with nothing drawn: under the header's title, what Vivid says, and on a waiting post its
+ * buttons (`Answers`). The work's own state in words, with no post, has no buttons.
  */
 function Said({
-  title,
   words,
   actions,
   reply,
-  onOpen,
 }: {
-  title: string
   words: string
   /** The post's buttons; none when Vivid posted nothing. */
   actions: Option.Option<ReadonlyArray<FeedAction>>
   reply: Option.Option<Reply>
-  onOpen: () => void
 }) {
   const bar = Option.zipWith(actions, reply, (labels, answering) => ({ labels, answering }))
   return (
     <>
-      <h2 className="mt-3">
-        <button
-          type="button"
-          onClick={onOpen}
-          className="cursor-pointer rounded-row text-start text-section font-strong tracking-tight text-balance text-ink decoration-ink-4 underline-offset-4 hover:underline focus-visible:outline-offset-2"
-        >
-          {title}
-        </button>
-      </h2>
-      <p className="mt-1 text-title text-pretty text-ink-2">{words}</p>
+      <p className="mt-2 text-title text-pretty text-ink">{words}</p>
       {Option.isSome(bar) && (
         <footer className="mt-3 flex justify-end gap-2">
           <Answers actions={bar.value.labels} {...bar.value.answering} />
