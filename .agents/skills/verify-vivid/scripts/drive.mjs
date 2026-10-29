@@ -13,6 +13,7 @@ import { nameProof } from './nameproof.mjs'
 import { watch } from './watch.mjs'
 import { memory } from './memory.mjs'
 import { learningFact } from './phonememory.mjs'
+import { procedure } from './procedure.mjs'
 import { feed } from './feed.mjs'
 import { owed } from './owed.mjs'
 import { todos } from './todos.mjs'
@@ -47,6 +48,7 @@ export const features = [
   'name',
   'memory',
   'learning',
+  'procedure',
   'discord',
   'github',
 ]
@@ -439,6 +441,7 @@ const recipes = {
   feed,
   memory,
   learning,
+  procedure,
   owed,
   todos,
   watch,
@@ -469,6 +472,7 @@ export async function drive(state, feature) {
           changed: 'A stale ask requires a real model.',
           stop: 'Stop requires a real model; rehearsal cannot prove interruption.',
           memory: 'Memory requires a real model; rehearsal cannot prove the memory tools.',
+          procedure: 'Teaching requires a real model; rehearsal cannot prove it.',
           owed: 'Tracking requires a real model; rehearsal cannot prove it.',
           todos: 'The list requires a real model; rehearsal cannot prove it.',
           library: 'Library requires a real model; rehearsal cannot prove retrieval and citation.',

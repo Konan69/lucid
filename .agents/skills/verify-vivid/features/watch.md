@@ -12,6 +12,12 @@ The HTTP journey signs in with Launch's synthetic Person, finds Verify Pulse and
 
 WatchFeed supplies the delivery signal. WatchThread then proves the background Run completed. The provider receipt, stable background Thread, Run and Feed item must agree. The item's `words` must be null and its `display` must hold the receipt. The browser journey separately connects through Settings, sends the request through the composer, checks the delivered Feed card shows no words under its title and reloads it, then clicks Disconnect in Settings.
 
+## Prove the whole event and the card's cause
+
+The pulse's words are longer than 4,000 characters and end with a code; the Watch is asked to draw the last word of the words in the card, so the card holds that code only when the whole event reached the model. The background Thread's history must hold the event as an `event` signal with `event: pulse.received` and the code in its text, which is what the Thread draws as "What Vivid saw". The Run's public origin must name the Watch's id and the event's id (the provider receipt).
+
+The card's `provenance` must be `Recorded`: posted by the background Run, caused by that Run's Watch event (`FeedCause.Watch` with the Watch's id and name and the receipt), with that Run as its first evidence. A signed redelivery of the same event must answer 200, start no second Run and leave the provenance unchanged. After removal the card must still be on the Feed with the same provenance, though its Watch row is gone. The browser journey opens the card's Thread, waits for "What Vivid saw" and the end code, reloads and waits again.
+
 ## Prove removal
 
 After the first occurrence, the fixture connects an independent account directly at Executor. This replaces its default account link. Vivid's real removal policy preserves apps with unrelated account links, so removing the Person's Integration leaves an actual emitter available. No event is emitted during this setup gap.
@@ -22,7 +28,7 @@ Require the Watch row to be gone through cascade deletion, its exact provider su
 
 ## Evidence
 
-The HTTP evidence is under `watch/`, browser evidence under `browser/watch/`. Each has its own verdict. `proof.json` records the first provider receipt, Watch id, background Run id, Feed card id and item. `provider-state.json` records the exact subscription, second event and deliveries. `post-removal.json` records every removal assertion. Browser snapshots and `feed.png` and `feed-reloaded.png` show the delivered card.
+The HTTP evidence is under `watch/`, browser evidence under `browser/watch/`. Each has its own verdict. `proof.json` records the first provider receipt, the end code, Watch id, background Run id, Feed card id and item. `redelivery.json` records the redelivery's status, Run count and card; `after-remove-card.json` the card after removal. `provider-state.json` records the exact subscription, second event and deliveries. `post-removal.json` records every removal assertion. Browser snapshots and `feed.png` and `feed-reloaded.png` show the delivered card; `thread-event.png` and `thread-event-reloaded.png` show its Thread's event row.
 
 ## Boundaries
 

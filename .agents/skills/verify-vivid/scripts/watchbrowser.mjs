@@ -53,6 +53,15 @@ export async function watchBrowser(state, id, directory, { run, capture }) {
   await run(['wait', '--text', proof.receipt])
   await capture('feed-reloaded')
   await json(directory + '/visible-feed.json', { marker, item: proof.item })
+  // The card's Thread shows the event that started it, whole, as what Vivid saw, after a reload.
+  await run(['open', state.web + '/t/' + proof.background])
+  await run(['wait', '--text', 'What Vivid saw'])
+  await run(['wait', '--text', proof.end])
+  await capture('thread-event')
+  await run(['reload'])
+  await run(['wait', '--text', 'What Vivid saw'])
+  await run(['wait', '--text', proof.end])
+  await capture('thread-event-reloaded')
   await disconnected(state, proof, directory, async () => {
     await run(['open', state.web + '/?settings=connections'])
     const available = `Array.from(document.querySelectorAll('[role="dialog"] button')).some(b => b.textContent.trim() === 'Disconnect' || b.getAttribute('aria-label') === 'Disconnect Verify Pulse')`
