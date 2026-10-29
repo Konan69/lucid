@@ -36,7 +36,7 @@ function Helper({ run, stop }: { run: ChildRun; stop: helpers.Reading }) {
   const [open, setOpen] = useState(false)
   const refusal = helpers.refusalFor(stop, run.id)
   return (
-    <li>
+    <li data-helper={run.id}>
       <div className="group/row -mx-2 flex min-h-11 items-center gap-2 rounded-row px-2 py-1 transition-colors duration-(--dur-fast) hover:bg-wash-hover">
         <button
           type="button"
@@ -62,6 +62,7 @@ function Helper({ run, stop }: { run: ChildRun; stop: helpers.Reading }) {
           <Button
             variant="ghost"
             size="xs"
+            aria-label="Stop this helper"
             disabled={helpers.isWaiting(stop)}
             onClick={() => stopHelper(run.id)}
           >
