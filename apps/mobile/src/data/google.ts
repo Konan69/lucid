@@ -150,9 +150,9 @@ export type SignInLoss =
 export interface Desk<Refusal> {
   /**
    * Reports a sign-in that ended without a session, so it is seen beyond the first screen. A
-   * loss about a link carries the link's shape: its place and field names, never their values.
+   * loss about a link carries the link's form: its place and field names, never their values.
    */
-  readonly report: (loss: SignInLoss, shape?: string) => void
+  readonly report: (loss: SignInLoss, form?: string) => void
   /** Where the sign-in stands now. */
   readonly standing: () => Standing
   /** Puts where it stands on the screen, and keeps it. */
@@ -256,7 +256,7 @@ const beginning = Effect.fn('Google.beginning')(function* (phone: Phone, server:
  * return that names another attempt is neither an answer nor a failure of this one.
  */
 /** A link with every value taken out, so a report can say what came back without the code. */
-export const shapeOf = (link: string): string => link.replace(/=[^&#]*/gu, '=')
+export const formOf = (link: string): string => link.replace(/=[^&#]*/gu, '=')
 
 export const returnFor = (attempt: Attempt, link: string): Option.Option<SignInReturn> =>
   Option.filter(readPhoneSignInReturn(link), (back) => back.state === attempt.state)
@@ -337,7 +337,7 @@ export function makeGoogle<Refusal>(phone: Phone, desk: Desk<Refusal>) {
     const read = readPhoneSignInReturn(link)
     const back = returnFor(attempt, link)
     if (Option.isNone(back)) {
-      desk.report(Option.isNone(read) ? 'SignInReturnUnread' : 'SignInReturnForeign', shapeOf(link))
+      desk.report(Option.isNone(read) ? 'SignInReturnUnread' : 'SignInReturnForeign', formOf(link))
       return desk.show(Standing.Failed())
     }
     yield* SignInReturn.match(back.value, {
