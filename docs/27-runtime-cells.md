@@ -30,7 +30,7 @@ Thread creator's cell (`packages/agent/runtime/src/client.ts`, `Product`;
 - **One owner per Person.** Pi owns tasks, queues, deduplication, wait, abort, and restart.
   Vivid registers its tools and learning task with that Harness
   (`packages/agent/runtime/src/person.ts`, `openPerson`).
-- **Shared cell storage.** The fleet declares two nodes and one retained R2 bucket. Each node
+- **Shared cell storage.** The fleet declares two nodes and one retained Railway bucket. Each node
   has a separate local volume and advertised peer address (`infra/cells.ts`, `railwayCells`).
 
 History. The custom runtime PostgreSQL adapter and AgentFS memory belonged to the pre-cell
@@ -113,7 +113,7 @@ by these declarations.
 
 - Each node is a separate Railway service, `cells-a` or `cells-b`, pinned to celld 0.6.2, with
   its own volume, private address, and peer advertisement.
-- One retained R2 bucket holds fleet data.
+- One retained Railway bucket holds fleet data.
 - The server's pre-deploy command applies product migrations, then publishes the Worker
   (`infra/railway.ts`, `railwayResources`; `apps/cells/scripts/build.mjs`, `main`).
 - `cellVariables` supplies private Worker bindings for server authority, selected model,
