@@ -245,7 +245,7 @@ const assertStackPolicy = (stackSource, localDependencies) => {
     /alchemy\/(Cloudflare|Neon|AWS)|\b(Cloudflare|Neon|AWS)\./,
     'local stack must not load cloud providers',
   )
-  // Railway compute and hosted R2 load only for a Railway target. The local graph never
+  // Railway compute and storage load only for a Railway target. The local graph never
   // requires their provider credentials.
   assert.match(
     stackSource,
@@ -493,7 +493,7 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
   )
   assert.match(
     source(root, 'infra/cells.ts'),
-    /Cloudflare\.R2\.Bucket\('CellsStorage',[\s\S]*?\.pipe\(RemovalPolicy\.retain\(\)\)/,
+    /Railway\.Bucket\('CellsStorage',[\s\S]*?\.pipe\(RemovalPolicy\.retain\(\)\)/,
     'retain the durable cells bucket',
   )
   assertRuntimePolicy(

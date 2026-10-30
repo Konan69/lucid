@@ -42,7 +42,7 @@ opens inside the cell; it has no runtime PostgreSQL migration owner or `DATABASE
 (`packages/agent/runtime/src/cell.ts`, `openCell`).
 
 `preview` remains disabled. `production` selects `infra/railway.ts` (`railwayResources`), which
-calls `railwayCells` in `infra/cells.ts` for the two celld 0.6.2 nodes and retained R2 bucket.
+calls `railwayCells` in `infra/cells.ts` for the two celld 0.6.2 nodes and retained Railway bucket.
 The application server receives their private URLs. Local development keeps the Command/Docker
 graph above. [Runtime cells](27-runtime-cells.md) describes the request and wake paths.
 
