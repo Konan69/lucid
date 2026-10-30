@@ -61,7 +61,8 @@ export const railwayCells = Effect.fn('railwayCells')(function* (
       image: 'ghcr.io/denoland/celld:v0.6.2',
       port: 5173,
       publicDomain: false,
-      healthcheckPath: '/.well-known/celld/health',
+      // Railway refuses a dotted path, and the Worker's own liveness answers without opening a cell.
+      healthcheckPath: '/health',
       env: {
         ...storage,
         CELLD_ADDR: '[::]:5173',
