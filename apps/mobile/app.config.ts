@@ -119,6 +119,37 @@ const withSplash = (config: ExpoConfig): ExpoConfig =>
  */
 const PERSONAL_TEAM = process.env['VIVID_IOS_PERSONAL_TEAM'] === '1'
 
+/**
+ * Whether this is the development build ("Vivid Dev"), set by `VIVID_APP_VARIANT=development` in
+ * the `development` profile of `eas.json`. It is Vivid with `expo-dev-client`: installed once
+ * beside the TestFlight app, it loads JavaScript from a developer's Metro server, so a change is
+ * seen on the phone without a new binary. Its own bundle identifier keeps it from replacing the
+ * real app; it keeps the `vivid` scheme, because sign-in returns on `PHONE_SCHEME` inside the
+ * browser session that the app itself opened. It signs like a personal team's build (no widget or share extension, no App Group,
+ * no push), because the extensions' App Group can only be made in Apple's web portal and a
+ * development build exists to iterate on screens, not on those extensions.
+ */
+const DEVELOPMENT = process.env['VIVID_APP_VARIANT'] === 'development'
+
+/** The development build's identity: its own bundle and name, so both apps sit on one phone. */
+const asDevelopment = (config: ExpoConfig): ExpoConfig => {
+  const { ios } = config
+  if (ios === undefined || ios.bundleIdentifier === undefined)
+    throw new Error('app.json must name the iOS bundle.')
+  return {
+    ...config,
+    name: `${config.name} Dev`,
+    ios: { ...ios, bundleIdentifier: `${ios.bundleIdentifier}.dev` },
+    android:
+      config.android === undefined || config.android.package === undefined
+        ? config.android
+        : { ...config.android, package: `${config.android.package}.dev` },
+  }
+}
+
+/** Builds that cannot sign the extensions, the App Group or push leave them out. */
+const LEAN = PERSONAL_TEAM || DEVELOPMENT
+
 /** The entitlements a personal team cannot sign, taken off its build. */
 const withoutPaidTeamCapabilities = (config: ExpoConfig): ExpoConfig =>
   withEntitlementsPlist(config, (plist) => {
@@ -172,7 +203,7 @@ const withShareTarget = (config: ExpoConfig, app: string): ExpoConfig =>
       'expo-sharing',
       {
         ios: {
-          enabled: !PERSONAL_TEAM,
+          enabled: !LEAN,
           extensionBundleIdentifier: `${app}.sharing`,
           appGroupId: `group.${app}`,
           activationRule: {
@@ -215,7 +246,7 @@ const withSigning = (config: ExpoConfig): ExpoConfig => {
   if (ios === undefined || ios.bundleIdentifier === undefined)
     throw new Error('app.json must name the iOS bundle.')
   const app = ios.bundleIdentifier
-  return PERSONAL_TEAM
+  return LEAN
     ? withoutPaidTeamCapabilities(withShareTarget(config, app))
     : withShareTarget(withThreadActivity(config, app), app)
 }
@@ -226,9 +257,10 @@ export default ({ config }: ConfigContext): Partial<ExpoConfig> => {
   // and an `app.json` that does not name the app is a broken build, so it fails here.
   const { name, slug } = config
   if (name === undefined || slug === undefined) throw new Error('app.json must name the app.')
-  const base = withSigning(withSplash(withSentryOff({ ...config, name, slug })))
+  const named = { ...config, name, slug }
+  const base = withSigning(withSplash(withSentryOff(DEVELOPMENT ? asDevelopment(named) : named)))
   if (server === undefined || server === '') return { ...base, updates: { enabled: false } }
-  const linked = PERSONAL_TEAM ? base : withServerLinks(base, server)
+  const linked = LEAN ? base : withServerLinks(base, server)
   return {
     ...linked,
     extra: { ...linked.extra, server },
