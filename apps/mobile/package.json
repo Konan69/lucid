@@ -18,7 +18,6 @@
     "test": "node ../../scripts/test.mjs"
   },
   "dependencies": {
-    "@config-plugins/react-native-webrtc": "15.0.2",
     "@effect/atom-react": "catalog:",
     "@expo/ui": "catalog:",
     "@openuidev/react-lang": "catalog:",
@@ -72,7 +71,6 @@
     "react-native-screens": "4.26.2",
     "react-native-svg": "15.15.4",
     "react-native-web": "catalog:",
-    "react-native-webrtc": "155.0.1",
     "react-native-webview": "13.16.1",
     "react-native-worklets": "catalog:",
     "thinking-orbs": "^0.3.2",
