@@ -69,6 +69,10 @@ export const railwayCells = Effect.fn('railwayCells')(function* (
         CELLD_INTERNAL_ADDR: '[::]:8081',
         CELLD_ADVERTISE: `${node.name}.railway.internal:8081`,
         CELLD_WATCH: '/var/lib/celld',
+        // Unset, an idle cell leaves memory only under pressure or at the residency cap
+        // (celld docs/README.md, "A resident cell"), so every opened Person stays loaded and
+        // billed. Five quiet minutes hibernate it; its next request wakes it on the same node.
+        CELLD_IDLE_EVICT_S: '300',
       },
     })
     yield* Railway.Volume(`${node.id}Data`, { project, service, mountPath: '/var/lib/celld' })
