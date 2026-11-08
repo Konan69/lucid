@@ -185,16 +185,7 @@ describe.skipIf(!testDatabaseConfigured)('Project work', () => {
               expected: ProjectRevision.make(2),
               change: complete('call-done'),
             })
-            .pipe(
-              Effect.provideService(
-                AuthContext,
-                AuthState.Person({
-                  person: test.personal.person,
-                  workspace: test.personal.workspace,
-                  sessionId: SessionId.make('project-work-session'),
-                }),
-              ),
-            ),
+            .pipe(Effect.provideService(AuthContext, personIn(test))),
         )
         expect(fromPerson).toEqual(new ProjectEvidenceMissing({ id: created.id }))
         expect(yield* store.list(test.personal)).toMatchObject([{ revision: 2 }])
@@ -214,8 +205,57 @@ describe.skipIf(!testDatabaseConfigured)('Project work', () => {
         ])
       }).pipe(Effect.scoped),
     )
+
+    it.effect('the Person sets the goal and marks it done in their own words', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const store = yield* ProjectStore
+        const created = yield* store.create(test.personal, { name: 'Site', parentProjectId: null })
+        const asPerson = Effect.provideService(AuthContext, personIn(test))
+        const confirm = ProjectChange.cases.Confirm.make({
+          summary: 'The site loads at the domain',
+        })
+
+        const early = yield* Effect.flip(
+          projectHandlers
+            .UpdateProject({ id: created.id, expected: ProjectRevision.make(0), change: confirm })
+            .pipe(asPerson),
+        )
+        expect(early).toEqual(new ProjectNotActive({ id: created.id }))
+
+        yield* projectHandlers
+          .UpdateProject({ id: created.id, expected: ProjectRevision.make(0), change: define })
+          .pipe(asPerson)
+        const fromRun = yield* Effect.flip(
+          projectHandlers
+            .UpdateProject({ id: created.id, expected: ProjectRevision.make(1), change: confirm })
+            .pipe(Effect.provideService(AuthContext, vividIn(test))),
+        )
+        expect(fromRun).toEqual(new ProjectEvidenceMissing({ id: created.id }))
+
+        const done = yield* projectHandlers
+          .UpdateProject({ id: created.id, expected: ProjectRevision.make(1), change: confirm })
+          .pipe(asPerson)
+        expect(ProjectWork.guards.Completed(done.work) && done.work.objective).toBe(
+          define.objective,
+        )
+        expect(ProjectWork.guards.Completed(done.work) && done.work.proof).toEqual({
+          summary: 'The site loads at the domain',
+          sources: [ProjectEvidence.cases.Person.make({ personId: test.personal.person.id })],
+        })
+        expect(yield* store.list(test.personal)).toMatchObject([{ revision: 2 }])
+      }).pipe(Effect.scoped),
+    )
   })
 })
+
+/** The fixture's Person on their own page, with no Run. */
+const personIn = (test: Effect.Success<ReturnType<typeof fixture>>) =>
+  AuthState.Person({
+    person: test.personal.person,
+    workspace: test.personal.workspace,
+    sessionId: SessionId.make('project-work-session'),
+  })
 
 /** Vivid inside the fixture's personal Thread, acting for its Person. */
 const vividIn = (test: Effect.Success<ReturnType<typeof fixture>>) =>

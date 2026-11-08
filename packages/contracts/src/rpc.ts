@@ -832,7 +832,10 @@ const CreateProject = Rpc.make('CreateProject', {
   payload: CreateProjectRequest,
   success: Project,
 })
-/** Vivid recording a Project's objective, progress or completion, against the revision it read. */
+/**
+ * A Project's objective, progress or completion, against the revision the writer read: Vivid from
+ * a Run, or the Person setting the goal or marking it done on the Project's page.
+ */
 const UpdateProject = Rpc.make('UpdateProject', {
   payload: UpdateProjectRequest,
   success: Project,
