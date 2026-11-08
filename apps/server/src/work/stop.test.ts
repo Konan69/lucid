@@ -99,9 +99,8 @@ const threadWithRun = Effect.fn('WorkTest.threadWithRun')(function* (
       state: input.state,
       origin: encodeOrigin(input.origin),
       startedAt: now,
-      ...(input.state === 'failed'
-        ? { finishedAt: now, failureReason: 'RateLimited' as const }
-        : {}),
+      finishedAt: input.state === 'failed' ? now : null,
+      failureReason: input.state === 'failed' ? 'RateLimited' : null,
     }),
   )
   return { thread, run }

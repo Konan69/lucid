@@ -1,5 +1,5 @@
 import { BackgroundWork } from '@vivid/contracts'
-import { thisReader, work } from '@vivid/state'
+import { makeWhen, thisReader, work } from '@vivid/state'
 import { CircleAlert, TriangleAlert } from 'lucide-react'
 import { live, LiveState, useLive } from '../../data/live'
 import { stopAll, stopWork, useStopAll, useWorkStandings } from '../../data/work'
@@ -8,7 +8,7 @@ import { useNow } from '../../ui/clock'
 import { cn } from '../../ui/cn'
 import { Awaiting, Empty, Row, Section } from './Parts'
 
-const words = work.makeWorkWords(thisReader())
+const words = work.makeWorkWords(makeWhen(thisReader()))
 
 /**
  * The colour a standing reads in: quiet while going, amber when stuck, danger when broken. Amber is
@@ -130,10 +130,8 @@ function WorkRow({
         <>
           <span className="wrap-anywhere">{line.detail}</span>
           <span aria-hidden> · </span>
-          <span className={cn('wrap-anywhere', TONE[line.tone])}>
-            {line.tone !== 'going' && (
-              <Icon aria-hidden className="mr-1 inline size-3.5 align-[-2px]" />
-            )}
+          <span className={cn('inline-flex items-start gap-1 wrap-anywhere', TONE[line.tone])}>
+            {line.tone !== 'going' && <Icon aria-hidden className="mt-0.5 size-3.5 shrink-0" />}
             {line.standing}
           </span>
           {press.failed && (

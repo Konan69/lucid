@@ -1,10 +1,11 @@
 import { BackgroundWork } from '@vivid/contracts'
-import { clock, thisReader, work } from '@vivid/state'
+import { clock, work } from '@vivid/state'
 import { Activity, CircleStop, Trash2 } from 'lucide-react-native'
 import { useSyncExternalStore } from 'react'
 import { View } from 'react-native'
 import { warn } from '../../data/haptics'
 import { useLive, useLiveData, type LiveData } from '../../data/live'
+import { when } from '../../data/when'
 import {
   dismissStopAll,
   stopEverything,
@@ -27,7 +28,7 @@ import {
   type Tone,
 } from '../../ui/ui'
 
-const words = work.makeWorkWords(thisReader())
+const words = work.makeWorkWords(when)
 
 /** The ink a standing reads in: quiet while going, amber when stuck, danger when broken. */
 const TONE = {

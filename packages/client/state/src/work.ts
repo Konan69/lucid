@@ -20,7 +20,6 @@ import {
 import { Context, Effect, type Layer, Option, Schema } from 'effect'
 import { Atom } from 'effect/reactivity'
 import { spanOf } from './clock.js'
-import { makeWhen, type Reader } from './when.js'
 
 /**
  * What Vivid has going for the Person in the background, as every surface draws it: the words of
@@ -102,12 +101,12 @@ const listeners = (count: number) => {
 }
 
 /**
- * Makes the sayer for one reader. A row's words come from one exhaustive match over its standing
- * (`standingOf`, the same function the server and Vivid's tool read), so "stalled" reads the same
- * on every surface.
+ * Makes the sayer for one surface, given how that surface says a moment (`makeWhen` on the web,
+ * the phone's own short form in `apps/mobile/src/data/when.ts`). A row's words come from one
+ * exhaustive match over its standing (`standingOf`, the same function the server and Vivid's tool
+ * read), so "stalled" reads the same on every surface.
  */
-export function makeWorkWords(reader: Reader) {
-  const when = makeWhen(reader)
+export function makeWorkWords(when: (moment: number, now: number) => string) {
   // The row's detail already names the account, so these do not say it again.
   const failure = (failed: WorkFailure) =>
     WorkFailure.match(failed, {

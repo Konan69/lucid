@@ -226,27 +226,36 @@ function followLook(
 }
 
 /**
+ * Every Thread the server has refused this Person as not found, in one session: deleted, or no
+ * longer theirs to see. A Thread joins it when its own live query says so, which happens when its
+ * screen is opened; the Notifications screen reads it to say a row is unavailable.
+ */
+const goneThreads = () => Atom.keepAlive(Atom.make<ReadonlySet<ThreadId>>(new Set<ThreadId>()))
+
+/**
+ * Whether the phone can reach the server; Home says so when it cannot. Each time the socket opens
+ * again after a loss, every open conversation catches up (`reconnected`).
+ */
+const openLink = () => {
+  const link = makeLink()
+  link.reopened(reconnected)
+  return link
+}
+
+/**
  * Builds the live data of one session: one socket, opened as the signed-in Person, and a query
  * for every `Watch…` call the app draws from.
  */
 function makeLiveData(session: SignedIn) {
   // A new session starts from Vivid as it ships; its own appearance arrives with the socket.
   forgetAppearance()
-  // Whether the phone can reach the server; Home says so when it cannot. Each time the socket
-  // opens again after a loss, every open conversation catches up (`reconnected`).
-  const link = makeLink()
-  link.reopened(reconnected)
+  const link = openLink()
   const engine = makeLive(
     VividRpcClient.layerLive({ url: liveAddress(session.server), onLink: link.heard }).pipe(
       Layer.provide(bearerSocket(session.token)),
     ),
   )
-  /**
-   * Every Thread the server has refused this Person as not found, in this session: deleted, or
-   * no longer theirs to see. A Thread joins it when its own live query says so, which happens
-   * when its screen is opened; the Notifications screen reads it to say a row is unavailable.
-   */
-  const gone = Atom.keepAlive(Atom.make<ReadonlySet<ThreadId>>(new Set<ThreadId>()))
+  const gone = goneThreads()
   const one = engine.query
   /** A query the first screen needs: its last answer is kept on the phone (`data/snapshot.ts`). */
   const kept = engine.kept
