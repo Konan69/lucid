@@ -12,6 +12,7 @@ import {
 import { makeNativeTransport } from '@sentry/react-native/dist/js/transports/native'
 import { Option, Schema } from 'effect'
 import * as Updates from 'expo-updates'
+import Constants from 'expo-constants'
 import type { ComponentType } from 'react'
 import { Platform } from 'react-native'
 import { reportsFrom, type Reports } from './build'
@@ -50,6 +51,14 @@ const LEFT_OUT = new Set(['ExpoContext', 'TurboModuleContext'])
 /** Register the actual navigation container so spans name routes, never route parameter values. */
 export const navigationTelemetry = reactNavigationIntegration({ enableTimeToInitialDisplay: true })
 
+/** Older installed binaries have no environment field; their shipped configuration is production. */
+const Launch = Schema.Struct({
+  extra: Schema.Struct({
+    telemetryEnvironment: Schema.optionalKey(Schema.Literals(['production', 'verification'])),
+  }),
+})
+const launch = Schema.decodeUnknownOption(Launch)
+
 /**
  * Which over-the-air update is running, as the tags the SDK's own `ExpoContext` would have set.
  * A value expo-updates does not have (a build with updates off has no channel) is not a tag.
@@ -70,9 +79,11 @@ const updates = () =>
  */
 export const startTelemetry = (): void => {
   if (__DEV__ || Platform.OS === 'web') return
+  const configuration = launch(Constants.expoConfig)
+  if (Option.isNone(configuration)) return
   const started = Option.liftThrowable(init)({
     dsn: ADDRESS,
-    environment: 'production',
+    environment: configuration.value.extra.telemetryEnvironment ?? 'production',
     transport: (given) => guarded(makeNativeTransport(given)),
     integrations: (defaults) => [
       ...defaults.filter(({ name }) => !LEFT_OUT.has(name)),

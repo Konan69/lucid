@@ -222,11 +222,23 @@ const withSigning = (config: ExpoConfig): ExpoConfig => {
 
 export default ({ config }: ConfigContext): Partial<ExpoConfig> => {
   const server = process.env['VIVID_SERVER']
+  const telemetryEnvironment = process.env['VIVID_ENVIRONMENT'] ?? 'production'
+  if (telemetryEnvironment !== 'production' && telemetryEnvironment !== 'verification')
+    throw new Error('VIVID_ENVIRONMENT must be production or verification for phone builds')
   // Expo hands over `app.json` typed as possibly partial. A config plugin needs the whole thing,
   // and an `app.json` that does not name the app is a broken build, so it fails here.
   const { name, slug } = config
   if (name === undefined || slug === undefined) throw new Error('app.json must name the app.')
-  const base = withSigning(withSplash(withSentryOff({ ...config, name, slug })))
+  const base = withSigning(
+    withSplash(
+      withSentryOff({
+        ...config,
+        name,
+        slug,
+        extra: { ...config.extra, telemetryEnvironment },
+      }),
+    ),
+  )
   if (server === undefined || server === '') return { ...base, updates: { enabled: false } }
   const linked = PERSONAL_TEAM ? base : withServerLinks(base, server)
   return {
