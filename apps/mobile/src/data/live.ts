@@ -204,6 +204,22 @@ function makeSearches(engine: ReturnType<typeof makeLive>) {
 }
 
 /**
+ * Builds a session's reading of how Vivid's Computer is doing, for the Computer screen: every
+ * part checked each time the screen asks, and the newest step Vivid took to fix it. A check never
+ * wakes a sleeping Computer (`GetComputerHealth`). Ported from the web (`computerHealth` and
+ * `computerRecovery` in `apps/web/src/data/live.ts`), made per session like every phone query.
+ */
+function makeHealth(engine: ReturnType<typeof makeLive>) {
+  const depth = Atom.make<'Deep'>('Deep')
+  return {
+    computerHealth: engine.ask(depth, (client, asked) =>
+      client.GetComputerHealth({ depth: asked }),
+    ),
+    computerRecovery: engine.ask(depth, (client) => client.GetComputerRecovery()),
+  }
+}
+
+/**
  * Keeps this device's own atoms for how things look current with the session's answers, for the
  * life of the session: Vivid's name and face, and the Person's theme.
  */
@@ -462,14 +478,19 @@ function makeLiveData(session: SignedIn) {
 export type LiveData = ReturnType<typeof makeLiveData>
 
 /**
- * The forms a Person saves from a screen, each one machine for the session so a refusal outlives
- * the sheet that showed it: their own name in Settings (`data/name.ts`), and a Project's goal and
- * done from its page (`data/goal.ts`).
+ * What a screen of the session saves or asks for itself. The forms are each one machine for the
+ * session so a refusal outlives the sheet that showed it: their own name in Settings
+ * (`data/name.ts`), and a Project's goal and done from its page (`data/goal.ts`). The Computer
+ * screen's health reading is asked when the screen asks (`makeHealth`).
  */
 const makeForms = (
   engine: ReturnType<typeof makeLive>,
   live: { readonly me: LiveQuery<MeResponse>; readonly projects: LiveQuery<ProjectListResponse> },
-) => ({ naming: makeNaming(engine, live.me), goal: makeGoal(engine, live.projects) })
+) => ({
+  naming: makeNaming(engine, live.me),
+  goal: makeGoal(engine, live.projects),
+  ...makeHealth(engine),
+})
 
 /**
  * What the app is showing at its root.

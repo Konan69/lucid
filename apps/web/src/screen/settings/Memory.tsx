@@ -1,16 +1,24 @@
 import { useAtomSet, useAtomValue } from '@effect/atom-react'
-import type { MemoryForgetId, MemoryLine, SavedMemory } from '@vivid/contracts'
+import { VividRpcClient } from '@vivid/client-runtime'
+import {
+  MemoryExport,
+  type MemoryForgetId,
+  type MemoryLine,
+  type SavedMemory,
+} from '@vivid/contracts'
 import { LiveState, makeWhen, remembering, thisReader } from '@vivid/state'
-import { ChevronDown } from 'lucide-react'
-import { Option } from 'effect'
+import { ChevronDown, Download as DownloadIcon } from 'lucide-react'
+import { Effect, Option, Result, Schema } from 'effect'
 import { useState } from 'react'
+import { act, running } from '../../data/app'
 import { memory, useLive } from '../../data/live'
+import { orSay } from '../../data/said'
 import { router } from '../../router'
 import { Button } from '../../ui/button'
 import { cn } from '../../ui/cn'
 import { Markdown } from '../../ui/Markdown'
 import { Textarea } from '../../ui/textarea'
-import { Awaiting, Empty, Refusal, Section } from './Parts'
+import { Awaiting, Empty, Refusal, Row, Section } from './Parts'
 
 const when = makeWhen(thisReader())
 
@@ -35,7 +43,61 @@ export function Memory() {
   const reading = useAtomValue(visit.reading)
   const send = useAtomSet(visit.send)
   const [opened] = useState(() => Date.now())
-  return <Remembered reading={reading} send={send} now={opened} />
+  return (
+    <>
+      <Remembered reading={reading} send={send} now={opened} />
+      <Download />
+    </>
+  )
+}
+
+/**
+ * Everything the Person's memory holds, read whole on the server (`ExportMemory`) and written out
+ * as the contract encodes it, so the file is the same JSON the server keeps and can be read
+ * without Vivid.
+ */
+const encodeExport = Schema.encodeEffect(MemoryExport)
+const exported = Effect.fn('Memory.exported')(function* () {
+  const client = yield* VividRpcClient
+  return yield* encodeExport(yield* client.ExportMemory())
+})
+
+/** Hands the browser one file to save, named for the day it was taken. */
+const save = (file: typeof MemoryExport.Encoded) => {
+  const day = new Date(file.exportedAt).toISOString().slice(0, 10)
+  const address = URL.createObjectURL(
+    new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' }),
+  )
+  const link = document.createElement('a')
+  link.href = address
+  link.download = `vivid-memory-${day}.json`
+  link.click()
+  URL.revokeObjectURL(address)
+}
+
+const download = () =>
+  void act(
+    orSay(
+      Effect.map(running(exported()), Result.map(save)),
+      'Your memory could not be downloaded. Try again.',
+    ),
+  )
+
+/** The way to take a copy of everything Vivid remembers about the Person. */
+function Download() {
+  return (
+    <Section title="Your copy">
+      <Row
+        label="Download everything Vivid remembers"
+        detail="Every page and line, whole, as one file you can keep."
+      >
+        <Button size="sm" variant="outline" onClick={download}>
+          <DownloadIcon />
+          Download
+        </Button>
+      </Row>
+    </Section>
+  )
 }
 
 /**
