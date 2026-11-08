@@ -51,11 +51,11 @@ describe.skipIf(!testDatabaseConfigured)('Action journal', () => {
         const probe = yield* ConnectionProbe
         const sent = yield* Ref.get(probe.calls)
         const request = write({ record: 1 })
-        const first = yield* useTool(actor, request)
+        const { outcome: first } = yield* useTool(actor, request)
         if (!ToolOutcome.guards.Completed(first) || first.receipt === null)
           return expect.fail('A journaled write completes with a receipt')
         expect(ActionReceipt.guards.Completed(first.receipt)).toBe(true)
-        const again = yield* useTool(actor, request)
+        const { outcome: again } = yield* useTool(actor, request)
         expect(again).toEqual(ToolOutcome.cases.Repeated.make({ receipt: first.receipt }))
         expect(yield* Ref.get(probe.calls)).toBe(sent + 1)
       }).pipe(Effect.scoped),
@@ -70,13 +70,13 @@ describe.skipIf(!testDatabaseConfigured)('Action journal', () => {
           const database = yield* Database
           yield* Ref.set(probe.outcome, ExecutorCallOutcome.cases.OutcomeUnknown.make({}))
           const lost = write({ record: 7 })
-          const first = yield* useTool(actor, lost)
+          const { outcome: first } = yield* useTool(actor, lost)
           if (!ToolOutcome.guards.OutcomeUnknown(first) || first.receipt === null)
             return expect.fail('A lost write answers Unknown with its operation')
           const operationId = first.receipt.operationId
           const sent = yield* Ref.get(probe.calls)
           // The runtime retrying the same call learns it is still unknown; nothing is sent.
-          const retried = yield* useTool(actor, lost)
+          const { outcome: retried } = yield* useTool(actor, lost)
           expect(retried).toEqual(ToolOutcome.cases.OutcomeUnknown.make({ receipt: first.receipt }))
           // A new call of the exact same act is refused, before any Gate decision or send.
           const checked = (yield* Ref.get(probe.checked)).length
@@ -89,7 +89,7 @@ describe.skipIf(!testDatabaseConfigured)('Action journal', () => {
             probe.outcome,
             ExecutorCallOutcome.cases.Completed.make({ value: { ok: true } }),
           )
-          const other = yield* useTool(actor, write({ record: 8 }))
+          const { outcome: other } = yield* useTool(actor, write({ record: 8 }))
           expect(ToolOutcome.guards.Completed(other)).toBe(true)
           expect(yield* Ref.get(probe.calls)).toBe(sent + 1)
           // A provider with no lookup cannot prove absence: still held.
@@ -104,7 +104,7 @@ describe.skipIf(!testDatabaseConfigured)('Action journal', () => {
             Effect.provideService(ActionLookup, lookingUp(Lookup.cases.Absent.make({}))),
           )
           expect(ActionReconciliation.guards.NotApplied(absent.reconciliation)).toBe(true)
-          const fresh = yield* useTool(actor, write({ record: 7 }))
+          const { outcome: fresh } = yield* useTool(actor, write({ record: 7 }))
           if (!ToolOutcome.guards.Completed(fresh) || fresh.receipt === null)
             return expect.fail('The fresh send completes with its own receipt')
           expect(fresh.receipt.operationId).not.toBe(operationId)
