@@ -217,6 +217,7 @@ const trust = Layer.mergeAll(inputStoreLayer, approvalStoreLayer).pipe(
   Layer.provideMerge(ruleStoreLayer),
   Layer.provide(
     Layer.succeed(ActionRunner, {
+      inspect: () => Effect.succeed([]),
       run: () => Effect.succeed(ActionOutcome.cases.Succeeded.make({ result: 'Sent' })),
     }),
   ),

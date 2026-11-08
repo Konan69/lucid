@@ -50,6 +50,10 @@ export const changedLine = (reason: ApprovalInvalidation) =>
     AuthorityChanged: () => 'No longer yours to answer.',
     RunStopped: () => 'Stopped before it was answered.',
     Superseded: () => 'This changed after it was asked.',
+    ExternalStateChanged: ({ source }) =>
+      source === 'BrowserPage'
+        ? 'The price or terms changed after you said yes.'
+        : 'The mail or its conversation changed after you said yes.',
   })
 
 /**

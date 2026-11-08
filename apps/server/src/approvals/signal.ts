@@ -101,6 +101,10 @@ const changedWords = (reason: ApprovalInvalidation) =>
     AuthorityChanged: () => 'The person it was asked of left the workspace',
     RunStopped: () => 'The work that asked was stopped',
     Superseded: () => 'It was asked before approvals were bound to what they approve',
+    ExternalStateChanged: ({ source }) =>
+      source === 'BrowserPage'
+        ? 'The browser page or its checkout terms changed'
+        : 'The mail envelope, attachments or conversation changed',
   })
 
 /**
@@ -109,7 +113,9 @@ const changedWords = (reason: ApprovalInvalidation) =>
  * A changed document or Integration is the work still wanted against something new.
  */
 export const wakesVivid = (reason: ApprovalInvalidation) =>
-  ApprovalInvalidation.isAnyOf(['ContentChanged', 'ConnectionChanged'])(reason)
+  ApprovalInvalidation.isAnyOf(['ContentChanged', 'ConnectionChanged', 'ExternalStateChanged'])(
+    reason,
+  )
 
 /** Freeze the outcome text in the settlement write so no later projection is needed for replay. */
 export const owed = (

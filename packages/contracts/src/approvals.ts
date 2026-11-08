@@ -63,6 +63,7 @@ const Version = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))
  *   one) or removed (`version` is null).
  * - `ConnectionChanged`: the Integration the action uses was signed in again, lost its sign-in,
  *   failed or was removed. `generation` is its authorization generation now; null once removed.
+ * - `ExternalStateChanged`: the browser page, Gmail MIME envelope or incoming thread changed.
  * - `AuthorityChanged`: the Person it was asked of left the Company the Thread belongs to.
  * - `RunStopped`: the Person stopped the Run that asked.
  * - `Superseded`: asked before Approvals were bound to what they approve (29 October 2026), so
@@ -74,8 +75,17 @@ export const ApprovalInvalidation = Schema.TaggedUnion({
   AuthorityChanged: { membershipId: MembershipId },
   RunStopped: { runId: RunId },
   Superseded: {},
+  ExternalStateChanged: { source: Schema.Literals(['BrowserPage', 'MailEnvelope']) },
 })
 export type ApprovalInvalidation = typeof ApprovalInvalidation.Type
+
+/** Digests bind external content without retaining private page or mail bytes in the binding. */
+export const ApprovalContentDigest = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)).pipe(
+  Schema.brand('ApprovalContentDigest'),
+)
+export const GmailThreadId = Schema.NonEmptyString.pipe(Schema.brand('GmailThreadId'))
+export const GmailMessageId = Schema.NonEmptyString.pipe(Schema.brand('GmailMessageId'))
+export const ApprovalPageAddress = Schema.NonEmptyString.pipe(Schema.brand('ApprovalPageAddress'))
 
 /**
  * One fact outside the action that the action depends on, as it was when the server prepared it.
@@ -84,6 +94,18 @@ export type ApprovalInvalidation = typeof ApprovalInvalidation.Type
  */
 export const ApprovalPrecondition = Schema.TaggedUnion({
   ArtifactVersion: { artifactId: ArtifactId, version: Version, contentDigest: Schema.String },
+  BrowserPage: { address: ApprovalPageAddress, outlineDigest: ApprovalContentDigest },
+  /** The entire RFC 2822 MIME binds To/Cc/Bcc, reply headers, subject and every attachment byte. */
+  MailEnvelope: {
+    mimeDigest: ApprovalContentDigest,
+    thread: Schema.NullOr(
+      Schema.Struct({
+        id: GmailThreadId,
+        latestMessageId: GmailMessageId,
+        sourceDigest: ApprovalContentDigest,
+      }),
+    ),
+  },
 })
 export type ApprovalPrecondition = typeof ApprovalPrecondition.Type
 

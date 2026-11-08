@@ -53,9 +53,11 @@ const identity = ['openid', 'email', 'profile'] as const
 const googleUserinfo = 'https://openidconnect.googleapis.com/v1/userinfo'
 const definition = (name: string) => `https://integrations.sh/specs/google/google-${name}.json`
 
+export const gmailServiceId = ServiceId.make('google/gmail')
+
 export const googleServices: readonly GoogleService[] = [
   GoogleService.make({
-    service: ServiceId.make('google/gmail'),
+    service: gmailServiceId,
     name: 'Gmail',
     description: "Read, search, send and organise email in Gmail, Google's mail.",
     domain: 'gmail.com',

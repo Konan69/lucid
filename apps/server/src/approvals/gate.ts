@@ -3,8 +3,10 @@ import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import {
   Approval,
+  ApprovalPrecondition,
+  InvalidRequest,
   RunId,
-  type ApprovalBinding,
+  ApprovalBinding,
   ThreadId,
   NotFound,
   type Person,
@@ -99,7 +101,7 @@ export interface GateService {
     action: ProposedAction,
     exposure: GateExposure,
     bound: ApprovalBinding,
-  ) => Effect.Effect<GateDecision, NotFound | DatabaseInfrastructureError>
+  ) => Effect.Effect<GateDecision, NotFound | InvalidRequest | DatabaseInfrastructureError>
 }
 
 /** The trust loop's single decision point. Implemented in `approvals/gate.ts` by `gateLayer`. */
@@ -114,6 +116,17 @@ export const ActionOutcome = Schema.TaggedUnion({
 export type ActionOutcome = typeof ActionOutcome.Type
 
 export interface ActionRunnerService {
+  /** Reads the external facts that must still hold when this exact action runs. */
+  readonly inspect: (input: {
+    readonly person: Person
+    readonly workspace: Workspace
+    readonly action: ProposedAction
+    readonly origin: ActionOrigin
+    readonly phase: 'Preparing' | 'Deciding'
+  }) => Effect.Effect<
+    ReadonlyArray<ApprovalPrecondition>,
+    NotFound | InvalidRequest | DatabaseInfrastructureError
+  >
   /**
    * Performs one stored action for the Person who approved it. It is called exactly once per
    * Approval, after the Approval has been claimed, with the action as it was stored when proposed
@@ -204,6 +217,7 @@ export const gateLayer = Layer.effect(
     const audit = yield* Audit
     const reviewer = yield* Reviewer
     const database = yield* Database
+    const runner = yield* ActionRunner
     /** Background Threads need containment even after expiry or without an admitted Run. */
     const checkUnwatched = Effect.fn('Gate.checkUnwatched')(function* (
       actor: Actor,
@@ -247,6 +261,17 @@ export const gateLayer = Layer.effect(
           )
           return GateDecision.cases.Blocked.make({ rule: never.action })
         }
+        const external = yield* runner.inspect({
+          person: actor.person,
+          workspace: actor.workspace,
+          action,
+          origin,
+          phase: 'Preparing',
+        })
+        const prepared = ApprovalBinding.make({
+          connectionGeneration: bound.connectionGeneration,
+          preconditions: [...bound.preconditions, ...external],
+        })
         // An applicable or unjudged Ask rule, and something personal
         // entering a shared Thread always ask: none of these is a judgment about the request.
         //
@@ -263,9 +288,9 @@ export const gateLayer = Layer.effect(
           BindingJudgment.guards.Uncertain(judged) ||
           exposure === 'PersonalInShared'
         )
-          return yield* ask(approvals, actor, action, bound)
+          return yield* ask(approvals, actor, action, prepared)
         // A standing Allow and a high "asked" score never authorize outward background work.
-        const background = yield* checkUnwatched(actor, action, origin, bound)
+        const background = yield* checkUnwatched(actor, action, origin, prepared)
         if (Option.isSome(background)) return background.value
         // An Allow rule is the Person's standing request for an undoable action. It does not
         // settle a destructive one: applicability is a 0.5 match (`rules/judge.ts`), too loose
@@ -275,7 +300,7 @@ export const gateLayer = Layer.effect(
         if (!reviewable(action)) return yield* allow(audit, actor, action)
         const review = yield* reviewer.review(actor, action)
         if (reviewOutcome(action.effect, review) === 'Ask')
-          return yield* ask(approvals, actor, action, bound)
+          return yield* ask(approvals, actor, action, prepared)
         return yield* allow(audit, actor, action)
       }),
     })
