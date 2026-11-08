@@ -2,6 +2,7 @@ import { defineTool } from './tool.ts'
 import {
   BackgroundWork,
   Tool,
+  WatchPurpose,
   WorkFailure,
   WorkStall,
   WorkStanding,
@@ -31,6 +32,7 @@ const troubleWords = (standing: WorkStanding, now: number) =>
       WorkStall.match(stall, {
         WorkingLong: ({ since }) =>
           `stalled: no answer after ${Math.round((now - since) / 60_000)} minutes`,
+        Paused: () => 'stalled: paused until the Person signs in to its Integration again',
         NotConfirmed: () => 'stalled: its Integration has not confirmed the Watch',
         NotRenewed: () =>
           'stalled: its subscription ran out and has not been renewed, so events may be missed',
@@ -48,8 +50,13 @@ const troubleWords = (standing: WorkStanding, now: number) =>
 const view = (work: BackgroundWork, now: number) => ({
   ...BackgroundWork.match(work, {
     Run: ({ title }) => ({ kind: 'reply still working', name: modelText(title) }),
-    Watch: ({ name, account }) => ({
-      kind: 'watch',
+    Helper: ({ number, brief, title }) => ({
+      kind: `helper ${number}`,
+      name: modelText(brief),
+      for: modelText(title),
+    }),
+    Watch: ({ name, account, purpose }) => ({
+      kind: WatchPurpose.guards.Checkin(purpose) ? 'check-in' : 'watch',
       name: modelText(name),
       account: modelText(account),
     }),

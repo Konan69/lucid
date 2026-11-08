@@ -9,15 +9,19 @@ import {
   WorkStanding,
   WorkStopReport,
   WorkStopResult,
-  WatchState,
+  WatchPurpose,
+  CheckinArming,
   refOf,
   standingOf,
   stopsWith,
+  type LiveHelperState,
+  type WatchFiring,
   type RunFailure,
+  type WorkerKind,
   WorkNotStopped,
   type WorkStop,
 } from '@vivid/contracts'
-import { Context, Effect, type Layer, Option, Schema } from 'effect'
+import { Context, Effect, type Layer, Match, Option, Schema } from 'effect'
 import { Atom } from 'effect/reactivity'
 import { spanOf } from './clock.js'
 
@@ -56,6 +60,7 @@ export interface WorkLine {
 export const keyOf = (ref: WorkRef): string =>
   WorkRef.match(ref, {
     Run: ({ run }) => `run:${run}`,
+    Helper: ({ helper }) => `helper:${helper}`,
     Watch: ({ watch }) => `watch:${watch}`,
     MadeIntegration: ({ connection }) => `made:${connection}`,
   })
@@ -79,7 +84,18 @@ const runDetail = (origin: RunOrigin) =>
     Watch: ({ watchName }) => `Woken by “${watchName}”`,
     WatchUnrecorded: ({ watchName }) => `Woken by “${watchName}”`,
     Forget: () => 'Forgetting what you asked',
+    Checkin: ({ watchName }) => `Checking in: “${watchName}”`,
+    Dream: () => 'Looking into something overnight',
+    ChildResult: () => 'Reading what a helper found',
   })
+
+/** What kind of narrower work a helper was given, as the Person would say it. */
+const HELPER = {
+  ReadOnly: 'Looking something up',
+  Researcher: 'Researching',
+  Executor: 'Doing a step',
+  ComputerUse: 'Using its computer',
+} satisfies Record<WorkerKind, string>
 
 /**
  * How long something has been stuck, to the minute: "34m", "2h 5m", "2d 3h". Seconds ticking
@@ -93,6 +109,22 @@ const stuckFor = (ms: number) => {
   const days = Math.floor(hours / 24)
   return hours % 24 === 0 ? `${days}d` : `${days}d ${hours % 24}h`
 }
+
+/** Where a helper that has not ended is, while it is going as it should. */
+const helperGoing = (state: LiveHelperState, now: number) =>
+  Match.valueTags(state, {
+    Reserved: () => 'Starting',
+    Working: ({ startedAt }) => `Working ${spanOf(now - startedAt)}`,
+    Stopping: () => 'Stopping',
+  })
+
+/** When a check-in next fires, once its timer confirmed it; an event Watch has no next time. */
+const nextCheckin = (purpose: WatchPurpose): Option.Option<number> =>
+  WatchPurpose.match(purpose, {
+    Event: () => Option.none(),
+    Checkin: ({ arming }) =>
+      CheckinArming.guards.Confirmed(arming) ? Option.some(arming.nextAt) : Option.none(),
+  })
 
 /** How many Watches listen to a made Integration; the section already says Vivid made it. */
 const listeners = (count: number) => {
@@ -117,18 +149,29 @@ export function makeWorkWords(when: (moment: number, now: number) => string) {
   const stall = (stalled: WorkStall, now: number) =>
     WorkStall.match(stalled, {
       WorkingLong: ({ since }) => `No answer after ${stuckFor(now - since)}`,
+      Paused: () => 'Paused until you sign in again',
       NotConfirmed: () => 'Not confirmed yet',
       NotRenewed: ({ since }) => `Not renewed since ${when(since, now)} · events may be missed`,
     })
+  /** An Active Watch going as it should: when a check-in fires next, or when it last woke Vivid. */
+  const watching = (lastFiring: WatchFiring | null, purpose: WatchPurpose, now: number) => {
+    const next = nextCheckin(purpose)
+    if (Option.isSome(next)) return `Next check-in ${when(next.value, now)}`
+    if (lastFiring === null) return 'Has not fired yet'
+    return `Last woke Vivid ${when(lastFiring.startedAt, now)}`
+  }
   /** A row going as it should: how long a Run has worked, when a Watch last woke Vivid. */
   const going = (work: BackgroundWork, now: number) =>
     BackgroundWork.match(work, {
       Run: ({ startedAt }) => `Working ${spanOf(now - startedAt)}`,
-      Watch: ({ state, lastFiring }) => {
-        if (WatchState.guards.Pending(state)) return 'Starting'
-        if (lastFiring === null) return 'Has not fired yet'
-        return `Last woke Vivid ${when(lastFiring.startedAt, now)}`
-      },
+      Helper: ({ state }) => helperGoing(state, now),
+      Watch: ({ state, lastFiring, purpose }) =>
+        Match.valueTags(state, {
+          Pending: () => 'Starting',
+          // Paused reads as stalled (`standingOf`); this keeps the match total.
+          Paused: () => 'Paused',
+          Active: () => watching(lastFiring, purpose, now),
+        }),
       MadeIntegration: () => 'Ready',
     })
   return (work: BackgroundWork, now: number): WorkLine => {
@@ -145,7 +188,14 @@ export function makeWorkWords(when: (moment: number, now: number) => string) {
     })
     const { title, detail } = BackgroundWork.match(work, {
       Run: ({ title: thread, origin }) => ({ title: thread, detail: runDetail(origin) }),
-      Watch: ({ name, account }) => ({ title: name, detail: account }),
+      Helper: ({ number, kind, brief, title: thread }) => ({
+        title: brief,
+        detail: `Helper ${number} · ${HELPER[kind]} for “${thread}”`,
+      }),
+      Watch: ({ name, account, purpose }) => ({
+        title: name,
+        detail: WatchPurpose.guards.Checkin(purpose) ? 'Check-in' : account,
+      }),
       MadeIntegration: ({ account, watches }) => ({ title: account, detail: listeners(watches) }),
     })
     return { key: keyOf(refOf(work)), title, detail, tone, standing, stop: stopsWith(work) }

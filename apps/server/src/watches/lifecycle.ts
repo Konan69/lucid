@@ -280,13 +280,12 @@ const make = Effect.fn('Watches.make')(function* () {
   })
 
   /**
-   * Stop one of a Person's live Watches. It stops for the Person first, whatever Executor then
-   * says: an unsubscribe that does not get through leaves a subscription that expires within its
-   * lifetime, and its deliveries meanwhile are answered Gone (`receiver.ts`).
+   * Stop a Watch by name. It stops for the Person first, whatever Executor then says: an
+   * unsubscribe that does not get through leaves a subscription that expires within its lifetime,
+   * and its deliveries meanwhile are answered Gone (`receiver.ts`).
    */
-  const end = Effect.fn('Watches.end')(function* (
-    found: Option.Option<WatchRecord & { readonly watch: Watch }>,
-  ) {
+  const stop = Effect.fn('Watches.stop')(function* (actor: Actor, name: string) {
+    const found = yield* store.named(actor, name)
     if (Option.isNone(found)) return yield* new WatchMissing({})
     const stopped = yield* store.stop(found.value.watch.id, 'removed')
     if (Option.isNone(stopped)) return yield* new WatchMissing({})
@@ -298,18 +297,6 @@ const make = Effect.fn('Watches.make')(function* () {
     )
     yield* publish(stopped.value)
     return Watch.make({ ...stopped.value.watch, account: found.value.watch.account })
-  })
-  /** Stop by name: the model knows Watches only by the names they were given. */
-  const stop = Effect.fn('Watches.stop')(function* (actor: Actor, name: string) {
-    return yield* end(yield* store.named(actor, name))
-  })
-  /**
-   * The same Stop by the Watch's id, for a Person's own screens (`work/stop.ts`): they list Watches
-   * by id, and a name can be reused by a newer Watch between the listing and the press.
-   */
-  const stopById = Effect.fn('Watches.stopById')(function* (actor: Actor, id: WatchId) {
-    const live = yield* store.list(actor)
-    return yield* end(Option.fromUndefinedOr(live.find((record) => record.watch.id === id)))
   })
 
   /**
@@ -356,7 +343,6 @@ const make = Effect.fn('Watches.make')(function* () {
     revise: makeRevision({ store, events, publish, subscribe, base }),
     find,
     stop,
-    stopById,
     complete: progress.complete,
     connectionChanged: progress.connectionChanged,
     pauseCurrent: progress.pauseCurrent,

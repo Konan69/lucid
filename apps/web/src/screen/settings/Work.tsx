@@ -29,6 +29,11 @@ const GROUPS = [
     takes: BackgroundWork.guards.Run,
   },
   {
+    title: 'Helpers',
+    detail: 'Narrower work Vivid handed off while answering.',
+    takes: BackgroundWork.guards.Helper,
+  },
+  {
     title: 'Watching',
     detail: 'Each one wakes Vivid when something happens in an Integration.',
     takes: BackgroundWork.guards.Watch,
@@ -171,7 +176,7 @@ function StopEverything({
   const sentence = (
     // Narrow, the sentence takes its own line and the buttons sit under it at the trailing edge.
     <p className="w-full min-w-0 text-label text-ink-3 sm:w-auto sm:flex-1">
-      Stops every reply Vivid is working on and every watch. Nothing is deleted.
+      Stops every reply, helper and watch Vivid has going. Nothing is deleted.
     </p>
   )
   return work.AllStanding.match(all, {

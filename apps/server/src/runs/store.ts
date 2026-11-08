@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { and, asc, eq, inArray, sql, type SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import {
   ChildBudget,
   ChildReceipt,
@@ -35,6 +35,7 @@ import {
   encodeStored,
   type DatabaseInfrastructureError,
 } from '../database/client.ts'
+import { ownedHere, type Actor } from '../auth/access.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { Runtime } from '../runtime/client.ts'
 import { audienceTopics, findThread } from '../threads/access.ts'
@@ -626,3 +627,29 @@ const makeChildRuns = Effect.fn('ChildRuns.make')(function* () {
 
 /** Needs a `Scope`: result deliveries outlive the request that ended a helper. */
 export const childRunsLayer = Layer.effect(ChildRuns, makeChildRuns())
+
+/**
+ * The helpers that have not ended, started by Runs acting for this Person in their current
+ * workspace, newest first, each with its parent's Thread title: what the list of background work
+ * shows (`work/list.ts`). Stopping one goes through `ChildRuns.cancel`, like a Person's Stop.
+ */
+export const liveHelpers = Effect.fn('ChildRuns.liveHelpers')(function* (actor: Actor) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .select({ helper: childRuns, title: threads.title })
+      .from(childRuns)
+      .innerJoin(runs, eq(runs.id, childRuns.parentRunId))
+      .innerJoin(threads, eq(threads.id, childRuns.threadId))
+      .where(
+        and(active, ownedHere({ personId: runs.personId, companyId: threads.companyId }, actor)),
+      )
+      .orderBy(desc(childRuns.requestedAt), desc(childRuns.id)),
+  )
+  return yield* Effect.forEach(
+    rows,
+    Effect.fnUntraced(function* ({ helper, title }) {
+      return { run: yield* toChildRun(helper), title }
+    }),
+  )
+})

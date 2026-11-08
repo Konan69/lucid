@@ -1,7 +1,7 @@
 import { Option, Schema } from 'effect'
 import { ConnectionState } from './connections.js'
 import { ConnectionId, RunId, ThreadId } from './identity.js'
-import { RunFailure } from './runs.js'
+import { ChildBudget, ChildRunState, RunFailure, WorkerKind } from './runs.js'
 import { RunOrigin, RunState } from './threads.js'
 import { Watch, WatchId, WatchState } from './watches.js'
 
@@ -13,15 +13,27 @@ import { Watch, WatchId, WatchState } from './watches.js'
  * mined as `mined/grok-bot-prompt.md` P10): a worker that has run unusually long or stopped
  * making progress is stalled and is reported as stalled, not as "still working"; one call stops
  * every worker at once and its result says, for each, whether it was stopped, had already
- * finished, or could not be stopped and why. Vivid has no subagents today, so the workers are
- * the things that act for a Person without them: Runs still working, Watches, and Integrations
- * Vivid made for itself. A new kind of background work is one more case of `BackgroundWork` and
+ * finished, or could not be stopped and why. Here the workers are the things that act for a
+ * Person without them: Runs still working, the helpers those Runs handed narrower work to,
+ * Watches (check-ins are Watches too), and Integrations Vivid made for itself. A new kind of background work is one more case of `BackgroundWork` and
  * of `WorkRef`; `standingOf` and `stopsWith` then fail to typecheck until it is placed.
  */
 
-/** A Watch that is still live: Stopped Watches are history and are never background work. */
-export const LiveWatchState = Schema.Union([WatchState.cases.Pending, WatchState.cases.Active])
+/** A Watch that is still live: Stopped and Completed Watches are history, never background work. */
+export const LiveWatchState = Schema.Union([
+  WatchState.cases.Pending,
+  WatchState.cases.Active,
+  WatchState.cases.Paused,
+])
 export type LiveWatchState = typeof LiveWatchState.Type
+
+/** A helper that has not ended: Completed, Failed and Stopped helpers are history. */
+export const LiveHelperState = Schema.Union([
+  ChildRunState.cases.Reserved,
+  ChildRunState.cases.Working,
+  ChildRunState.cases.Stopping,
+])
+export type LiveHelperState = typeof LiveHelperState.Type
 
 /** The last Run a Watch's event started, as much of it as says whether the Watch is working. */
 export const WatchFiring = Schema.Struct({ run: RunId, startedAt: Schema.Finite, state: RunState })
@@ -33,7 +45,9 @@ export interface WatchFiring extends Schema.Schema.Type<typeof WatchFiring> {}
  * a Run working too long or a Watch overdue becomes stalled while nothing in the database moves.
  *
  * - `Run`: a Run acting for this Person that is still working, in the Thread it is advancing.
- * - `Watch`: a live Watch, with its Integration's state and the last Run one of its events started.
+ * - `Helper`: a helper Run (`ChildRun`) one of those Runs started and that has not ended.
+ * - `Watch`: a live Watch, with its Integration's state and the last Run one of its events started;
+ *   `purpose` says whether it waits on an event or is a check-in Vivid timed for itself.
  * - `MadeIntegration`: an Integration Vivid wrote for itself (`make_integration`), with how many
  *   live Watches listen to it; on its own it never wakes Vivid.
  */
@@ -46,11 +60,25 @@ export const BackgroundWork = Schema.TaggedUnion({
     origin: RunOrigin,
     startedAt: Schema.Finite,
   },
+  Helper: {
+    helper: RunId,
+    thread: ThreadId,
+    /** The parent's Thread title, which is what the helper's work is for. */
+    title: Schema.String,
+    /** "Helper 2" in its Thread; the model and the Person know a helper by it. */
+    number: Schema.Int.check(Schema.isGreaterThan(0)),
+    kind: WorkerKind,
+    brief: Schema.String,
+    budget: ChildBudget,
+    state: LiveHelperState,
+    requestedAt: Schema.Finite,
+  },
   Watch: {
     watch: WatchId,
     name: Watch.fields.name,
     account: Watch.fields.account,
     instruction: Watch.fields.instruction,
+    purpose: Watch.fields.purpose,
     state: LiveWatchState,
     createdAt: Schema.Finite,
     integration: ConnectionState,
@@ -68,14 +96,17 @@ export const BackgroundWork = Schema.TaggedUnion({
 })
 export type BackgroundWork = typeof BackgroundWork.Type
 
-/** A Person's background work, newest first within each kind: Runs, then Watches, then made Integrations. */
+/** A Person's background work, newest first within each kind: Runs, helpers, Watches, made Integrations. */
 export const WorkListResponse = Schema.Struct({ work: Schema.Array(BackgroundWork) })
 export interface WorkListResponse extends Schema.Schema.Type<typeof WorkListResponse> {}
 
 /**
  * Why a piece of work is stalled: it has not failed, but it is not getting anywhere.
  *
- * - `WorkingLong`: a Run has been working since `since` and is past `RUN_WORKING_LONG_MS`.
+ * - `WorkingLong`: a Run has been working since `since` and is past `RUN_WORKING_LONG_MS`, or a
+ *   helper is past its own time budget, after which the runtime should already have ended it.
+ * - `Paused`: a Watch was paused at `since` because its Integration needs the Person to sign in
+ *   again (`watches/progress.ts`); it resumes when they do.
  * - `NotConfirmed`: a Watch's subscription was never confirmed by its Integration.
  * - `NotRenewed`: a Watch's subscription ran out at `since` and renewal has not got through, so
  *   events since then may not have reached Vivid (`apps/server/src/watches/lifecycle.ts` keeps
@@ -83,6 +114,7 @@ export interface WorkListResponse extends Schema.Schema.Type<typeof WorkListResp
  */
 export const WorkStall = Schema.TaggedUnion({
   WorkingLong: { since: Schema.Finite },
+  Paused: { since: Schema.Finite },
   NotConfirmed: { since: Schema.Finite },
   NotRenewed: { since: Schema.Finite },
 })
@@ -137,11 +169,16 @@ const failing = (failure: WorkFailure): WorkStanding => WorkStanding.cases.Faili
 const stalled = (stall: WorkStall): WorkStanding => WorkStanding.cases.Stalled.make({ stall })
 const going = (): WorkStanding => WorkStanding.cases.Going.make({})
 
-/** A Watch's standing: its Integration first, then its last firing, then its subscription. */
+/**
+ * A Watch's standing: paused first (its own reason already names the Integration), then its
+ * Integration, then its last firing, then its subscription.
+ */
 const watchStanding = (
   watch: Extract<BackgroundWork, { _tag: 'Watch' }>,
   now: number,
 ): WorkStanding => {
+  if (WatchState.guards.Paused(watch.state))
+    return stalled(WorkStall.cases.Paused.make({ since: watch.state.at }))
   const broken = integrationFailure(watch.integration)
   if (Option.isSome(broken)) return failing(broken.value)
   const firing = watch.lastFiring
@@ -171,6 +208,12 @@ export const standingOf = (work: BackgroundWork, now: number): WorkStanding =>
       now - startedAt > RUN_WORKING_LONG_MS
         ? stalled(WorkStall.cases.WorkingLong.make({ since: startedAt }))
         : going(),
+    Helper: ({ state, requestedAt, budget }) => {
+      const since = ChildRunState.guards.Working(state) ? state.startedAt : requestedAt
+      return now - since > budget.seconds * 1000
+        ? stalled(WorkStall.cases.WorkingLong.make({ since }))
+        : going()
+    },
     Watch: (watch) => watchStanding(watch, now),
     MadeIntegration: ({ state }) =>
       Option.match(integrationFailure(state), { onNone: going, onSome: failing }),
@@ -179,6 +222,7 @@ export const standingOf = (work: BackgroundWork, now: number): WorkStanding =>
 /** Which piece of background work a Stop names. */
 export const WorkRef = Schema.TaggedUnion({
   Run: { run: RunId },
+  Helper: { helper: RunId },
   Watch: { watch: WatchId },
   MadeIntegration: { connection: ConnectionId },
 })
@@ -188,6 +232,7 @@ export type WorkRef = typeof WorkRef.Type
 export const refOf = (work: BackgroundWork): WorkRef =>
   BackgroundWork.match(work, {
     Run: ({ run }): WorkRef => WorkRef.cases.Run.make({ run }),
+    Helper: ({ helper }): WorkRef => WorkRef.cases.Helper.make({ helper }),
     Watch: ({ watch }): WorkRef => WorkRef.cases.Watch.make({ watch }),
     MadeIntegration: ({ connection }): WorkRef =>
       WorkRef.cases.MadeIntegration.make({ connection }),
@@ -204,6 +249,7 @@ export type WorkStop = 'Stop' | 'Remove'
 export const stopsWith = (work: BackgroundWork): WorkStop =>
   BackgroundWork.match(work, {
     Run: (): WorkStop => 'Stop',
+    Helper: (): WorkStop => 'Stop',
     Watch: (): WorkStop => 'Stop',
     MadeIntegration: (): WorkStop => 'Remove',
   })

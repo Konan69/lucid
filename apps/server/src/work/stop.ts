@@ -3,7 +3,9 @@ import * as Match from 'effect/Match'
 import * as Option from 'effect/Option'
 import {
   BackgroundWork,
+  ChildRunState,
   InvalidRequest,
+  NotFound,
   type WorkRef,
   WorkStopReport,
   WorkStopResult,
@@ -16,6 +18,7 @@ import {
 import { requirePerson, type Actor } from '../auth/access.ts'
 import { connectionOrigin, listRecords } from '../connections/records.ts'
 import { ConnectionStore } from '../connections/store.ts'
+import { ChildRuns } from '../runs/store.ts'
 import { stopPersonRun } from '../threads/stop.ts'
 import { Watches } from '../watches/lifecycle.ts'
 import { listWork } from './list.ts'
@@ -36,14 +39,49 @@ const stopRun = (actor: Actor, run: RunId) =>
     ),
   )
 
-/** Stop one of this Person's live Watches by id. One that is no longer live had already ended. */
+/**
+ * Stop one of this Person's live Watches by id. The id is resolved to its name among their live
+ * Watches in this same call, and the stop goes through `Watches.stop`, the one stop the model's
+ * tool uses: a name is unique among a Person's live Watches (`vivid_watches_live_name`). One that
+ * is no longer live had already ended.
+ */
 const stopWatch = (actor: Actor, watch: WatchId) =>
   Effect.gen(function* () {
-    return yield* (yield* Watches).stopById(actor, watch)
-  }).pipe(
-    Effect.as(stopped()),
-    Effect.catchTag('WatchMissing', () => Effect.succeed(alreadyEnded())),
-  )
+    const watches = yield* Watches
+    const live = (yield* watches.list(actor)).find((one) => one.id === watch)
+    if (live === undefined) return alreadyEnded()
+    return yield* watches.stop(actor, live.name).pipe(
+      Effect.as(stopped()),
+      Effect.catchTag('WatchMissing', () => Effect.succeed(alreadyEnded())),
+    )
+  })
+
+/**
+ * Stop a helper, through the same cancel a Person's Stop on it uses (`runs/store.ts` `cancel`).
+ * Only a helper started by a Run acting for this Person is theirs to stop; one that has ended had
+ * already ended. Whoever presses, the cancel records who asked: the Person, or Vivid for them.
+ */
+const stopHelper = (actor: Actor, helper: RunId) =>
+  Effect.gen(function* () {
+    const helpers = yield* ChildRuns
+    const found = yield* helpers.find(helper)
+    const owner = yield* helpers.actingFor(helper)
+    if (Option.isNone(found) || !Option.contains(owner, actor.person.id))
+      return yield* new NotFound({ message: 'Helper not found.' })
+    const state = found.value.state
+    if (
+      ChildRunState.guards.Completed(state) ||
+      ChildRunState.guards.Failed(state) ||
+      ChildRunState.guards.Stopped(state)
+    )
+      return alreadyEnded()
+    return yield* helpers.cancel(found.value, actor.by === 'person' ? 'Person' : 'Vivid').pipe(
+      Effect.as(stopped()),
+      Effect.catchTag('RuntimeUnavailable', () =>
+        Effect.succeed(WorkStopResult.cases.NotStopped.make({ reason: 'RuntimeUnreachable' })),
+      ),
+    )
+  })
 
 /**
  * Remove an Integration Vivid made for itself. Only a Person removes one, and only a made one:
@@ -69,6 +107,7 @@ const removeMade = (actor: Actor, connection: ConnectionId) =>
 export const stopWork = Effect.fn('Work.stop')(function* (actor: Actor, work: WorkRef) {
   return yield* Match.valueTags(work, {
     Run: ({ run }) => stopRun(actor, run),
+    Helper: ({ helper }) => stopHelper(actor, helper),
     Watch: ({ watch }) => stopWatch(actor, watch),
     MadeIntegration: ({ connection }) => removeMade(actor, connection),
   })
@@ -82,15 +121,22 @@ export const stopWork = Effect.fn('Work.stop')(function* (actor: Actor, work: Wo
  */
 const reaches = (actor: Actor) => (work: BackgroundWork) =>
   stopsWith(work) === 'Stop' &&
-  !(BackgroundWork.guards.Run(work) && Option.contains(actor.threadId, work.thread))
+  !(
+    (BackgroundWork.guards.Run(work) || BackgroundWork.guards.Helper(work)) &&
+    Option.contains(actor.threadId, work.thread)
+  )
 
 /**
- * Watches go first, so no event starts a new Run while the Runs are being stopped. Within that,
- * the order the list gave.
+ * Watches go first, so no event starts a new Run while the Runs are being stopped; helpers before
+ * the Runs that started them, so each is stopped and reported on its own rather than swept up by
+ * its parent's Thread Stop. Within each, the order the list gave.
  */
 const watchesFirst = (all: ReadonlyArray<BackgroundWork>) => [
   ...all.filter(BackgroundWork.guards.Watch),
-  ...all.filter((work) => !BackgroundWork.guards.Watch(work)),
+  ...all.filter(BackgroundWork.guards.Helper),
+  ...all.filter(
+    (work) => !BackgroundWork.guards.Watch(work) && !BackgroundWork.guards.Helper(work),
+  ),
 ]
 
 /**

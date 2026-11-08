@@ -45,6 +45,11 @@ const GROUPS = [
     takes: BackgroundWork.guards.Run,
   },
   {
+    title: 'Helpers',
+    detail: 'Narrower work Vivid handed off while answering.',
+    takes: BackgroundWork.guards.Helper,
+  },
+  {
     title: 'Watching',
     detail: 'Each one wakes Vivid when something happens in an Integration.',
     takes: BackgroundWork.guards.Watch,
@@ -217,7 +222,7 @@ function StopEverything({
   const ask = () =>
     confirmDestructive({
       title: count === 1 ? 'Stop 1 thing?' : `Stop ${count} things?`,
-      detail: 'Every reply Vivid is working on and every watch stops. Nothing is deleted.',
+      detail: 'Every reply, helper and watch Vivid has going stops. Nothing is deleted.',
       action: 'Stop everything',
       onConfirm: () => {
         warn()

@@ -1,7 +1,10 @@
 import { describe, expect, layer } from '@effect/vitest'
 import {
   BackgroundWork,
+  ChildBudget,
+  ChildRunState,
   ConnectionId,
+  DEFAULT_CHILD_BUDGET,
   CreateWatchRequest,
   RunId,
   RUN_WORKING_LONG_MS,
@@ -11,6 +14,8 @@ import {
   WorkStall,
   WorkStanding,
   WorkStopResult,
+  WatchCondition,
+  WatchIntent,
   standingOf,
   type WatchId,
 } from '@vivid/contracts'
@@ -33,6 +38,8 @@ import { Database } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { Runtime } from '../runtime/client.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
+import { childRunsLayer } from '../runs/store.ts'
+import { childRuns } from '../runs/tables.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { TTL_MS, Watches } from '../watches/lifecycle.ts'
 import { Executor, person, testLayer } from '../watches/testing.ts'
@@ -45,24 +52,33 @@ import { stopAllWork, stopWork } from './stop.ts'
  * stand in; the runtime records which Threads it was told to stop.
  */
 
-class Aborted extends Context.Service<Aborted, Ref.Ref<ReadonlyArray<ThreadId>>>()(
+/** What the runtime was told to stop: each Thread's Run, and each helper by its id. */
+class Aborted extends Context.Service<Aborted, Ref.Ref<ReadonlyArray<string>>>()(
   'test/WorkAborted',
 ) {}
 const runtimeLayer = Layer.effectContext(
   Effect.gen(function* () {
-    const aborted = yield* Ref.make<ReadonlyArray<ThreadId>>([])
+    const aborted = yield* Ref.make<ReadonlyArray<string>>([])
     const runtime = Layer.mock(Runtime, {
       stop: (thread) => Ref.update(aborted, (all) => [...all, thread]).pipe(Effect.as(true)),
+      stopChild: (_thread, helper) =>
+        Ref.update(aborted, (all) => [...all, helper]).pipe(Effect.as(true)),
     })
     return (yield* Layer.build(runtime)).pipe(Context.add(Aborted, aborted))
   }),
 )
 
-const workLayer = Layer.mergeAll(
-  runtimeLayer,
-  // Removal of a made Integration goes through Executor; these tests never press Remove.
-  Layer.mock(ConnectionStore, { discordPeople: new Set<string>() }),
-).pipe(Layer.provideMerge(testLayer))
+// The helper store is the real one; only the runtime's abort under it stands in.
+const workLayer = childRunsLayer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      runtimeLayer,
+      // Removal of a made Integration goes through Executor; these tests never press Remove.
+      Layer.mock(ConnectionStore, { discordPeople: new Set<string>() }),
+    ),
+  ),
+  Layer.provideMerge(testLayer),
+)
 
 const encodeOrigin = Schema.encodeSync(StoredRunOrigin)
 
@@ -104,6 +120,35 @@ const threadWithRun = Effect.fn('WorkTest.threadWithRun')(function* (
     }),
   )
   return { thread, run }
+})
+
+const encodeBudget = Schema.encodeEffect(ChildBudget)
+const encodeHelperState = Schema.encodeEffect(ChildRunState)
+
+/** A helper the Run in a Thread started and that is working, as the helper store writes it. */
+const workingHelper = Effect.fn('WorkTest.workingHelper')(function* (parent: {
+  readonly thread: ThreadId
+  readonly run: RunId
+}) {
+  const database = yield* Database
+  const id = RunId.make(`helper_${crypto.randomUUID()}`)
+  const now = yield* Clock.currentTimeMillis
+  yield* database.run(
+    database.insert(childRuns).values({
+      id,
+      parentRunId: parent.run,
+      threadId: parent.thread,
+      parentToolCallId: 'call-1',
+      number: 1,
+      kind: 'Researcher',
+      brief: 'Compare fares to Lisbon',
+      budget: yield* encodeBudget(DEFAULT_CHILD_BUDGET),
+      requestedAt: now,
+      state: yield* encodeHelperState(ChildRunState.cases.Working.make({ startedAt: now })),
+      wake: 'held',
+    }),
+  )
+  return id
 })
 
 /** An Integration Vivid made for itself, as `make_integration` leaves its row. */
@@ -152,6 +197,8 @@ const grantedWatch = Effect.fn('WorkTest.grantedWatch')(function* (actor: Actor)
       event: 'message.received',
       arguments: {},
       instruction: 'Tell me when a client writes.',
+      condition: WatchCondition.cases.Continuous.make({}),
+      purpose: WatchIntent.cases.Event.make({}),
     }),
   )
   yield* Queue.take(executor.subscribed)
@@ -229,6 +276,7 @@ describe.skipIf(!testDatabaseConfigured)('Background work', () => {
           state: 'working',
           origin: StoredRunOrigin.cases.Message.make({}),
         })
+        const helper = yield* workingHelper(other)
         const actor: Actor = { ...owner, threadId: Option.some(calling.thread) }
         const asVivid = Effect.provideService(
           AuthContext,
@@ -242,9 +290,11 @@ describe.skipIf(!testDatabaseConfigured)('Background work', () => {
         // Watches first, so no event starts a Run while the Runs are being stopped.
         expect(report.map(({ work, result }) => [work._tag, result._tag])).toEqual([
           ['Watch', 'Stopped'],
+          ['Helper', 'Stopped'],
           ['Run', 'Stopped'],
         ])
-        expect(yield* Ref.get(yield* Aborted)).toEqual([other.thread])
+        // Helpers before the Runs that started them, so each is stopped and reported on its own.
+        expect(yield* Ref.get(yield* Aborted)).toEqual([helper, other.thread])
         expect(yield* Ref.get((yield* Executor).unsubscribed)).toContain('mail.message.received')
         const left = yield* listWork(actor)
         // Removal is never part of Stop everything: the made Integration is still there.
