@@ -116,7 +116,7 @@ export const openPerson = Effect.fn('Person.open')(function* (
   const registered = tools(
     scopeResolver(opened, product),
     (call) => resolveMemoryCall(opened, product, call),
-    memory,
+    { memory, transcripts: { person: personId, harness: opened } },
     {
       skills: skills.tools === undefined ? [] : skills.tools,
       children: childTools({ harness: opened, product, helpers: Deferred.await(helpersReady) }),
