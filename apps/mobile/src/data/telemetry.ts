@@ -93,7 +93,7 @@ export const startTelemetry = (): void => {
     beforeBreadcrumb: scrubBreadcrumb,
     beforeSendTransaction: scrubTransaction,
     enableNativeCrashHandling: true,
-    tracesSampleRate: 0.2,
+    tracesSampleRate: configuration.value.extra.telemetryEnvironment === 'verification' ? 1 : 0.2,
     tracePropagationTargets: Option.toArray(origin),
     propagateTraceparent: true,
     enableAutoPerformanceTracing: true,
