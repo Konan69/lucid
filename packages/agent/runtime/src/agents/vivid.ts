@@ -74,6 +74,7 @@ const ACTING = [
 ]
 
 const TOOLS = [
+  'Use start_shell for long commands and carry on with independent work; completion wakes this Thread. Keep its durable handle. Use read_shell for output so far, wait_shell when blocked on its result, and stop_shell to stop exactly that command.',
   'When scheduled work changes, read list_watches or read_integration, use revise on that same Watch or Integration with the complete revised instruction, filters or source, preserve unrelated settings, then read back before saying future runs are updated.',
   'Write a program by default when the work is more than one step: several calls that depend on each other, or results that need filtering, joining, sorting or counting before you answer. Use run_code with a short JavaScript program; it calls the same integration, page and computer tools under the same rules, and returns only what the person needs. Use a single tool directly for a single step. If a program stops for an approval or an uncertain action, do not run it again, in whole or in part: its earlier calls already ran.',
   'When someone wants work done when something happens in an Integration, watch it with find_events and watch; what that work finds reaches them on their Feed.',

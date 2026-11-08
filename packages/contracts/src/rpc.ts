@@ -10,6 +10,10 @@ import * as RpcGroup from 'effect/rpc/RpcGroup'
 import * as RpcMiddleware from 'effect/rpc/RpcMiddleware'
 import { CapabilityFacts } from './capabilities.js'
 import {
+  ShellSnapshot,
+  StartShellRequest,
+  ReadShellRequest,
+  WaitShellRequest,
   ComputerHealth,
   ComputerRecoveryOutcome,
   GetComputerHealthRequest,
@@ -1113,6 +1117,26 @@ const ComputerShell = Rpc.make('ComputerShell', {
   payload: ComputerShellRequest,
   success: ComputerShellOutcome,
 })
+const StartShell = Rpc.make('StartShell', {
+  ...call,
+  payload: StartShellRequest,
+  success: ShellSnapshot,
+})
+const ReadShell = Rpc.make('ReadShell', {
+  ...call,
+  payload: ReadShellRequest,
+  success: ShellSnapshot,
+})
+const WaitShell = Rpc.make('WaitShell', {
+  ...call,
+  payload: WaitShellRequest,
+  success: ShellSnapshot,
+})
+const StopShell = Rpc.make('StopShell', {
+  ...call,
+  payload: ReadShellRequest,
+  success: ShellSnapshot,
+})
 const ComputerFileRead = Rpc.make('ComputerFileRead', {
   ...call,
   payload: ComputerFileReadRequest,
@@ -1399,6 +1423,10 @@ export const VividRpc = RpcGroup.make(
   StopComputer,
   HoldComputer,
   ComputerShell,
+  StartShell,
+  ReadShell,
+  WaitShell,
+  StopShell,
   ComputerFileRead,
   ComputerFileWrite,
   Browse,

@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect'
-import { ApprovalId, ComputerId, RunId, ThreadId } from './identity.js'
+import { ApprovalId, ComputerId, RunId, ThreadId, ShellHandle } from './identity.js'
 import { DeviceAbility, WindowAction, WindowRefusal, WindowResult } from './windows.js'
 import { CopySignInRequest, SignInRead } from './signins.js'
 
@@ -626,3 +626,34 @@ export const ReportDeviceStopRequest = Schema.Struct({
 export interface ReportDeviceStopRequest extends Schema.Schema.Type<
   typeof ReportDeviceStopRequest
 > {}
+
+export const StartShellRequest = Schema.Struct({
+  command: ComputerShellRequest.fields.command,
+  directory: ComputerPath,
+})
+export type StartShellRequest = typeof StartShellRequest.Type
+export const ReadShellRequest = Schema.Struct({ handle: ShellHandle })
+export type ReadShellRequest = typeof ReadShellRequest.Type
+export const WaitShellRequest = Schema.Struct({
+  handle: ShellHandle,
+  seconds: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 600 })),
+})
+export type WaitShellRequest = typeof WaitShellRequest.Type
+const shellOutput = {
+  handle: ShellHandle,
+  stdout: Schema.String,
+  stderr: Schema.String,
+  truncated: Schema.Boolean,
+  outputDirectory: ComputerPath,
+}
+/** Running snapshots remain readable; terminal states never invent an exit status. */
+export const ShellSnapshot = Schema.TaggedUnion({
+  Queued: { handle: ShellHandle },
+  Running: shellOutput,
+  Completed: { ...shellOutput, exitCode: Schema.Int },
+  Stopped: shellOutput,
+  Unknown: shellOutput,
+  Missing: {},
+  Unavailable: { reason: Schema.String },
+})
+export type ShellSnapshot = typeof ShellSnapshot.Type

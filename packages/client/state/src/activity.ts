@@ -554,6 +554,38 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.what)],
   },
+  start_shell: {
+    said: {
+      running: 'Starting a long job on its computer',
+      done: 'Started a long job on its computer',
+      failed: 'Could not start the job',
+    },
+    detail: (asked) => [said(asked.command)],
+  },
+  read_shell: {
+    said: {
+      running: 'Checking on a job',
+      done: 'Checked on a job',
+      failed: 'Could not check on the job',
+    },
+    detail: () => [],
+  },
+  wait_shell: {
+    said: {
+      running: 'Waiting for a job to finish',
+      done: 'A job finished',
+      failed: 'The job did not finish',
+    },
+    detail: () => [],
+  },
+  stop_shell: {
+    said: {
+      running: 'Stopping a job',
+      done: 'Stopped a job',
+      failed: 'Could not stop the job',
+    },
+    detail: () => [],
+  },
   read_integration: {
     said: {
       running: 'Reading how it is set up',
