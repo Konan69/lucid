@@ -3,8 +3,8 @@
     "name": "Vivid",
     "slug": "vivid",
     "scheme": "vivid",
-    "version": "0.4.35",
-    "runtimeVersion": "0.3.18",
+    "version": "0.4.36",
+    "runtimeVersion": "0.3.19",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
@@ -15,7 +15,8 @@
     },
     "android": {
       "package": "work.vivid.mobile",
-      "softwareKeyboardLayoutMode": "resize"
+      "softwareKeyboardLayoutMode": "resize",
+      "permissions": ["android.permission.CAMERA"]
     },
     "plugins": [
       "expo-secure-store",
@@ -65,14 +66,7 @@
           "enableBackgroundRemoteNotifications": false
         }
       ],
-      "expo-quick-actions",
-      [
-        "@config-plugins/react-native-webrtc",
-        {
-          "cameraPermission": "Vivid uses the camera so you can send a photo you take in a Thread.",
-          "microphonePermission": "Vivid listens while you hold to talk."
-        }
-      ]
+      "expo-quick-actions"
     ],
     "web": {
       "bundler": "metro"
