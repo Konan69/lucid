@@ -1,3 +1,4 @@
+import { revisionTools } from './revision.ts'
 import type { ToolRegistration } from '@earendil-works/pi-durable'
 import {
   ComputerRecoveryId,
@@ -40,7 +41,10 @@ import { projectTools } from './projects.ts'
 import { owedTools } from './owed.ts'
 import { todoTools } from './todos.ts'
 import { watchTools } from './watches.ts'
+import { checkinTools } from './checkins.ts'
+import { workTools } from './work.ts'
 import { skillTools } from './skills.ts'
+import { recallTools, type Transcripts } from './recall.ts'
 
 type Requirement = keyof typeof requirements
 
@@ -67,6 +71,10 @@ interface RegistryInput {
   readonly project: ProjectOf
   readonly memory: Memory['Service']
   readonly skills: ReadonlyArray<ToolRegistration>
+  /** The Person's own conversations in this cell, for finding and reading earlier work. */
+  readonly transcripts: Transcripts
+  /** Starting, checking, waiting on and stopping helpers (`tools/children.ts`). */
+  readonly children: ReadonlyArray<ToolRegistration>
 }
 interface MountInput extends RegistryInput {
   readonly connections: ReadonlyArray<ToolRegistration>
@@ -192,6 +200,17 @@ const definitions: ReadonlyArray<{
     mount: ({ runTool }) => watchTools(runTool),
   },
   {
+    description:
+      'Choose and keep check-ins on open work: list what is open, plan its next check through a timer Integration, and move it when the work is still open.',
+    requirement: 'Product',
+    mount: ({ runTool }) => checkinTools(runTool),
+  },
+  {
+    description: 'Read and revise existing Watches and personally authored Integrations in place.',
+    requirement: 'Product',
+    mount: ({ runTool }) => revisionTools(runTool),
+  },
+  {
     description: 'Put relevant background findings on the Person’s Feed.',
     requirement: 'Product',
     mount: ({ runTool }) => feedTools(runTool),
@@ -236,6 +255,12 @@ const definitions: ReadonlyArray<{
     mount: ({ runTool }) => artifactTools(runTool),
   },
   {
+    description:
+      'Start helpers that work on independent parts of a request at the same time (spawn_run), each with a complete brief; their results come back as new messages, so carry on and never poll. Check one only when asked how it is going (check_run), wait only when the next step needs them now (wait_runs), and stop one that is no longer needed (cancel_run). Helpers cannot ask the Person anything; you stay the one who answers.',
+    requirement: 'Local',
+    mount: ({ children }) => children,
+  },
+  {
     description: 'Activate built-in skills and read their reference files.',
     requirement: 'Local',
     mount: ({ skills }) => skills,
@@ -245,6 +270,18 @@ const definitions: ReadonlyArray<{
       'Read current capabilities and passive Computer health, or request one targeted recovery step. Never replay an interrupted action or automatically climb the recovery ladder.',
     requirement: 'Product',
     mount: inspectionTools,
+  },
+  {
+    description:
+      'Search and read the person’s earlier conversations to recover original requests, decisions and work that saved memory may not hold.',
+    requirement: 'Product',
+    mount: ({ runTool, transcripts }) => recallTools(runTool, transcripts),
+  },
+  {
+    description:
+      'See everything running in the background for the Person and which of it is stalled or failing, and stop all of it at once when they ask you to stop.',
+    requirement: 'Product',
+    mount: ({ runTool }) => workTools(runTool),
   },
 ]
 

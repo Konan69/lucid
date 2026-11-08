@@ -35,6 +35,22 @@ root = Col([Caption("To Dana Bello"), letter, files, acts], 2)
 letter = Text("Dana, Friday at 10 works. I will bring the revised deck and the September numbers.", "md")
 files = Row([Badge("deck-v3.pdf"), Badge("september.xlsx")], 2)
 acts = Row([Button("Not now", @ToAssistant("Not now"), "ghost"), Button("Send it", @ToAssistant("Send the reply to Dana"))], 2, null, "end")`,
+  `A drawn Feed card about a place: the map itself first, the one line it needs under it, then the Buttons:
+
+root = Col([map, Text("Dinner moved to Nok by Alara, Friday at 8:00 PM. It is 12 minutes from the office.", "sm"), acts], 2)
+map = Map([MapMarker("Office", 6.4281, 3.4219, "🏢"), MapMarker("Nok by Alara", 6.4355, 3.4306, "🍽️")], true)
+acts = Row([Button("Not now", @ToAssistant("Not now"), "ghost"), Button("Add it to my calendar", @ToAssistant("Add dinner at Nok by Alara on Friday to my calendar"))], 2, null, "end")`,
+  `A drawn Feed card about the week: the strip of days, the day that changed marked:
+
+root = Col([Caption("Week of 19 Oct"), week, acts], 2)
+week = Week([{day: "Mon", date: "19", items: [{time: "9:00", title: "Standup"}]}, {day: "Tue", date: "20", items: [{time: "10:30", title: "Design review"}, {time: "2:00 PM", title: "Call with Iyin"}], marked: true}, {day: "Wed", date: "21"}, {day: "Thu", date: "22", items: [{time: "11:00", title: "Board prep"}]}, {day: "Fri", date: "23"}])
+acts = Row([Button("Keep it", @ToAssistant("Keep the call with Iyin on Tuesday"), "ghost"), Button("Move it", @ToAssistant("Move the call with Iyin to another day"))], 2, null, "end")`,
+  `A drawn Feed card about work on your Computer: the page you found, and the screen where it waits for a last look:
+
+root = Col([page, screen, acts], 2)
+page = Page("https://www.airpeace.com/booking/LOS-ABV", "Lagos to Abuja, Thursday 22 Oct", "Air Peace", "https://www.airpeace.com/booking/LOS-ABV/cover.jpg", "Seat 4A is held until 6:00 PM. ₦112,750 with one bag.")
+screen = Screen("The Air Peace booking, filled in, on its payment page")
+acts = Row([Button("Not now", @ToAssistant("Do not book the Air Peace flight yet"), "ghost"), Button("Book it", @ToAssistant("Book the Air Peace flight on Thursday"))], 2, null, "end")`,
 ] as const
 
 /**
@@ -91,6 +107,8 @@ export const DISPLAYS = generateSystemPrompt({
     additionalRules: [
       'Each fenced block is one whole display with its own root statement. Never send only the changed statements: a later display stands alone.',
       'Lead with the thing itself: a Chart, a Table, tiles to choose from, the letter in a Card. Keep words inside a display few; it is a card, not an essay.',
+      'When it is about a place, draw the Map; about days or times in a week, the Week; about a web page you read, the Page with its title, site, picture and summary as the page gave them; about work on your Computer the Person should look at, the Screen. The picture comes first and the words go under it (the last three examples).',
+      'A MapMarker needs the place’s real latitude and longitude, from a tool or a place you know for certain. Never guess coordinates; without them, say the place in words.',
       'Whenever your reply asks the Person to choose, confirm or answer, the display holds the controls that do it; never draw the options as static Cards or text and then ask in words ("pick one and I will send it"). Choosing among options is a Pressable tile for each, then the Button that answers (second and third examples); confirming or answering is Buttons alone (first example).',
       'A choice is Pressable tiles bound to one $variable with @Set, and one Button whose label and @ToAssistant message say the choice, as in the second example.',
       'Use @ToAssistant on a Button that answers you; its message is what the Person would type, short and first person ("Send the reply to Ada"). End such a display with one Row of Buttons, the way out first as variant "ghost", then the answer. That display is the last thing in your reply: stop there and wait.',
@@ -98,7 +116,7 @@ export const DISPLAYS = generateSystemPrompt({
       'An Integration you made with make_integration is one of the Person’s Integrations: when no Integration holds what a display needs to keep live or change (a tracker, a list), make one whose tools read and change it, then bind those tools with Query and Mutation.',
       'A display can run a program on the Person’s Computer the way run_code does: Query("run_code", {code, summary}, default) or Mutation("run_code", {code, summary}), with no @account. The program’s returned JSON is the result. A Query program runs whenever the display is drawn and may only read: its Integration calls must be reads and the browser is refused. Anything that changes something is a Mutation run by a Button, and goes through approval like run_code. Write code and summary as literal strings in the declaration itself, never built from variables or other values, or the display will refuse to run it. Never use run_code in both a Query and a Mutation in one display. Prefer an Integration’s own tool when one does the job.',
       'Write numbers, money and dates the way they should read. Chart data is plain numbers.',
-      'Image takes only an http(s) address a tool or the Person gave you. Never guess an address.',
+      'Image, and a Page’s url and image, take only an http(s) address a tool or the Person gave you. Never guess an address.',
     ],
     examples: [...EXAMPLES],
     toolExamples: [...TOOL_EXAMPLES],

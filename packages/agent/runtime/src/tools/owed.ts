@@ -92,7 +92,7 @@ export function owedTools(runTool: RunTool) {
     defineTool({
       name: Tool.track_owed,
       description:
-        'Track what someone owes the Person when they say they are waiting on someone, or when you notice a promise or order in mail. Keep their words for what and who. Resolve since and any due date using their context clock and time zone. Use null when no due date was given. Never invent a party or a date. When it arrives, use resolve_owed.',
+        'Track what someone owes the Person when they say they are waiting on someone, or when you notice a promise or order in mail. Keep their words for what and who. Resolve since and any due date using their context clock and time zone. Use null when no due date was given. Never invent a party or a date. After tracking it, choose its next check in this Run and set a check-in through the timer Integration and watch with Checkin purpose. Reuse the returned operationKey when arming; it is set only after the timer confirms. When it arrives, use resolve_owed.',
       input: v.strictObject({
         summary,
         what,

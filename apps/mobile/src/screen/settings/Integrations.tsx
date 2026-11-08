@@ -17,10 +17,11 @@ import { useLive, useLiveData } from '../../data/live'
 import { useTheme } from '../../theme'
 import { Live } from '../../ui/Live'
 import { Screen } from '../../ui/Screen'
-import { Field, Label, Notice, Segmented, Skeleton, styles } from '../../ui/ui'
+import { Card, Field, Label, Notice, Segmented, Skeleton, styles } from '../../ui/ui'
 import { useGo, useMe } from '../../workspace'
 import { Catalog } from '../integration/Catalog'
 import { Connected } from '../integration/Connected'
+import { KeyForm } from '../integration/Key'
 import { useFlow } from '../integration/flow'
 
 /**
@@ -179,8 +180,19 @@ function Lists({
     flow.add(service.id, shared, Option.none(), Option.none())
   }
 
+  const keying = flow.keying(Option.none())
   return (
     <>
+      {/* A key wanted for an account the live list has not shown yet: its own card until the
+          account's row arrives and the form moves under it. */}
+      {Option.isSome(keying) && connections.every((item) => item.id !== keying.value.id) && (
+        <Card style={{ gap: 12 }}>
+          <Label accessibilityRole="header" size="footnote">
+            Connect {keying.value.serviceName}
+          </Label>
+          <KeyForm keying={keying.value} />
+        </Card>
+      )}
       <Connected
         connections={connections.filter((item) => named(item.serviceName, query))}
         searching={query.trim().length > 0}
@@ -189,6 +201,7 @@ function Lists({
         marks={marksOf(offered)}
         standing={flow.standing}
         busy={flow.busy}
+        keying={keying}
         onResume={(connection) => flow.resume(connection.id, Option.none())}
         onManage={(connection) => go.navigate('Account', { id: connection.id })}
       />

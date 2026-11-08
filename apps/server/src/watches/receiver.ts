@@ -7,7 +7,16 @@ import * as Stream from 'effect/Stream'
 import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
-import { SignalCue, ThreadId, WatchId, WatchState } from '@vivid/contracts'
+import {
+  CheckinArming,
+  CheckinRead,
+  SignalCue,
+  ThreadId,
+  TimerOperationKey,
+  WatchId,
+  WatchPurpose,
+  WatchState,
+} from '@vivid/contracts'
 import { ServerConfig } from '../config.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { observeFailures } from '../observability/failure.ts'
@@ -20,6 +29,8 @@ import {
 import { ThreadStore } from '../threads/store.ts'
 import { secretFor, verify } from './signature.ts'
 import { WatchStore, type WatchRecord } from './store.ts'
+import { Watches } from './lifecycle.ts'
+import { WatchedApps } from './apps.ts'
 
 /**
  * Where Executor delivers a Watch's events: `POST /api/watches/:id`.
@@ -56,6 +67,11 @@ class WatchUnsigned extends Schema.TaggedError<WatchUnsigned>()(
 ) {}
 /** A verified request for a stopped or deleted Watch ends that delivery at Executor for good. */
 class WatchGone extends Schema.TaggedError<WatchGone>()('WatchGone', {}, { title: 'Watch gone' }) {}
+class WatchNotArmed extends Schema.TaggedError<WatchNotArmed>()(
+  'WatchNotArmed',
+  {},
+  { title: 'Watch not armed' },
+) {}
 class WatchBodyInvalid extends Schema.TaggedError<WatchBodyInvalid>()(
   'WatchBodyInvalid',
   {},
@@ -75,6 +91,9 @@ const WatchEvent = Schema.Struct({
 })
 type WatchEvent = typeof WatchEvent.Type
 const Body = Schema.Union([Verification, WatchEvent])
+const decodeTimerKey = Schema.decodeUnknownOption(
+  Schema.Struct({ operationKey: TimerOperationKey }),
+)
 const decodeBody = Schema.decodeUnknownEffect(Schema.fromJsonString(Body))
 const isVerification = Schema.is(Verification)
 const decodeId = Schema.decodeUnknownEffect(WatchId.check(Schema.isNonEmpty()))
@@ -127,32 +146,88 @@ const wake = Effect.fn('Http.Watch.wake')(function* (record: WatchRecord, event:
     personId: record.personId,
     companyId: record.companyId,
   })
-  yield* (yield* Conversation).deliver({
+  const delivered = yield* deliveryOf(record, event)
+  const run = yield* (yield* Conversation).deliver({
     // A Watch is the Person's own standing request, delivered as theirs.
     speaker: DeliverySpeaker.cases.Acting.make({}),
     threadId: thread.id,
     personId: record.personId,
     // The event goes to the runtime whole; the runtime words it for the model (`delivery.ts`).
-    message: DeliveryMessage.cases.Signal.make({
+    message: DeliveryMessage.cases.Signal.make({ cue: delivered.cue }),
+    origin: delivered.origin,
+    idempotencyKey: `watch:${watch.id}:${event.eventId}`,
+  })
+  // A check-in whose open work has ended completes here, bound to the Run that was told so.
+  if (Option.isSome(delivered.closed))
+    yield* (yield* Watches).finishCheckin(record, run.id, delivered.closed.value)
+  yield* (yield* Changes).publish([Topic.person(record.personId)])
+})
+
+/**
+ * What one event says to Vivid and what its Run records. An event Watch passes the event whole.
+ * A check-in instead carries the server's fresh read of the open work it follows, so Vivid acts
+ * on product records rather than on the timer's payload, and says whether that work has ended.
+ */
+const deliveryOf = Effect.fn('Http.Watch.delivery')(function* (
+  record: WatchRecord,
+  event: WatchEvent,
+) {
+  const watch = record.watch
+  if (!WatchPurpose.guards.Checkin(watch.purpose))
+    return {
       cue: SignalCue.cases.Watch.make({
         name: watch.name,
         event: watch.event,
         occurredAt: event.timestamp,
         instruction: watch.instruction,
+        condition: watch.condition,
         data: event.data,
       }),
+      // The Run keeps which Watch and which event, so a card it posts can say what caused it.
+      origin: StoredRunOrigin.cases.Watch.make({
+        watchId: watch.id,
+        watchName: watch.name,
+        eventId: event.eventId,
+        event: watch.event,
+        occurredAt: event.timestamp,
+      }),
+      closed: Option.none<string>(),
+    }
+  const reading = yield* (yield* Watches).readCheckin(record, watch.purpose)
+  return {
+    cue: SignalCue.cases.Checkin.make({
+      name: watch.name,
+      occurredAt: event.timestamp,
+      instruction: watch.instruction,
+      timing: watch.purpose.timing,
+      operationKey: watch.purpose.arming.operationKey,
+      reading,
+      condition: watch.condition,
     }),
-    // The Run keeps which Watch and which event, so a card it posts can say what caused it.
-    origin: StoredRunOrigin.cases.Watch.make({
+    origin: StoredRunOrigin.cases.Checkin.make({
       watchId: watch.id,
       watchName: watch.name,
       eventId: event.eventId,
-      event: watch.event,
-      occurredAt: event.timestamp,
     }),
-    idempotencyKey: `watch:${watch.id}:${event.eventId}`,
-  })
-  yield* (yield* Changes).publish([Topic.person(record.personId)])
+    closed: CheckinRead.match(reading, {
+      Open: () => Option.none<string>(),
+      Closed: ({ evidence }) => Option.some(evidence),
+    }),
+  }
+})
+
+/** Ignore old timer operations and retry a matching event until its actual receipt arrives. */
+const acceptsTimer = Effect.fn('Http.Watch.acceptsTimer')(function* (
+  record: WatchRecord,
+  decoded: WatchEvent,
+) {
+  if (!WatchPurpose.guards.Checkin(record.watch.purpose)) return true
+  const key = decodeTimerKey(decoded.data)
+  if (Option.isNone(key) || key.value.operationKey !== record.watch.purpose.arming.operationKey)
+    return false
+  if (CheckinArming.guards.Awaiting(record.watch.purpose.arming))
+    return yield* new WatchNotArmed({})
+  return true
 })
 
 /** Verify, then answer the challenge or wake Vivid. */
@@ -182,10 +257,22 @@ const accept = Effect.fn('Http.Watch.accept')(function* () {
   const found = yield* (yield* WatchStore).find(id)
   if (Option.isNone(found)) return yield* new WatchGone({})
   const record = found.value
-  if (WatchState.guards.Stopped(record.watch.state)) return yield* new WatchGone({})
+  if (WatchState.isAnyOf(['Stopped', 'Completed'])(record.watch.state))
+    return yield* new WatchGone({})
   const decoded = yield* decodeBody(body).pipe(Effect.mapError(() => new WatchBodyInvalid({})))
   if (isVerification(decoded))
     return HttpServerResponse.jsonUnsafe({ challenge: decoded.challenge }, { status: 200 })
+  // Retired subscription callbacks are acknowledged without waking Vivid after a revision.
+  if (new URL(request.url, record.callbackUrl).search !== new URL(record.callbackUrl).search)
+    return HttpServerResponse.jsonUnsafe({ received: true }, { status: 200 })
+  if (WatchState.guards.Paused(record.watch.state))
+    return HttpServerResponse.jsonUnsafe({ received: true }, { status: 200 })
+  if (yield* (yield* WatchedApps).needsAuthorization(record.connectionId)) {
+    yield* (yield* Watches).connectionChanged(record.connectionId)
+    return HttpServerResponse.jsonUnsafe({ received: true }, { status: 200 })
+  }
+  if (!(yield* acceptsTimer(record, decoded)))
+    return HttpServerResponse.jsonUnsafe({ received: true }, { status: 200 })
   yield* wake(record, decoded)
   return HttpServerResponse.jsonUnsafe({ received: true }, { status: 200 })
 })
@@ -204,6 +291,7 @@ export const watchRoutes = HttpRouter.add(
   accept().pipe(
     observeFailures('http'),
     Effect.catchTags({
+      WatchNotArmed: () => status(503),
       WatchUnknown: () => status(404),
       WatchUnsigned: () => status(401),
       WatchGone: () => status(410),

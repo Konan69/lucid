@@ -61,6 +61,15 @@ export const GrantObservation = Schema.Struct({
 /** Only these reviewed Google classes have deterministic admission controls. */
 export const ConnectionDataClass = Schema.Literals(['GmailDrafts', 'CalendarEventSchedules'])
 export type ConnectionDataClass = typeof ConnectionDataClass.Type
+/**
+ * The service whose accounts each data class belongs to. The server's admission policy
+ * (`apps/server/src/connections/permissions.ts`) and every screen that offers the class read this
+ * one table, so a class is offered exactly on the accounts it can be withheld from.
+ */
+export const connectionDataClassService = {
+  GmailDrafts: ServiceId.make('google/gmail'),
+  CalendarEventSchedules: ServiceId.make('google/calendar'),
+} as const satisfies Record<ConnectionDataClass, ServiceId>
 export const ConnectionPermission = Schema.Struct({
   dataClass: ConnectionDataClass,
   decision: RuleDecision,
@@ -730,3 +739,16 @@ export const ConnectionAuthorizationMessage = Schema.Struct({
   ready: Schema.Literal(false),
   authorization: ConnectionAuthorization,
 })
+
+/** Only personally authored Integrations expose source for an in-place revision. */
+export const ReadMadeIntegrationRequest = Schema.Struct({ account: Schema.NonEmptyString })
+export interface ReadMadeIntegrationRequest extends Schema.Schema.Type<
+  typeof ReadMadeIntegrationRequest
+> {}
+export const MadeIntegrationSource = Schema.Struct({
+  account: Schema.String,
+  files: MakeIntegrationRequest.fields.files,
+})
+export interface MadeIntegrationSource extends Schema.Schema.Type<typeof MadeIntegrationSource> {}
+export const ReviseMadeIntegrationRequest = MadeIntegrationSource
+export type ReviseMadeIntegrationRequest = MadeIntegrationSource

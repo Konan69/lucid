@@ -69,6 +69,8 @@ export const live = {
   todos: one((client) => client.WatchTodos()),
   /** What the Person has typed and not sent, on any device, where they are working. */
   drafts: kept((client) => client.WatchDrafts()),
+  /** What Vivid has going in the background, to see and stop (`screen/settings/Work.tsx`). */
+  work: one((client) => client.WatchWork()),
 }
 
 /**
@@ -88,6 +90,20 @@ export const serviceSearch = Atom.make('')
  * download after a start (`connections/catalog.ts` `retainCatalog`).
  */
 export const services = engine.ask(serviceSearch, (client, query) => client.FindServices({ query }))
+
+/**
+ * How deeply Settings checks Vivid's Computer: every part, each time the panel asks. A check
+ * never wakes a sleeping Computer (`GetComputerHealth`), so opening Settings costs it nothing.
+ */
+const healthDepth = Atom.make<'Deep'>('Deep')
+
+/** How Vivid's Computer is doing, part by part (`screen/settings/Computers.tsx`). */
+export const computerHealth = engine.ask(healthDepth, (client, depth) =>
+  client.GetComputerHealth({ depth }),
+)
+
+/** The newest step Vivid took to fix its Computer, read beside its health. */
+export const computerRecovery = engine.ask(healthDepth, (client) => client.GetComputerRecovery())
 
 /** What the Person has typed into "find anything". */
 export const findQuery = Atom.make('')

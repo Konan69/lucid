@@ -2,7 +2,7 @@ import * as TestClock from 'effect/testing/TestClock'
 import { readThreadHistory } from './history.ts'
 import { ChannelReplies } from '../channels/replies.ts'
 import { Deferred, Ref } from 'effect'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import * as NodeCrypto from 'node:crypto'
 import { expect, layer } from '@effect/vitest'
 import {
@@ -50,6 +50,7 @@ import { runs, threads } from '../threads/tables.ts'
 import { sendToThread, watchConversation } from '../threads/relay.ts'
 import { threadStoreLayer } from '../threads/store.ts'
 import { threadHandlers } from '../threads/handlers.ts'
+import { ChildRuns } from '../runs/store.ts'
 import { Runtime, runtimeLayer } from './client.ts'
 import { productFixture, productLayer } from './testing.ts'
 
@@ -139,8 +140,17 @@ const transport = (
   )
 }
 
+/**
+ * Whether a settled Run's notice is owed. `Watched`: the Person is watching, so none is.
+ * `Unowed`: nobody is watching and owing it fails in SQL inside the settlement's transaction.
+ */
+type Notices = 'Watched' | 'Unowed'
+
 /** The real server reservation and settlement observer use an independent Person, Thread and session. */
-const fixture = Effect.fn('PiServer.test.fixture')(function* (receipt: Receipt) {
+const fixture = Effect.fn('PiServer.test.fixture')(function* (
+  receipt: Receipt,
+  notices: Notices = 'Watched',
+) {
   const rows = yield* productFixture()
   const database = yield* Database
   const given = yield* world()
@@ -161,9 +171,10 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (receipt: Receipt) 
     workspace: Workspace.cases.Personal.make({}),
     sessionId,
   })
-  const ended = yield* Queue.unbounded<void>()
   const store = yield* RunStore
   const stopped = yield* Queue.unbounded<void>()
+  // Channel replies go out after the settlement commits, so a settlement read from here is in the
+  // database. `RunStore.end` itself runs inside the observer's transaction and cannot say that.
   const reported = yield* Queue.unbounded<string>()
   const titles = yield* Ref.make(0)
   const observed = RunStore.of({
@@ -173,11 +184,9 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (receipt: Receipt) 
         .end(id, ending)
         .pipe(
           Effect.tap((changed) =>
-            changed && RunEnding.guards.Completed(ending)
-              ? Queue.offer(ended, undefined)
-              : changed && RunEnding.guards.Stopped(ending)
-                ? Queue.offer(stopped, undefined)
-                : Effect.void,
+            changed && RunEnding.guards.Stopped(ending)
+              ? Queue.offer(stopped, undefined)
+              : Effect.void,
           ),
         ),
   })
@@ -207,8 +216,13 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (receipt: Receipt) 
     threadStoreLayer.pipe(Layer.provide(Layer.succeed(Database, database))),
     silentChangesLayer,
     Layer.mock(ThreadTitles, { afterRun: () => Ref.update(titles, (count) => count + 1) }),
-    Layer.mock(Presence, { watching: () => Effect.succeed(true) }),
-    Layer.succeed(Notifier, { notify: () => Effect.void }),
+    Layer.mock(Presence, { watching: () => Effect.succeed(notices === 'Watched') }),
+    Layer.succeed(Notifier, {
+      // A statement that fails aborts the surrounding PostgreSQL transaction, as a real failed owe does.
+      notify: () => database.run(database.execute(sql`select 1 / 0`)).pipe(Effect.asVoid),
+    }),
+    // These Threads start no helpers; Thread Stop finds none to stop.
+    Layer.mock(ChildRuns, { stopThread: () => Effect.void }),
   )
   let serverScope = yield* Scope.make()
   yield* Effect.addFinalizer(() => Scope.close(serverScope, Exit.void))
@@ -229,7 +243,6 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (receipt: Receipt) 
     admission,
     given,
     runtime,
-    ended,
     stopped,
     reported,
     titles,
@@ -311,7 +324,7 @@ layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)), { excludeTestServi
         const { run } = yield* test.send('peer-node')
         yield* answer.entered
         yield* answer.release
-        yield* Queue.take(test.ended)
+        expect(yield* Queue.take(test.reported)).toBe('Completed')
         expect((yield* test.store.get(run.id)).state._tag).toBe('Completed')
       }).pipe(Effect.scoped),
     )
@@ -350,7 +363,7 @@ layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)), { excludeTestServi
         })
         expect(yield* test.store.list(test.threadId)).toHaveLength(1)
         yield* answer.release
-        yield* Queue.take(test.ended)
+        expect(yield* Queue.take(test.reported)).toBe('Completed')
         expect((yield* test.store.get(first.run.id)).state._tag).toBe('Completed')
       }).pipe(Effect.scoped),
     )
@@ -368,10 +381,23 @@ layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)), { excludeTestServi
           expect(run.submissionId).toBeDefined()
           expect((yield* test.store.list(test.threadId)).map((entry) => entry.turn)).toEqual([1])
           yield* answer.release
-          yield* Queue.take(test.ended)
+          expect(yield* Queue.take(test.reported)).toBe('Completed')
           expect((yield* test.store.get(run.id)).state._tag).toBe('Completed')
           expect(test.given.faux.state.callCount).toBe(1)
         }).pipe(Effect.scoped),
+    )
+
+    it.effect('a Run whose notice cannot be owed still settles as Completed', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture('Kept', 'Unowed')
+        const answer = yield* held('Finished without a notice')
+        test.given.faux.setResponses([answer.factory])
+        const { run } = yield* test.send('unowed')
+        yield* answer.entered
+        yield* answer.release
+        expect(yield* Queue.take(test.reported)).toBe('Completed')
+        expect((yield* test.store.get(run.id)).state._tag).toBe('Completed')
+      }).pipe(Effect.scoped),
     )
 
     it.effect('a server restart reattaches observation of a working admitted Pi submission', () =>
@@ -383,7 +409,7 @@ layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)), { excludeTestServi
         yield* answer.entered
         yield* test.restart
         yield* answer.release
-        yield* Queue.take(test.ended)
+        expect(yield* Queue.take(test.reported)).toBe('Completed')
         expect((yield* test.store.get(run.id)).state._tag).toBe('Completed')
         expect(test.given.faux.state.callCount).toBe(1)
       }).pipe(Effect.scoped),
@@ -417,7 +443,6 @@ layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)), { excludeTestServi
         expect((yield* test.store.get(run.id)).state._tag).toBe('Working')
         expect(yield* Queue.size(test.stopped)).toBe(0)
         yield* answer.release
-        yield* Queue.take(test.ended)
         expect(yield* Queue.take(test.reported)).toBe('Completed')
         expect((yield* test.store.get(run.id)).state._tag).toBe('Completed')
       }).pipe(Effect.scoped),
@@ -449,7 +474,7 @@ layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)), { excludeTestServi
           expect.objectContaining({ key: 'reply', submissionId: run.submissionId }),
         )
         yield* answer.release
-        yield* Queue.take(test.ended)
+        expect(yield* Queue.take(test.reported)).toBe('Completed')
         expect((yield* test.store.get(run.id)).state._tag).toBe('Completed')
         yield* Fiber.interrupt(watching)
         // A reconnect starts again with a Whole, never an operation from the old link.
@@ -507,7 +532,7 @@ layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)))((it) => {
       const { run } = yield* Fiber.join(sending)
       yield* answer.entered
       yield* answer.release
-      yield* Queue.take(test.ended)
+      expect(yield* Queue.take(test.reported)).toBe('Completed')
       expect((yield* test.store.get(run.id)).state._tag).toBe('Completed')
     }).pipe(Effect.scoped),
   )

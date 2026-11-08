@@ -3,6 +3,7 @@ import { Array as Arr, Deferred, Effect, Order, Queue, type Scope } from 'effect
 import { release } from './deliveries.ts'
 import { recordResponse } from './response.ts'
 import type { learning } from './learning.ts'
+import type { dreaming } from './dreaming.ts'
 import { threadOf } from './threads.ts'
 import { Option } from 'effect'
 
@@ -36,6 +37,7 @@ interface Barrier {
  * reads settlements from the commits themselves:
  *
  * - a durable learning task captures each Person's words and authority before release;
+ * - the Dreamer records where the Person last spoke and may queue a quiet pass (`dreaming.ts`);
  * - each settled delivery's kept record is released (the frozen context, `deliveries.ts`);
  * - the inputs that were placed and settled together are one run, and its metadata entry is
  *   appended (`response.ts`).
@@ -49,9 +51,14 @@ interface Barrier {
 export const followSettlements: (
   harness: Harness,
   learn: Effect.Success<ReturnType<typeof learning>>['start'],
+  dream: ReturnType<typeof dreaming>['settled'],
 ) => Effect.Effect<{ readonly quiet: Effect.Effect<void> }, never, Scope.Scope> = Effect.fn(
   'Settled.follow',
-)(function* (harness: Harness, learn: Effect.Success<ReturnType<typeof learning>>['start']) {
+)(function* (
+  harness: Harness,
+  learn: Effect.Success<ReturnType<typeof learning>>['start'],
+  dream: ReturnType<typeof dreaming>['settled'],
+) {
   const work = yield* Queue.unbounded<Batch | Barrier>()
   const unsubscribe = harness.subscribeCommits((publication) => {
     const settled = publication.changes.flatMap((change) =>
@@ -73,6 +80,8 @@ export const followSettlements: (
       yield* learn(harness, settled, batch.at).pipe(
         Effect.catch(() => Effect.logWarning('LearningFailed')),
       )
+      // The Dreamer's home, the nightly schedule and a long conversation's quiet pass (`dreaming.ts`).
+      yield* dream(harness, settled).pipe(Effect.catch(() => Effect.logWarning('DreamingFailed')))
       for (const record of settled) {
         if (record.requestId !== undefined)
           yield* release(harness, conversationId, record.requestId)

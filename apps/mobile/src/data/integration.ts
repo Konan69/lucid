@@ -1,11 +1,12 @@
 import {
+  ConnectionGrant,
   ConnectionState,
   ServiceAuthorization,
   type Connection,
   type ConnectionAuthorization,
   type Service,
 } from '@vivid/contracts'
-import { connecting, whichAccount } from '@vivid/state'
+import { access, connecting, whichAccount } from '@vivid/state'
 import { Option } from 'effect'
 
 /**
@@ -150,13 +151,22 @@ interface Standing {
   readonly words: string
 }
 
-/** How a Connection stands, as the colour of its dot and the words beside it. */
-export const standingOf = (connection: Connection): Standing =>
-  ConnectionState.match(connection.state, {
-    Ready: (): Standing => ({ tone: 'status-success', words: 'Connected' }),
-    NeedsAuthorization: (): Standing => ({ tone: 'status-approve', words: 'Sign-in not finished' }),
-    Failed: ({ reason }): Standing => ({ tone: 'status-danger', words: `Not working: ${reason}` }),
-  })
+/** The ink of a dot for each tone a standing can have. */
+const TONE = {
+  good: 'status-success',
+  waiting: 'status-approve',
+  bad: 'status-danger',
+} as const satisfies Record<access.AccessTone, StandingTone>
+
+/**
+ * How a Connection stands, as the colour of its dot and the words beside it. The words come from
+ * its grant as well as its state (`access.accessStanding`, shared with the web): a sign-in that
+ * lapsed says it expired, where it used to say "Sign-in not finished".
+ */
+export const standingOf = (connection: Connection): Standing => {
+  const standing = access.accessStanding(connection)
+  return { tone: TONE[standing.tone], words: standing.words }
+}
 
 /** Whether a name answers to what is typed in the search, whatever its case. */
 export const named = (name: string, query: string): boolean =>
@@ -189,7 +199,9 @@ export const accountLine = (connection: Connection, facts: RowFacts): string =>
       // An account that works and is told apart by something says only that; "Connected" is
       // then what the dot on its logo already says.
       const standing =
-        ConnectionState.guards.Ready(connection.state) && Option.isSome(which)
+        ConnectionState.guards.Ready(connection.state) &&
+        !ConnectionGrant.guards.Partial(connection.grant) &&
+        Option.isSome(which)
           ? Option.none<string>()
           : Option.some(standingOf(connection).words)
       const shared = Option.map(facts.sharedWith, (company) => `Shared with ${company}`)

@@ -28,6 +28,7 @@ import { Screen } from '../ui/Screen'
 import { Live } from '../ui/Live'
 import { Row, Section } from '../ui/List'
 import { NameSheet, Sheet } from '../ui/Sheet'
+import { ArtifactShelf } from './artifact/Shelf'
 import {
   Button,
   confirmDestructive,
@@ -82,14 +83,18 @@ export function Library() {
       })}
       level={level}
       above={
-        shelves.length > 1 ? (
-          <Segmented
-            label="Shelf"
-            value={shelf}
-            options={shelves.map((choice) => ({ value: choice.shelf, label: choice.name }))}
-            onChange={setChosen}
-          />
-        ) : null
+        <>
+          {/* What Vivid made belongs to the workspace, not to a shelf: it heads the top level. */}
+          <ArtifactShelf />
+          {shelves.length > 1 && (
+            <Segmented
+              label="Shelf"
+              value={shelf}
+              options={shelves.map((choice) => ({ value: choice.shelf, label: choice.name }))}
+              onChange={setChosen}
+            />
+          )}
+        </>
       }
       below={null}
     />

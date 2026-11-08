@@ -14,10 +14,12 @@ import { assertTable } from './table.mjs'
 import { capabilities, computer } from './capabilities.mjs'
 import { devices } from './devices.mjs'
 import { reading } from './reading.mjs'
+import { helpers, helperstop } from './helpers.mjs'
 import { settingsProof } from './settingsproof.mjs'
 import { nameProof } from './nameproof.mjs'
 import { watch } from './watch.mjs'
 import { integrations } from './integrations.mjs'
+import { checkin } from './checkin.mjs'
 import { memory } from './memory.mjs'
 import { learningFact } from './phonememory.mjs'
 import { procedure } from './procedure.mjs'
@@ -54,6 +56,7 @@ export const features = [
   'document',
   'watch',
   'integrations',
+  'checkin',
   'library',
   'feed',
   'owed',
@@ -70,6 +73,8 @@ export const features = [
   'github',
   'push',
   'texting-discord',
+  'helpers',
+  'helperstop',
 ]
 export const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
@@ -595,6 +600,7 @@ const recipes = {
   projects,
   watch,
   integrations,
+  checkin,
   reading,
   settings: settingsProof,
   name: nameProof,
@@ -603,6 +609,8 @@ const recipes = {
   library,
   push: pushProof,
   'texting-discord': textingDiscordProof,
+  helpers,
+  helperstop,
 }
 const blocked = {
   handoff: 'No proof-owned Computer: a handoff is prepared and filled on a disposable Person Computer.',
@@ -637,6 +645,8 @@ export async function drive(state, feature) {
           todos: 'The list requires a real model; rehearsal cannot prove it.',
           library: 'Library requires a real model; rehearsal cannot prove retrieval and citation.',
           projects: 'Project state requires a real model; rehearsal cannot prove it.',
+          helpers: 'Helpers require a real model; rehearsal cannot start one.',
+          helperstop: 'Helpers require a real model; rehearsal cannot start one.',
         }
   let failed = false
   for (const name of chosen) {

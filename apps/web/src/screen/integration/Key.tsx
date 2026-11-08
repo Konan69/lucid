@@ -5,17 +5,8 @@ import { useId, useState } from 'react'
 import { act } from '../../data/app'
 import { changing } from '../../data/live'
 import { Button } from '../../ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '../../ui/dialog'
 import { Field, FieldError, FieldGroup, FieldLabel } from '../../ui/field'
 import { Input } from '../../ui/input'
-import { useSurface } from '../../ui/Layer'
 
 /**
  * An integration that is waiting for its key: which one, what its service is called, and what it
@@ -31,20 +22,25 @@ export interface Keying {
 }
 
 /**
- * Collects the key a service asks for. It is opened from Settings and from the card in a Thread;
- * either way the key goes straight to the integration and nowhere else. The values are wrapped the moment they leave the form and
- * sent once; they are not kept in state after the dialog closes and never appear anywhere else.
+ * Collects the key a service asks for, inside the Integration's own card: the card in a Thread
+ * and the one Settings shows while a key is wanted. The key goes straight to the integration and
+ * nowhere else. The values are wrapped the moment they leave the form and sent once; they are not
+ * kept in state after the form closes and never appear anywhere else.
  *
- * The dialog is open for as long as the attempt is waiting for a key, so it does not close
- * itself: `onClose` says the Person sent it away, and `onAnswered` hands over the account as the
- * server answered with it, and either one moves the attempt on. Both name the attempt the dialog
- * was opened for, so a dialog left from an attempt that was replaced ends nothing.
+ * It was a dialog over the page until the approved mockup 4 of 26 October 2026 (issue #126): the
+ * key is typed where the Integration is, so the Person never loses sight of what it is for.
+ *
+ * The form is shown for as long as the attempt is waiting for a key, so it does not close itself:
+ * `onClose` says the Person sent it away (Cancel, or Escape in a field), and `onAnswered` hands
+ * over the account as the server answered with it, and either one moves the attempt on. Both
+ * name the attempt the form was opened for, so a form left from an attempt that was replaced ends
+ * nothing.
  *
  * Every answer that holds an account is handed over, whether or not the service took the key:
  * the machine decides. After one completion the account no longer waits for a key and the server
  * takes no second one (`makeComplete`, `apps/server/src/connections/executor.ts`), so a key the
  * service refused ends the attempt (`Unusable`) and closes this; "check it and try again" was
- * offering a retry the server cannot take. Only the call itself failing keeps the dialog open.
+ * offering a retry the server cannot take. Only the call itself failing keeps the form open.
  */
 export function EnterKey({
   keying,
@@ -58,9 +54,7 @@ export function EnterKey({
   const [refusal, setRefusal] = useState<string | null>(null)
   // One id for the form; each field's own name is added to it, so a label finds its input.
   const ids = useId()
-  // Sent away (Escape, a click outside, the close button) it plays out before `onClose` is told.
   const close = () => onClose(keying.attempt.id)
-  const surface = useSurface(close)
 
   function submit(form: HTMLFormElement) {
     return Effect.gen(function* () {
@@ -86,47 +80,49 @@ export function EnterKey({
   }
 
   return (
-    <Dialog {...surface}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{`Connect ${keying.serviceName}`}</DialogTitle>
-          <DialogDescription>
-            This goes straight to the integration and is never shown to Vivid or kept in a thread.
-          </DialogDescription>
-        </DialogHeader>
-        {/* `contents`: the fields and the actions take the dialog's own gap, and the submit button
-            stays inside the form whose inputs `submit` reads. */}
-        <form
-          className="contents"
-          onSubmit={(event) => {
-            event.preventDefault()
-            void act(submit(event.currentTarget))
-          }}
-        >
-          <FieldGroup>
-            {keying.fields.map((field) => (
-              <Field key={field.name}>
-                <FieldLabel htmlFor={`${ids}-${field.name}`}>{field.label}</FieldLabel>
-                <Input
-                  mono
-                  id={`${ids}-${field.name}`}
-                  required
-                  name={field.name}
-                  type="password"
-                  autoComplete="off"
-                />
-              </Field>
-            ))}
-            {refusal !== null && <FieldError>{refusal}</FieldError>}
-          </FieldGroup>
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={close}>
-              Cancel
-            </Button>
-            <Button type="submit">Connect</Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <form
+      aria-label={`Key for ${keying.serviceName}`}
+      className="flex flex-col gap-3"
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape') return
+        event.preventDefault()
+        close()
+      }}
+      onSubmit={(event) => {
+        event.preventDefault()
+        void act(submit(event.currentTarget))
+      }}
+    >
+      <FieldGroup>
+        {keying.fields.map((field, place) => (
+          <Field key={field.name}>
+            <FieldLabel htmlFor={`${ids}-${field.name}`}>{field.label}</FieldLabel>
+            <Input
+              mono
+              // The form appears because the Person pressed for it, so the first field is theirs.
+              autoFocus={place === 0}
+              id={`${ids}-${field.name}`}
+              required
+              name={field.name}
+              type="password"
+              autoComplete="off"
+            />
+          </Field>
+        ))}
+        {refusal !== null && <FieldError>{refusal}</FieldError>}
+      </FieldGroup>
+      <p className="text-meta font-meta text-pretty text-ink-3">
+        It goes straight to {keying.serviceName}. Vivid never sees it and it is never kept in a
+        thread.
+      </p>
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="ghost" size="sm" onClick={close}>
+          Cancel
+        </Button>
+        <Button type="submit" size="sm">
+          Connect
+        </Button>
+      </div>
+    </form>
   )
 }

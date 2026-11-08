@@ -287,10 +287,10 @@ const makeMarkRead = (database: DatabaseService) =>
 const idTaken = () => Effect.fail(new Conflict({ message: 'That Thread id is taken' }))
 
 /**
- * Ids the server mints for the Threads it opens itself (Watch arrivals, Settings forgets). A
- * client may not claim one.
+ * Ids the server mints for the Threads it opens itself (Watch arrivals, Settings forgets, Dreamer
+ * runs). A client may not claim one.
  */
-const RESERVED = /^(?:watch|forget)-/u
+const RESERVED = /^(?:watch|forget|dream)-/u
 
 /**
  * Insert, Membership check, creator read receipt and notice commit together. The inserted row

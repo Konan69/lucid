@@ -62,6 +62,7 @@ import { Alert } from '../ui/alert'
 import { Segmented } from '../ui/Segmented'
 import { SkeletonList } from '../ui/skeleton'
 import { BAR } from './bar'
+import { ArtifactShelf } from './artifact/Shelf'
 import { Emblem, type Hue } from './Emblem'
 import { ENTER, PRESS, stagger } from './motion'
 
@@ -682,6 +683,8 @@ function ShelfLevel({
   const { contents, folder, folderId, grid, query, setChosen, setPath, setQuery, setView } = browser
   return (
     <>
+      {/* What Vivid made belongs to the workspace, not to a shelf or a folder: it heads the top. */}
+      {Option.isNone(folder) && Option.isNone(query) && <ArtifactShelf />}
       {browser.shelves.length > 1 && (
         <div>
           <Segmented

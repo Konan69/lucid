@@ -2,8 +2,9 @@ import { Effect, Option } from 'effect'
 import {
   ConnectionPermission,
   ToolOutcome,
+  connectionDataClassService,
   type ConnectionDataClass,
-  ServiceId,
+  type ServiceId,
 } from '@vivid/contracts'
 import { permissionsOf, type ConnectionRecord } from './records.ts'
 
@@ -14,7 +15,7 @@ import { permissionsOf, type ConnectionRecord } from './records.ts'
  */
 export const classPolicies = {
   GmailDrafts: {
-    service: ServiceId.make('google/gmail'),
+    service: connectionDataClassService.GmailDrafts,
     governing: 'gmail.users.drafts.list',
     emitters: [
       'gmail.users.drafts',
@@ -24,7 +25,7 @@ export const classPolicies = {
     ],
   },
   CalendarEventSchedules: {
-    service: ServiceId.make('google/calendar'),
+    service: connectionDataClassService.CalendarEventSchedules,
     governing: 'calendar.events.list',
     emitters: ['calendar.events', 'calendar.freebusy.query'],
   },

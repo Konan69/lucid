@@ -11,7 +11,10 @@ The receipt must report personal apps Unsupported and personal browsing Availabl
 Evidence retains facts, model answers, tool receipts and device stream cleanup. The unavailable
 internal-name assertion is a narrow check. It does not judge every paraphrase in an answer.
 
-No browser recipe belongs to this backend unit. The Computer panel UI unit adds it.
+The browser recipe is the Settings Devices panel for Vivid's computer (`accessbrowser.mjs`
+`computerBrowser`, shared with `computer`): what Vivid can do there is drawn from its health. For
+this run's absent Computer that is the panel's title and its recovery ladder; the ability list
+needs a running proof-owned Computer.
 Deep health Ready and browser restart are blocked. No proof-owned Computer exists. The Boat
 trial plan is at its two-machine limit, and the only Vivid Computer is production's. Never use
 that Computer or enable `VIVID_TEST_BOAT_LIVE` or `VIVID_LIVE_THREAD_COMPUTER`.

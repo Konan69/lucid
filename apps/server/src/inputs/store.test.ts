@@ -53,7 +53,12 @@ layer(testDatabaseLayer)((it) => {
             )
             const store = yield* InputStore
             const request = yield* store.ask(
-              { ...test.owner, by: 'vivid', threadId: Option.some(test.companyId) },
+              {
+                ...test.owner,
+                by: 'vivid',
+                threadId: Option.some(test.companyId),
+                helper: Option.none(),
+              },
               question,
             )
             expect(yield* store.inbox(test.owner)).toEqual([request])
@@ -107,7 +112,12 @@ layer(testDatabaseLayer)((it) => {
           )
           const store = yield* InputStore
           const request = yield* store.ask(
-            { ...test.owner, by: 'vivid', threadId: Option.some(test.companyId) },
+            {
+              ...test.owner,
+              by: 'vivid',
+              threadId: Option.some(test.companyId),
+              helper: Option.none(),
+            },
             question,
           )
           expect(yield* store.inbox(test.owner)).toEqual([request])

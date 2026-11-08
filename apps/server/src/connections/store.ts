@@ -17,6 +17,8 @@ import {
 import {
   AddIntegrationRequest,
   MakeIntegrationRequest,
+  MadeIntegrationSource,
+  type ReviseMadeIntegrationRequest,
   ServiceId,
   SignInSurface,
   AuditEvent,
@@ -52,6 +54,7 @@ import {
   ExecutorTool,
   ExecutorOwnerId,
   ExecutorReferences,
+  ExecutorAppOwnership,
   ExecutorResourceMissing,
   ExecutorNotReady,
   ExecutorPublicAddressRequired,
@@ -65,7 +68,7 @@ import {
   ExecutorAuthorizationUnavailable,
   ExecutorBuildFailed,
 } from './executor.ts'
-import { madeFiles, madeService } from './made.ts'
+import { madeFiles, madeService, MADE } from './made.ts'
 import { executorFailure } from './errors.ts'
 import {
   connectionOf,
@@ -93,6 +96,9 @@ import { callbackHash, correlateSignIn } from './correlation.ts'
 import { catalogService, IMPORTED, serviceLogo } from './logo.ts'
 import { loadCuration } from './curation.ts'
 import { connectionAddressLayer, type ConnectionSource } from './address.ts'
+import { Watches, watchesLayer } from '../watches/lifecycle.ts'
+import { watchStoreLayer } from '../watches/store.ts'
+import { watchedAppsLayer } from '../watches/apps.ts'
 
 const isResourceMissing = Schema.is(ExecutorResourceMissing)
 const isPublicAddressRequired = Schema.is(ExecutorPublicAddressRequired)
@@ -613,7 +619,7 @@ const rememberListCatalog = Effect.fn('Connections.rememberListCatalog')(
     ),
 )
 
-type ConnectionAuthority = Executor | Database | Audit | ServerConfig | Changes
+type ConnectionAuthority = Executor | Database | Audit | ServerConfig | Changes | Watches
 type ProvideAuthority = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ) => Effect.Effect<A, E, Exclude<R, ConnectionAuthority>>
@@ -630,7 +636,8 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     Audit,
     ServerConfig,
     Changes,
-  )(yield* Effect.context<Executor | Database | Audit | ServerConfig | Changes>())
+    Watches,
+  )(yield* Effect.context<ConnectionAuthority>())
   const provide: ProvideAuthority = (effect) => effect.pipe(Effect.provide(dependencies))
   const catalogServices = Effect.fn('Connections.catalog')(function* () {
     return (yield* executor.catalog.pipe(Effect.mapError(executorFailure))).map(catalogService)
@@ -673,7 +680,16 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     if (ServiceAuthorization.guards.SetupRequired(entry.authorization)) return entry
     return yield* inspectService(entry)
   })
-  const get = (actor: Actor, id: ConnectionId) => provide(getRecord(actor, id, false))
+  /** Reading an already-expired dependency also pauses the current background Watch. */
+  const get = Effect.fn('Connections.get')(
+    function* (actor: Actor, id: ConnectionId) {
+      const record = yield* provide(getRecord(actor, id, false))
+      if (record.status === 'needs-authorization')
+        yield* provide((yield* Watches).pauseCurrent(actor, id))
+      return record
+    },
+    (effect) => provide(effect),
+  )
   const management = makeManagement({ executor, database, provide, get })
 
   return {
@@ -715,6 +731,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     records: (actor: Actor) => provide(listRecords(actor)),
     tools: (actor: Actor, row: ConnectionRecord) => provide(loadTools(actor, row)),
     ...makeRegistration({ executor, provide, catalogServices }),
+    ...makeAuthoredManagement({ executor, provide }),
     ...management,
   }
 })
@@ -884,6 +901,7 @@ const makeCallbacks = (
         workspace: Workspace.cases.Personal.make({}),
         by: 'person',
         threadId: Option.none(),
+        helper: Option.none(),
       }
       const state = yield* callback(actor, trip.id, address)
       // Read after completion so the latest persisted trip decides where the browser hands back.
@@ -1094,4 +1112,57 @@ export class ConnectionStore extends Context.Service<
 >()('vivid/ConnectionStore') {}
 export const connectionStoreLayer = Layer.effect(ConnectionStore, makeStore()).pipe(
   Layer.provideMerge(connectionAddressLayer),
+  Layer.provideMerge(watchesLayer.pipe(Layer.provide([watchStoreLayer, watchedAppsLayer]))),
 )
+
+/** Authored source belongs only to its Person and a dedicated, ready Executor app. */
+function makeAuthoredManagement(input: {
+  readonly executor: ExecutorService
+  readonly provide: ProvideAuthority
+}) {
+  const selected = Effect.fn('Connections.authored')(function* (actor: Actor, account: string) {
+    const found = namedAccounts(yield* input.provide(listRecords(actor))).find(
+      (entry) => entry.account.trim().toLowerCase() === account.trim().toLowerCase(),
+    )
+    if (found === undefined) return yield* new NotFound({ message: 'Integration not found.' })
+    const { row } = found
+    if (row.personId !== actor.person.id || row.companyId !== null || !row.service.startsWith(MADE))
+      return yield* new InvalidRequest({
+        message: 'Only an Integration Vivid made for you can be revised.',
+      })
+    const references = row.references
+    if (row.status !== 'ready' || !ExecutorReferences.isAnyOf(['Public', 'Authorized'])(references))
+      return yield* new InvalidRequest({
+        message: 'Reconnect this Integration before revising it.',
+      })
+    if (!ExecutorAppOwnership.guards.Dedicated(references.appOwnership))
+      return yield* new InvalidRequest({
+        message: 'This Integration does not own a dedicated app.',
+      })
+    return { account: found.account, app: references.app }
+  })
+  const readMade = Effect.fn('Connections.readMade')(function* (actor: Actor, account: string) {
+    const held = yield* selected(actor, account)
+    const files = yield* input.executor.readMade(held.app).pipe(Effect.mapError(executorFailure))
+    return MadeIntegrationSource.make({ account: held.account, files })
+  })
+  return {
+    readMade,
+    /** Build failures leave the old active version intact; readback reports only deployed source. */
+    reviseMade: Effect.fn('Connections.reviseMade')(function* (
+      actor: Actor,
+      request: ReviseMadeIntegrationRequest,
+    ) {
+      const held = yield* selected(actor, request.account)
+      yield* input.executor
+        .reviseMade(held.app, madeFiles({ name: held.account, files: request.files }))
+        .pipe(
+          Effect.mapError(madeBeginFailure),
+          Effect.catchTag('ExecutorBuildFailed', ({ message }) =>
+            Effect.fail(new InvalidRequest({ message })),
+          ),
+        )
+      return yield* readMade(actor, held.account)
+    }),
+  }
+}

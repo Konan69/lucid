@@ -91,7 +91,7 @@ export const consider = Effect.fn('Learning.consider')(function* (exchange: Exch
 })
 
 /** A learning failure is deliberately content-free at the host logging boundary. */
-class LearningFailed extends Schema.TaggedError<LearningFailed>()(
+export class LearningFailed extends Schema.TaggedError<LearningFailed>()(
   'LearningFailed',
   {},
   { title: 'Learning failed' },
@@ -152,7 +152,7 @@ const LearnedRun = defineDocFamily<{ taskId: number | null }, null>({
 })
 
 /** Read only user/assistant prose. Tool results and private authority never become learning evidence. */
-function prose(entry: EntryRecord, role: 'user' | 'assistant') {
+export function prose(entry: EntryRecord, role: 'user' | 'assistant') {
   if (entry.model === undefined) return ''
   return entry.model
     .flatMap((message) => {
@@ -182,28 +182,30 @@ function earlierTurns(entries: ReadonlyArray<EntryRecord>) {
 }
 
 /** Page native history instead of assuming a run fits in Pi's first page. */
-const history = Effect.fn('Learning.history')(function* (
+export const history: (
   harness: Harness,
   conversationId: ConversationId,
-) {
-  const conversation = yield* pi(() => harness.conversation(conversationId, BACKGROUND_CONTEXT))
-  if (conversation === undefined) return yield* new LearningFailed()
-  const entries: EntryRecord[] = []
-  let cursor = Option.none<Cursor>()
-  for (;;) {
-    const page = yield* pi(() =>
-      conversation.entries(
-        { order: 'ascending' },
-        256,
-        Option.getOrUndefined(cursor),
-        BACKGROUND_CONTEXT,
-      ),
-    )
-    entries.push(...page.items)
-    if (page.next === undefined) return entries
-    cursor = Option.some(page.next)
-  }
-})
+) => Effect.Effect<Array<EntryRecord>, LearningFailed | PiRejected> = Effect.fn('Learning.history')(
+  function* (harness: Harness, conversationId: ConversationId) {
+    const conversation = yield* pi(() => harness.conversation(conversationId, BACKGROUND_CONTEXT))
+    if (conversation === undefined) return yield* new LearningFailed()
+    const entries: EntryRecord[] = []
+    let cursor = Option.none<Cursor>()
+    for (;;) {
+      const page = yield* pi(() =>
+        conversation.entries(
+          { order: 'ascending' },
+          256,
+          Option.getOrUndefined(cursor),
+          BACKGROUND_CONTEXT,
+        ),
+      )
+      entries.push(...page.items)
+      if (page.next === undefined) return entries
+      cursor = Option.some(page.next)
+    }
+  },
+)
 
 const decodeKept = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.toCodecJson(Kept)))
 const decodeSignal = Schema.decodeUnknownEffect(PlacedSignal)

@@ -145,6 +145,7 @@ layer(testLayer)((it) => {
             workspace: Workspace.cases.Personal.make({}),
             by: 'vivid' as const,
             threadId: Option.some(threadId),
+            helper: Option.none(),
           }
           const host = RunId.make(NodeCrypto.randomUUID())
           const joined = RunId.make(NodeCrypto.randomUUID())

@@ -38,6 +38,7 @@ import { namedAccounts } from './names.ts'
 import { MADE } from './made.ts'
 import { connections, connectionPermissions } from './tables.ts'
 import { invalidatePending, usingConnection } from '../approvals/stale.ts'
+import { Watches } from '../watches/lifecycle.ts'
 
 /** A stored Connection. The retired `label` column (`tables.ts`) is read by nothing, so it is
  * left out of the record here, once, and no caller ever sees it. */
@@ -253,7 +254,7 @@ export const connectionOf = Effect.fn('Connections.connectionOf')(function* (
 })
 
 /** Only catalogue services support allocating another account from Settings. */
-function connectionOrigin(service: ServiceId): Connection['origin'] {
+export function connectionOrigin(service: ServiceId): Connection['origin'] {
   if (service.startsWith(MADE)) return 'Made'
   if (service.startsWith(IMPORTED)) return 'Address'
   return 'Catalogue'
@@ -278,6 +279,9 @@ export const recordChanged = Effect.fn('Connections.changed')(function* (
   actor: Actor,
   row: ConnectionRecord,
 ) {
+  const watches = yield* Watches
+  yield* watches.connectionChanged(row.id)
+  if (row.status === 'needs-authorization') yield* watches.pauseCurrent(actor, row.id)
   const extra = row.companyId === null ? [] : [Topic.company(row.companyId)]
   yield* changed(actor, ...extra)
 })

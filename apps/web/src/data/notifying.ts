@@ -232,7 +232,13 @@ if (pushable) {
  */
 export const showOnDesktop = (notice: Notice) =>
   Option.map(desktop, (notices) => {
-    void notices.show({ title: notice.title, body: notice.body, opens: notice.opens })
+    void notices.show({
+      title: notice.title,
+      body: notice.body,
+      opens: notice.opens,
+      // A Feed post Vivid made on its own is quiet here too, as its push is (`push/delivery.ts`).
+      silent: notice.kind === 'posted',
+    })
   })
 
 const decodeOpened = Schema.decodeUnknownOption(NotificationOpens)

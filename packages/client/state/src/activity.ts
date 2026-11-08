@@ -34,6 +34,8 @@ const Asked = Schema.Struct({
   site: text,
   /** What is owed, or what to do, on the steps that keep the Person's waiting-on and to-do lists. */
   what: text,
+  /** The earlier conversation a step reads, by the name Vivid used for it. */
+  thread: text,
 })
 type Asked = typeof Asked.Type
 
@@ -360,6 +362,38 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.title)],
   },
+  spawn_run: {
+    said: {
+      running: 'Starting a helper',
+      done: 'Started a helper',
+      failed: 'Could not start a helper',
+    },
+    detail: nothing,
+  },
+  wait_runs: {
+    said: {
+      running: 'Waiting for helpers',
+      done: 'Heard back from helpers',
+      failed: 'Could not hear back from helpers',
+    },
+    detail: nothing,
+  },
+  check_run: {
+    said: {
+      running: 'Checking on a helper',
+      done: 'Checked on a helper',
+      failed: 'Could not check on the helper',
+    },
+    detail: nothing,
+  },
+  cancel_run: {
+    said: {
+      running: 'Stopping a helper',
+      done: 'Stopped a helper',
+      failed: 'Could not stop the helper',
+    },
+    detail: nothing,
+  },
   read_page: {
     said: {
       running: 'Opening the page',
@@ -482,6 +516,30 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.name)],
   },
+  finish_watching: {
+    said: {
+      running: 'Finishing a watch',
+      done: 'Finished a watch',
+      failed: 'Could not finish the watch',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
+  list_open_work: {
+    said: {
+      running: 'Looking at what is still open',
+      done: 'Looked at what is still open',
+      failed: 'Could not see what is still open',
+    },
+    detail: nothing,
+  },
+  update_checkin: {
+    said: {
+      running: 'Changing when it checks back',
+      done: 'Changed when it checks back',
+      failed: 'Could not change when it checks back',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
   post: {
     said: {
       running: 'Putting it on your Feed',
@@ -554,6 +612,98 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.what)],
   },
+  // The Dreamer's report to Vivid; it runs in a conversation no screen shows.
+  report_finding: {
+    said: {
+      running: 'Noting what it found',
+      done: 'Noted what it found',
+      failed: 'Could not note what it found',
+    },
+    detail: nothing,
+  },
+  start_shell: {
+    said: {
+      running: 'Starting a long job on its computer',
+      done: 'Started a long job on its computer',
+      failed: 'Could not start the job',
+    },
+    detail: (asked) => [said(asked.command)],
+  },
+  read_shell: {
+    said: {
+      running: 'Checking on a job',
+      done: 'Checked on a job',
+      failed: 'Could not check on the job',
+    },
+    detail: () => [],
+  },
+  wait_shell: {
+    said: {
+      running: 'Waiting for a job to finish',
+      done: 'A job finished',
+      failed: 'The job did not finish',
+    },
+    detail: () => [],
+  },
+  stop_shell: {
+    said: {
+      running: 'Stopping a job',
+      done: 'Stopped a job',
+      failed: 'Could not stop the job',
+    },
+    detail: () => [],
+  },
+  read_integration: {
+    said: {
+      running: 'Reading how it is set up',
+      done: 'Read how it is set up',
+      failed: 'Could not read how it is set up',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
+  revise: {
+    said: {
+      running: 'Changing it in place',
+      done: 'Changed it in place',
+      failed: 'Could not change it',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
+  search_threads: {
+    said: {
+      running: 'Looking through earlier conversations',
+      done: 'Looked through earlier conversations',
+      failed: 'Could not look through earlier conversations',
+    },
+    detail: (asked, answered) => [
+      quoted(asked.query),
+      counted(answered.results, 'message', 'messages'),
+    ],
+  },
+  read_thread: {
+    said: {
+      running: 'Reading an earlier conversation',
+      done: 'Read an earlier conversation',
+      failed: 'Could not read that conversation',
+    },
+    detail: (asked) => [said(asked.thread)],
+  },
+  list_work: {
+    said: {
+      running: 'Checking what it has going',
+      done: 'Checked what it has going',
+      failed: 'Could not check what it has going',
+    },
+    detail: nothing,
+  },
+  stop_all_work: {
+    said: {
+      running: 'Stopping everything',
+      done: 'Stopped everything',
+      failed: 'Could not stop everything',
+    },
+    detail: nothing,
+  },
 } satisfies Record<ToolName, Step>
 
 /** Old histories and newer runtimes can name tools this client no longer describes. */
@@ -575,6 +725,7 @@ const NOTHING_ASKED: Asked = {
   question: Option.none(),
   site: Option.none(),
   what: Option.none(),
+  thread: Option.none(),
 }
 
 const NOTHING_ANSWERED: Answered = {

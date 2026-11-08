@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect'
-import { ApprovalId, ComputerId, RunId, ThreadId } from './identity.js'
+import { ApprovalId, ComputerId, RunId, ThreadId, ShellHandle } from './identity.js'
 import { DeviceAbility, WindowAction, WindowRefusal, WindowResult } from './windows.js'
 import { CopySignInRequest, SignInRead } from './signins.js'
 
@@ -193,6 +193,21 @@ export const ComputerRecoveryOutcome = Schema.TaggedUnion({
   OutcomeUnknown: { receipt: ComputerRecoveryId },
 })
 export type ComputerRecoveryOutcome = typeof ComputerRecoveryOutcome.Type
+/**
+ * The newest recovery step taken on a Person's Computer, as its receipt row holds it.
+ *
+ * - `None`: no step was ever taken.
+ * - `Unsettled`: the step was claimed and has no outcome. It may still be running, or the server
+ *   stopped while it ran; the row cannot tell which and is never replayed (`recovery.ts`), so a
+ *   screen says when it began, not that it is still going.
+ * - `Settled`: the step ended, with its outcome.
+ */
+export const ComputerRecoveryRecord = Schema.TaggedUnion({
+  None: {},
+  Unsettled: { step: ComputerRecoveryStep, since: Schema.Finite },
+  Settled: { step: ComputerRecoveryStep, since: Schema.Finite, outcome: ComputerRecoveryOutcome },
+})
+export type ComputerRecoveryRecord = typeof ComputerRecoveryRecord.Type
 export const GetComputerHealthRequest = Schema.Struct({ depth: ComputerHealthDepth })
 export type GetComputerHealthRequest = typeof GetComputerHealthRequest.Type
 export const RecoverComputerRequest = Schema.Struct({
@@ -626,3 +641,34 @@ export const ReportDeviceStopRequest = Schema.Struct({
 export interface ReportDeviceStopRequest extends Schema.Schema.Type<
   typeof ReportDeviceStopRequest
 > {}
+
+export const StartShellRequest = Schema.Struct({
+  command: ComputerShellRequest.fields.command,
+  directory: ComputerPath,
+})
+export type StartShellRequest = typeof StartShellRequest.Type
+export const ReadShellRequest = Schema.Struct({ handle: ShellHandle })
+export type ReadShellRequest = typeof ReadShellRequest.Type
+export const WaitShellRequest = Schema.Struct({
+  handle: ShellHandle,
+  seconds: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 600 })),
+})
+export type WaitShellRequest = typeof WaitShellRequest.Type
+const shellOutput = {
+  handle: ShellHandle,
+  stdout: Schema.String,
+  stderr: Schema.String,
+  truncated: Schema.Boolean,
+  outputDirectory: ComputerPath,
+}
+/** Running snapshots remain readable; terminal states never invent an exit status. */
+export const ShellSnapshot = Schema.TaggedUnion({
+  Queued: { handle: ShellHandle },
+  Running: shellOutput,
+  Completed: { ...shellOutput, exitCode: Schema.Int },
+  Stopped: shellOutput,
+  Unknown: shellOutput,
+  Missing: {},
+  Unavailable: { reason: Schema.String },
+})
+export type ShellSnapshot = typeof ShellSnapshot.Type

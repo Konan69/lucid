@@ -37,6 +37,7 @@ import { Record } from './settings/Record'
 import { Devices } from './settings/Devices'
 import { Name } from './settings/Name'
 import { Rules } from './settings/Rules'
+import { Work } from './settings/Work'
 import { Customise } from './vivid/Customise'
 import { Themes } from './settings/Themes'
 import { useFlow } from './integration/flow'
@@ -56,6 +57,7 @@ type Over = Data.TaggedEnum<{
   Customise: {}
   Rules: {}
   Record: {}
+  Work: {}
 }>
 const Over = Data.taggedEnum<Over>()
 
@@ -133,6 +135,11 @@ export function Settings() {
             detail="What it has kept about you, to correct or remove."
             onPress={() => go.navigate('Memory')}
           />
+          <Row
+            title="What Vivid is doing"
+            detail="What runs while you are away, and a way to stop it."
+            onPress={() => setOver(Over.Work())}
+          />
         </Section>
         <VividRow workspace={me.workspace} onCustomise={() => setOver(Over.Customise())} />
         <Section title="Devices">
@@ -168,6 +175,7 @@ export function Settings() {
       {Over.$is('Customise')(over) && <Customise onClose={close} />}
       {Over.$is('Rules')(over) && <Rules onClose={close} />}
       {Over.$is('Record')(over) && <Record onClose={close} />}
+      {Over.$is('Work')(over) && <Work onClose={close} />}
       {naming.isOpen(renaming) && <Name current={me.person.name} />}
     </Screen>
   )

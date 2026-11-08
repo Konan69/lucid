@@ -128,7 +128,7 @@ export function forgetTools(runTool: RunTool) {
   return [
     defineTool({
       name: Tool.plan_forget,
-      description: `Plan forgetting something the Person asked you to forget. Change nothing yet. Name every memory entry that says it, at the revision you read: retract an ordinary entry; for a standing page (${StandingLayer.literals.join(', ')}) give rewrite with the whole page minus that fact. Name, exactly as list_watches and the waiting-on list show them, every Watch whose instruction uses it and every open waiting-on record about it. Queued learning is stopped for you. Then tell the Person what will go and what will stay, and ask once before forget_memory.`,
+      description: `Plan forgetting something the Person asked you to forget. Change nothing yet. Name every memory entry that says it, at the revision you read: retract an ordinary entry; for a standing page (${StandingLayer.literals.join(', ')}) give rewrite with the whole page minus that fact. Name, exactly as list_watches and the waiting-on list show them, every Watch whose instruction uses it and every open waiting-on record about it. Queued learning is stopped for you. If only the named fact will go, call forget_memory without asking; if dependent memories or queued work will also go, say what will go and ask once first.`,
       input: v.object({
         summary,
         entries: v.pipe(v.array(entryInput), v.minLength(1)),
@@ -154,7 +154,7 @@ export function forgetTools(runTool: RunTool) {
                 watches: data.watches.map(modelText),
                 waiting_on: data.owed.map(modelText),
                 shared_conversations: plan.shared.length,
-                next: 'Say what will be forgotten and what stays, then ask once. Call forget_memory only after a clear yes.',
+                next: 'Call forget_memory without asking when only the named fact will go. If dependent memories or queued work will also go, say what will go and ask once first.',
               },
             }
           }),
@@ -165,7 +165,7 @@ export function forgetTools(runTool: RunTool) {
     defineTool({
       name: Tool.forget_memory,
       description:
-        'Carry out the plan you made with plan_forget in this conversation, after the Person confirmed it. Stops its Watches and waiting-on records and queued learning, retracts and rewrites its entries, reads everything back and answers completed or blocked with what remains. Say it is forgotten only when this answers completed.',
+        'Carry out the plan you made with plan_forget in this conversation, without asking when only the named fact will go, or after confirmation when dependent memories or queued work will also go. Stops its Watches and waiting-on records and queued learning, retracts and rewrites its entries, reads everything back and answers completed or blocked with what remains. Say it is forgotten only when this answers completed.',
       input: v.object({ summary }),
       run({ signal }) {
         return runTool(

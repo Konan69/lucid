@@ -52,11 +52,20 @@ export const NotifyPersonOutcome = Schema.TaggedUnion({
 })
 export type NotifyPersonOutcome = typeof NotifyPersonOutcome.Type
 
+/**
+ * Whether a pushed notice makes a sound. Only what the Person is waiting on and what is urgent is
+ * `Audible`; a Feed post Vivid made on its own arrives `Quiet` (Konan, 27 October 2026: "Feed posts
+ * appear silently"). The server decides it from the notice's kind (`push/delivery.ts`).
+ */
+export const PushSound = Schema.Literals(['Audible', 'Quiet'] as const)
+export type PushSound = typeof PushSound.Type
+
 /** The same payload is used by the browser worker and the phone tap handler. */
 export const PushPayload = Schema.Struct({
   notificationId: NotificationId,
   title: Schema.String,
   body: Schema.String,
   opens: NotificationOpens,
+  sound: PushSound,
 })
 export interface PushPayload extends Schema.Schema.Type<typeof PushPayload> {}
