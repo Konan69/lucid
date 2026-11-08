@@ -554,6 +554,22 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.what)],
   },
+  read_integration: {
+    said: {
+      running: 'Reading how it is set up',
+      done: 'Read how it is set up',
+      failed: 'Could not read how it is set up',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
+  revise: {
+    said: {
+      running: 'Changing it in place',
+      done: 'Changed it in place',
+      failed: 'Could not change it',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
 } satisfies Record<ToolName, Step>
 
 /** Old histories and newer runtimes can name tools this client no longer describes. */
