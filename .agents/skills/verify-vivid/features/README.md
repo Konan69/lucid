@@ -13,6 +13,7 @@ Read the touched feature before launching. A verdict belongs to the recorded com
 - [Allow an action](approve.md).
 - [Deny an action](deny.md).
 - [An ask that changed](changed.md).
+- [Action receipts and Run outcomes](outcome.md).
 - [Stop work](stop.md).
 - [Send a picture](picture.md).
 - [Run a program](code.md).

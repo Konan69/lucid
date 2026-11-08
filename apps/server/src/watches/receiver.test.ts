@@ -153,7 +153,7 @@ describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
         expect(working).toHaveLength(1)
         const run = working[0]
         if (run === undefined) return expect.fail('Expected one Run')
-        yield* runs.end(run.id, RunEnding.cases.Completed.make({}))
+        yield* runs.end(run.id, RunEnding.cases.Completed.make({ responseId: run.id }))
         expect((yield* post(url, event('evt_1'), secret, Option.none())).status).toBe(200)
         const finished = yield* runs.list(thread)
         expect(finished).toHaveLength(1)

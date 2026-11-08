@@ -1,4 +1,6 @@
 import {
+  type ActionReceipt,
+  type ActionReconciliationRequired,
   ComputerScreen,
   ComputerSession,
   CoverageReason,
@@ -32,9 +34,16 @@ export interface ToolResult {
   /** Only Computer tools supply a source; Person receipts cannot advertise the cloud viewer. */
   readonly computer?: 'person' | 'vivid'
   readonly terminate?: boolean
+  /**
+   * The server's receipts for the outward writes this call sent. They are kept in the result's
+   * metadata beside the output and never in the model's words: operation ids are references the
+   * model has no use for. Only tools that send outward writes supply them.
+   */
+  readonly receipts?: ReadonlyArray<ActionReceipt>
 }
 
 export type ToolFailure =
+  | ActionReconciliationRequired
   | NoDeviceConnected
   | NameMissing
   | NameAmbiguous
@@ -228,6 +237,12 @@ export const settle = Effect.fn('Tools.settle')(function* (
       return warnFailure(tool, tag)
     }),
     Effect.catchTags({
+      // The exact act was sent earlier in this Thread and its result is not known. Sending it
+      // again could do it twice, so the server refused; the model is told not to retry.
+      ActionReconciliationRequired: () =>
+        failure(
+          'The same action was sent before in this Thread and its result is not known yet, so it was not sent again. Do not retry it; tell the Person its result is not known yet.',
+        ),
       NoDeviceConnected: () => failure('The Person’s computer is not connected.'),
       NameMissing: ({ name }) => failure(`Nothing here is called “${name}”; list them again.`),
       NameAmbiguous: ({ name, matches }) =>
@@ -273,11 +288,12 @@ export const settle = Effect.fn('Tools.settle')(function* (
       DatabaseFailure: () => failure('Vivid could not read or save that record right now.'),
     }),
   )
-  return {
-    output:
-      result.integration === undefined
-        ? modelOutput(result.output, tool, Option.fromUndefinedOr(result.computer))
-        : boundIntegrationOutput(result.output, result.integration),
-    terminate: result.terminate === true,
-  }
+  const output =
+    result.integration === undefined
+      ? modelOutput(result.output, tool, Option.fromUndefinedOr(result.computer))
+      : boundIntegrationOutput(result.output, result.integration)
+  const terminate = result.terminate === true
+  return result.receipts === undefined
+    ? { output, terminate }
+    : { output, terminate, receipts: result.receipts }
 })

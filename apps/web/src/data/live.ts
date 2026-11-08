@@ -227,6 +227,11 @@ export const presentIn = Atom.family((id: ThreadId) =>
  * and the query does it each time the Thread moves while someone has it open (`@vivid/state`
  * `seen.ts`, shared with the phone). Being present is `presentIn`.
  */
-export const seenThread = makeSeenThread({ engine, threads: live.thread, launch: start })
+export const seenThread = makeSeenThread({
+  engine,
+  threads: live.thread,
+  me: live.me,
+  launch: start,
+})
 
 export { LiveState }

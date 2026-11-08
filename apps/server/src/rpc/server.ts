@@ -2,6 +2,8 @@ import * as Layer from 'effect/Layer'
 import * as RpcSerialization from 'effect/rpc/RpcSerialization'
 import * as RpcServer from 'effect/rpc/RpcServer'
 import { VividRpc } from '@vivid/contracts/rpc'
+import { actionHandlers } from '../actions/handlers.ts'
+import { actionLookupLayer } from '../actions/journal.ts'
 import { appearanceHandlers } from '../appearance/handlers.ts'
 import { artifactHandlers } from '../artifacts/handlers.ts'
 import { approvalHandlers } from '../approvals/handlers.ts'
@@ -48,6 +50,7 @@ export const rpcHandlersLayer = VividRpc.toLayer({
   ...appearanceHandlers,
   ...threadHandlers,
   ...approvalHandlers,
+  ...actionHandlers,
   ...inputHandlers,
   ...ruleHandlers,
   ...auditHandlers,
@@ -65,7 +68,7 @@ export const rpcHandlersLayer = VividRpc.toLayer({
   ...searchHandlers,
   ...watchHandlers,
   ...feedHandlers,
-}).pipe(Layer.provide(Layer.mergeAll(draftStoreLayer, feedStoreLayer)))
+}).pipe(Layer.provide(Layer.mergeAll(draftStoreLayer, feedStoreLayer, actionLookupLayer)))
 
 /**
  * The live endpoint: one WebSocket per client, carrying every `Watch…` subscription and every

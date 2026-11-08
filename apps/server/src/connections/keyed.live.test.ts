@@ -2,7 +2,13 @@ import * as NodeProcess from 'node:process'
 import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
-import { AddIntegrationOutcome, ConnectionState, SessionId, ToolOutcome } from '@vivid/contracts'
+import {
+  AddIntegrationOutcome,
+  ConnectionState,
+  SessionId,
+  ToolOutcome,
+  ToolCallId,
+} from '@vivid/contracts'
 import { ConfigProvider, Effect, Layer, Logger, Redacted, Schema } from 'effect'
 import { eq } from 'drizzle-orm'
 import { executorLayer } from './executor.ts'
@@ -138,6 +144,7 @@ describe.skipIf(!enabled)('keyed MCP product acceptance', () => {
               if (accountTool === undefined) expect.fail('Expected an authenticated account read')
               const { outcome: read } = yield* connectionHandlers
                 .UseTool({
+                  toolCallId: ToolCallId.make(crypto.randomUUID()),
                   connectionId: result.step.connection.id,
                   tool: accountTool.name,
                   input: {},
@@ -159,6 +166,7 @@ describe.skipIf(!enabled)('keyed MCP product acceptance', () => {
               expect(yield* store.records(memberActor)).toHaveLength(0)
               const { outcome: refused } = yield* connectionHandlers
                 .UseTool({
+                  toolCallId: ToolCallId.make(crypto.randomUUID()),
                   connectionId: result.step.connection.id,
                   tool: 'get_me',
                   input: {},

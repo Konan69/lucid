@@ -10,6 +10,7 @@ import {
   ResultQuery,
   ResultCoverage,
   ServiceId,
+  ToolCallId,
   ToolOutcome,
 } from '@vivid/contracts'
 import { toolOutcome, boundIntegrationOutput } from '@vivid/agent-runtime/tooltesting'
@@ -67,7 +68,9 @@ describe.skipIf(!testDatabaseConfigured)('Integration grants and coverage', () =
               shared: false,
             })
             const input = { path: { userId: 'me' }, query: { maxResults: 50 } }
+            // A read is never journaled, so the three calls below may share one call identity.
             const request = {
+              toolCallId: ToolCallId.make(crypto.randomUUID()),
               connectionId: connection.id,
               tool: operation,
               input,

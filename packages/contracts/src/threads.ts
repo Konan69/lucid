@@ -1,6 +1,13 @@
 import { Schema } from 'effect'
 import { Approval } from './approvals.js'
-import { PersonId, PersonSummary, ProjectId, RunId, ThreadId } from './identity.js'
+import {
+  ActionOperationId,
+  PersonId,
+  PersonSummary,
+  ProjectId,
+  RunId,
+  ThreadId,
+} from './identity.js'
 import { InputRequest } from './inputs.js'
 
 /** The image formats accepted by the conversation gateway and served inline to every client. */
@@ -237,6 +244,46 @@ export const RunState = Schema.TaggedUnion({
 })
 export type RunState = typeof RunState.Type
 
+/**
+ * Proof that the Person a Run acted for saw its final response. `Thread`: their own app drew that
+ * exact response in the Thread and said so. A channel provider's delivery confirmation would be
+ * another case; none returns one today, so there is none.
+ */
+export const RunDeliveryReceipt = Schema.TaggedUnion({
+  Thread: { person: PersonSummary, acknowledgedAt: Schema.Finite, responseId: RunId },
+})
+export type RunDeliveryReceipt = typeof RunDeliveryReceipt.Type
+
+/**
+ * What a Run's `Unknown` outcome is unsure of. `Execution`: the runtime stopped reporting.
+ * `Action`: the Run sent an outward operation whose result is not known. `Delivery`: the response
+ * may not have reached the Person.
+ */
+export const RunUncertainty = Schema.TaggedUnion({
+  Execution: {},
+  Action: { operationId: ActionOperationId },
+  Delivery: { responseId: RunId },
+})
+export type RunUncertainty = typeof RunUncertainty.Type
+
+/**
+ * The furthest a Run is proven to have got, beside `RunState`, which says how its execution ended.
+ *
+ * - `Accepted`: the runtime holds it durably. A Run that failed or was stopped stays here.
+ * - `Completed`: it answered. `responseId` names the response, shared by Runs that joined it.
+ * - `Delivered`: the Person it acted for saw that response.
+ * - `Unknown`: something it did cannot be told; `uncertainty` says what.
+ *
+ * Execution ending is not delivery: a completed reply that nobody has drawn is `Completed`.
+ */
+export const RunOutcome = Schema.TaggedUnion({
+  Accepted: { acceptedAt: Schema.Finite, submissionId: Schema.String },
+  Completed: { completedAt: Schema.Finite, responseId: RunId },
+  Delivered: { completedAt: Schema.Finite, responseId: RunId, receipt: RunDeliveryReceipt },
+  Unknown: { observedAt: Schema.Finite, uncertainty: RunUncertainty },
+})
+export type RunOutcome = typeof RunOutcome.Type
+
 /** One bounded attempt by Vivid to advance a Thread. */
 export const Run = Schema.Struct({
   id: RunId,
@@ -255,9 +302,20 @@ export const Run = Schema.Struct({
   turn: Schema.Finite,
   origin: RunOrigin,
   state: RunState,
+  /** Null while the Run is only reserved: the runtime has not accepted it yet. */
+  outcome: Schema.NullOr(RunOutcome),
   startedAt: Schema.Finite,
 }).annotate({ identifier: 'Run', title: 'Run' })
 export interface Run extends Schema.Schema.Type<typeof Run> {}
+
+/**
+ * The intended Person's app saying it drew a Run's final response. The server checks the Run, the
+ * response and the Person's access, and records the time and Person itself.
+ */
+export const AcknowledgeRunDeliveryRequest = Schema.Struct({ runId: RunId, responseId: RunId })
+export interface AcknowledgeRunDeliveryRequest extends Schema.Schema.Type<
+  typeof AcknowledgeRunDeliveryRequest
+> {}
 
 /** A send answers once admitted, with the product Run it started or joined. */
 export const SendToThreadResponse = Schema.Struct({ run: Run })

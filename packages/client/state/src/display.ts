@@ -185,6 +185,9 @@ export const displayToolResult = (outcome: ToolOutcome): DisplayToolResult =>
     PermissionDeclined: () =>
       failed('You have not allowed Vivid to use this kind of information from this Integration.'),
     Unsupported: () => failed('This Integration cannot do that yet.'),
+    // The server only answers this way for Vivid's journaled calls; a display's own call is never
+    // one, so this says plainly that nothing new happened.
+    Repeated: () => failed('This was already done, so it was not done again.'),
     ConnectionNotReady: () => failed('This Integration needs to be connected again.'),
     OutcomeUnknown: () => failed('No answer came back. It may or may not have happened.'),
   })
@@ -246,7 +249,7 @@ export const displayCodeResult = (outcome: DisplayCodeOutcome): DisplayToolResul
     ? waiting()
     : CodeOutcome.match(outcome, {
         Completed: ({ result }) =>
-          displayToolResult(ToolOutcome.cases.Completed.make({ output: result })),
+          displayToolResult(ToolOutcome.cases.Completed.make({ output: result, receipt: null })),
         ApprovalRequired: () => failed('This needs your approval in the Thread.'),
         Blocked: () => failed('A rule prevents this action.'),
         Failed: ({ failure }) => failed(programFailure(failure)),

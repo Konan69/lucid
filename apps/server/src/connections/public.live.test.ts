@@ -2,7 +2,7 @@ import * as NodeProcess from 'node:process'
 import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
-import { AddIntegrationOutcome, ToolOutcome } from '@vivid/contracts'
+import { AddIntegrationOutcome, ToolOutcome, ToolCallId } from '@vivid/contracts'
 import { ConfigProvider, Effect, Layer, Schema } from 'effect'
 import { eq } from 'drizzle-orm'
 import { connectionAddressLayer } from './address.ts'
@@ -150,6 +150,7 @@ describe.skipIf(!enabled)('Public integrations through Vivid and Executor', () =
                 })
                 expect(resolved.effect).toBe('read')
                 const { outcome: used } = yield* connectionHandlers.UseTool({
+                  toolCallId: ToolCallId.make(crypto.randomUUID()),
                   connectionId: resolved.connectionId,
                   tool: resolved.name,
                   input: source.input,

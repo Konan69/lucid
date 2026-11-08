@@ -366,7 +366,7 @@ function makeLiveData(session: SignedIn) {
   // Looking at a Thread marks it read (`@vivid/state` `seen.ts`, shared with the browser). The
   // screen reads this only while it is the one on top and the app is in front
   // (`screen/Chat.tsx`), and the Thread's own query the rest of the time.
-  const seenThread = makeSeenThread({ engine, threads: live.thread, launch })
+  const seenThread = makeSeenThread({ engine, threads: live.thread, me: live.me, launch })
 
   // Connecting an Integration is one machine for the session, made here because this is where
   // the session's registry and socket are made: every screen, sheet and card of the session

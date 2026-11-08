@@ -1,9 +1,10 @@
-import { and, asc, desc, eq, isNotNull, ne, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, isNotNull, isNull, ne, sql } from 'drizzle-orm'
 import * as Arr from 'effect/Array'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import {
   ApprovalInvalidation,
@@ -12,15 +13,20 @@ import {
   DeliveryScope,
   NotFound,
   type DeliveryScopeRequest,
+  Forbidden,
   Run,
+  RunDeliveryReceipt,
   RunFailure,
   RunOrigin,
+  RunOutcome,
   RunState,
+  RunUncertainty,
   type PersonId,
   PersonSummary,
-  type RunId,
+  RunId,
   ThreadId,
 } from '@vivid/contracts'
+import { unresolvedOf, type Unresolved } from '../actions/journal.ts'
 import { loadSummaries } from '../auth/access.ts'
 import { announceFeed } from '../feed/changes.ts'
 import { askedBy, invalidatePending } from '../approvals/stale.ts'
@@ -31,13 +37,14 @@ import {
   encodeStored,
   type DatabaseInfrastructureError,
 } from '../database/client.ts'
+import { requireThread } from './access.ts'
 import { Admitted, StoredRunOrigin } from './conversation.ts'
 import { runs, threads } from './tables.ts'
 import { summaryFor } from './wire.ts'
 
-/** How a Run that is no longer working ended, as its row stores it. */
+/** How a Run that is no longer working ended, as its row stores it. `responseId` names its answer. */
 export const RunEnding = Schema.TaggedUnion({
-  Completed: {},
+  Completed: { responseId: RunId },
   Failed: { reason: RunFailure },
   Stopped: {},
   Unknown: {},
@@ -191,6 +198,15 @@ export interface RunStoreService {
   readonly list: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<Run>, DatabaseInfrastructureError>
+  /**
+   * Records that the Person a completed Run acted for, who can still see its Thread, drew its final
+   * response. The first acknowledgement is the receipt; it answers with the Thread when it was.
+   */
+  readonly acknowledge: (input: {
+    readonly runId: RunId
+    readonly responseId: RunId
+    readonly personId: PersonId
+  }) => Effect.Effect<Option.Option<ThreadId>, NotFound | Forbidden | DatabaseInfrastructureError>
 }
 
 /**
@@ -263,19 +279,97 @@ const stateOf = Effect.fn('RunStore.stateOf')(function* (row: typeof runs.$infer
   return ENDED[ending](finishedAt)
 })
 
+/**
+ * How far a Run is proven to have got, from what its row and the action journal already hold.
+ * Nothing here is stored twice: admission is the receipt, completion the settled state and its
+ * response, delivery the acknowledgement. An unresolved outward operation outranks completion,
+ * since a finished reply does not settle what the Run sent; while working it is still in progress.
+ */
+const outcomeOf = ({
+  row,
+  submissionId,
+  state,
+  person,
+  unresolved,
+}: {
+  readonly row: typeof runs.$inferSelect
+  readonly submissionId: Option.Option<string>
+  readonly state: RunState
+  readonly person: PersonSummary
+  readonly unresolved: Option.Option<Unresolved>
+}): Option.Option<RunOutcome> => {
+  if (Option.isNone(submissionId) || row.admittedAt === null) return Option.none()
+  const accepted = RunOutcome.cases.Accepted.make({
+    acceptedAt: row.admittedAt,
+    submissionId: submissionId.value,
+  })
+  const actionUnknown = Option.map(unresolved, ({ operationId, observedAt }) =>
+    RunOutcome.cases.Unknown.make({
+      observedAt,
+      uncertainty: RunUncertainty.cases.Action.make({ operationId }),
+    }),
+  )
+  return Option.some(
+    RunState.match(state, {
+      Working: (): RunOutcome => accepted,
+      Unknown: ({ finishedAt }): RunOutcome =>
+        RunOutcome.cases.Unknown.make({
+          observedAt: finishedAt,
+          uncertainty: RunUncertainty.cases.Execution.make({}),
+        }),
+      Failed: (): RunOutcome => Option.getOrElse(actionUnknown, () => accepted),
+      Stopped: (): RunOutcome => Option.getOrElse(actionUnknown, () => accepted),
+      Completed: ({ finishedAt }): RunOutcome =>
+        Option.getOrElse(actionUnknown, () => answered(row, accepted, finishedAt, person)),
+    }),
+  )
+}
+
+/** A completed Run's answer: delivered once its Person acknowledged it, else only completed. */
+const answered = (
+  row: typeof runs.$inferSelect,
+  accepted: RunOutcome,
+  completedAt: number,
+  person: PersonSummary,
+): RunOutcome => {
+  // Runs completed before the answering response was kept cannot name it, so stay accepted.
+  if (row.responseId === null) return accepted
+  const completed = { completedAt, responseId: row.responseId }
+  if (row.deliveredAt === null) return RunOutcome.cases.Completed.make(completed)
+  return RunOutcome.cases.Delivered.make({
+    ...completed,
+    receipt: RunDeliveryReceipt.cases.Thread.make({
+      person,
+      acknowledgedAt: row.deliveredAt,
+      responseId: row.responseId,
+    }),
+  })
+}
+
 const toRun = Effect.fn('RunStore.toRun')(function* (
   row: typeof runs.$inferSelect,
   summaries: ReadonlyMap<PersonId, PersonSummary>,
+  unresolved: ReadonlyMap<RunId, Unresolved>,
 ) {
   const person = yield* summaryFor(summaries, row.personId)
   const receipt = row.receipt === null ? undefined : yield* decodeReceipt(row.receipt)
+  const submissionId = receipt === undefined ? undefined : String(receipt.submissionId)
+  const state = yield* stateOf(row)
+  const outcome = outcomeOf({
+    row,
+    submissionId: Option.fromUndefinedOr(submissionId),
+    state,
+    person,
+    unresolved: Option.fromUndefinedOr(unresolved.get(row.id)),
+  })
   return Run.make({
-    submissionId: receipt === undefined ? undefined : String(receipt.submissionId),
+    submissionId,
     id: row.id,
     threadId: row.threadId,
     turn: row.turn,
     origin: originOf(yield* decodeOrigin(row.origin), person),
-    state: yield* stateOf(row),
+    state,
+    outcome: Option.getOrNull(outcome),
     startedAt: row.startedAt,
   })
 })
@@ -400,19 +494,20 @@ const makeAdmitted = (database: DatabaseService) =>
     )
   })
 
-type EndingColumns = Pick<typeof runs.$inferInsert, 'state' | 'failureReason'>
+type EndingColumns = Pick<typeof runs.$inferInsert, 'state' | 'failureReason' | 'responseId'>
 
 const makeEnd = (database: DatabaseService) =>
   Effect.fn('RunStore.end')(function* (id: RunId, ending: RunEnding) {
     const now = yield* Clock.currentTimeMillis
     const columns = RunEnding.match(ending, {
-      Completed: (): EndingColumns => ({
+      Completed: ({ responseId }): EndingColumns => ({
         state: 'completed',
         failureReason: null,
+        responseId,
       }),
-      Failed: ({ reason }) => ({ state: 'failed', failureReason: reason }),
-      Stopped: () => ({ state: 'stopped', failureReason: null }),
-      Unknown: () => ({ state: 'unknown', failureReason: null }),
+      Failed: ({ reason }) => ({ state: 'failed', failureReason: reason, responseId: null }),
+      Stopped: () => ({ state: 'stopped', failureReason: null, responseId: null }),
+      Unknown: () => ({ state: 'unknown', failureReason: null, responseId: null }),
     })
     // One conditional update: only the caller that moves the Run out of `working` gets `true`, so
     // a settlement observed twice (a restart, a repeated delivery) acts once.
@@ -480,8 +575,37 @@ const makeList = (database: DatabaseService) =>
     const summaries = yield* loadSummaries(rows.map((row) => row.personId)).pipe(
       Effect.provideService(Database, database),
     )
-    const newestFirst = yield* Effect.forEach(rows, (row) => toRun(row, summaries))
+    const unresolved = yield* unresolvedOf(rows.map((row) => row.id)).pipe(
+      Effect.provideService(Database, database),
+    )
+    const newestFirst = yield* Effect.forEach(rows, (row) => toRun(row, summaries, unresolved))
     return Arr.reverse(newestFirst)
+  })
+
+/**
+ * Only the Person the Run acted for acknowledges it, and only for the response that answered it:
+ * another member of a shared Thread drawing it is not that Person's receipt. Thread access is
+ * checked first; one conditional write makes a repeat harmless.
+ */
+const makeAcknowledge = (database: DatabaseService): RunStoreService['acknowledge'] =>
+  Effect.fn('RunStore.acknowledge')(function* ({ runId, responseId, personId }) {
+    const [row] = yield* database.run(database.select().from(runs).where(eq(runs.id, runId)))
+    if (row === undefined) return yield* new NotFound({ message: 'Run not found' })
+    // A Person who can no longer see the Thread learns nothing about its Runs, this one included.
+    yield* requireThread(row.threadId, personId).pipe(Effect.provideService(Database, database))
+    if (row.personId !== personId)
+      return yield* new Forbidden({ message: 'Only the Person this Run acted for acknowledges it' })
+    if (row.state !== 'completed' || row.responseId !== responseId)
+      return yield* new NotFound({ message: 'That is not this Run’s final response' })
+    const now = yield* Clock.currentTimeMillis
+    const written = yield* database.run(
+      database
+        .update(runs)
+        .set({ deliveredAt: now })
+        .where(and(eq(runs.id, runId), isNull(runs.deliveredAt)))
+        .returning({ thread: runs.threadId }),
+    )
+    return Option.map(Arr.head(written), (first) => first.thread)
   })
 
 export const runStoreLayer = Layer.effect(
@@ -495,6 +619,7 @@ export const runStoreLayer = Layer.effect(
       end: makeEnd(database),
       working: makeWorking(database),
       list: makeList(database),
+      acknowledge: makeAcknowledge(database),
     })
   }),
 )

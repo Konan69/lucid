@@ -99,6 +99,7 @@ describe.skipIf(!enabled)('Programs on a real Boat machine', () => {
               value: { asked: call.input },
               summary: call.kind,
               end: 'completed',
+              receipt: null,
             })
           })
           const outcome = yield* timed(
@@ -127,8 +128,8 @@ return {file, platform: process.platform};`,
             CodeOutcome.cases.Completed.make({
               result: { file: 'records https://example.com/', platform: 'linux' },
               calls: [
-                { kind: 'find_tools', summary: 'find_tools', end: 'completed' },
-                { kind: 'read_page', summary: 'read_page', end: 'completed' },
+                { kind: 'find_tools', summary: 'find_tools', end: 'completed', receipt: null },
+                { kind: 'read_page', summary: 'read_page', end: 'completed', receipt: null },
               ],
               truncated: false,
               logs: ['wrote the file'],
