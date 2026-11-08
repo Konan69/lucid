@@ -7,7 +7,7 @@ import { NobodyToActFor } from '../client.ts'
 import { ToolScopeMissing } from './failure.ts'
 import { capabilityRegistry } from './capabilities.ts'
 import { projectNamed } from './projects.ts'
-import type { ProjectOf } from './memory.ts'
+import { dreamerMemoryTools, type ProjectOf } from './memory.ts'
 import {
   scopeLayer,
   scopedRunner,
@@ -52,7 +52,7 @@ export function tools(
     // @effect-diagnostics-next-line strictEffectProvide:off -- The per-call authority Layer, as in toolRunner.
     projectNamed(name).pipe(Effect.provide(current()))
   const registry = capabilityRegistry({ runTool, run, runMemory, project, memory, skills })
-  const mounted = registry.tools.map((definition) =>
+  const mount = (definition: ToolRegistration) =>
     durableTool({
       ...definition,
       execute(args, api, context) {
@@ -60,7 +60,11 @@ export function tools(
           authority.run(scopeLayer(resolve, api), () => definition.execute(args, api, context)),
         )
       },
-    }),
-  )
-  return { tools: mounted, reading: registry.reading }
+    })
+  return {
+    tools: registry.tools.map(mount),
+    reading: registry.reading,
+    // Offered only to the Dreamer (`agents/dreamer.ts`), never to a reply.
+    dreaming: dreamerMemoryTools(runMemory, project).map(mount),
+  }
 }

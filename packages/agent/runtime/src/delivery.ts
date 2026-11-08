@@ -52,6 +52,7 @@ export const signalAttributes = (envelope: SignalEnvelope): Record<string, strin
     CarryOn: () => attribution,
     Handoff: ({ handoff }) => ({ ...attribution, handoff }),
     Forget: () => attribution,
+    Dream: ({ pass }) => ({ ...attribution, pass }),
   })
 }
 
@@ -227,6 +228,7 @@ export function signalShown(placed: PlacedSignal) {
     CarryOn: ({ body }) => ({ tagName, attributes, body }),
     Handoff: ({ body }) => ({ tagName, attributes, body }),
     Forget: ({ body }) => ({ tagName, attributes, body }),
+    Dream: ({ body }) => ({ tagName, attributes, body }),
   })
 }
 
@@ -275,6 +277,8 @@ const cueText = (cue: SignalCue) =>
     CarryOn: ({ body }) => body,
     Handoff: ({ body }) => body,
     Forget: ({ body }) => body,
+    // A finding is woken like a Watch event: nobody is watching, and the Feed is how it reaches them.
+    Dream: ({ body }) => [BACKGROUND_INSTRUCTION, body].join('\n\n'),
   })
 
 /** Render a signal with its type first, then its ordered attributes and escaped body.

@@ -16,6 +16,7 @@ import type { ContextSources } from './context.ts'
 import { opening } from './deliveries.ts'
 import { Memory } from './memory.ts'
 import { learning } from './learning.ts'
+import { dreaming } from './dreaming.ts'
 import type { DecisionModel } from 'effect/ai'
 import { Models } from './models.ts'
 import { correctionHooks } from './correction.ts'
@@ -115,6 +116,14 @@ export const openPerson = Effect.fn('Person.open')(function* (
   )
   const all = registered.tools
   const registry = createRegistry()
+  const dream = dreaming(
+    (program, signal) => run(program, { signal }),
+    { host: personId, product, opened, model: models.selected },
+    all,
+    registered.dreaming,
+  )
+  registry.install(dream.extension)
+  registry.install(dream.dreamer)
   const learn = yield* learning(
     personId,
     (program, signal) => run(program, { signal }),
@@ -161,7 +170,7 @@ export const openPerson = Effect.fn('Person.open')(function* (
     }).pipe(Effect.onError(() => Effect.promise(() => storage.close(BACKGROUND_CONTEXT)))),
     closeHarness,
   )
-  const { quiet } = yield* followSettlements(harness, learn.start)
+  const { quiet } = yield* followSettlements(harness, learn.start, dream.settled)
   yield* Deferred.succeed(ready, harness)
   return {
     personId,
