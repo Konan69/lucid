@@ -193,6 +193,22 @@ function makeCatalog(engine: ReturnType<typeof makeLive>) {
 }
 
 /**
+ * Builds a session's reading of how Vivid's Computer is doing, for the Computer screen: every
+ * part checked each time the screen asks, and the newest step Vivid took to fix it. A check never
+ * wakes a sleeping Computer (`GetComputerHealth`). Ported from the web (`computerHealth` and
+ * `computerRecovery` in `apps/web/src/data/live.ts`), made per session like every phone query.
+ */
+function makeHealth(engine: ReturnType<typeof makeLive>) {
+  const depth = Atom.make<'Deep'>('Deep')
+  return {
+    computerHealth: engine.ask(depth, (client, asked) =>
+      client.GetComputerHealth({ depth: asked }),
+    ),
+    computerRecovery: engine.ask(depth, (client) => client.GetComputerRecovery()),
+  }
+}
+
+/**
  * Keeps this device's own atoms for how things look current with the session's answers, for the
  * life of the session: Vivid's name and face, and the Person's theme.
  */
@@ -315,7 +331,7 @@ function makeLiveData(session: SignedIn) {
     drafts: kept((client) => client.WatchDrafts()),
   }
 
-  const catalog = makeCatalog(engine)
+  const asked = { ...makeCatalog(engine), ...makeHealth(engine) }
   // Where the Person was working when a query was last asked, for the subscription below.
   let whereabouts = Option.none<string>()
 
@@ -423,7 +439,7 @@ function makeLiveData(session: SignedIn) {
       ...expectations: ReadonlyArray<() => Settle>
     ) => start(engine.change(program, ...expectations)),
     link: link.atom,
-    ...catalog,
+    ...asked,
     /** Connecting an Integration: the session's one machine (`data/connecting.ts`). */
     connecting,
     devices: makeDeviceDecisions(engine),

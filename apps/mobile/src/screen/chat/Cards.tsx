@@ -6,10 +6,11 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { Option } from 'effect'
-import { changedLine } from '@vivid/state'
+import { access, changedLine } from '@vivid/state'
 import { View } from 'react-native'
 import { Card, cardOf, type ToolPart } from '../../data/message'
 import { Label } from '../../ui/ui'
+import { AccessCard } from '../integration/Access'
 import { IntegrationCard } from '../integration/Card'
 import { approvalOf, handoffOf, requestOf } from './asked'
 import { Handed } from './Handoff'
@@ -41,6 +42,19 @@ export function Cards({
   thread: ThreadId
 }) {
   return tools.map((tool) => {
+    // A call one of the Person's accounts could not make is answered where Vivid stopped.
+    const escalation = tool.state === 'output-available' ? access.escalationOf(tool) : Option.none()
+    if (Option.isSome(escalation))
+      return (
+        <View key={tool.toolCallId} style={CARD_ROOM}>
+          <AccessCard
+            id={tool.toolCallId}
+            escalation={escalation.value}
+            current={live}
+            thread={thread}
+          />
+        </View>
+      )
     return Option.match(cardOf(tool), {
       onNone: () => null,
       onSome: (card) => (

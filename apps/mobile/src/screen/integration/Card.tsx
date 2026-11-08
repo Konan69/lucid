@@ -14,6 +14,7 @@ import { useTheme } from '../../theme'
 import { EDGE, Label, Notice, Press, radius } from '../../ui/ui'
 import { useGo } from '../../workspace'
 import { useFlow } from './flow'
+import { KeyForm } from './Key'
 import { Logo } from './Logo'
 
 /**
@@ -24,7 +25,7 @@ import { Logo } from './Logo'
  * here in the Thread; it used to open the whole Integrations page over the Thread, where the
  * Person had to find the service again. An Integration Vivid has already begun adding carries
  * what is left (`authorization`): a sign-in, which opens the provider's page in the phone's
- * browser, or a key, which is typed into a sheet that sends it straight to the Integration
+ * browser, or a key, which is typed into the card itself and goes straight to the Integration
  * (never into the Thread, never to Vivid). The card names the Integration and nothing more: the
  * sign-in address itself is asked of the server when it is opened, and is never read from the
  * Thread.
@@ -117,6 +118,7 @@ export function IntegrationCard({
     Option.fromUndefinedOr(list.find((each) => each.service === request.service)),
     (each) => Option.fromNullishOr(each.mark),
   )
+  const keying = flow.keying(Option.some(id))
   const said = cardSaid(flow.standingOfCard(id), {
     starting: wayIn(authorization, awaited).starting,
     serviceName: request.serviceName,
@@ -174,12 +176,18 @@ export function IntegrationCard({
           <Notice message={said.line.value.words} />
         </View>
       )}
+      {/* The key this card's own attempt is waiting for, typed in the card. */}
+      {Option.isSome(keying) && (
+        <View style={{ marginTop: 12, marginLeft: 47 }}>
+          <KeyForm keying={keying.value} />
+        </View>
+      )}
     </View>
   )
 }
 
 /** The one thing a card's row offers: what its button says, how loud it is, and what it does. */
-interface Action {
+export interface Action {
   readonly label: string
   readonly kind: 'primary' | 'quiet'
   readonly disabled: boolean
@@ -263,7 +271,7 @@ const rowOf = (card: {
  * 36-point logo, with its hit area made up to 44 by slop. The loud one is the primary fill; the
  * quiet one sits on the card's own surface with a hairline.
  */
-function CardButton({ label, kind, disabled, onPress }: Action) {
+export function CardButton({ label, kind, disabled, onPress }: Action) {
   const { colors: c } = useTheme()
   const primary = kind === 'primary'
   return (

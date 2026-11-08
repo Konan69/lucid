@@ -14,7 +14,6 @@ import { Option } from 'effect'
 import { createContext, useContext, useSyncExternalStore } from 'react'
 import type { First } from './data/first'
 import type { Front, FrontStore } from './data/front'
-import type { KeyRoute } from './data/connecting'
 
 /**
  * Where a signed-in Person can be in the app. Every place is a screen on one native stack, so
@@ -73,7 +72,6 @@ export type Routes = {
     shared: boolean
     card: string | null
   }
-  Key: KeyRoute
   Notifications: undefined
   Add: { thread: ThreadId; shared: boolean }
 }
