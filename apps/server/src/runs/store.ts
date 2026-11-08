@@ -14,7 +14,7 @@ import {
   RunId,
   RuntimeChildAnswer,
   SignalCue,
-  type ChildReport,
+  ChildReport,
   type ChildStopCause,
   type PersonId,
   type RuntimeUnavailable,
@@ -26,7 +26,9 @@ import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
+import * as Predicate from 'effect/Predicate'
 import * as Schedule from 'effect/Schedule'
+import type * as Scope from 'effect/Scope'
 import {
   Database,
   decodeStored,
@@ -219,32 +221,47 @@ const resultBody = (run: ChildRun, result: ChildRunResult) =>
 /** Retries a result delivery the Thread could not take yet: busy with another Person, or unreachable. */
 const WAKE_RETRY = Schedule.min([Schedule.exponential('2 seconds'), Schedule.spaced('1 minute')])
 
-const makeChildRuns = Effect.fn('ChildRuns.make')(function* () {
-  const database = yield* Database
-  const runtime = yield* Runtime
-  const conversation = yield* Conversation
-  const changes = yield* Changes
-  const threadStore = yield* ThreadStore
-  const scope = yield* Effect.scope
-  const withDatabase = Effect.provideService(Database, database)
+/** What a stored schema value is written as. */
+type Encoded<S extends { readonly Encoded: unknown }> = S['Encoded']
 
-  const rowOf = (id: RunId) =>
-    database
-      .run(database.select().from(childRuns).where(eq(childRuns.id, id)))
-      .pipe(Effect.map((rows) => Option.fromUndefinedOr(rows[0])))
+type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
 
-  /** A helper's change moves its Thread's activity: the Thread view and every list showing it. */
-  const announce = Effect.fn('ChildRuns.announce')(function* (threadId: ThreadId) {
-    const thread = yield* findThread(threadId).pipe(withDatabase)
+/** What every helper operation below reads and writes through, captured once by the Layer. */
+interface Deps {
+  readonly database: Database['Service']
+  readonly runtime: Runtime['Service']
+  readonly conversation: Conversation['Service']
+  readonly changes: Changes['Service']
+  readonly threadStore: ThreadStore['Service']
+  readonly scope: Scope.Scope
+}
+
+/** The failures a result delivery waits out: a Thread busy with another Person, or unreachable. */
+const retryable = (error: { readonly _tag: string }) =>
+  Predicate.isTagged(error, 'Conflict') ||
+  Predicate.isTagged(error, 'RuntimeUnavailable') ||
+  Predicate.isTagged(error, 'DatabaseUnavailable')
+
+const rowReader = (database: Database['Service']) => (id: RunId) =>
+  database
+    .run(database.select().from(childRuns).where(eq(childRuns.id, id)))
+    .pipe(Effect.map((rows) => Option.fromUndefinedOr(rows[0])))
+
+/** A helper's change moves its Thread's activity: the Thread view and every list showing it. */
+const announcer = (deps: Deps) =>
+  Effect.fn('ChildRuns.announce')(function* (threadId: ThreadId) {
+    const thread = yield* findThread(threadId).pipe(Effect.provideService(Database, deps.database))
     if (Option.isNone(thread)) return
-    yield* changes.publish(
-      audienceTopics(thread.value, yield* threadStore.participants(threadId)).map(
+    yield* deps.changes.publish(
+      audienceTopics(thread.value, yield* deps.threadStore.participants(threadId)).map(
         Topic.part('activity'),
       ),
     )
   })
 
-  const actingFor: ChildRunsService['actingFor'] = Effect.fn('ChildRuns.actingFor')(function* (id) {
+/** The Person the Run that started a helper acts for. */
+const actingReader = (database: Database['Service']): ChildRunsService['actingFor'] =>
+  Effect.fn('ChildRuns.actingFor')(function* (id) {
     const rows = yield* database.run(
       database
         .select({ personId: runs.personId })
@@ -255,20 +272,23 @@ const makeChildRuns = Effect.fn('ChildRuns.make')(function* () {
     return Option.map(Option.fromUndefinedOr(rows[0]), (row) => row.personId)
   })
 
-  /**
-   * Delivers one helper's result to its Thread as a new delivery from Vivid, acting for the
-   * Person its parent acted for. The key is the helper's, so a repeat starts nothing new. A
-   * Thread busy answering another Person refuses it; the retry keeps the key and the Person.
-   */
+/**
+ * Delivers one helper's result to its Thread as a new delivery from Vivid, acting for the
+ * Person its parent acted for. The key is the helper's, so a repeat starts nothing new. A
+ * Thread busy answering another Person refuses it; the retry keeps the key and the Person.
+ */
+const waker = (deps: Deps) => {
+  const rowOf = rowReader(deps.database)
+  const actingFor = actingReader(deps.database)
   const deliverWake = Effect.fn('ChildRuns.deliverWake')(function* (id: RunId) {
     const row = yield* rowOf(id)
     if (Option.isNone(row) || row.value.wake !== 'due') return
     const run = yield* toChildRun(row.value)
     const person = yield* actingFor(id)
     if (Option.isNone(person)) return
-    const result = resultOf(run.state, yield* runtime.child(run.threadId, id))
+    const result = resultOf(run.state, yield* deps.runtime.child(run.threadId, id))
     if (Option.isNone(result)) return
-    yield* conversation.deliver({
+    yield* deps.conversation.deliver({
       threadId: run.threadId,
       personId: person.value,
       speaker: DeliverySpeaker.cases.Vivid.make({}),
@@ -281,106 +301,115 @@ const makeChildRuns = Effect.fn('ChildRuns.make')(function* () {
       origin: StoredRunOrigin.cases.ChildResult.make({ childRunId: id }),
       idempotencyKey: `child-result:${id}`,
     })
-    const sent = yield* database.run(
-      database
+    const sent = yield* deps.database.run(
+      deps.database
         .update(childRuns)
         .set({ wake: 'sent' })
         .where(and(eq(childRuns.id, id), eq(childRuns.wake, 'due')))
         .returning({ id: childRuns.id }),
     )
     // A Thread Stop dropped this result while it was being delivered: stop what it started.
-    if (sent.length === 0) yield* runtime.stop(run.threadId)
+    if (sent.length === 0) yield* deps.runtime.stop(run.threadId)
   })
-
   /** Delivery runs beside the request that ended the helper and outlives it. */
-  const wake = (id: RunId) =>
+  return (id: RunId) =>
     deliverWake(id).pipe(
-      Effect.retry({
-        while: (error) =>
-          error._tag === 'Conflict' ||
-          error._tag === 'RuntimeUnavailable' ||
-          error._tag === 'DatabaseUnavailable',
-        schedule: WAKE_RETRY,
-      }),
+      Effect.retry({ while: retryable, schedule: WAKE_RETRY }),
       Effect.catch((error) =>
         Effect.logWarning('A helper result could not be delivered', { reason: error._tag }),
       ),
-      Effect.forkIn(scope),
+      Effect.forkIn(deps.scope),
       Effect.asVoid,
     )
+}
 
-  const spawn: ChildRunsService['spawn'] = Effect.fn('ChildRuns.spawn')(
-    function* (reporter, request) {
-      const now = yield* Clock.currentTimeMillis
-      const parentRunId = deliveryRunId(reporter.threadId, request.delivery)
-      const id = childRunId(parentRunId, request.toolCallId)
-      const state = yield* encodeState(ChildRunState.cases.Reserved.make({}))
-      const budget = yield* encodeBudget(request.budget)
-      const row = yield* database.transaction((tx) =>
-        Effect.gen(function* () {
-          // Run start and settlement lock the Thread first; numbering a helper keeps that order.
-          yield* tx
-            .select({ id: threads.id })
-            .from(threads)
-            .where(eq(threads.id, reporter.threadId))
-            .for('update')
-          const [parent] = yield* tx.select().from(runs).where(eq(runs.id, parentRunId))
-          if (
-            parent === undefined ||
-            parent.threadId !== reporter.threadId ||
-            parent.personId !== reporter.personId ||
-            parent.admittedAt === null
-          )
-            return yield* new NotFound({ message: 'The Run answering now was not found.' })
-          const [existing] = yield* tx.select().from(childRuns).where(eq(childRuns.id, id))
-          if (existing !== undefined) return existing
-          const working = yield* tx
-            .select({ kind: childRuns.kind, parentRunId: childRuns.parentRunId })
-            .from(childRuns)
-            .innerJoin(runs, eq(runs.id, childRuns.parentRunId))
-            .where(and(active, eq(runs.personId, reporter.personId)))
-          if (
-            working.filter((child) => child.parentRunId === parentRunId).length >= HELPERS_PER_RUN
-          )
-            return yield* new Conflict({
-              message: `${HELPERS_PER_RUN} helpers are already working for this message. Wait for one to finish.`,
-            })
-          // The Computer has one desktop: a second helper driving it would fight the first.
-          if (
-            request.kind === 'ComputerUse' &&
-            working.some((child) => child.kind === 'ComputerUse')
-          )
-            return yield* new Conflict({
-              message: 'A helper is already using the computer. Wait for it to finish.',
-            })
-          const [inserted] = yield* tx
-            .insert(childRuns)
-            .values({
-              id,
-              parentRunId,
-              threadId: reporter.threadId,
-              parentToolCallId: request.toolCallId,
-              number: sql`(select coalesce(max("number"), 0) + 1 from "vivid_child_runs" where "thread_id" = ${reporter.threadId})`,
-              kind: request.kind,
-              brief: request.brief,
-              budget,
-              requestedAt: now,
-              state,
-              wake: 'held',
-            })
-            .returning()
-          if (inserted === undefined)
-            return yield* new NotFound({ message: 'The helper could not be reserved.' })
-          return inserted
-        }),
-      )
-      yield* announce(reporter.threadId)
-      return yield* toChildRun(row)
-    },
+/**
+ * Reserves one helper inside the spawn's transaction: the parent must be the admitted Run of this
+ * Person in this Thread, a repeated call finds its helper, and the per-Run and Computer limits
+ * hold. The Thread row is locked first, the order Run start and settlement take.
+ */
+const reserve = Effect.fn('ChildRuns.reserve')(function* (
+  tx: Transaction,
+  reporter: Reporter,
+  request: SpawnChildRunRequest,
+  fixed: {
+    readonly id: RunId
+    readonly parentRunId: RunId
+    readonly budget: Encoded<typeof ChildBudget>
+    readonly state: Encoded<typeof ChildRunState>
+    readonly requestedAt: number
+  },
+) {
+  const { id, parentRunId } = fixed
+  yield* tx
+    .select({ id: threads.id })
+    .from(threads)
+    .where(eq(threads.id, reporter.threadId))
+    .for('update')
+  const [parent] = yield* tx.select().from(runs).where(eq(runs.id, parentRunId))
+  if (
+    parent === undefined ||
+    parent.threadId !== reporter.threadId ||
+    parent.personId !== reporter.personId ||
+    parent.admittedAt === null
   )
+    return yield* new NotFound({ message: 'The Run answering now was not found.' })
+  const [existing] = yield* tx.select().from(childRuns).where(eq(childRuns.id, id))
+  if (existing !== undefined) return existing
+  const working = yield* tx
+    .select({ kind: childRuns.kind, parentRunId: childRuns.parentRunId })
+    .from(childRuns)
+    .innerJoin(runs, eq(runs.id, childRuns.parentRunId))
+    .where(and(active, eq(runs.personId, reporter.personId)))
+  if (working.filter((child) => child.parentRunId === parentRunId).length >= HELPERS_PER_RUN)
+    return yield* new Conflict({
+      message: `${HELPERS_PER_RUN} helpers are already working for this message. Wait for one to finish.`,
+    })
+  // The Computer has one desktop: a second helper driving it would fight the first.
+  if (request.kind === 'ComputerUse' && working.some((child) => child.kind === 'ComputerUse'))
+    return yield* new Conflict({
+      message: 'A helper is already using the computer. Wait for it to finish.',
+    })
+  const [inserted] = yield* tx
+    .insert(childRuns)
+    .values({
+      ...fixed,
+      threadId: reporter.threadId,
+      parentToolCallId: request.toolCallId,
+      number: sql`(select coalesce(max("number"), 0) + 1 from "vivid_child_runs" where "thread_id" = ${reporter.threadId})`,
+      kind: request.kind,
+      brief: request.brief,
+      wake: 'held',
+    })
+    .returning()
+  if (inserted === undefined)
+    return yield* new NotFound({ message: 'The helper could not be reserved.' })
+  return inserted
+})
 
-  /** Loads a helper the reporter may report on: in its Thread, for the Person its parent acts for. */
-  const reported = Effect.fn('ChildRuns.reported')(function* (reporter: Reporter, id: RunId) {
+const spawner = (deps: Deps): ChildRunsService['spawn'] => {
+  const announce = announcer(deps)
+  return Effect.fn('ChildRuns.spawn')(function* (reporter, request) {
+    const now = yield* Clock.currentTimeMillis
+    const parentRunId = deliveryRunId(reporter.threadId, request.delivery)
+    const fixed = {
+      id: childRunId(parentRunId, request.toolCallId),
+      parentRunId,
+      budget: yield* encodeBudget(request.budget),
+      state: yield* encodeState(ChildRunState.cases.Reserved.make({})),
+      requestedAt: now,
+    }
+    const row = yield* deps.database.transaction((tx) => reserve(tx, reporter, request, fixed))
+    yield* announce(reporter.threadId)
+    return yield* toChildRun(row)
+  })
+}
+
+/** Loads a helper the reporter may report on: in its Thread, for the Person its parent acts for. */
+const reportedReader = (database: Database['Service']) => {
+  const rowOf = rowReader(database)
+  const actingFor = actingReader(database)
+  return Effect.fn('ChildRuns.reported')(function* (reporter: Reporter, id: RunId) {
     const row = yield* rowOf(id)
     const person = yield* actingFor(id)
     if (
@@ -392,74 +421,66 @@ const makeChildRuns = Effect.fn('ChildRuns.make')(function* () {
       return yield* new NotFound({ message: 'Helper not found.' })
     return row.value
   })
+}
 
-  /** One conditional write: only the report that moves the helper on acts, so repeats are no-ops. */
-  const settle: ChildRunsService['settle'] = Effect.fn('ChildRuns.settle')(
-    function* (reporter, id, report) {
-      const row = yield* reported(reporter, id)
-      const now = yield* Clock.currentTimeMillis
-      const state = yield* decodeState(row.state)
-      if (report._tag === 'Started') {
-        if (!ChildRunState.guards.Reserved(state)) return yield* toChildRun(row)
-        yield* database.run(
-          database
-            .update(childRuns)
-            .set({
-              state: yield* encodeState(ChildRunState.cases.Working.make({ startedAt: now })),
-              receipt: yield* encodeReceipt(report.receipt),
-            })
-            .where(and(eq(childRuns.id, id), sql`${childRuns.state}->>'_tag' = 'Reserved'`)),
-        )
-      } else {
-        if (!ChildRunState.isAnyOf(ACTIVE)(state)) return yield* toChildRun(row)
-        const ended = endingState(state, report.ending, now)
-        const changed = yield* database.run(
-          database
-            .update(childRuns)
-            .set({
-              state: yield* encodeState(ended),
-              wake: wakeAfter(row.wake, ended, report.wake),
-            })
-            .where(and(eq(childRuns.id, id), active))
-            .returning({ wake: childRuns.wake }),
-        )
-        if (changed[0] !== undefined && changed[0].wake === 'due') yield* wake(id)
-      }
-      yield* announce(row.threadId)
-      return yield* toChildRun(Option.getOrElse(yield* rowOf(id), () => row))
-    },
-  )
-
-  const inThread: ChildRunsService['inThread'] = Effect.fn('ChildRuns.inThread')(
-    function* (threadId) {
-      const rows = yield* database.run(
-        database
-          .select()
-          .from(childRuns)
-          .where(eq(childRuns.threadId, threadId))
-          .orderBy(asc(childRuns.number)),
-      )
-      return yield* Effect.forEach(rows, toChildRun)
-    },
-  )
-
-  const find: ChildRunsService['find'] = Effect.fn('ChildRuns.find')(function* (id) {
-    const row = yield* rowOf(id)
-    if (Option.isNone(row)) return Option.none()
-    return Option.some(yield* toChildRun(row.value))
+/** One conditional write: only the report that moves the helper on acts, so repeats are no-ops. */
+const settler = (
+  deps: Deps,
+  wake: (id: RunId) => Effect.Effect<void>,
+): ChildRunsService['settle'] => {
+  const { database } = deps
+  const rowOf = rowReader(database)
+  const reported = reportedReader(database)
+  const announce = announcer(deps)
+  const started = Effect.fn('ChildRuns.started')(function* (
+    row: Row,
+    receipt: ChildReceipt,
+    now: number,
+  ) {
+    if (!ChildRunState.guards.Reserved(yield* decodeState(row.state))) return
+    yield* database.run(
+      database
+        .update(childRuns)
+        .set({
+          state: yield* encodeState(ChildRunState.cases.Working.make({ startedAt: now })),
+          receipt: yield* encodeReceipt(receipt),
+        })
+        .where(and(eq(childRuns.id, row.id), sql`${childRuns.state}->>'_tag' = 'Reserved'`)),
+    )
   })
-
-  const detail: ChildRunsService['detail'] = Effect.fn('ChildRuns.detail')(function* (run) {
-    if (ChildRunState.isAnyOf(ACTIVE)(run.state)) return ChildRunDetail.cases.Active.make({ run })
-    const result = resultOf(run.state, yield* runtime.child(run.threadId, run.id))
-    return Option.match(result, {
-      onNone: () => ChildRunDetail.cases.Active.make({ run }),
-      onSome: (ended) => ChildRunDetail.cases.Ended.make({ run, result: ended }),
+  const ended = Effect.fn('ChildRuns.ended')(function* (
+    row: Row,
+    ending: ChildEnding,
+    parentWaiting: boolean,
+    now: number,
+  ) {
+    const state = yield* decodeState(row.state)
+    if (!ChildRunState.isAnyOf(ACTIVE)(state)) return
+    const next = endingState(state, ending, now)
+    const changed = yield* database.run(
+      database
+        .update(childRuns)
+        .set({ state: yield* encodeState(next), wake: wakeAfter(row.wake, next, parentWaiting) })
+        .where(and(eq(childRuns.id, row.id), active))
+        .returning({ wake: childRuns.wake }),
+    )
+    if (changed[0] !== undefined && changed[0].wake === 'due') yield* wake(row.id)
+  })
+  return Effect.fn('ChildRuns.settle')(function* (reporter, id, report) {
+    const row = yield* reported(reporter, id)
+    const now = yield* Clock.currentTimeMillis
+    yield* ChildReport.match(report, {
+      Started: ({ receipt }) => started(row, receipt, now),
+      Ended: ({ ending, wake: parentWaiting }) => ended(row, ending, parentWaiting, now),
     })
+    yield* announce(row.threadId)
+    return yield* toChildRun(Option.getOrElse(yield* rowOf(id), () => row))
   })
+}
 
-  /** Marks the helpers Stopping, by whom, unless they already ended. Answers the ones it marked. */
-  const markStopping = Effect.fn('ChildRuns.markStopping')(function* (
+/** Marks the helpers Stopping, by whom, unless they already ended. Answers the ones it marked. */
+const stoppingMarker = (database: Database['Service']) =>
+  Effect.fn('ChildRuns.markStopping')(function* (
     where: SQL,
     by: ChildStopCause,
     suppress: boolean,
@@ -484,24 +505,34 @@ const makeChildRuns = Effect.fn('ChildRuns.make')(function* () {
     return marked.map((row) => row.id)
   })
 
-  /** After the runtime said a helper's work ended, the Stopping record becomes Stopped. */
-  const markStopped = Effect.fn('ChildRuns.markStopped')(function* (id: RunId) {
+/** After the runtime said a helper's work ended, the Stopping record becomes Stopped. */
+const stoppedMarker = (database: Database['Service'], wake: (id: RunId) => Effect.Effect<void>) => {
+  const rowOf = rowReader(database)
+  return Effect.fn('ChildRuns.markStopped')(function* (id: RunId) {
     const row = yield* rowOf(id)
     if (Option.isNone(row)) return
     const state = yield* decodeState(row.value.state)
     if (!ChildRunState.guards.Stopping(state)) return
     const now = yield* Clock.currentTimeMillis
-    const ended = ChildRunState.cases.Stopped.make({ finishedAt: now, by: state.by })
+    const next = ChildRunState.cases.Stopped.make({ finishedAt: now, by: state.by })
     const changed = yield* database.run(
       database
         .update(childRuns)
-        .set({ state: yield* encodeState(ended), wake: wakeAfter(row.value.wake, ended, true) })
+        .set({ state: yield* encodeState(next), wake: wakeAfter(row.value.wake, next, true) })
         .where(and(eq(childRuns.id, id), sql`${childRuns.state}->>'_tag' = 'Stopping'`))
         .returning({ wake: childRuns.wake }),
     )
     if (changed[0] !== undefined && changed[0].wake === 'due') yield* wake(id)
   })
+}
 
+/** Stopping one helper, and every helper of a Thread for its Thread Stop. */
+const stoppers = (deps: Deps, wake: (id: RunId) => Effect.Effect<void>) => {
+  const { database, runtime } = deps
+  const rowOf = rowReader(database)
+  const announce = announcer(deps)
+  const markStopping = stoppingMarker(database)
+  const markStopped = stoppedMarker(database, wake)
   const cancel: ChildRunsService['cancel'] = Effect.fn('ChildRuns.cancel')(function* (run, by) {
     // The parent stopping its own helper already knows; only a Person's stop is news to it.
     yield* markStopping(eq(childRuns.id, run.id), by, false)
@@ -515,7 +546,6 @@ const makeChildRuns = Effect.fn('ChildRuns.make')(function* () {
     const after = yield* rowOf(run.id)
     return yield* toChildRun(Option.getOrElse(after, () => row.value))
   })
-
   const stopThread: ChildRunsService['stopThread'] = Effect.fn('ChildRuns.stopThread')(
     function* (threadId) {
       const where = eq(childRuns.threadId, threadId)
@@ -535,22 +565,62 @@ const makeChildRuns = Effect.fn('ChildRuns.make')(function* () {
       if (stopping.length > 0) yield* announce(threadId)
     },
   )
+  return { cancel, stopThread }
+}
 
+/** Reading helpers: a Thread's, one by id, and one with its result once it ended. */
+const readers = (deps: Deps) => {
+  const { database, runtime } = deps
+  const rowOf = rowReader(database)
+  const inThread: ChildRunsService['inThread'] = Effect.fn('ChildRuns.inThread')(
+    function* (threadId) {
+      const rows = yield* database.run(
+        database
+          .select()
+          .from(childRuns)
+          .where(eq(childRuns.threadId, threadId))
+          .orderBy(asc(childRuns.number)),
+      )
+      return yield* Effect.forEach(rows, toChildRun)
+    },
+  )
+  const find: ChildRunsService['find'] = Effect.fn('ChildRuns.find')(function* (id) {
+    const row = yield* rowOf(id)
+    if (Option.isNone(row)) return Option.none()
+    return Option.some(yield* toChildRun(row.value))
+  })
+  const detail: ChildRunsService['detail'] = Effect.fn('ChildRuns.detail')(function* (run) {
+    if (ChildRunState.isAnyOf(ACTIVE)(run.state)) return ChildRunDetail.cases.Active.make({ run })
+    const result = resultOf(run.state, yield* runtime.child(run.threadId, run.id))
+    return Option.match(result, {
+      onNone: () => ChildRunDetail.cases.Active.make({ run }),
+      onSome: (ended) => ChildRunDetail.cases.Ended.make({ run, result: ended }),
+    })
+  })
+  return { inThread, find, detail }
+}
+
+const makeChildRuns = Effect.fn('ChildRuns.make')(function* () {
+  const deps: Deps = {
+    database: yield* Database,
+    runtime: yield* Runtime,
+    conversation: yield* Conversation,
+    changes: yield* Changes,
+    threadStore: yield* ThreadStore,
+    scope: yield* Effect.scope,
+  }
+  const wake = waker(deps)
   // A server that restarted owes the results it had not delivered yet.
-  const owed = yield* database.run(
-    database.select({ id: childRuns.id }).from(childRuns).where(eq(childRuns.wake, 'due')),
+  const owed = yield* deps.database.run(
+    deps.database.select({ id: childRuns.id }).from(childRuns).where(eq(childRuns.wake, 'due')),
   )
   yield* Effect.forEach(owed, ({ id }) => wake(id), { discard: true })
-
   return ChildRuns.of({
-    spawn,
-    settle,
-    inThread,
-    detail,
-    find,
-    actingFor,
-    cancel,
-    stopThread,
+    spawn: spawner(deps),
+    settle: settler(deps, wake),
+    actingFor: actingReader(deps.database),
+    ...readers(deps),
+    ...stoppers(deps, wake),
   })
 })
 

@@ -389,13 +389,13 @@ export const fixture = Effect.fn('TrustTest.fixture')(function* () {
     personalId,
     companyId,
     otherId,
-    vivid: { ...personal, by: 'vivid', threadId: Option.some(personalId), helper: Option.none() } satisfies Actor,
+    vivid: { ...personal, by: 'vivid', threadId: Option.some(personalId) } satisfies Actor,
     /** A write through Ada's own Integration, which exists for as long as this case does. */
     connectionAction: actionThrough(connectionId),
     /** What that action was prepared against: the Integration as it is signed in now. */
     bound: ApprovalBinding.make({ connectionGeneration: 0, preconditions: [] }),
     connectionId,
-    companyVivid: { ...member, by: 'vivid', threadId: Option.some(companyId), helper: Option.none() } satisfies Actor,
+    companyVivid: { ...member, by: 'vivid', threadId: Option.some(companyId) } satisfies Actor,
     summary: summaryOf(first),
   }
 })

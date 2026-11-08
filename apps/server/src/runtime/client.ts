@@ -220,6 +220,42 @@ const makeAdmit = ({ http, request }: Transport): RuntimeService['admit'] =>
       ),
   )
 
+/**
+ * Reading and stopping one helper. A helper lives in its Thread's conversation store, under the
+ * Thread creator's address, so both calls go to that address.
+ */
+const makeChildCalls = (input: {
+  readonly http: Transport['http']
+  readonly request: Transport['request']
+  readonly addressOf: (threadId: ThreadId) => Effect.Effect<Address, RuntimeUnavailable>
+}) => {
+  const { http, request, addressOf } = input
+  const child: RuntimeService['child'] = Effect.fn('Runtime.child')(function* (threadId, runId) {
+    const address = yield* addressOf(threadId)
+    const suffix = `/children/${encodeURIComponent(runId)}`
+    const response = yield* requestRuntime(http, request(address, suffix, 'GET'), address).pipe(
+      Effect.mapError(unavailable),
+    )
+    return yield* HttpClientResponse.schemaBodyJson(RuntimeChildAnswer)(response).pipe(
+      Effect.mapError(unavailable),
+    )
+  }, Effect.scoped)
+  const stopChild: RuntimeService['stopChild'] = Effect.fn('Runtime.stopChild')(function* (
+    threadId,
+    runId,
+  ) {
+    const address = yield* addressOf(threadId)
+    const suffix = `/children/${encodeURIComponent(runId)}/abort`
+    const response = yield* requestRuntime(http, request(address, suffix, 'POST'), address).pipe(
+      Effect.mapError(unavailable),
+    )
+    return (yield* HttpClientResponse.schemaBodyJson(RuntimeStopped)(response).pipe(
+      Effect.mapError(unavailable),
+    )).aborted
+  }, Effect.scoped)
+  return { child, stopChild }
+}
+
 /** Capture transport once. Product ownership supplies every address; the runtime owns settlement. */
 const makeRuntime = Effect.fn('Runtime.make')(function* () {
   const config = yield* ServerConfig
@@ -294,30 +330,6 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
       Effect.mapError(unavailable),
     )).aborted
   }, Effect.scoped)
-  /** A helper lives in its Thread's conversation store, under the Thread creator's address. */
-  const child: RuntimeService['child'] = Effect.fn('Runtime.child')(function* (threadId, runId) {
-    const address = yield* addressOf(threadId)
-    const suffix = `/children/${encodeURIComponent(runId)}`
-    const response = yield* requestRuntime(http, request(address, suffix, 'GET'), address).pipe(
-      Effect.mapError(unavailable),
-    )
-    return yield* HttpClientResponse.schemaBodyJson(RuntimeChildAnswer)(response).pipe(
-      Effect.mapError(unavailable),
-    )
-  }, Effect.scoped)
-  const stopChild: RuntimeService['stopChild'] = Effect.fn('Runtime.stopChild')(function* (
-    threadId,
-    runId,
-  ) {
-    const address = yield* addressOf(threadId)
-    const suffix = `/children/${encodeURIComponent(runId)}/abort`
-    const response = yield* requestRuntime(http, request(address, suffix, 'POST'), address).pipe(
-      Effect.mapError(unavailable),
-    )
-    return (yield* HttpClientResponse.schemaBodyJson(RuntimeStopped)(response).pipe(
-      Effect.mapError(unavailable),
-    )).aborted
-  }, Effect.scoped)
   /** Finite history and attachment reads retain their caller's scope through body consumption. */
   const read: RuntimeService['read'] = Effect.fn('Runtime.read')(function* (input) {
     const address = yield* addressOf(input.threadId)
@@ -349,8 +361,7 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
     admit: makeAdmit({ http, request }),
     settled,
     stop,
-    child,
-    stopChild,
+    ...makeChildCalls({ http, request, addressOf }),
     read,
     watch,
   })

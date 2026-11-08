@@ -68,15 +68,13 @@ const fixture = Effect.fn('Helpers.test.fixture')(function* () {
       .values({ id: personId, name: 'Helper test', email: `${personId}@example.test` }),
   )
   yield* database.run(
-    database
-      .insert(threads)
-      .values({
-        id: threadId,
-        personId,
-        title: 'Helper test',
-        titleSource: 'Person',
-        updatedAt: 0,
-      }),
+    database.insert(threads).values({
+      id: threadId,
+      personId,
+      title: 'Helper test',
+      titleSource: 'Person',
+      updatedAt: 0,
+    }),
   )
   const delivery = 'message-helper-test'
   const parentRunId = deliveryRunId(threadId, delivery)
