@@ -30,7 +30,7 @@ export async function monitoring(state, _thread, directory) {
       body: JSON.stringify({ _tag: 'Request', id: '1', tag: 'Me', payload: null, headers: [], traceId, spanId, sampled: true }) + '\n',
     })
     const body = await response.text()
-    failed = /DatabaseUnavailable|DatabaseFailure/.test(body)
+    failed = /DatabaseUnavailable|DatabaseFailure|Invalid session/.test(body)
     await json(directory + '/failure.json', { failed, status: response.status, body, traceId, spanId, begin })
   } catch (error) {
     failed = false

@@ -62,10 +62,10 @@ export const workspaceIn = Effect.fn('Auth.workspaceIn')(function* (
 /** Resolves a Better Auth session, cookie or bearer, into the Person and where they are working. */
 export const authenticate = Effect.fn('Auth.authenticate')(function* (headers: Headers) {
   const auth = yield* Auth
-  const session = yield* Effect.tryPromise({
-    try: () => auth.api.getSession({ headers }),
-    catch: () => new Unauthenticated({ message: 'Invalid session' }),
-  })
+  const session = yield* Effect.tryPromise(() => auth.api.getSession({ headers })).pipe(
+    Effect.withErrorReporting,
+    Effect.mapError(() => new Unauthenticated({ message: 'Invalid session' })),
+  )
   if (session === null) return yield* new Unauthenticated({ message: 'Authentication required' })
   const person = yield* findPerson(session.user.id)
   if (Option.isNone(person))
