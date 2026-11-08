@@ -10,6 +10,7 @@ import { changedLine } from '@vivid/state'
 import { View } from 'react-native'
 import { Card, cardOf, type ToolPart } from '../../data/message'
 import { Label } from '../../ui/ui'
+import { ArtifactCard } from '../artifact/Card'
 import { IntegrationCard } from '../integration/Card'
 import { approvalOf, handoffOf, requestOf } from './asked'
 import { Handed } from './Handoff'
@@ -45,7 +46,10 @@ export function Cards({
       onNone: () => null,
       onSome: (card) => (
         // A card stands a little apart from the words round it. What Vivid asks is words itself.
-        <View key={tool.toolCallId} style={Card.$is('Connection')(card) ? CARD_ROOM : undefined}>
+        <View
+          key={tool.toolCallId}
+          style={Card.$is('Connection')(card) || Card.$is('Artifact')(card) ? CARD_ROOM : undefined}
+        >
           <Drawn
             call={tool.toolCallId}
             card={card}
@@ -101,6 +105,7 @@ function Drawn({
         onNone: () => null,
         onSome: (handoff) => <Handed handoff={handoff} me={me} />,
       }),
+    Artifact: ({ artifact }) => <ArtifactCard delivered={artifact} />,
     Connection: ({ request, authorization, awaited }) => (
       <IntegrationCard
         id={call}
