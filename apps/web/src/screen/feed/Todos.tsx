@@ -1,5 +1,5 @@
 import type { ThreadId } from '@vivid/contracts'
-import { thisReader, todos } from '@vivid/state'
+import { todos } from '@vivid/state'
 import { Check, Ellipsis } from 'lucide-react'
 import { Option } from 'effect'
 import { closeTodo, useTodoStandings } from '../../data/todos'
@@ -20,8 +20,6 @@ import {
   DropdownMenuTrigger,
 } from '../../ui/dropdownmenu'
 
-const words = todos.makeTodoWords(thisReader())
-
 const done = todos.Closing.cases.Complete.make({})
 const drop = todos.Closing.cases.Drop.make({})
 
@@ -37,14 +35,19 @@ const drop = todos.Closing.cases.Drop.make({})
  */
 export function Todos({
   open,
+  zone,
   now,
   onOpen,
 }: {
   open: ReadonlyArray<todos.Open>
+  /** The Person's own zone: a due date is a day on their calendar (`todos.todoWordsIn`). */
+  zone: Option.Option<string>
   now: number
   onOpen: (thread: ThreadId) => void
 }) {
   const standings = useTodoStandings()
+  if (Option.isNone(zone)) return null
+  const words = todos.todoWordsIn(zone.value)
   return (
     // The rows' fill runs past the page's text edge, so their words line up with the head's.
     <section aria-labelledby="todos-heading" className="-mx-4">
@@ -60,6 +63,7 @@ export function Todos({
               Option.fromUndefinedOr(standings.get(todo.id)),
               (): todos.Standing => 'shown',
             )}
+            words={words}
             now={now}
             onOpen={() => onOpen(todo.threadId)}
           />
@@ -77,11 +81,13 @@ export function Todos({
 function Row({
   todo,
   standing,
+  words,
   now,
   onOpen,
 }: {
   todo: todos.Open
   standing: todos.Standing
+  words: todos.TodoWords
   now: number
   onOpen: () => void
 }) {

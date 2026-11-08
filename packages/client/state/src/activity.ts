@@ -588,6 +588,15 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.what)],
   },
+  // The Dreamer's report to Vivid; it runs in a conversation no screen shows.
+  report_finding: {
+    said: {
+      running: 'Noting what it found',
+      done: 'Noted what it found',
+      failed: 'Could not note what it found',
+    },
+    detail: nothing,
+  },
   start_shell: {
     said: {
       running: 'Starting a long job on its computer',

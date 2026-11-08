@@ -10,6 +10,7 @@ import {
   RunId,
   ThreadId,
 } from './identity.js'
+import { DreamPass } from './dreams.js'
 import { HandoffRequest, InputRequest } from './inputs.js'
 import { ChildRun, RunFailure } from './runs.js'
 import { WatchId, WatchInstruction, WatchName } from './watches.js'
@@ -222,6 +223,8 @@ export const RunOrigin = Schema.TaggedUnion({
   WatchUnrecorded: { person: PersonSummary, watchName: Schema.String },
   /** The Person pressed Forget in Settings; Vivid plans the forget and carries it out. */
   Forget: { person: PersonSummary },
+  /** The Dreamer found something useful and new, or a blocker, overnight or after a conversation. */
+  Dream: { person: PersonSummary, pass: DreamPass },
   /** A helper this Thread's Vivid started finished, and its result came back (`runs.ts`). */
   ChildResult: { person: PersonSummary },
 })
@@ -367,6 +370,8 @@ export const SignalType = Schema.Literals([
   'handoff',
   // A Settings Forget press, delivered into a background Thread for Vivid to plan and carry out.
   'forget',
+  // What the Dreamer found, delivered into its own background Thread (`dreams.ts`).
+  'dream',
   // A helper's result returning to the Thread that started it (`runs.ts`).
   'child-result',
 ] as const)
@@ -399,6 +404,7 @@ export type ApprovalOutcome = typeof ApprovalOutcome.Type
  * - `CarryOn`: a card telling Vivid to go on (`CarryOnRequest`); no client draws it.
  * - `Handoff`: the Person finished a step Vivid handed them on its Computer, named by its handoff.
  * - `Forget`: a Settings Forget press, with the instruction to plan and carry it out in `body`.
+ * - `Dream`: what the Dreamer found, as it wrote it, in `body`; `pass` says when it ran.
  * - `ChildResult`: a helper this Thread's Vivid started ended; `helper` is its number in the
  *   Thread, the only name the model has for one, and `body` says how it ended (`runs.ts`).
  */
@@ -418,6 +424,7 @@ export const SignalCue = Schema.TaggedUnion({
   CarryOn: { body: Schema.String },
   Handoff: { body: Schema.String, handoff: HandoffId },
   Forget: { body: Schema.String },
+  Dream: { body: Schema.String, pass: DreamPass },
   ChildResult: {
     body: Schema.String,
     helper: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0)),
@@ -437,6 +444,7 @@ export const signalTypes = {
   CarryOn: 'carry-on',
   Handoff: 'handoff',
   Forget: 'forget',
+  Dream: 'dream',
   ChildResult: 'child-result',
 } as const satisfies Record<SignalCue['_tag'], SignalType>
 

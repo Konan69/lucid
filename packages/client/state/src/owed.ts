@@ -3,7 +3,7 @@ import { AtomMachine } from '@typeonce/effect-machine/reactivity'
 import { Owed, OwedId, OwedState } from '@vivid/contracts'
 import { Context, Effect, type Layer, Option, Schema } from 'effect'
 import { Atom } from 'effect/reactivity'
-import { dayOf, type Reader } from './when.js'
+import { dayOf, thisReader, type Reader } from './when.js'
 
 /**
  * What the Person is waiting on, as every surface draws it on the Feed: the records Vivid keeps
@@ -176,21 +176,32 @@ export const makeClose = (services: Layer.Layer<Closer>) =>
 export type CloseAtoms = ReturnType<typeof makeClose>
 
 /**
- * The words a row says about one record, said against the moment the page was opened and the
- * reader's own calendar (`when.ts`), so "tomorrow" means the reader's tomorrow.
+ * The words a row says about one record, said against the moment the page was opened.
+ *
+ * A deadline is a day in the Person's own zone: `track_owed` resolves "Friday" with the zone in
+ * the Person's settings, so the row reads it on that calendar (`person`), never the device's. Read
+ * on the device's, a Friday 23:00 deadline in Lagos said "Saturday" in a browser three hours
+ * ahead. Where the device is somewhere the deadline falls on another day (`here`), the quiet line
+ * also says when that is where the Person is now, so both zones are in front of them.
  */
-export function makeOwedWords(reader: Reader) {
-  const weekday = new Intl.DateTimeFormat(reader.locale, {
-    timeZone: reader.timeZone,
+export function makeOwedWords(person: Reader, here: Reader) {
+  const weekday = new Intl.DateTimeFormat(person.locale, {
+    timeZone: person.timeZone,
     weekday: 'long',
   })
-  const dated = new Intl.DateTimeFormat(reader.locale, {
-    timeZone: reader.timeZone,
+  const dated = new Intl.DateTimeFormat(person.locale, {
+    timeZone: person.timeZone,
     day: 'numeric',
     month: 'short',
   })
+  const local = new Intl.DateTimeFormat(here.locale, {
+    timeZone: here.timeZone,
+    weekday: 'long',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
   /** Whole calendar days from `now` to `moment`: negative in the past. */
-  const daysTo = (moment: number, now: number) => dayOf(moment, reader).day - dayOf(now, reader).day
+  const daysTo = (moment: number, now: number) => dayOf(moment, person).day - dayOf(now, person).day
   const plural = (count: number, one: string) => (count === 1 ? `1 ${one}` : `${count} ${one}s`)
 
   /** A day as a row says it: today, tomorrow, a weekday this week, otherwise a date. */
@@ -248,10 +259,34 @@ export function makeOwedWords(reader: Reader) {
     const next = Option.isSome(stuck)
       ? Option.none<string>()
       : Option.some(sentence(record.nextStep))
-    return [chased, stuck, next].flatMap((part) => Option.toArray(part)).join(' ')
+    const elsewhere = Option.map(
+      Option.filter(
+        Option.fromNullOr(record.due),
+        (due) => dayOf(due, person).day !== dayOf(due, here).day,
+      ),
+      (due) => `That is ${local.format(due)} where you are now.`,
+    )
+    return [chased, stuck, next, elsewhere].flatMap((part) => Option.toArray(part)).join(' ')
   }
 
   return { timing, detail }
+}
+export type OwedWords = ReturnType<typeof makeOwedWords>
+
+/** One sayer per Person zone: building `Intl` formatters is the expensive part of a row. */
+const sayers = new Map<string, OwedWords>()
+
+/**
+ * The words for a Person whose settings name `timeZone`, read on this device. Both surfaces take
+ * the zone from the Person's live settings (`Settings.timezone`), the one `track_owed` used.
+ */
+export const owedWordsIn = (timeZone: string): OwedWords => {
+  const here = thisReader()
+  const known = sayers.get(timeZone)
+  if (known !== undefined) return known
+  const made = makeOwedWords({ locale: here.locale, timeZone }, here)
+  sayers.set(timeZone, made)
+  return made
 }
 
 /** A step written without a full stop still reads as a sentence beside the others. */

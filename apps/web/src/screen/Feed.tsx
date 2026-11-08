@@ -28,7 +28,6 @@ import { Computer } from './thread/Device'
 import { Composer } from './thread/Composer'
 
 const when = makeWhen(thisReader())
-const said = owed.makeOwedWords(thisReader())
 
 /** Today as the head of the page says it: "Tuesday 20 October". */
 const today = new Intl.DateTimeFormat(thisReader().locale, {
@@ -69,6 +68,7 @@ export function Feed({ me, onOpen }: { me: MeResponse; onOpen: (thread: ThreadId
         onNone: () => [],
         onSome: (list) => owed.waitingOf(list.owed),
       })}
+      zone={Option.map(useLiveValue(live.settings), (settings) => settings.timezone)}
       toDo={Option.match(todoList, {
         onNone: () => [],
         onSome: (list) => todos.openOf(list.todos),
@@ -85,6 +85,7 @@ export function FeedView({
   items,
   approvals,
   waiting,
+  zone,
   toDo,
   devices,
   onOpen,
@@ -94,6 +95,8 @@ export function FeedView({
   /** Every Approval waiting on this Person (`WatchInbox`), so a card can be decided where it is. */
   approvals: ReadonlyArray<Approval>
   waiting: ReadonlyArray<owed.Waiting>
+  /** The Person's own zone: deadlines and due dates are days on their calendar, so rows wait for it. */
+  zone: Option.Option<string>
   toDo: ReadonlyArray<todos.Open>
   devices: Option.Option<DeviceList>
   onOpen: (thread: ThreadId) => void
@@ -115,7 +118,7 @@ export function FeedView({
     view.waiting.filter((item) => !feed.folds(item, Option.fromUndefinedOr(presses.get(item.card))))
       .length
   const standing = feed.standingOf(needs)
-  const head = owed.headOf(open, said.timing, now)
+  const head = Option.flatMap(zone, (tz) => owed.headOf(open, owed.owedWordsIn(tz).timing, now))
   const place = draftPlace(me.person.id, {
     workspace: workspaceKey(me.workspace),
     thread: Option.none(),
@@ -147,8 +150,8 @@ export function FeedView({
         </div>
 
         <div className="mt-8 flex min-w-0 flex-col gap-8 lg:col-span-3">
-          {waiting.length > 0 && <Owed waiting={waiting} now={now} onOpen={onOpen} />}
-          {toDo.length > 0 && <Todos open={toDo} now={now} onOpen={onOpen} />}
+          <Owed waiting={waiting} zone={zone} now={now} onOpen={onOpen} />
+          {toDo.length > 0 && <Todos open={toDo} zone={zone} now={now} onOpen={onOpen} />}
           {(Option.isSome(view.computer) || view.waiting.length > 0) && (
             <section aria-labelledby="needs-heading" className="flex flex-col">
               <h2 id="needs-heading" className="px-1 pb-2 text-label font-title text-ink-3">
