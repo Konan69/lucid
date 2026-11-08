@@ -1,12 +1,14 @@
 import { Machine } from '@typeonce/effect-machine'
 import { AtomMachine } from '@typeonce/effect-machine/reactivity'
 import {
+  ApprovalState,
   FeedCardId,
   FeedItem,
+  type Approval,
   ThreadId,
   FeedResponse as FeedResponseSchema,
 } from '@vivid/contracts'
-import { Context, Data, Effect, type Layer, Option, Schema } from 'effect'
+import { Array as Arr, Context, Data, Effect, type Layer, Option, Schema } from 'effect'
 import { Atom } from 'effect/reactivity'
 import { deviceWaiting, type DeviceList, type DeviceWaiting } from './devices.js'
 import type { FormState } from './display.js'
@@ -191,6 +193,24 @@ export const askedWords = (item: Waiting): string =>
   item.asking.includes('approval')
     ? 'Vivid wants to do something and needs your yes. Open it to decide.'
     : 'Vivid has a question for you. Open it to answer.'
+
+/**
+ * The Approval a waiting card stopped on, to decide on the card (#129): the oldest one still
+ * pending in its Thread among `inbox`, the Approvals waiting on this Person (`WatchInbox`), as
+ * the Thread's own banner would put it up first (`approvalUp`). One asked of somebody else is not
+ * in their inbox, so that card keeps its words (`askedWords`).
+ */
+export const approvalOf = (
+  item: Waiting,
+  inbox: ReadonlyArray<Approval>,
+): Option.Option<Approval> =>
+  item.asking.includes('approval')
+    ? Arr.findFirst(
+        inbox,
+        (approval) =>
+          approval.threadId === item.thread && ApprovalState.guards.Pending(approval.state),
+      )
+    : Option.none()
 
 /** The delivery authority a surface supplies; card identity stays explicit in every call. */
 const Delivery = Schema.Struct({ card: FeedCardId, thread: ThreadId, pressed: Pressed })

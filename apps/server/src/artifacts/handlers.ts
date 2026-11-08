@@ -12,7 +12,13 @@ import {
   type WriteDocumentRequest,
 } from '@vivid/contracts'
 import { Effect, Stream } from 'effect'
-import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/access.ts'
+import {
+  requireActor,
+  requirePerson,
+  requireRun,
+  requireVivid,
+  type Actor,
+} from '../auth/access.ts'
 import { Topic } from '../live/changes.ts'
 import { live } from '../live/query.ts'
 import { find } from './history.ts'
@@ -98,7 +104,7 @@ export const artifactHandlers = {
     return yield* (yield* ArtifactStore).write(auth.person.id, auth.threadId, request)
   }),
   ReadDocument: Effect.fn('Rpc.ReadDocument')(function* (request: typeof ReadDocumentRequest.Type) {
-    const auth = yield* requireVivid()
+    const auth = yield* requireRun()
     return yield* (yield* ArtifactStore).read(auth.person.id, auth.threadId, request)
   }),
 }

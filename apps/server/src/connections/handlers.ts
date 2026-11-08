@@ -2,6 +2,8 @@ import { Effect } from 'effect'
 import type {
   AddIntegrationRequest,
   MakeIntegrationRequest,
+  ReadMadeIntegrationRequest,
+  ReviseMadeIntegrationRequest,
   FindIntegrationsRequest,
   TestIntegrationRequest,
   BeginConnectionRequest,
@@ -16,7 +18,13 @@ import type {
   UseDisplayToolRequest,
   UseToolRequest,
 } from '@vivid/contracts'
-import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/access.ts'
+import {
+  requireActor,
+  requirePerson,
+  requireVivid,
+  type Actor,
+  requireRun,
+} from '../auth/access.ts'
 import { live } from '../live/query.ts'
 import { ConnectionStore } from './store.ts'
 import {
@@ -36,6 +44,19 @@ const load = Effect.fn('Connections.load')(function* (actor: Actor) {
 
 /** Authentication belongs at transport ingress; account rules stay in the owned domain. */
 export const connectionHandlers = {
+  /** Runtime source tools use the same acting Person authority as source creation. */
+  ReadMadeIntegration: Effect.fn('Rpc.ReadMadeIntegration')(function* (
+    request: ReadMadeIntegrationRequest,
+  ) {
+    yield* requireVivid()
+    return yield* (yield* ConnectionStore).readMade(yield* requireActor(), request.account)
+  }),
+  ReviseMadeIntegration: Effect.fn('Rpc.ReviseMadeIntegration')(function* (
+    request: ReviseMadeIntegrationRequest,
+  ) {
+    yield* requireVivid()
+    return yield* (yield* ConnectionStore).reviseMade(yield* requireActor(), request)
+  }),
   /** Discovery uses the same live Person/Company scope as every Connection read. */
   FindIntegrations: Effect.fn('Rpc.FindIntegrations')(function* (request: FindIntegrationsRequest) {
     return yield* findIntegrations(yield* requireActor(), request)
@@ -125,7 +146,7 @@ export const connectionHandlers = {
   }),
   /** Only a Run proposes tool actions to the gate. */
   UseTool: Effect.fn('Rpc.UseTool')(function* (request: UseToolRequest) {
-    yield* requireVivid()
+    yield* requireRun()
     return yield* useTool(yield* requireActor(), request)
   }),
   /** A display's Query or Mutation, for the Person looking at it; never Vivid's own call. */

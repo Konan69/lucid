@@ -1,4 +1,11 @@
-import { ComputerState, type Computer as ComputerRecord } from '@vivid/contracts'
+import { useAtomRefresh, useAtomValue } from '@effect/atom-react'
+import {
+  ComputerState,
+  type Computer as ComputerRecord,
+  type ComputerHealth,
+  type ComputerRecoveryRecord,
+} from '@vivid/contracts'
+import { health, liveStateOf } from '@vivid/state'
 import { VividRpcClient } from '@vivid/client-runtime'
 import { Effect, Option, Result, Schema } from 'effect'
 import { useState, type ReactNode } from 'react'
@@ -13,6 +20,9 @@ import { Screen } from '../ui/Screen'
 import { drawsScreen, Live } from './computer/Live'
 import { Button, Dot, EDGE, Face, Label, Notice, radius, styles } from '../ui/ui'
 import { start } from '../data/app'
+import { when } from '../data/when'
+import { useNow } from '../data/foreground'
+import { Section } from '../ui/List'
 
 /**
  * Turning the computer on. The screen shows it starting at once, and puts it back with the reason
@@ -120,6 +130,7 @@ export function Computer() {
         contentContainerStyle={[styles.page, styles.column, { flexGrow: 1, paddingTop: 12 }]}
       >
         {page(state)}
+        <Health />
       </ScrollView>
     </Screen>
   )
@@ -339,6 +350,166 @@ function Machine({ computer }: { computer: ComputerRecord }) {
           </>
         )}
       </View>
+    </>
+  )
+}
+
+/** The ink of a standing's dot. */
+const TONE = {
+  good: 'status-success',
+  working: 'status-working',
+  bad: 'status-danger',
+  quiet: 'ink-3',
+} as const satisfies Record<
+  health.HealthTone,
+  'status-success' | 'status-working' | 'status-danger' | 'ink-3'
+>
+
+/** The ink of an ability's dot. */
+const ABLE = {
+  works: 'status-success',
+  idle: 'ink-3',
+  broken: 'status-danger',
+  unchecked: 'line-4',
+} as const satisfies Record<
+  health.AbilityState,
+  'status-success' | 'ink-3' | 'status-danger' | 'line-4'
+>
+
+/**
+ * How the computer is doing, under its controls: every part checked when the screen asks, what
+ * Vivid can do on it now, and how Vivid fixes it. The steps are shown and never offered: recovery
+ * is Vivid's alone, gentlest first (`health.LADDER`), so the Person reads what happened and what
+ * comes next and is asked nothing. The same panel as the web's Settings (`VividComputer`,
+ * `apps/web/src/screen/settings/Computers.tsx`).
+ */
+function Health() {
+  const data = useLiveData()
+  const checked = liveStateOf(useAtomValue(data.computerHealth))
+  const recovered = liveStateOf(useAtomValue(data.computerRecovery))
+  const again = useAtomRefresh(data.computerHealth)
+  const againRecovered = useAtomRefresh(data.computerRecovery)
+  return (
+    <View style={{ gap: 12, marginTop: 12 }}>
+      {LiveState.$match(checked, {
+        Loading: () => (
+          <Label size="label" tone="ink-3">
+            Checking every part…
+          </Label>
+        ),
+        Failed: () => (
+          <Label size="label" tone="ink-3">
+            Vivid could not check its computer just now.
+          </Label>
+        ),
+        Ready: ({ value }) => (
+          <Checked
+            health={value}
+            recovery={
+              LiveState.$is('Ready')(recovered) ? Option.some(recovered.value) : Option.none()
+            }
+          />
+        ),
+      })}
+      <Button
+        kind="ghost"
+        label="Check again"
+        disabled={LiveState.$is('Loading')(checked)}
+        onPress={() => {
+          again()
+          againRecovered()
+        }}
+      />
+    </View>
+  )
+}
+
+/** One reading: the standing, what Vivid can do, and how Vivid fixes it. */
+function Checked({
+  health: reading,
+  recovery,
+}: {
+  health: ComputerHealth
+  recovery: Option.Option<ComputerRecoveryRecord>
+}) {
+  const now = useNow()
+  const at = (moment: number) => when(moment, now)
+  const said = health.healthReading(reading, at)
+  const abilities = health.abilitiesOf(reading)
+  const next = health.nextStep(reading)
+  const last = Option.flatMap(recovery, (record) => health.recoveryWords(record, at))
+  return (
+    <>
+      <Section title="How it is doing">
+        <View style={{ padding: 14, gap: 4 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Dot tone={TONE[said.tone]} />
+            <Label size="footnote">{said.title}</Label>
+          </View>
+          <Label size="label" tone="ink-2">
+            {said.detail}
+          </Label>
+          <Label size="caption" tone="ink-3" style={{ fontVariant: ['tabular-nums'] }}>
+            Checked {at(reading.checkedAt)}
+          </Label>
+        </View>
+      </Section>
+      {abilities.length > 0 && (
+        <Section title="What Vivid can do on it now">
+          {abilities.map((ability) => (
+            <View key={ability.name} style={{ flexDirection: 'row', gap: 10, padding: 14 }}>
+              <View style={{ paddingTop: 6 }}>
+                <Dot tone={ABLE[ability.state]} size={6} />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Label size="label">{ability.name}</Label>
+                <Label size="label" tone="ink-3">
+                  {ability.detail}
+                </Label>
+              </View>
+            </View>
+          ))}
+        </Section>
+      )}
+      <Section
+        title="How Vivid fixes it"
+        detail="By itself, gentlest step first, and only as far as it has to."
+      >
+        <View style={{ padding: 14, gap: 6 }}>
+          {health.LADDER.map((step, place) => {
+            const current = Option.contains(next, step)
+            return (
+              <View key={step} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Label size="label" tone="ink-3" style={{ width: 14, textAlign: 'right' }}>
+                  {place}
+                </Label>
+                <Label
+                  size="label"
+                  tone={current ? 'ink' : 'ink-3'}
+                  style={current ? { fontWeight: '600' } : undefined}
+                >
+                  {health.STEP_WORDS[step].doing}
+                </Label>
+                {current && (
+                  <Label size="caption" tone="status-working">
+                    Next
+                  </Label>
+                )}
+              </View>
+            )
+          })}
+          {Option.isSome(last) && (
+            <Label
+              accessibilityLiveRegion="polite"
+              size="label"
+              tone="ink-2"
+              style={{ marginTop: 6 }}
+            >
+              {last.value}
+            </Label>
+          )}
+        </View>
+      </Section>
     </>
   )
 }

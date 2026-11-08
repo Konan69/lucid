@@ -22,6 +22,7 @@ const personActor = Effect.fn('Channels.personActor')(function* () {
     workspace: auth.workspace,
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   } satisfies Actor
 })
 

@@ -22,8 +22,10 @@ import { correctionHooks } from './correction.ts'
 import { continuityHooks } from './continuity.ts'
 import { joinHooks } from './response.ts'
 import { followSettlements } from './settled.ts'
+import { helpers, type Helpers } from './children.ts'
 import { BuiltinSkills } from './skills.ts'
 import { PiRejected } from './threads.ts'
+import { childTools } from './tools/children.ts'
 import { tools } from './tools/index.ts'
 
 /** One Person's conversations on the native storage supplied by its host. */
@@ -107,11 +109,17 @@ export const openPerson = Effect.fn('Person.open')(function* (
   const opened = Deferred.await(ready)
 
   const memory = yield* Memory
+  // Helper tools are mounted in the registry with the rest; the helpers they start take fixed
+  // subsets of that registry, so they are made once it exists and these tools wait for them.
+  const helpersReady = yield* Deferred.make<Helpers>()
   const registered = tools(
     scopeResolver(opened, product),
     (call) => resolveMemoryCall(opened, product, call),
-    memory,
-    skills.tools === undefined ? [] : skills.tools,
+    { memory, transcripts: { person: personId, harness: opened } },
+    {
+      skills: skills.tools === undefined ? [] : skills.tools,
+      children: childTools({ harness: opened, product, helpers: Deferred.await(helpersReady) }),
+    },
   )
   const all = registered.tools
   const registry = createRegistry()
@@ -123,6 +131,15 @@ export const openPerson = Effect.fn('Person.open')(function* (
   )
   registry.install(learn.extension)
   registry.install(learn.learner)
+  // Helpers get fixed subsets of Vivid's own tools; only Vivid's own conversation can start one.
+  const helping = helpers({
+    harness: opened,
+    product,
+    run: (program, signal) => run(program, { signal }),
+    tools: all,
+  })
+  for (const extension of helping.extensions) registry.install(extension)
+  yield* Deferred.succeed(helpersReady, helping)
   registry.install(
     definition({
       tools: all,
@@ -166,7 +183,11 @@ export const openPerson = Effect.fn('Person.open')(function* (
   return {
     personId,
     harness,
-    agent: { model: models.selected, thinkingLevel: THINKING, tools: offered(all, skills) },
+    agent: {
+      model: models.selected,
+      thinkingLevel: THINKING,
+      tools: offered(all, skills),
+    },
     sources: { product, memory, capabilities: registered.reading },
     quiet,
   } satisfies PersonConversations

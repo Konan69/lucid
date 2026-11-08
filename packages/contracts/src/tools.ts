@@ -2,11 +2,19 @@ import { Record, Result, Schema } from 'effect'
 
 /** Every tool Vivid mounts, including file tools and skill activation. */
 export const ToolName = Schema.Literals([
+  'read_integration',
+  'revise',
   'activate_skill',
   'add_integration',
   'add_todo',
   'ask_person',
   'bash',
+  'cancel_run',
+  'check_run',
+  'start_shell',
+  'read_shell',
+  'wait_shell',
+  'stop_shell',
   'browse',
   'complete_todo',
   'connect',
@@ -45,6 +53,7 @@ export const ToolName = Schema.Literals([
   'resolve_owed',
   'run_code',
   'save_skill',
+  'spawn_run',
   'search_library',
   'search_memory',
   'stop_watching',
@@ -56,10 +65,13 @@ export const ToolName = Schema.Literals([
   'update_owed',
   'update_project',
   'use_tool',
+  'wait_runs',
   'watch',
   'write',
   'write_document',
   'write_memory',
+  'search_threads',
+  'read_thread',
 ])
 export type ToolName = typeof ToolName.Type
 

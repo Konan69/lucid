@@ -14,6 +14,7 @@ import {
   ComputerRecoveryRefusal,
   ComputerRecoveryId,
   ComputerRecoveryOutcome,
+  ComputerRecoveryRecord,
   InstallationId,
   ThreadId,
   BrowserAction,
@@ -1119,6 +1120,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
             workspace: Workspace.cases.Personal.make({}),
             by: 'person' as const,
             threadId: Option.none(),
+            helper: Option.none(),
           })
           const absent = yield* computerHandlers.GetCapabilities().pipe(asAccount(first))
           expect(absent.computer).toEqual(
@@ -1249,6 +1251,48 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
             return expect.fail('Expected the typed provider observation failure')
           expect(invalid.cause._tag).toBe('InvalidObservation')
         }).pipe(Effect.scoped, (program) => scopedCase(accountsLayer, program, 'inherited')),
+    )
+
+    it.effect('the Person’s panel reads the newest recovery receipt, settled or not', () =>
+      Effect.gen(function* () {
+        const { first, second } = yield* accounts()
+        const database = yield* Database
+        const store = yield* ComputerStore
+        const owner = {
+          person: first,
+          workspace: Workspace.cases.Personal.make({}),
+          by: 'person' as const,
+          threadId: Option.none(),
+          helper: Option.none(),
+        }
+        const read = (person: Person) =>
+          computerHandlers.GetComputerRecovery().pipe(asAccount(person))
+        expect(yield* read(first)).toEqual(ComputerRecoveryRecord.cases.None.make({}))
+        const restore = {
+          id: ComputerRecoveryId.make(NodeCrypto.randomUUID()),
+          step: 'Restore' as const,
+        }
+        const outcome = yield* store.recover(owner, restore)
+        expect(outcome._tag).toBe('Unsupported')
+        const settled = yield* read(first)
+        if (!ComputerRecoveryRecord.guards.Settled(settled))
+          return expect.fail('Expected the settled Restore receipt')
+        expect([settled.step, settled.outcome]).toEqual(['Restore', outcome])
+        const interrupted = {
+          id: ComputerRecoveryId.make(NodeCrypto.randomUUID()),
+          step: 'Reboot' as const,
+          personId: first.id,
+          createdAt: settled.since + 1000,
+        }
+        yield* database.run(database.insert(computerRecoveries).values(interrupted))
+        expect(yield* read(first)).toEqual(
+          ComputerRecoveryRecord.cases.Unsettled.make({
+            step: 'Reboot',
+            since: interrupted.createdAt,
+          }),
+        )
+        expect(yield* read(second)).toEqual(ComputerRecoveryRecord.cases.None.make({}))
+      }).pipe(Effect.scoped, (program) => scopedCase(accountsLayer, program, 'inherited')),
     )
 
     it.effect('adopts for one Person without writing an intent for a refused Person', () =>

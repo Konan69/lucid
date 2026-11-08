@@ -3,6 +3,7 @@ import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
 import { Memory } from '../../memory.ts'
+import type { Transcripts } from '../recall.ts'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { createModels } from '@earendil-works/pi-ai/models'
 import {
@@ -20,6 +21,7 @@ import {
   type ToolExecutionResult,
   type ToolRegistration,
 } from '@earendil-works/pi-durable'
+import { PersonId } from '@vivid/contracts'
 import { Effect, Result, Schema } from 'effect'
 import { expect } from 'vitest'
 
@@ -158,6 +160,12 @@ export const unusedMemory: Memory['Service'] = Memory.of({
   write: () => Effect.die('Unexpected entry write'),
   delete: () => Effect.die('Unexpected entry delete'),
 })
+
+/** Catalogue tests never read earlier conversations; fail if that assumption changes. */
+export const unusedTranscripts: Transcripts = {
+  person: PersonId.make('catalogue-person'),
+  harness: Effect.die('Unexpected conversation read'),
+}
 
 export { toolOutcome } from '../outcomes.ts'
 export { boundIntegrationOutput } from '../result.ts'

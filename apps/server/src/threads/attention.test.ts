@@ -39,6 +39,7 @@ const fixture = Effect.fn('Attention.fixture')(function* () {
     workspace: Workspace.cases.Personal.make({}),
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   }
   const id = ThreadId.make(crypto.randomUUID())
   yield* (yield* ThreadStore).create(actor, { id, title: 'Plan the trip', projectId: null })

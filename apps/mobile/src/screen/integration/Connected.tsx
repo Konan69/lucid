@@ -2,11 +2,12 @@ import { ConnectionOwnership, ConnectionState, type Connection } from '@vivid/co
 import { Option } from 'effect'
 import type { ReactNode } from 'react'
 import { View } from 'react-native'
-import { byService, type connecting } from '@vivid/state'
+import { access, byService, type connecting } from '@vivid/state'
 import { accountLine, standingOf, type StandingTone } from '../../data/integration'
 import { useTheme } from '../../theme'
 import { Row, Section } from '../../ui/List'
 import { Button, Card, Dot, Label } from '../../ui/ui'
+import { KeyForm, type Keying } from './Key'
 import { Logo } from './Logo'
 
 /**
@@ -27,9 +28,12 @@ export function Connected({
   marks,
   standing,
   busy,
+  keying,
   onResume,
   onManage,
 }: {
+  /** The key this page's attempt is waiting for, typed under the account it is for. */
+  keying: Option.Option<Keying>
   /** The accounts whose service answers to the search, in the server's order. */
   connections: ReadonlyArray<Connection>
   searching: boolean
@@ -82,6 +86,7 @@ export function Connected({
               )}
               // A Company's Integration is named, finished or removed by an admin, never a member.
               actions={own || admin ? Option.some({ onResume, onManage }) : Option.none()}
+              keying={Option.filter(keying, (wanted) => wanted.id === connection.id)}
             />
           )
         }),
@@ -121,8 +126,11 @@ function Account({
   asking,
   mark,
   actions,
+  keying,
 }: {
   connection: Connection
+  /** The key wanted for this account, typed here under its row. */
+  keying: Option.Option<Keying>
   /** The second line: which account it is and how it stands. */
   line: string
   asking: boolean
@@ -149,7 +157,9 @@ function Account({
         detail={line}
         onPress={() => actions.value.onManage(connection)}
       />
-      {!ConnectionState.guards.Ready(connection.state) && (
+      {/* Only an account waiting on a sign-in can be picked up; a failed one is removed from its
+          sheet and connected again, which the server says when asked to resume it. */}
+      {access.canReconnect(connection) && Option.isNone(keying) && (
         // Under the words, starting where they start (the row's 16, the 40 of the logo, its 12).
         <View style={{ paddingLeft: 68, paddingRight: 16, paddingBottom: 12 }}>
           <Button
@@ -157,6 +167,11 @@ function Account({
             disabled={asking}
             onPress={() => actions.value.onResume(connection)}
           />
+        </View>
+      )}
+      {Option.isSome(keying) && (
+        <View style={{ paddingLeft: 68, paddingRight: 16, paddingBottom: 12 }}>
+          <KeyForm keying={keying.value} />
         </View>
       )}
     </View>

@@ -127,3 +127,5 @@ export function watchTools(runTool: RunTool) {
     }),
   ] as const
 }
+
+export { view as watchView }

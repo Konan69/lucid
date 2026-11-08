@@ -6,6 +6,7 @@ import {
   type ProjectId,
   type Thread,
 } from '@vivid/contracts'
+import { useAtomSet } from '@effect/atom-react'
 import { projects } from '@vivid/state'
 import { Option } from 'effect'
 import { useState, type ReactNode } from 'react'
@@ -614,6 +615,7 @@ export function Menu({
   const scopedId = Option.map(scoped, (project) => project.id)
   const listed = scopedThreads(threads, filed, scopedId)
   const [query, setQuery] = useState<Option.Option<string>>(Option.none())
+  const setFind = useAtomSet(data.findQuery)
   // In a personal space the drawer is headed by Vivid itself, under the name the Person gave it.
   const vivid = useAppearance()
   const here = Workspace.match(me.workspace, {
@@ -676,7 +678,14 @@ export function Menu({
             gap: 10,
           }}
         >
-          <Seek query={query} onChange={setQuery} />
+          <Seek
+            query={query}
+            onChange={(next) => {
+              setQuery(next)
+              // The server searches the words of the Person's conversations for the same text.
+              setFind(Option.getOrElse(next, () => ''))
+            }}
+          />
           {Option.isNone(query) && <Fresh onPress={onFresh} />}
         </View>
       </View>

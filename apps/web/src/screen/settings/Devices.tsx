@@ -9,7 +9,7 @@ import {
 } from '../../data/account'
 import { act, running } from '../../data/app'
 import { Button } from '../../ui/button'
-import { YourComputers } from './Computers'
+import { VividComputer, YourComputers } from './Computers'
 import { Empty, Refusal, Row, Section } from './Parts'
 
 /**
@@ -19,6 +19,7 @@ import { Empty, Refusal, Row, Section } from './Parts'
 export function Devices() {
   return (
     <>
+      <VividComputer />
       <YourComputers />
       <SignedIn />
     </>
