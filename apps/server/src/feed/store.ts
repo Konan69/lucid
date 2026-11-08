@@ -166,7 +166,7 @@ const decodeOrigin = decodeStored(StoredRunOriginColumn, 'Run origin')
 
 /**
  * What started a Thread's work: its first Run, which a later follow-up never replaces. A Run a
- * Watch event started names that Watch and event; any other first Run, or a Watch Run from before
+ * Watch event started names that Watch and event, one a Dreamer finding started says so; any other first Run, or a Watch Run from before
  * events were recorded, is its Run alone. Read from the record, never from the newest Run.
  */
 const causeOf = Effect.fn('FeedStore.causeOf')(function* (tx: Transaction, thread: ThreadId) {
@@ -178,6 +178,8 @@ const causeOf = Effect.fn('FeedStore.causeOf')(function* (tx: Transaction, threa
     .limit(1)
   const first = yield* returned(rows, 'The Thread’s first Run')
   const origin = yield* decodeOrigin(first.origin)
+  if (StoredRunOrigin.guards.Dream(origin))
+    return FeedCause.cases.Dream.make({ run: first.id, pass: origin.pass })
   return StoredRunOrigin.guards.Watch(origin)
     ? FeedCause.cases.Watch.make({
         run: first.id,

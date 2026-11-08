@@ -18,6 +18,7 @@ import { connectionHandlers } from '../connections/handlers.ts'
 import { draftHandlers } from '../drafts/handlers.ts'
 import { draftStoreLayer } from '../drafts/store.ts'
 import { feedHandlers } from '../feed/handlers.ts'
+import { dreamHandlers } from '../dreams/handlers.ts'
 import { feedStoreLayer } from '../feed/store.ts'
 import { inputHandlers } from '../inputs/handlers.ts'
 import { libraryHandlers } from '../library/handlers.ts'
@@ -39,39 +40,45 @@ import { requestProtocolLayer } from './requests.ts'
 import { liveProtocolLayer } from './link.ts'
 
 /**
- * Every product call, implemented once. `VividRpc.toLayer` is total over the contract: a call
- * declared in `packages/contracts/src/rpc.ts` with no handler here does not compile.
+ * Every product call, implemented once. The handlers are total over the contract: a call declared
+ * in `packages/contracts/src/rpc.ts` with no handler here leaves `rpcServerLayer` a requirement it
+ * cannot meet, and does not compile.
  */
-export const rpcHandlersLayer = VividRpc.toLayer({
-  ...artifactHandlers,
-  ...channelHandlers,
-  ...companyHandlers,
-  ...codeHandlers,
-  ...settingsHandlers,
-  ...buildHandlers,
-  ...appearanceHandlers,
-  ...threadHandlers,
-  ...childHandlers,
-  ...approvalHandlers,
-  ...actionHandlers,
-  ...inputHandlers,
-  ...ruleHandlers,
-  ...auditHandlers,
-  ...notificationHandlers,
-  ...pushHandlers,
-  ...projectHandlers,
-  ...owedHandlers,
-  ...todoHandlers,
-  ...libraryHandlers,
-  ...connectionHandlers,
-  ...draftHandlers,
-  ...memoryHandlers,
-  ...skillHandlers,
-  ...computerHandlers,
-  ...searchHandlers,
-  ...watchHandlers,
-  ...feedHandlers,
-}).pipe(
+export const rpcHandlersLayer = Layer.mergeAll(
+  // The whole group in one `toLayer` passed TypeScript's instantiation depth (TS2589) at 193
+  // calls, so the Dreamer's call is provided on its own; the two together are still total.
+  VividRpc.omit('Dream').toLayer({
+    ...artifactHandlers,
+    ...channelHandlers,
+    ...companyHandlers,
+    ...codeHandlers,
+    ...settingsHandlers,
+    ...buildHandlers,
+    ...appearanceHandlers,
+    ...threadHandlers,
+    ...childHandlers,
+    ...approvalHandlers,
+    ...actionHandlers,
+    ...inputHandlers,
+    ...ruleHandlers,
+    ...auditHandlers,
+    ...notificationHandlers,
+    ...pushHandlers,
+    ...projectHandlers,
+    ...owedHandlers,
+    ...todoHandlers,
+    ...libraryHandlers,
+    ...connectionHandlers,
+    ...draftHandlers,
+    ...memoryHandlers,
+    ...skillHandlers,
+    ...computerHandlers,
+    ...searchHandlers,
+    ...watchHandlers,
+    ...feedHandlers,
+  }),
+  VividRpc.toLayerHandler('Dream', dreamHandlers.Dream),
+).pipe(
   Layer.provide(
     Layer.mergeAll(draftStoreLayer, feedStoreLayer, actionLookupLayer, messageSearchLayer),
   ),

@@ -300,6 +300,7 @@ import {
   DeliveryScopeRequest,
   AcknowledgeRunDeliveryRequest,
 } from './threads.js'
+import { DreamRequest, DreamResponse } from './dreams.js'
 import {
   ChildRun,
   ChildRunDetail,
@@ -382,6 +383,14 @@ const Post = Rpc.make('Post', {
   payload: PostRequest,
   success: PostOutcome,
 })
+
+// ── The Dreamer ─────────────────────────────────────────────────────────────
+/**
+ * Runtime-only, called by the Person's cell as Vivid acting for them: open the Background Thread
+ * one Dreamer run reads in, or report its finding there (`DreamRequest`). The Person, workspace
+ * and Thread come from the call's authority, never from the payload.
+ */
+const Dream = Rpc.make('Dream', { ...call, payload: DreamRequest, success: DreamResponse })
 
 // ── The signed-in Person and where they are working ────────────────────────
 const Me = Rpc.make('Me', { ...call, success: MeResponse })
@@ -1399,6 +1408,7 @@ export const VividRpc = RpcGroup.make(
   WatchFeed,
   MarkFeedCard,
   Post,
+  Dream,
   WatchNotifications,
   ReadNotifications,
   FindAppEvents,
