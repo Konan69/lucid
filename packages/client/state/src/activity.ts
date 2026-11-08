@@ -368,6 +368,14 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.question)],
   },
+  request_handoff: {
+    said: {
+      running: 'Handing you a step',
+      done: 'Handed you a step',
+      failed: 'Could not hand you the step',
+    },
+    detail: (asked) => [said(asked.summary)],
+  },
   // The replies themselves are drawn as taps under the reply (`offeredReplies`); the step is only
   // the line at the foot of the Thread for the moment the call runs.
   suggest_replies: {

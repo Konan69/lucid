@@ -41,7 +41,7 @@ const definitions = [
     displayName: 'Work in a signed-in browser',
     about: 'Works through signed-in pages with you and checks that each step succeeded.',
     starter: false,
-    needs: ['browse', 'use_desktop', 'ask_person', 'find_tools', 'connect'],
+    needs: ['browse', 'use_desktop', 'ask_person', 'request_handoff', 'find_tools', 'connect'],
     connections: [],
   },
   {

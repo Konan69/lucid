@@ -2,13 +2,14 @@ import { Schema } from 'effect'
 import { Approval } from './approvals.js'
 import {
   ActionOperationId,
+  HandoffId,
   PersonId,
   PersonSummary,
   ProjectId,
   RunId,
   ThreadId,
 } from './identity.js'
-import { InputRequest } from './inputs.js'
+import { HandoffRequest, InputRequest } from './inputs.js'
 import { WatchId, WatchInstruction, WatchName } from './watches.js'
 
 /** The image formats accepted by the conversation gateway and served inline to every client. */
@@ -353,6 +354,8 @@ export const ThreadDetail = Schema.Struct({
   approvals: Schema.Array(Approval),
   /** Every Input request raised in this Thread. */
   requests: Schema.Array(InputRequest),
+  /** Every handoff raised in this Thread, open or settled, so its card keeps its outcome. */
+  handoffs: Schema.Array(HandoffRequest),
 }).annotate({ identifier: 'ThreadDetail', title: 'Thread detail' })
 export interface ThreadDetail extends Schema.Schema.Type<typeof ThreadDetail> {}
 
@@ -376,6 +379,8 @@ export const SignalType = Schema.Literals([
   'event',
   // A card telling Vivid to go on (`CarryOnRequest`); no client draws it.
   'carry-on',
+  // The Person finished a step Vivid handed them on its Computer (`inputs/handoff.ts`).
+  'handoff',
 ] as const)
 export type SignalType = typeof SignalType.Type
 
@@ -403,6 +408,7 @@ export type ApprovalOutcome = typeof ApprovalOutcome.Type
  * - `Watch`: one event a Watch received. `data` is the event as the Integration sent it, whole;
  *   `occurredAt` is the Integration's own timestamp text, kept as sent.
  * - `CarryOn`: a card telling Vivid to go on (`CarryOnRequest`); no client draws it.
+ * - `Handoff`: the Person finished a step Vivid handed them on its Computer, named by its handoff.
  */
 export const SignalCue = Schema.TaggedUnion({
   Message: { body: Schema.String },
@@ -417,6 +423,7 @@ export const SignalCue = Schema.TaggedUnion({
     data: Schema.Json,
   },
   CarryOn: { body: Schema.String },
+  Handoff: { body: Schema.String, handoff: HandoffId },
 })
 export type SignalCue = typeof SignalCue.Type
 
@@ -428,6 +435,7 @@ export const signalTypes = {
   Answer: 'answer',
   Watch: 'event',
   CarryOn: 'carry-on',
+  Handoff: 'handoff',
 } as const satisfies Record<SignalCue['_tag'], SignalType>
 
 /**
@@ -514,6 +522,8 @@ export interface RuntimeAdmissionBody extends Schema.Schema.Type<typeof RuntimeA
 export const Inbox = Schema.Struct({
   approvals: Schema.Array(Approval),
   requests: Schema.Array(InputRequest),
+  /** Handoffs still waiting on this Person. */
+  handoffs: Schema.Array(HandoffRequest),
 }).annotate({ identifier: 'Inbox', title: 'Inbox' })
 export interface Inbox extends Schema.Schema.Type<typeof Inbox> {}
 

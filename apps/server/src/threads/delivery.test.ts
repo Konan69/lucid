@@ -7,6 +7,13 @@ import { describe, expect, layer } from '@effect/vitest'
 import {
   InputAnswer,
   CompanyId,
+  Computer,
+  ComputerId,
+  ComputerState,
+  HandoffField,
+  HandoffFieldId,
+  HandoffFieldReceipt,
+  HandoffFieldResult,
   InputRequestState,
   InstallationId,
   SessionId,
@@ -64,6 +71,9 @@ import * as RpcSerialization from 'effect/rpc/RpcSerialization'
 import { sendToThread } from './relay.ts'
 import { findPerson, type Actor } from '../auth/access.ts'
 import { InputStore, inputStoreLayer } from '../inputs/store.ts'
+import { Definition } from '../inputs/handoff.ts'
+import { handoffs } from '../inputs/tables.ts'
+import { ComputerStore } from '../computers/store.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
 import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database } from '../database/client.ts'
@@ -319,6 +329,28 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
     conversationLayer.pipe(Layer.provide(silentChannelRepliesLayer), Layer.provide(services)),
   )
   const conversation = yield* Conversation.pipe(Effect.provideContext(context))
+  /** The Computer as a handoff reaches it: each clearing's labels, and each hand back. */
+  const cleared = yield* Ref.make<ReadonlyArray<ReadonlyArray<string>>>([])
+  const handedBack = yield* Ref.make(0)
+  const sending = yield* Layer.build(
+    Layer.merge(
+      services,
+      Layer.mock(ComputerStore, {
+        clearFields: (_person, _page, labels) =>
+          Ref.update(cleared, (before) => [...before, labels]).pipe(Effect.as([])),
+        hold: () =>
+          Ref.update(handedBack, (count) => count + 1).pipe(
+            Effect.as(
+              Computer.make({
+                id: ComputerId.make(NodeCrypto.randomUUID()),
+                heldByPerson: false,
+                state: ComputerState.cases.Absent.make({}),
+              }),
+            ),
+          ),
+      }),
+    ),
+  )
   const devices = yield* DeviceRegistry.pipe(Effect.provideContext(context))
   /** Completion is observed through the real conditional SQL settlement before another Person sends. */
   const finish = Effect.fn('Delivery.test.settle')(function* (id: RunId) {
@@ -338,6 +370,9 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
     devices,
     finish,
     services,
+    sending,
+    cleared,
+    handedBack,
     topics,
     notices,
     watching,
@@ -417,6 +452,47 @@ const privateThread = Effect.fn('Gateway.test.private')(function* (test: Harness
   )
 })
 
+/** A filled sign-in Ben was handed in the test Thread, as its row keeps it; no value is in it. */
+const openHandoff = Effect.fn('Delivery.test.handoff')(function* (test: Harness, runId: RunId) {
+  const database = yield* Database
+  const id = NodeCrypto.randomUUID()
+  const field = HandoffFieldId.make(NodeCrypto.randomUUID())
+  yield* database.run(
+    database.insert(handoffs).values({
+      id,
+      threadId: test.threadId,
+      runId,
+      personId: test.ben,
+      summary: 'Sign in to Example.',
+      request: Definition.cases.Form.make({
+        kind: 'SignIn',
+        fields: [HandoffField.make({ id: field, label: 'Password', purpose: 'Password' })],
+      }),
+      page: { origin: 'https://example.test', address: 'https://example.test/signin' },
+      binding: { target: 'target', tab: 'tab', digest: 'digest' },
+      status: 'ready',
+      receipts: [
+        HandoffFieldReceipt.make({
+          fieldId: field,
+          result: HandoffFieldResult.cases.Filled.make({}),
+        }),
+      ],
+      createdAt: 0,
+    }),
+  )
+  return id
+})
+
+const handoffStatus = Effect.fn('Delivery.test.handoffStatus')(function* (id: string) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database.select({ status: handoffs.status }).from(handoffs).where(eq(handoffs.id, id)),
+  )
+  const [row] = rows
+  if (row === undefined) return expect.unreachable('the handoff row')
+  return row.status
+})
+
 const decodeIncoming = Schema.decodeUnknownEffect(IncomingMessage)
 const decodeSend = Schema.decodeEffect(SendToThreadRequest)
 
@@ -448,6 +524,7 @@ const post = Effect.fn('Relay.test.send')(function* (test: Harness, body: Schema
   const result = yield* sendToThread(request.success).pipe(
     Effect.provideService(AuthContext, context),
     Effect.provideService(Conversation, test.conversation),
+    Effect.provide(test.sending),
     Effect.result,
   )
   if (Result.isSuccess(result))
@@ -681,6 +758,28 @@ layer(
             ),
           ).toEqual([{ preview: 'Use this instead.' }])
         }).pipe(Effect.scoped),
+    )
+
+    it.effect('an accepted message withdraws an open handoff, clearing it before hand back', () =>
+      Effect.gen(function* () {
+        const test = yield* inputHarness()
+        yield* post(test, { kind: 'user', body: 'Sign me in.', idempotencyKey: 'before-step' })
+        const asked = (yield* Ref.get(test.admitted))[0]
+        if (asked === undefined) expect.fail('Missing first delivery')
+        const runId = deliveryRunId(test.threadId, asked.idempotencyKey)
+        yield* test.finish(runId)
+        const step = yield* openHandoff(test, runId)
+        const body = { kind: 'user', body: 'Never mind, do it later.', idempotencyKey: 'moved-on' }
+        expect((yield* post(test, body)).status).toBe(202)
+        expect(yield* handoffStatus(step)).toBe('withdrawn')
+        expect(yield* Ref.get(test.cleared)).toEqual([['Password']])
+        expect(yield* Ref.get(test.handedBack)).toBe(1)
+        // A replay of that message claims nothing, so a step handed over since stays open.
+        const later = yield* openHandoff(test, runId)
+        expect((yield* post(test, body)).status).toBe(202)
+        expect(yield* handoffStatus(later)).toBe('ready')
+        expect(yield* Ref.get(test.cleared)).toEqual([['Password']])
+      }).pipe(Effect.scoped),
     )
 
     it.effect('a refused admission and a Busy reservation both leave questions waiting', () =>

@@ -37,6 +37,7 @@ export const features = [
   'tool',
   'replies',
   'question',
+  'handoff',
   'approve',
   'deny',
   'changed',
@@ -502,6 +503,7 @@ const recipes = {
   push: pushProof,
 }
 const blocked = {
+  handoff: 'No proof-owned Computer: a handoff is prepared and filled on a disposable Person Computer.',
   ...discordBlocked(),
   ...githubBlocked(),
 }

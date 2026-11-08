@@ -19,7 +19,7 @@ export {
 export { connections, connectionPermissions, credentials } from '../connections/tables.ts'
 export { draftGenerations, drafts } from '../drafts/tables.ts'
 export { feedCards } from '../feed/tables.ts'
-export { inputRequests } from '../inputs/tables.ts'
+export { handoffs, inputRequests } from '../inputs/tables.ts'
 export { libraryChunks, libraryDocuments, libraryFolders } from '../library/tables.ts'
 export { rules } from '../rules/tables.ts'
 export { skills } from '../skills/tables.ts'

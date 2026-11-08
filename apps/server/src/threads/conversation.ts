@@ -19,13 +19,14 @@ import type { DatabaseInfrastructureError } from '../database/client.ts'
 
 /**
  * The cues a server producer makes itself: an Approval's outcome, an answer, a Watch's event, a
- * card's carry-on.
+ * card's carry-on, a finished handoff.
  */
 export const ServerCue = Schema.Union([
   SignalCue.cases.Approval,
   SignalCue.cases.Answer,
   SignalCue.cases.Watch,
   SignalCue.cases.CarryOn,
+  SignalCue.cases.Handoff,
 ])
 export type ServerCue = typeof ServerCue.Type
 

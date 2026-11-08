@@ -6,13 +6,13 @@ import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import { PersonId, ThreadId } from '@vivid/contracts'
 import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
-import type { inputRequests } from '../inputs/tables.ts'
+import type { handoffs, inputRequests } from '../inputs/tables.ts'
 import { canSee, findThread } from '../threads/access.ts'
 import { Conversation, DeliverySpeaker, StoredRunOrigin } from '../threads/conversation.ts'
 import { Signal, encodeSignal } from './signal.ts'
 import type { approvals } from './tables.ts'
 
-type SignalTable = typeof approvals | typeof inputRequests
+type SignalTable = typeof approvals | typeof inputRequests | typeof handoffs
 /** Owners execute each complete query on the current database; builders never leave the domain. */
 export interface SignalWriter {
   readonly table: SignalTable

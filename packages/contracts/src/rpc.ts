@@ -162,6 +162,7 @@ import {
   ApprovalId,
   ConnectionId,
   InvitationId,
+  HandoffId,
   InputRequestId,
   LibraryFolderId,
   LibraryItemId,
@@ -171,7 +172,16 @@ import {
   SkillId,
   ThreadId,
 } from './identity.js'
-import { AnswerInputRequest, AskInputRequest, InputRequestResponse } from './inputs.js'
+import {
+  AnswerInputRequest,
+  AskInputRequest,
+  FillHandoffRequest,
+  HandoffIdRequest,
+  HandoffResponse,
+  InputRequestResponse,
+  PrepareHandoffOutcome,
+  PrepareHandoffRequest,
+} from './inputs.js'
 import {
   CreateLibraryFolderRequest,
   LibraryFolderListResponse,
@@ -634,6 +644,67 @@ const AnswerInput = Rpc.make('AnswerInput', {
   payload: AnswerInputRequest,
   success: InputRequestResponse,
 })
+
+/**
+ * Handoffs: Vivid prepares the one step only the Person can do on its Computer; the Person asked
+ * fills it, finishes it on the live screen and sends Vivid on. Refusals carry the handoff's id and
+ * nothing a Person typed.
+ */
+const PrepareHandoff = Rpc.make('PrepareHandoff', {
+  ...call,
+  payload: PrepareHandoffRequest,
+  success: PrepareHandoffOutcome,
+})
+
+/** The handoff is over (finished or withdrawn), so nothing more can be done to it. */
+export class HandoffClosed extends Schema.TaggedError<HandoffClosed>()(
+  'HandoffClosed',
+  { id: HandoffId, message: Schema.Literal('This step is already over.') },
+  { title: 'Handoff closed' },
+) {}
+
+/** Only the Person asked may enter values or finish the step, on their own Computer. */
+export class HandoffNotAddressee extends Schema.TaggedError<HandoffNotAddressee>()(
+  'HandoffNotAddressee',
+  { id: HandoffId, message: Schema.Literal('Only the person asked can do this step.') },
+  { title: 'Not the Person asked' },
+) {}
+
+/** The Computer could not be reached to type or to clear the fields; nothing was typed. */
+export class HandoffComputerUnavailable extends Schema.TaggedError<HandoffComputerUnavailable>()(
+  'HandoffComputerUnavailable',
+  { id: HandoffId, reason: Schema.String },
+  { title: 'Computer unavailable' },
+) {}
+
+/**
+ * Finishing or withdrawing was refused because these fields could not be shown empty on the
+ * Computer, so it stays held for the step and Vivid cannot read what was typed. The labels are the
+ * form's own; the Person leaves the page on the screen, or tries again.
+ */
+export class HandoffNotCleared extends Schema.TaggedError<HandoffNotCleared>()(
+  'HandoffNotCleared',
+  { id: HandoffId, labels: Schema.NonEmptyArray(Schema.String) },
+  { title: 'Fields not cleared' },
+) {}
+
+/** The closed refusals of a Person's handoff calls. */
+export const HandoffFailure = Schema.Union([
+  HandoffClosed,
+  HandoffNotAddressee,
+  HandoffComputerUnavailable,
+  HandoffNotCleared,
+])
+export type HandoffFailure = typeof HandoffFailure.Type
+
+const handoffCall = { error: Schema.Union([RpcFailure, HandoffFailure]), success: HandoffResponse }
+/** Takes the live screen for a step done there. A form is begun by filling it. */
+const BeginHandoff = Rpc.make('BeginHandoff', { ...handoffCall, payload: HandoffIdRequest })
+/** Types the Person's values into the prepared fields; answers one receipt per field. */
+const FillHandoff = Rpc.make('FillHandoff', { ...handoffCall, payload: FillHandoffRequest })
+/** The Person has finished: fields are cleared, the screen handed back and Vivid told. */
+const CompleteHandoff = Rpc.make('CompleteHandoff', { ...handoffCall, payload: HandoffIdRequest })
+const WithdrawHandoff = Rpc.make('WithdrawHandoff', { ...handoffCall, payload: HandoffIdRequest })
 
 // ── Rules and the audit record ─────────────────────────────────────────────
 const ListRules = Rpc.make('ListRules', { ...call, success: RuleListResponse })
@@ -1135,6 +1206,11 @@ export const VividRpc = RpcGroup.make(
   ReconcileAction,
   AskInput,
   AnswerInput,
+  PrepareHandoff,
+  BeginHandoff,
+  FillHandoff,
+  CompleteHandoff,
+  WithdrawHandoff,
   ListRules,
   WatchRules,
   CreateRule,

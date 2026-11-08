@@ -2,6 +2,7 @@ import {
   ApprovalId,
   ConnectionAuthorizationMessage,
   ConnectionRequestMessage,
+  HandoffId,
   InputRequestId,
   textOf,
   type ConversationMessage,
@@ -330,6 +331,8 @@ export const doingOf = (
 export type Card = Data.TaggedEnum<{
   Approval: { readonly id: ApprovalId }
   Input: { readonly id: InputRequestId }
+  /** A step on the Computer Vivid handed the Person (`inputs/handoff.ts` on the server). */
+  Handoff: { readonly id: HandoffId }
   Connection: {
     readonly request: ConnectionRequestMessage
     readonly authorization: Option.Option<Authorization>
@@ -345,6 +348,9 @@ const decodeApproval = Schema.decodeUnknownOption(
 const decodeInput = Schema.decodeUnknownOption(
   Schema.Struct({ kind: Schema.Literal('input-request'), requestId: InputRequestId }),
 )
+const decodeHandoff = Schema.decodeUnknownOption(
+  Schema.Struct({ kind: Schema.Literal('handoff'), handoffId: HandoffId }),
+)
 const decodeConnection = Schema.decodeUnknownOption(ConnectionRequestMessage)
 // The same message with one more field: what comes next for an Integration already begun.
 const decodeAuthorization = Schema.decodeUnknownOption(ConnectionAuthorizationMessage)
@@ -357,6 +363,9 @@ export function cardOf(tool: ToolPart): Option.Option<Card> {
   ).pipe(
     Option.orElse(() =>
       Option.map(decodeInput(tool.output), (out) => Card.Input({ id: out.requestId })),
+    ),
+    Option.orElse(() =>
+      Option.map(decodeHandoff(tool.output), (out) => Card.Handoff({ id: out.handoffId })),
     ),
     Option.orElse(() =>
       Option.map(decodeConnection(tool.output), (request) =>

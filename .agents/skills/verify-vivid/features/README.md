@@ -10,6 +10,7 @@ Read the touched feature before launching. A verdict belongs to the recorded com
 - [Rich replies](tool.md).
 - [Suggested replies](replies.md).
 - [Questions](question.md).
+- [Hand over a step](handoff.md).
 - [Allow an action](approve.md).
 - [Deny an action](deny.md).
 - [An ask that changed](changed.md).

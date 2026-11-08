@@ -3,6 +3,7 @@ import * as Option from 'effect/Option'
 import type { ApprovalId, DecideApprovalRequest } from '@vivid/contracts'
 import { requireActor, requirePerson, type Actor } from '../auth/access.ts'
 import { InputStore } from '../inputs/store.ts'
+import { handoffsWaiting } from '../inputs/handoff.ts'
 import { changed, Topic } from '../live/changes.ts'
 import { live } from '../live/query.ts'
 import { ApprovalStore } from './store.ts'
@@ -12,6 +13,7 @@ const loadInbox = Effect.fn('Inbox.load')(function* (actor: Actor) {
   return {
     approvals: yield* (yield* ApprovalStore).inbox(actor),
     requests: yield* (yield* InputStore).inbox(actor),
+    handoffs: yield* handoffsWaiting(actor),
   }
 })
 

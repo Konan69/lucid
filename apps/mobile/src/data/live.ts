@@ -32,6 +32,7 @@ import * as Atom from 'effect/reactivity/Atom'
 import { createContext, useContext } from 'react'
 import { followThemeAtom, themeAtom } from './appearance'
 import { makeDeviceDecisions } from './devices'
+import { makeHandoffCalls } from './handing'
 import { makeNaming } from './name'
 import { makeNotifying } from './notifying'
 import { makeConnecting } from './connecting'
@@ -372,7 +373,6 @@ function makeLiveData(session: SignedIn) {
   // the session's registry and socket are made: every screen, sheet and card of the session
   // presses and draws from it, and an attempt outlives whichever of them began it.
   const connecting = makeConnecting({ engine, connections: live.connections.atom })
-  const naming = makeNaming(engine, live.me)
 
   followLook(engine, live)
 
@@ -427,8 +427,10 @@ function makeLiveData(session: SignedIn) {
     /** Connecting an Integration: the session's one machine (`data/connecting.ts`). */
     connecting,
     devices: makeDeviceDecisions(engine),
+    /** A step's calls, like a device decision, outlive the banner that pressed them. */
+    handing: makeHandoffCalls(engine),
     /** The Person changing their own name in Settings (`data/name.ts`). */
-    naming,
+    naming: makeNaming(engine, live.me),
     /**
      * What Vivid remembers about the Person, read from their cell. There is no watch on it: the
      * Memory screen begins a new reading each time it is opened (`screen/settings/Memory.tsx`).

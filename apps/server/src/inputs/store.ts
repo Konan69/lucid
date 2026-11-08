@@ -42,6 +42,7 @@ import { Conversation, DeliveryMessage } from '../threads/conversation.ts'
 import { Signal, encodeSignal } from '../approvals/signal.ts'
 import { replaySignals, type SignalWriter } from '../approvals/replay.ts'
 import { answerKey } from './answers.ts'
+import { handoffSignals } from './handoff.ts'
 import { inputRequests } from './tables.ts'
 import { answerText } from './validation.ts'
 
@@ -382,7 +383,12 @@ export const inputStoreLayer = Layer.effect(
       }),
       ask: (actor, request) => run(ask(actor, request)),
       answer: (actor, request) => run(answer(actor, request)),
-      replay: run(replaySignals(signalWriter, Option.none())),
+      // A finished handoff owes its signal the way an answer does; both are retried together.
+      replay: run(
+        replaySignals(signalWriter, Option.none()).pipe(
+          Effect.andThen(replaySignals(handoffSignals, Option.none())),
+        ),
+      ),
     })
   }),
 )

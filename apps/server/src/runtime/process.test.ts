@@ -41,6 +41,7 @@ import { testConfigLayer } from '../database/testdb.ts'
 import { silentChangesLayer } from '../live/changes.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { Conversation } from '../threads/conversation.ts'
+import { ComputerStore } from '../computers/store.ts'
 import { conversationLayer } from '../threads/delivery.ts'
 import { ThreadTitles } from '../threads/generation.ts'
 import { Presence } from '../threads/presence.ts'
@@ -222,6 +223,7 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (receipt: Receipt) 
   const server = yield* Layer.buildWithScope(serverLayer, serverScope)
   let conversation = yield* Conversation.pipe(Effect.provideContext(server))
   const scope = yield* Layer.build(foundation)
+  const computers = yield* Layer.build(Layer.mock(ComputerStore, {}))
   return {
     ...rows,
     admission,
@@ -253,6 +255,8 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (receipt: Receipt) 
       sendToThread({ threadId: rows.threadId, text: 'Help me', pictures: [], key }).pipe(
         Effect.provideService(AuthContext, auth),
         Effect.provideService(Conversation, conversation),
+        // No step is handed over in this Thread, so a send never reaches the Computer.
+        Effect.provide(computers),
         Effect.provideContext(scope),
       ),
     watch: watchConversation({ threadId: rows.threadId }).pipe(
