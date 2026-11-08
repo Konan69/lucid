@@ -379,6 +379,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
             workspace: Workspace.cases.Company.make({ company, role: 'member' }),
             by: 'person' as const,
             threadId: Option.none<ThreadId>(),
+            helper: Option.none<RunId>(),
           })
           yield* Ref.set(yield* Published, [])
           const written = yield* store.write(person.id, threadId, {
