@@ -399,9 +399,11 @@ const externalDrift = Effect.fn('Approvals.externalDrift')(function* (
   const external = row.binding.preconditions.filter(
     ApprovalPrecondition.isAnyOf(['BrowserPage', 'MailEnvelope']),
   )
-  const first = external[0]
-  if (first === undefined) return Option.none<ApprovalInvalidation>()
-  const invalidation = ApprovalInvalidation.cases.ExternalStateChanged.make({ source: first._tag })
+  // Inspect even an older ask with no external baseline. Newly observed terms cannot inherit
+  // permission from an approval that never captured them; ordinary targets still observe [].
+  const invalidation = ApprovalInvalidation.cases.ExternalStateChanged.make({
+    source: ActionTarget.guards.Browser(row.action.target) ? 'BrowserPage' : 'MailEnvelope',
+  })
   const current = yield* (yield* ActionRunner)
     .inspect({
       person: actor.person,

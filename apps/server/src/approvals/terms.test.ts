@@ -228,6 +228,18 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
               action: BrowserAction.cases.Click.make({ target: 'Pay now' }),
             }),
           })
+          // A pre-deployment pending ask has no page baseline and must not grandfather a click.
+          const store = yield* ApprovalStore
+          const legacy = yield* store.raise(test.vivid, action, test.bound)
+          expect(
+            yield* Effect.flip(
+              store.decide(test.personal, {
+                id: legacy.id,
+                digest: legacy.digest,
+                decision: ApprovalDecision.cases.AllowOnce.make({}),
+              }),
+            ),
+          ).toEqual(new ApprovalChanged({ id: legacy.id }))
           const approval = yield* ask(test, action)
           yield* Ref.set((yield* Source).page, page(35))
           yield* reasks(test, approval)
