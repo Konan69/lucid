@@ -49,6 +49,7 @@ export const signalAttributes = (envelope: SignalEnvelope): Record<string, strin
     Approval: ({ outcome }) => ({ ...attribution, outcome }),
     Answer: () => attribution,
     Watch: ({ name }) => ({ ...attribution, name }),
+    CarryOn: () => attribution,
   })
 }
 
@@ -221,6 +222,7 @@ export function signalShown(placed: PlacedSignal) {
       attributes: { ...attributes, event, occurredAt },
       body: JSON.stringify(data, null, 2),
     }),
+    CarryOn: ({ body }) => ({ tagName, attributes, body }),
   })
 }
 
@@ -266,6 +268,7 @@ const cueText = (cue: SignalCue) =>
         `What to do: ${instruction}`,
         `The event, as JSON:\n${JSON.stringify(data)}`,
       ].join('\n\n'),
+    CarryOn: ({ body }) => body,
   })
 
 /** Render a signal with its type first, then its ordered attributes and escaped body.
