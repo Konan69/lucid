@@ -1,14 +1,17 @@
 import {
+  ProjectEvidence,
   ProjectWork,
   type Project,
+  type ProjectProof,
   type ProjectId,
   type Thread,
   type ThreadId,
 } from '@vivid/contracts'
-import { projects as projectsData } from '@vivid/state'
+import { goal, projects as projectsData } from '@vivid/state'
 import { Option } from 'effect'
-import { ChevronRight, Plus, SquarePen } from 'lucide-react'
+import { Check, ChevronRight, Plus, RotateCcw, SquarePen, Target } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
+import { openGoal, useGoal } from '../data/goal'
 import { live, LiveState, useLive } from '../data/live'
 import { router } from '../router'
 import { scope } from '../data/scope'
@@ -21,6 +24,7 @@ import { SkeletonList } from '../ui/skeleton'
 import { StatusLabel } from '../ui/Status'
 import { BAR } from './bar'
 import { CreateProject } from './project/Create'
+import { GoalDialog } from './project/Goal'
 import { Mark } from './project/Mark'
 import { relativeTime } from './sidebar/Threads'
 
@@ -29,8 +33,8 @@ import { relativeTime } from './sidebar/Threads'
  *
  * A Project is a piece of work with Threads in it. Its page says which one it is (its colour and
  * name), what is known about it (how many Threads, how many are waiting on the Person, when it
- * last moved), where its work stands when Vivid has recorded it (what done means, the latest
- * dated progress and the next step, or that it is done and what shows it), and then lists its
+ * last moved), where its work stands (what done means, the next step and the dated progress, or
+ * that it is done and what shows it, which Vivid records and the Person can set here), and then lists its
  * Threads with their live state, the Projects inside it and, in a Company, the people in its
  * Threads. It says nothing the server does not: a Project that only groups Threads draws no goal.
  *
@@ -186,6 +190,7 @@ function ProjectLine({
     <button type="button" onClick={onOpen} className={cn(LINK, 'group/line h-12')}>
       <Mark id={project.id} />
       <span className="min-w-0 flex-1 truncate text-label text-ink">{project.name}</span>
+      {ProjectWork.guards.Completed(project.work) && <StatusLabel status="done" />}
       {needing > 0 && <StatusLabel status="attention">{` · ${needing}`}</StatusLabel>}
       <span className="text-meta font-meta text-ink-3 tabular-nums">
         {projectsData.countThreads(project.threadCount).toLowerCase()}
@@ -326,10 +331,11 @@ function Standing({ project, needing }: { project: Project; needing: number }) {
 }
 
 /**
- * Where the Project's work stands, as Vivid recorded it from the conversation; there is no form
- * for it. A Project that only groups Threads draws nothing here. The proof of a finished Project
- * is a message in a Thread, so its link opens that Thread; a Member it is not shared with is
- * refused there like at any Thread link.
+ * Where the Project's work stands: what done means, the next step and the dated progress, or that
+ * it is done and what shows it. Vivid records it from the conversation; the Person sets the goal,
+ * corrects it, marks it done or reopens it here (`project/Goal.tsx`). A Project that only groups
+ * Threads offers to set a goal and invents none. Proof from a Thread links to that Thread; a
+ * Member it is not shared with is refused there like at any Thread link.
  */
 function Work({
   project,
@@ -338,54 +344,146 @@ function Work({
   project: Project
   onOpenThread: (id: ThreadId) => void
 }) {
+  const reading = useGoal()
   // Read once when the page opens: how long ago progress was made does not need to tick.
   const [now] = useState(() => Date.now())
-  return ProjectWork.match(project.work, {
-    Unspecified: () => null,
-    Active: (work) => {
-      const latest = work.progress.at(-1)
-      return (
-        <Part title="Where it stands">
-          <dl className={LIST}>
-            <Fact term="Goal">{work.objective}</Fact>
-            {latest !== undefined && (
-              <Fact term="Latest">
-                {latest.text}
-                <time className="ml-2 text-meta font-meta text-ink-3 tabular-nums">
-                  {relativeTime(latest.at, now)}
-                </time>
-              </Fact>
-            )}
-            <Fact term="Next">{work.nextStep}</Fact>
-          </dl>
-        </Part>
-      )
-    },
-    Completed: (work) => {
-      const [source] = work.proof.sources
-      return (
-        <Part title="Where it stands">
-          <dl className={LIST}>
-            <Fact term="Goal">{work.objective}</Fact>
-            <Fact term="Done">
-              {work.proof.summary}
-              <time className="ml-2 text-meta font-meta text-ink-3 tabular-nums">
-                {relativeTime(work.completedAt, now)}
-              </time>
-              <span className="mt-1 block">
-                <Button variant="link" size="xs" onClick={() => onOpenThread(source.threadId)}>
-                  See the message
-                </Button>
-              </span>
-            </Fact>
-          </dl>
-        </Part>
-      )
-    },
+  const form = goal.formFor(reading, project.id)
+  const stands = ProjectWork.match(project.work, {
+    Unspecified: () => (
+      <Part title="Goal">
+        <div className="flex items-center gap-3 rounded-card bg-surface-2 px-4 py-3 edge">
+          <p className="min-w-0 flex-1 text-label font-meta text-pretty text-ink-3">
+            Say what done looks like, and Vivid keeps track of where it stands.
+          </p>
+          <Button variant="outline" size="sm" onClick={() => openGoal(project.id, 'Goal')}>
+            <Target className="size-3.5" />
+            Set a goal
+          </Button>
+        </div>
+      </Part>
+    ),
+    Active: (work) => (
+      <Part
+        title="Where it stands"
+        actions={
+          <>
+            <Button variant="ghost" size="xs" onClick={() => openGoal(project.id, 'Goal')}>
+              Edit goal
+            </Button>
+            <Button variant="outline" size="xs" onClick={() => openGoal(project.id, 'Done')}>
+              <Check className="size-3.5" />
+              Mark done
+            </Button>
+          </>
+        }
+      >
+        <dl className={LIST}>
+          <Fact term="Goal">{work.objective}</Fact>
+          <Fact term="Next">{work.nextStep}</Fact>
+        </dl>
+      </Part>
+    ),
+    Completed: (work) => (
+      <Part
+        title="Where it stands"
+        actions={
+          <Button variant="ghost" size="xs" onClick={() => openGoal(project.id, 'Goal')}>
+            <RotateCcw className="size-3.5" />
+            Reopen
+          </Button>
+        }
+      >
+        <dl className={LIST}>
+          <Fact term="Goal">{work.objective}</Fact>
+          <Fact term="Done">
+            {work.proof.summary}
+            <Dated at={work.completedAt} now={now} />
+            <Proof proof={work.proof} onOpenThread={onOpenThread} />
+          </Fact>
+        </dl>
+      </Part>
+    ),
+  })
+  return (
+    <>
+      {stands}
+      <Progress project={project} now={now} />
+      {Option.isSome(form) && <GoalDialog project={project} form={form.value} reading={reading} />}
+    </>
+  )
+}
+
+/** When a line of work was written: how long ago, with the full date and time on hover. */
+function Dated({ at, now }: { at: number; now: number }) {
+  return (
+    <time
+      dateTime={new Date(at).toISOString()}
+      title={projectsData.formatMoved(at)}
+      className="ml-2 text-meta font-meta whitespace-nowrap text-ink-3 tabular-nums"
+    >
+      {relativeTime(at, now)}
+    </time>
+  )
+}
+
+/**
+ * Where the proof of a done Project lives. A message in a Thread opens that Thread; the Person's
+ * own word, given on this page, has nothing more to open.
+ */
+function Proof({
+  proof,
+  onOpenThread,
+}: {
+  proof: ProjectProof
+  onOpenThread: (id: ThreadId) => void
+}) {
+  const [source] = proof.sources
+  return ProjectEvidence.match(source, {
+    ThreadMessage: ({ threadId }) => (
+      <span className="mt-1 block">
+        <Button variant="link" size="xs" onClick={() => onOpenThread(threadId)}>
+          See the message
+        </Button>
+      </span>
+    ),
+    Person: () => null,
   })
 }
 
-/** One line of a Project's work: what it is, then what Vivid recorded. */
+/** How many lines of progress the page shows before the Person asks for the rest. */
+const PROGRESS_SHOWN = 5
+
+/**
+ * The Project's dated progress, newest first: each line Vivid recorded as the work moved. The
+ * latest few show; the rest open on request, so a long-running Project does not bury its Threads.
+ */
+function Progress({ project, now }: { project: Project; now: number }) {
+  const [all, setAll] = useState(false)
+  const lines = projectsData.progressOf(project)
+  if (lines.length === 0) return null
+  const shown = all ? lines : lines.slice(0, PROGRESS_SHOWN)
+  return (
+    <Part title="Progress">
+      <ol className={LIST}>
+        {shown.map((line) => (
+          <li key={`${line.at}-${line.text}`} className="flex gap-4 px-4 py-2.5">
+            <span className="min-w-0 flex-1 text-label text-pretty wrap-anywhere text-ink">
+              {line.text}
+            </span>
+            <Dated at={line.at} now={now} />
+          </li>
+        ))}
+      </ol>
+      {lines.length > PROGRESS_SHOWN && (
+        <Button variant="ghost" size="xs" onClick={() => setAll(!all)} className="mt-1">
+          {all ? 'Show fewer' : `Show all ${lines.length} updates`}
+        </Button>
+      )}
+    </Part>
+  )
+}
+
+/** One line of a Project's work: what it is, then what it says. */
 function Fact({ term, children }: { term: string; children: ReactNode }) {
   return (
     <div className="flex gap-4 px-4 py-2.5">
@@ -395,11 +493,22 @@ function Fact({ term, children }: { term: string; children: ReactNode }) {
   )
 }
 
-/** A titled part of a Project's page. */
-function Part({ title, children }: { title: string; children: ReactNode }) {
+/** A titled part of a Project's page, with the part's own actions at the end of its title. */
+function Part({
+  title,
+  actions,
+  children,
+}: {
+  title: string
+  actions?: ReactNode
+  children: ReactNode
+}) {
   return (
     <section className="mt-8">
-      <h2 className="mb-2 flex h-7 items-center px-1 text-meta font-title text-ink-3">{title}</h2>
+      <div className="mb-2 flex h-7 items-center gap-1 px-1">
+        <h2 className="min-w-0 flex-1 text-meta font-title text-ink-3">{title}</h2>
+        {actions}
+      </div>
       {children}
     </section>
   )
