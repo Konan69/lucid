@@ -1,4 +1,10 @@
-import type { Project, ProjectId, Thread, ThreadId } from '@vivid/contracts'
+import {
+  ProjectWork,
+  type Project,
+  type ProjectId,
+  type Thread,
+  type ThreadId,
+} from '@vivid/contracts'
 import { projects as projectsData } from '@vivid/state'
 import { Option } from 'effect'
 import { ChevronRight, Plus, SquarePen } from 'lucide-react'
@@ -23,9 +29,10 @@ import { relativeTime } from './sidebar/Threads'
  *
  * A Project is a piece of work with Threads in it. Its page says which one it is (its colour and
  * name), what is known about it (how many Threads, how many are waiting on the Person, when it
- * last moved), and then lists its Threads with their live state, the Projects inside it and, in a
- * Company, the people in its Threads. It says nothing the server does not: a Project has no
- * purpose line, no "where it stands", no next step and no files of its own yet, so none is drawn.
+ * last moved), where its work stands when Vivid has recorded it (what done means, the latest
+ * dated progress and the next step, or that it is done and what shows it), and then lists its
+ * Threads with their live state, the Projects inside it and, in a Company, the people in its
+ * Threads. It says nothing the server does not: a Project that only groups Threads draws no goal.
  *
  * Everything comes from `live.projects` and `live.threads`. Which Project is open belongs to the
  * address (`open`), so the sidebar can link to one and the back button leaves it.
@@ -248,6 +255,8 @@ function ProjectPage({
         </Button>
       </header>
 
+      <Work project={project} onOpenThread={onOpenThread} />
+
       <Part title="Threads">
         <Live state={threads} loading={<SkeletonList of="row" count={3} />}>
           {(list) => (
@@ -313,6 +322,76 @@ function Standing({ project, needing }: { project: Project; needing: number }) {
       {' · '}
       <time>moved {relativeTime(project.updatedAt, now)}</time>
     </>
+  )
+}
+
+/**
+ * Where the Project's work stands, as Vivid recorded it from the conversation; there is no form
+ * for it. A Project that only groups Threads draws nothing here. The proof of a finished Project
+ * is a message in a Thread, so its link opens that Thread; a Member it is not shared with is
+ * refused there like at any Thread link.
+ */
+function Work({
+  project,
+  onOpenThread,
+}: {
+  project: Project
+  onOpenThread: (id: ThreadId) => void
+}) {
+  // Read once when the page opens: how long ago progress was made does not need to tick.
+  const [now] = useState(() => Date.now())
+  return ProjectWork.match(project.work, {
+    Unspecified: () => null,
+    Active: (work) => {
+      const latest = work.progress.at(-1)
+      return (
+        <Part title="Where it stands">
+          <dl className={LIST}>
+            <Fact term="Goal">{work.objective}</Fact>
+            {latest !== undefined && (
+              <Fact term="Latest">
+                {latest.text}
+                <time className="ml-2 text-meta font-meta text-ink-3 tabular-nums">
+                  {relativeTime(latest.at, now)}
+                </time>
+              </Fact>
+            )}
+            <Fact term="Next">{work.nextStep}</Fact>
+          </dl>
+        </Part>
+      )
+    },
+    Completed: (work) => {
+      const [source] = work.proof.sources
+      return (
+        <Part title="Where it stands">
+          <dl className={LIST}>
+            <Fact term="Goal">{work.objective}</Fact>
+            <Fact term="Done">
+              {work.proof.summary}
+              <time className="ml-2 text-meta font-meta text-ink-3 tabular-nums">
+                {relativeTime(work.completedAt, now)}
+              </time>
+              <span className="mt-1 block">
+                <Button variant="link" size="xs" onClick={() => onOpenThread(source.threadId)}>
+                  See the message
+                </Button>
+              </span>
+            </Fact>
+          </dl>
+        </Part>
+      )
+    },
+  })
+}
+
+/** One line of a Project's work: what it is, then what Vivid recorded. */
+function Fact({ term, children }: { term: string; children: ReactNode }) {
+  return (
+    <div className="flex gap-4 px-4 py-2.5">
+      <dt className="w-14 shrink-0 text-meta font-title text-ink-3">{term}</dt>
+      <dd className="min-w-0 flex-1 text-label text-pretty wrap-anywhere text-ink">{children}</dd>
+    </div>
   )
 }
 

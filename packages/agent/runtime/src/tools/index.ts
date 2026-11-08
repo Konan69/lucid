@@ -1,12 +1,13 @@
 import * as NodeAsyncHooks from 'node:async_hooks'
 import { Effect, type Layer } from 'effect'
-import type { MemoryAuthority } from '@vivid/contracts'
-import type { Memory } from '../memory.ts'
+import type { Memory, MemoryWriter } from '../memory.ts'
 import type { ToolFailure } from './result.ts'
 import { defineTool as durableTool, type ToolRegistration } from '@earendil-works/pi-durable'
 import { NobodyToActFor } from '../client.ts'
 import { ToolScopeMissing } from './failure.ts'
 import { capabilityRegistry } from './capabilities.ts'
+import { projectNamed } from './projects.ts'
+import type { ProjectOf } from './memory.ts'
 import {
   scopeLayer,
   scopedRunner,
@@ -21,7 +22,7 @@ import {
  * The core supplies its configured entry directory; constructing tools does no I/O. */
 export function tools(
   resolve: ResolveScope,
-  resolvePerson: (call: Parameters<ResolveScope>[0]) => Effect.Effect<MemoryAuthority, ToolFailure>,
+  resolvePerson: (call: Parameters<ResolveScope>[0]) => Effect.Effect<MemoryWriter, ToolFailure>,
   memory: Memory['Service'],
   skills: ReadonlyArray<ToolRegistration>,
 ) {
@@ -46,7 +47,11 @@ export function tools(
       )
     return resolvePerson(call)
   }, memory)
-  const registry = capabilityRegistry({ runTool, run, runMemory, memory, skills })
+  /** A Project-scoped memory names its Project; the name resolves through the call's own scope. */
+  const project: ProjectOf = (name) =>
+    // @effect-diagnostics-next-line strictEffectProvide:off -- The per-call authority Layer, as in toolRunner.
+    projectNamed(name).pipe(Effect.provide(current()))
+  const registry = capabilityRegistry({ runTool, run, runMemory, project, memory, skills })
   const mounted = registry.tools.map((definition) =>
     durableTool({
       ...definition,

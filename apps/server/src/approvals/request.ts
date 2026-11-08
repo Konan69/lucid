@@ -64,6 +64,8 @@ const spoken = (run: RequestRun, message: Message, answered: ReadonlySet<string>
     FirstConversation: () => false,
     Watch: () => false,
     WatchUnrecorded: () => false,
+    // The forget's instruction is the server's own text about a Settings press, not words said.
+    Forget: () => false,
   })
 }
 

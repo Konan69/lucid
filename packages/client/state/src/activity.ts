@@ -116,6 +116,22 @@ const STEPS = {
   search_memory: UNKNOWN,
   write_memory: UNKNOWN,
   delete_memory: UNKNOWN,
+  plan_forget: {
+    said: {
+      running: 'Working out what to forget',
+      done: 'Worked out what to forget',
+      failed: 'Could not work out what to forget',
+    },
+    detail: nothing,
+  },
+  forget_memory: {
+    said: {
+      running: 'Forgetting',
+      done: 'Checked what is forgotten',
+      failed: 'Could not forget it',
+    },
+    detail: nothing,
+  },
   make_integration: UNKNOWN,
   search_library: {
     said: {
@@ -407,6 +423,22 @@ const STEPS = {
       running: 'Starting a project',
       done: 'Started a project',
       failed: 'Could not start the project',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
+  read_project: {
+    said: {
+      running: 'Looking at the project',
+      done: 'Looked at the project',
+      failed: 'Could not look at the project',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
+  update_project: {
+    said: {
+      running: 'Updating the project',
+      done: 'Updated the project',
+      failed: 'Could not update the project',
     },
     detail: (asked) => [said(asked.name)],
   },

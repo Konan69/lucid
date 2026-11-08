@@ -218,6 +218,8 @@ export const RunOrigin = Schema.TaggedUnion({
   },
   /** A Watch Run started before 29 October 2026, which recorded only the Watch's name. */
   WatchUnrecorded: { person: PersonSummary, watchName: Schema.String },
+  /** The Person pressed Forget in Settings; Vivid plans the forget and carries it out. */
+  Forget: { person: PersonSummary },
 })
 export type RunOrigin = typeof RunOrigin.Type
 
@@ -381,6 +383,8 @@ export const SignalType = Schema.Literals([
   'carry-on',
   // The Person finished a step Vivid handed them on its Computer (`inputs/handoff.ts`).
   'handoff',
+  // A Settings Forget press, delivered into a background Thread for Vivid to plan and carry out.
+  'forget',
 ] as const)
 export type SignalType = typeof SignalType.Type
 
@@ -409,6 +413,7 @@ export type ApprovalOutcome = typeof ApprovalOutcome.Type
  *   `occurredAt` is the Integration's own timestamp text, kept as sent.
  * - `CarryOn`: a card telling Vivid to go on (`CarryOnRequest`); no client draws it.
  * - `Handoff`: the Person finished a step Vivid handed them on its Computer, named by its handoff.
+ * - `Forget`: a Settings Forget press, with the instruction to plan and carry it out in `body`.
  */
 export const SignalCue = Schema.TaggedUnion({
   Message: { body: Schema.String },
@@ -424,6 +429,7 @@ export const SignalCue = Schema.TaggedUnion({
   },
   CarryOn: { body: Schema.String },
   Handoff: { body: Schema.String, handoff: HandoffId },
+  Forget: { body: Schema.String },
 })
 export type SignalCue = typeof SignalCue.Type
 
@@ -436,6 +442,7 @@ export const signalTypes = {
   Watch: 'event',
   CarryOn: 'carry-on',
   Handoff: 'handoff',
+  Forget: 'forget',
 } as const satisfies Record<SignalCue['_tag'], SignalType>
 
 /**

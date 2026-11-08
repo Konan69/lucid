@@ -14,7 +14,11 @@ import {
   ResultCoverage,
   type IntegrationResult,
   computerScreenAddress,
+  type MemoryForgetStale,
   type NoDeviceConnected,
+  type ProjectChanged,
+  type ProjectEvidenceMissing,
+  type ProjectNotActive,
 } from '@vivid/contracts'
 import type { RpcFailure } from '@vivid/contracts/rpc'
 import * as Config from 'effect/Config'
@@ -67,6 +71,10 @@ export type ToolFailure =
   | MemoryMissing
   | MemoryUnavailable
   | MemorySearchInvalid
+  | ProjectChanged
+  | ProjectNotActive
+  | ProjectEvidenceMissing
+  | MemoryForgetStale
   | RpcClientError.RpcClientError
   | Config.ConfigError
 
@@ -312,6 +320,22 @@ export const settle = Effect.fn('Tools.settle')(function* (
       MemorySearchInvalid: () =>
         failure(
           'The memory search expression is invalid. Use FTS5 words, quoted phrases or prefix* and correct any unmatched quotes.',
+        ),
+      ProjectChanged: ({ actual }) =>
+        failure(
+          `The Project changed to revision ${actual}. Read it with read_project before updating it.`,
+        ),
+      ProjectNotActive: () =>
+        failure(
+          'The Project has no objective in progress. Define its objective and next step first.',
+        ),
+      ProjectEvidenceMissing: () =>
+        failure(
+          'Nothing in this conversation shows the Project is done. Mark it done only once the Person has said so or this reply has observed it.',
+        ),
+      MemoryForgetStale: () =>
+        failure(
+          'Memory changed since you planned this forget. Read the entries again and make a new plan; nothing was changed.',
         ),
       NotFound: () => failure('It does not exist or the person cannot see it.'),
       Forbidden: () => failure('The person is not allowed to do that here.'),

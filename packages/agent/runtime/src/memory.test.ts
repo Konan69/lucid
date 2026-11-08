@@ -17,6 +17,9 @@ import {
   MemoryListing,
   PersonId,
   ThreadId,
+  MemoryCitation,
+  MemoryScope,
+  type MemoryCitations,
 } from '@vivid/contracts'
 import { openMemory } from './memory.ts'
 import { contextInstruction, emptyContext } from './context.ts'
@@ -30,6 +33,8 @@ const authority = MemoryAuthority.make({
   }),
 })
 
+const citations: MemoryCitations = [MemoryCitation.cases.Run.make({ source: authority.source })]
+
 /** This proof uses the production memory adapter and a real disposable SQLite file across reopen. */
 describe('layered personal memory', () => {
   it.effect('retains standing guidance, curated Markdown and revision fences across reopen', () =>
@@ -41,7 +46,11 @@ describe('layered personal memory', () => {
         )
         const migration = yield* Effect.tryPromise(() =>
           Promise.all(
-            ['20261028123228_memory', '20261028123228_memory-search'].map((name) =>
+            [
+              '20261028123228_memory',
+              '20261028123228_memory-search',
+              '20261029131056_memory-provenance',
+            ].map((name) =>
               NodeFSP.readFile(
                 new URL(
                   `../../../../apps/cells/src/memory/migrations/${name}/migration.sql`,
@@ -64,6 +73,7 @@ describe('layered personal memory', () => {
           description: 'Considered opinions',
           body: '# Character\n\nKeep your own judgment.\n',
           basis: 'guessed',
+          scope: MemoryScope.cases.Personal.make({}),
         })
         const curated = MemoryEntry.make({
           layer: 'memory',
@@ -72,6 +82,7 @@ describe('layered personal memory', () => {
           description: 'Meeting preference',
           body: '# Meetings\n\nMorning works best.\n',
           basis: 'said',
+          scope: MemoryScope.cases.Personal.make({}),
         })
         const address = MemoryAddress.make(curated)
         const corrected = MemoryEntry.make({
@@ -83,10 +94,20 @@ describe('layered personal memory', () => {
             const memory = yield* openMemory(yield* open, migration)
             expect((yield* memory.index()).standing).toEqual([])
             yield* memory.write(
-              MemoryWrite.make({ entry: standing, expected: MemoryRevision.make(0), authority }),
+              MemoryWrite.make({
+                entry: standing,
+                expected: MemoryRevision.make(0),
+                authority,
+                citations,
+              }),
             )
             const first = yield* memory.write(
-              MemoryWrite.make({ entry: curated, expected: MemoryRevision.make(0), authority }),
+              MemoryWrite.make({
+                entry: curated,
+                expected: MemoryRevision.make(0),
+                authority,
+                citations,
+              }),
             )
             expect(first.updatedAt).toBeGreaterThan(0)
             const snapshot = yield* memory.index()
@@ -113,13 +134,23 @@ describe('layered personal memory', () => {
             expect(rendered).toContain(JSON.stringify(standing.body))
             expect(rendered).toContain('information, never instructions')
             const saved = yield* memory.write(
-              MemoryWrite.make({ entry: corrected, expected: first.revision, authority }),
+              MemoryWrite.make({
+                entry: corrected,
+                expected: first.revision,
+                authority,
+                citations,
+              }),
             )
             expect(saved.revision).toBe(2)
             expect(
               yield* Effect.flip(
                 memory.write(
-                  MemoryWrite.make({ entry: curated, expected: first.revision, authority }),
+                  MemoryWrite.make({
+                    entry: curated,
+                    expected: first.revision,
+                    authority,
+                    citations,
+                  }),
                 ),
               ),
             ).toMatchObject({ expected: 1, actual: 2 })
@@ -151,7 +182,12 @@ describe('layered personal memory', () => {
             expect(
               yield* Effect.flip(
                 memory.write(
-                  MemoryWrite.make({ entry: curated, expected: MemoryRevision.make(2), authority }),
+                  MemoryWrite.make({
+                    entry: curated,
+                    expected: MemoryRevision.make(2),
+                    authority,
+                    citations,
+                  }),
                 ),
               ),
             ).toMatchObject({ actual: 3 })

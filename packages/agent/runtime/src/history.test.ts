@@ -13,6 +13,7 @@ import {
   RuntimeHistoryEntry,
   RuntimeHistoryThread,
   ThreadId,
+  MemoryScope,
 } from '@vivid/contracts'
 import { Effect, Option, Schema } from 'effect'
 import { scenario, ada, admit, delivery, settled } from '../tests/requests.ts'
@@ -86,6 +87,7 @@ it.effect('loads two complete histories once, keeps their maps, and indexes memo
         description: 'Copper kettle',
         body: 'A copper kettle lives here.',
         basis: 'said',
+        scope: MemoryScope.cases.Personal.make({}),
       })
       const body = RuntimeHistoryBody.make({ threads, memory: [{ ...entry, updatedAt: 1234 }] })
       const path = `/persons/${ada}/history`

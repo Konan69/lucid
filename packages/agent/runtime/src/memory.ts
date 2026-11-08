@@ -6,6 +6,8 @@ import {
 import {
   isStandingLayer,
   MemoryAuthority,
+  MemoryCitations,
+  MemoryScope,
   MemorySource,
   MemoryRevision,
   MemoryAddress,
@@ -55,6 +57,15 @@ export class MemoryMissing extends Schema.TaggedError<MemoryMissing>()(
 
 export const INDEX_BUDGET = 8000
 
+/**
+ * Who writes memory in a call, and what the write rests on. The host builds both, from the Run
+ * or the learner it serves; no tool argument reaches either.
+ */
+export interface MemoryWriter {
+  readonly authority: MemoryAuthority
+  readonly citations: MemoryCitations
+}
+
 interface MemoryService {
   readonly index: (person: PersonId) => Effect.Effect<MemoryIndex, MemoryUnavailable>
   readonly list: (
@@ -83,19 +94,31 @@ interface MemoryService {
 export class Memory extends Context.Service<Memory, MemoryService>()('@vivid/runtime/Memory') {}
 
 const storedAuthority = Schema.fromJsonString(MemoryAuthority)
+const storedScope = Schema.fromJsonString(MemoryScope)
+const storedCitations = Schema.fromJsonString(MemoryCitations)
 const Row = Schema.Struct({
   ...SavedMemory.fields,
   authority: storedAuthority,
+  scope: storedScope,
+  citations: storedCitations,
 })
 const decodeEntry = Schema.decodeUnknownEffect(Row)
-const decodeLines = Schema.decodeUnknownEffect(Schema.Array(MemoryLine))
-const decodeHits = Schema.decodeUnknownEffect(Schema.Array(MemoryHit))
+const decodeLines = Schema.decodeUnknownEffect(
+  Schema.Array(Schema.Struct({ ...MemoryLine.fields, scope: storedScope })),
+)
+const decodeHits = Schema.decodeUnknownEffect(
+  Schema.Array(Schema.Struct({ ...MemoryHit.fields, scope: storedScope })),
+)
 const encodeAuthority = Schema.encodeEffect(storedAuthority)
+const encodeScope = Schema.encodeEffect(storedScope)
+const encodeCitations = Schema.encodeEffect(storedCitations)
 const RevisionRow = Schema.Struct({ revision: MemoryRevision })
 const decodeRevision = Schema.decodeUnknownEffect(RevisionRow)
 const decodeRevisionValue = Schema.decodeUnknownEffect(MemoryRevision)
 const select =
-  'layer, file, kind, description, body, basis, revision, updated_at AS updatedAt, authority'
+  'layer, file, kind, description, body, basis, scope, revision, updated_at AS updatedAt, authority, citations'
+const lineColumns =
+  'layer, file, kind, description, basis, scope, revision, updated_at AS updatedAt'
 
 /** Narrow Promise interop to chord's public executor. Its transaction owns rollback and queueing. */
 const attempt = <A>(call: () => Promise<A>) =>
@@ -132,7 +155,7 @@ const index = Effect.fn('Memory.index')(function* (database: SqliteDatabase) {
         ),
         lines: await tx.all<object>(
           // The same order as `list`, so a cursor taken from the last index line continues it exactly.
-          'SELECT layer, file, kind, description, basis, revision, updated_at AS updatedAt FROM memory_entries WHERE body IS NOT NULL ORDER BY updated_at DESC, layer DESC, file DESC',
+          `SELECT ${lineColumns} FROM memory_entries WHERE body IS NOT NULL ORDER BY updated_at DESC, layer DESC, file DESC`,
         ),
       }),
     ),
@@ -170,7 +193,7 @@ const list = Effect.fn('Memory.list')(function* (database: SqliteDatabase, listi
   }
   const rows = yield* attempt(() =>
     database.all<object>(
-      `SELECT layer, file, kind, description, basis, revision, updated_at AS updatedAt
+      `SELECT ${lineColumns}
       FROM memory_entries WHERE body IS NOT NULL AND (? IS NULL OR layer = ?) ${after}
       ORDER BY updated_at DESC, layer DESC, file DESC LIMIT ?`,
       ...parameters,
@@ -211,7 +234,7 @@ const search = Effect.fn('Memory.search')(function* (
   const rows = yield* Effect.tryPromise({
     try: () =>
       database.all<object>(
-        `SELECT n.layer, n.file, n.kind, n.description, n.basis, n.revision,
+        `SELECT n.layer, n.file, n.kind, n.description, n.basis, n.scope, n.revision,
           n.updated_at AS updatedAt, snippet(memory_search, 2, '', '', '…', 64) AS excerpt
         FROM memory_search JOIN memory_entries n ON n.id = memory_search.rowid
         WHERE memory_search MATCH ? AND n.body IS NOT NULL AND (? IS NULL OR n.layer = ?)
@@ -248,8 +271,14 @@ const read = Effect.fn('Memory.read')(function* (database: SqliteDatabase, addre
 
 /** Compare and replace inside one native transaction. Stale callers receive the actual revision. */
 const write = Effect.fn('Memory.write')(function* (database: SqliteDatabase, input: MemoryWrite) {
-  const { entry, authority, expected } = input
+  const { entry, authority, expected, citations } = input
   const encoded = yield* encodeAuthority(authority).pipe(
+    Effect.mapError(() => MemoryUnavailable.make({})),
+  )
+  const scope = yield* encodeScope(entry.scope).pipe(
+    Effect.mapError(() => MemoryUnavailable.make({})),
+  )
+  const cited = yield* encodeCitations(citations).pipe(
     Effect.mapError(() => MemoryUnavailable.make({})),
   )
   const updatedAt = MemorySource.guards.HistoryLoad(authority.source)
@@ -267,10 +296,11 @@ const write = Effect.fn('Memory.write')(function* (database: SqliteDatabase, inp
         const actual = row === undefined ? 0 : row.revision
         if (actual !== expected) return { actual, saved: false }
         await tx.run(
-          `INSERT INTO memory_entries (layer, file, kind, description, body, basis, revision, updated_at, authority)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (layer, file) DO UPDATE SET
+          `INSERT INTO memory_entries (layer, file, kind, description, body, basis, revision, updated_at, authority, scope, citations)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (layer, file) DO UPDATE SET
         kind=excluded.kind, description=excluded.description, body=excluded.body, basis=excluded.basis,
-        revision=excluded.revision, updated_at=excluded.updated_at, authority=excluded.authority`,
+        revision=excluded.revision, updated_at=excluded.updated_at, authority=excluded.authority,
+        scope=excluded.scope, citations=excluded.citations`,
           entry.layer,
           entry.file,
           entry.kind,
@@ -280,6 +310,8 @@ const write = Effect.fn('Memory.write')(function* (database: SqliteDatabase, inp
           actual + 1,
           updatedAt,
           encoded,
+          scope,
+          cited,
         )
         return { actual: actual + 1, saved: true }
       },
@@ -300,6 +332,7 @@ const write = Effect.fn('Memory.write')(function* (database: SqliteDatabase, inp
     revision,
     updatedAt,
     authority,
+    citations,
   })
 })
 

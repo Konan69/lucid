@@ -1,8 +1,7 @@
 import type { ToolExecutionApi } from '@earendil-works/pi-durable'
 import type { VividRpcClient } from '@vivid/client-runtime'
-import type { MemoryAuthority } from '@vivid/contracts'
 import { Context, Effect, type Layer, Option, Predicate } from 'effect'
-import { Memory } from '../memory.ts'
+import { Memory, type MemoryWriter } from '../memory.ts'
 import type { Acting } from '../client.ts'
 import { settle, type ToolFailure, type ToolResult } from './result.ts'
 import { ComputerSaid } from './sandbox.ts'
@@ -89,11 +88,11 @@ export type RunScoped = ReturnType<typeof scopedRunner>
  * The caller supplies the Memory layer so tool definitions can load without runtime settings.
  */
 export function memoryRunner(
-  authority: () => Effect.Effect<MemoryAuthority, ToolFailure>,
+  authority: () => Effect.Effect<MemoryWriter, ToolFailure>,
   memory: Memory['Service'],
 ) {
   return function runMemory(
-    operation: (authority: MemoryAuthority) => Effect.Effect<ToolResult, ToolFailure, Memory>,
+    operation: (writer: MemoryWriter) => Effect.Effect<ToolResult, ToolFailure, Memory>,
     { signal, tool }: { readonly signal: AbortSignal; readonly tool: string },
   ) {
     const program = Effect.gen(function* () {

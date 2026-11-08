@@ -24,6 +24,7 @@ import { procedure } from './procedure.mjs'
 import { feed } from './feed.mjs'
 import { owed } from './owed.mjs'
 import { todos } from './todos.mjs'
+import { projects } from './projects.mjs'
 import { offer } from './offer.mjs'
 import { discordProof, discordBlocked } from './discord.mjs'
 import { githubProof, githubBlocked } from './github.mjs'
@@ -56,6 +57,7 @@ export const features = [
   'feed',
   'owed',
   'todos',
+  'projects',
   'devices',
   'reading',
   'settings',
@@ -588,6 +590,7 @@ const recipes = {
   procedure,
   owed,
   todos,
+  projects,
   watch,
   integrations,
   reading,
@@ -629,6 +632,7 @@ export async function drive(state, feature) {
           owed: 'Tracking requires a real model; rehearsal cannot prove it.',
           todos: 'The list requires a real model; rehearsal cannot prove it.',
           library: 'Library requires a real model; rehearsal cannot prove retrieval and citation.',
+          projects: 'Project state requires a real model; rehearsal cannot prove it.',
         }
   let failed = false
   for (const name of chosen) {

@@ -19,7 +19,7 @@ import type { DatabaseInfrastructureError } from '../database/client.ts'
 
 /**
  * The cues a server producer makes itself: an Approval's outcome, an answer, a Watch's event, a
- * card's carry-on, a finished handoff.
+ * card's carry-on, a finished handoff, a Settings forget.
  */
 export const ServerCue = Schema.Union([
   SignalCue.cases.Approval,
@@ -27,6 +27,7 @@ export const ServerCue = Schema.Union([
   SignalCue.cases.Watch,
   SignalCue.cases.CarryOn,
   SignalCue.cases.Handoff,
+  SignalCue.cases.Forget,
 ])
 export type ServerCue = typeof ServerCue.Type
 
@@ -69,6 +70,8 @@ export const StoredRunOrigin = Schema.TaggedUnion({
   },
   /** A Watch Run stored before 29 October 2026, which kept only the Watch's name. */
   WatchUnrecorded: { watchName: Schema.String },
+  /** A Settings Forget press woke Vivid in a background Thread to plan and carry it out. */
+  Forget: {},
 })
 export type StoredRunOrigin = typeof StoredRunOrigin.Type
 

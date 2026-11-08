@@ -235,11 +235,10 @@ const definitions = [
     starter: false,
     needs: [
       'list_watches',
-      'stop_watching',
       'search_memory',
       'read_memory',
-      'write_memory',
-      'delete_memory',
+      'plan_forget',
+      'forget_memory',
       'read_document',
       'write_document',
       'ask_person',

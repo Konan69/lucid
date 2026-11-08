@@ -207,6 +207,11 @@ import {
 import {
   CorrectMemoryRequest,
   ForgetMemoryRequest,
+  MemoryForgetId,
+  MemoryForgetPlan,
+  MemoryForgetReceipt,
+  MemoryForgetStale,
+  PlanMemoryForgetRequest,
   MemoryAddress,
   MemoryIndex,
   MemoryListing,
@@ -218,7 +223,15 @@ import {
   NotificationReadResponse,
   ReadNotificationsRequest,
 } from './notifications.js'
-import { CreateProjectRequest, Project, ProjectListResponse } from './projects.js'
+import {
+  CreateProjectRequest,
+  Project,
+  ProjectChanged,
+  ProjectEvidenceMissing,
+  ProjectListResponse,
+  ProjectNotActive,
+  UpdateProjectRequest,
+} from './projects.js'
 import {
   Owed,
   OwedListResponse,
@@ -792,6 +805,12 @@ const CreateProject = Rpc.make('CreateProject', {
   payload: CreateProjectRequest,
   success: Project,
 })
+/** Vivid recording a Project's objective, progress or completion, against the revision it read. */
+const UpdateProject = Rpc.make('UpdateProject', {
+  payload: UpdateProjectRequest,
+  success: Project,
+  error: Schema.Union([RpcFailure, ProjectChanged, ProjectNotActive, ProjectEvidenceMissing]),
+})
 
 // ── Waiting on ────────────────────────────────────────────────────────────
 const ListOwed = Rpc.make('ListOwed', { ...call, success: OwedListResponse })
@@ -987,7 +1006,24 @@ const CorrectMemory = Rpc.make('CorrectMemory', {
   payload: CorrectMemoryRequest,
   success: SavedMemory,
 })
-const ForgetMemory = Rpc.make('ForgetMemory', { ...call, payload: ForgetMemoryRequest })
+/** Vivid's forget plan, checked against the acting Person's memory, Watches and owed records. */
+const PlanMemoryForget = Rpc.make('PlanMemoryForget', {
+  ...call,
+  payload: PlanMemoryForgetRequest,
+  success: MemoryForgetPlan,
+})
+/** Carry out a confirmed plan, or hand a Settings Forget press to Vivid; answers the receipt. */
+const ForgetMemory = Rpc.make('ForgetMemory', {
+  payload: ForgetMemoryRequest,
+  success: MemoryForgetReceipt,
+  error: Schema.Union([RpcFailure, MemoryForgetStale]),
+})
+/** One forget's receipt, live: Settings shows Pending until Vivid's background Run settles. */
+const WatchMemoryForget = Rpc.make('WatchMemoryForget', {
+  ...live,
+  payload: { id: MemoryForgetId },
+  success: MemoryForgetReceipt,
+})
 
 // ── Skills ─────────────────────────────────────────────────────────────────
 const ListSkills = Rpc.make('ListSkills', { ...call, success: SkillListResponse })
@@ -1270,6 +1306,7 @@ export const VividRpc = RpcGroup.make(
   ListProjects,
   WatchProjects,
   CreateProject,
+  UpdateProject,
   ListOwed,
   WatchOwed,
   TrackOwed,
@@ -1314,7 +1351,9 @@ export const VividRpc = RpcGroup.make(
   ListMemory,
   ReadMemory,
   CorrectMemory,
+  PlanMemoryForget,
   ForgetMemory,
+  WatchMemoryForget,
   ListSkills,
   WatchSkills,
   ListSkillSummaries,

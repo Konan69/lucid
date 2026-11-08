@@ -238,6 +238,8 @@ export const automaticallyNotifies = Effect.fn('RunStore.automaticallyNotifies')
     // A background wake for the Feed: the Person hears about it only when Vivid posts there.
     Watch: () => false,
     WatchUnrecorded: () => false,
+    // The Settings screen shows the forget's receipt; nothing else is said.
+    Forget: () => false,
   })
 })
 const decodeState = decodeStored(
@@ -264,6 +266,7 @@ const originOf = (origin: StoredRunOrigin, person: PersonSummary) =>
       }),
     WatchUnrecorded: ({ watchName }): RunOrigin =>
       RunOrigin.cases.WatchUnrecorded.make({ person, watchName }),
+    Forget: (): RunOrigin => RunOrigin.cases.Forget.make({ person }),
   })
 
 const ENDED = {

@@ -51,6 +51,7 @@ export const signalAttributes = (envelope: SignalEnvelope): Record<string, strin
     Watch: ({ name }) => ({ ...attribution, name }),
     CarryOn: () => attribution,
     Handoff: ({ handoff }) => ({ ...attribution, handoff }),
+    Forget: () => attribution,
   })
 }
 
@@ -225,6 +226,7 @@ export function signalShown(placed: PlacedSignal) {
     }),
     CarryOn: ({ body }) => ({ tagName, attributes, body }),
     Handoff: ({ body }) => ({ tagName, attributes, body }),
+    Forget: ({ body }) => ({ tagName, attributes, body }),
   })
 }
 
@@ -272,6 +274,7 @@ const cueText = (cue: SignalCue) =>
       ].join('\n\n'),
     CarryOn: ({ body }) => body,
     Handoff: ({ body }) => body,
+    Forget: ({ body }) => body,
   })
 
 /** Render a signal with its type first, then its ordered attributes and escaped body.
