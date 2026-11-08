@@ -2,13 +2,26 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import type { Harness } from '@earendil-works/pi-durable'
 import { describe, expect, it } from '@effect/vitest'
-import { Deferred, Effect } from 'effect'
+import {
+  ForgetChange,
+  MemoryAddress,
+  MemoryAuthority,
+  MemoryClosed,
+  MemoryClosure,
+  MemoryFile,
+  MemoryForgetId,
+  MemoryRevision,
+  MemorySource,
+  ThreadId,
+} from '@vivid/contracts'
+import { Deferred, Effect, Schema } from 'effect'
 import { start, world } from '../tests/process.ts'
 import { ada, admit, delivery, settled, type Runtime } from '../tests/requests.ts'
 import { DreamHome } from './dreaming.ts'
 import { pi } from './threads.ts'
 
 const THREAD = 'dreaming-proof'
+const decodeClosed = Schema.decodeUnknownEffect(MemoryClosed)
 const ZONE = 'Pacific/Auckland'
 
 /**
@@ -123,6 +136,31 @@ describe('the Dreamer on native Pi SQLite', () => {
             const [until] = sleeping
             expect(until).toBeGreaterThanOrEqual(before + 20 * 60_000)
             expect(until).toBeLessThanOrEqual(Date.now() + 20 * 60_000)
+          }),
+        )
+        // A forget stops the queued pass, which would re-read the conversation, and only that.
+        const response = yield* runtime.send(`/persons/${ada}/memory/forget`, {
+          method: 'POST',
+          body: MemoryClosure.make({
+            changes: [
+              ForgetChange.cases.Retract.make({
+                address: MemoryAddress.make({ layer: 'memory', file: MemoryFile.make('tea.md') }),
+                expected: MemoryRevision.make(1),
+              }),
+            ],
+            authority: MemoryAuthority.make({
+              actor: ada,
+              source: MemorySource.cases.Forget.make({ forgetId: MemoryForgetId.make('dream') }),
+            }),
+            writer: ThreadId.make(THREAD),
+          }),
+        })
+        expect(response.status).toBe(200)
+        expect(yield* decodeClosed(response.body)).toMatchObject({ learning: 1 })
+        yield* runtime.persons.use(ada, (person) =>
+          Effect.gen(function* () {
+            const live = yield* pi(() => person.harness.inspect(BACKGROUND_CONTEXT))
+            expect(live.tasks.map((task) => task.record.kind)).toEqual(['vivid.nights'])
           }),
         )
       }),
