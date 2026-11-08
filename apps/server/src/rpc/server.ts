@@ -33,6 +33,7 @@ import { settingsHandlers } from '../settings/handlers.ts'
 import { skillHandlers } from '../skills/handlers.ts'
 import { threadHandlers } from '../threads/handlers.ts'
 import { watchHandlers } from '../watches/handlers.ts'
+import { workHandlers } from '../work/handlers.ts'
 import { requestProtocolLayer } from './requests.ts'
 import { liveProtocolLayer } from './link.ts'
 
@@ -68,6 +69,7 @@ export const rpcHandlersLayer = VividRpc.toLayer({
   ...searchHandlers,
   ...watchHandlers,
   ...feedHandlers,
+  ...workHandlers,
 }).pipe(Layer.provide(Layer.mergeAll(draftStoreLayer, feedStoreLayer, actionLookupLayer)))
 
 /**

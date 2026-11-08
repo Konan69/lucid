@@ -23,6 +23,7 @@ export const abortThread = Effect.fn('Threads.abort')(function* (threadId: Threa
  * so queued work fails its final Working check. Only the caller that changes Working to Stopped
  * aborts: repeated reports and reports for an already settled Run cannot stop a newer turn.
  * DeviceRegistry owns RunEnded because it holds the link that received the window work.
+ * Answers whether this call stopped it: false when the Run had already ended.
  */
 export const stopPersonRun = Effect.fn('Threads.stopPersonRun')(function* (
   personId: PersonId,
@@ -61,5 +62,7 @@ export const stopPersonRun = Effect.fn('Threads.stopPersonRun')(function* (
       return Option.some(row.threadId)
     }),
   )
-  if (Option.isSome(stopped)) yield* abortThread(stopped.value)
+  if (Option.isNone(stopped)) return false
+  yield* abortThread(stopped.value)
+  return true
 })
