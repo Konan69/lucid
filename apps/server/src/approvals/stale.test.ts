@@ -33,7 +33,7 @@ import {
 } from '../artifacts/store.ts'
 import { contentDigest } from './action.ts'
 import { artifacts, artifactVersions } from '../artifacts/tables.ts'
-import { decodeRow, saveState } from '../connections/records.ts'
+import { decodeRow, grantOf, saveState } from '../connections/records.ts'
 import { connections } from '../connections/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
@@ -283,6 +283,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
               row,
               ConnectionState.cases.Ready.make({}),
               row.references,
+              grantOf(row),
             )
             expect(saved.authorizationGeneration).toBe(1)
             const after = yield* current(approval)
