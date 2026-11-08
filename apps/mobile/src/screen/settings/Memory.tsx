@@ -31,12 +31,14 @@ const SENTENCE_LIMIT = 200
 
 /** Whether Vivid was told or worked it out, in the web app's words (`settings/Memory.tsx`). */
 const BASIS = { said: 'You said', guessed: 'Vivid’s guess' } as const
+/** What a Dreamer note says in place of who said it, as on the web (`settings/Memory.tsx`). */
+const FOUND = 'Vivid looked into it'
 
 type Send = (event: remembering.Sent) => void
 
 /** The line under a remembered sentence: who it came from and when it last changed. */
-const provenance = (line: Pick<MemoryLine, 'basis' | 'updatedAt'>, now: number) =>
-  `${BASIS[line.basis]} · ${when(line.updatedAt, now)}`
+const provenance = (line: Pick<MemoryLine, 'layer' | 'basis' | 'updatedAt'>, now: number) =>
+  `${line.layer === 'dreams' ? FOUND : BASIS[line.basis]} · ${when(line.updatedAt, now)}`
 
 /**
  * What Vivid remembers about the Person, the phone's half of the web app's section of the same
@@ -121,6 +123,9 @@ function Shown({ shown, send, now }: { shown: ShownReading; send: Send; now: num
   const lines = remembering.Entry.guards.Forgetting(shown.entry)
     ? shown.lines.filter((line) => !remembering.isAt(line, remembering.openAddress(shown.entry)))
     : shown.lines
+  // What the Dreamer found is listed on its own, above what Vivid remembers.
+  const dreams = remembering.found(lines)
+  const others = remembering.kept(lines)
   return (
     <>
       <Pages title="About you" pages={page('person')} />
@@ -133,11 +138,24 @@ function Shown({ shown, send, now }: { shown: ShownReading; send: Send; now: num
         <Notice message="Vivid no longer remembers that, so it has left the list." />
       )}
       {remembering.Entry.guards.Handed(shown.entry) && <Forgotten id={shown.entry.forget} />}
+      {dreams.length > 0 && (
+        <Section title="What Vivid found">
+          {dreams.map((line) => (
+            <Row
+              key={`${line.layer}/${line.file}`}
+              wrap
+              title={line.description}
+              detail={provenance(line, now)}
+              onPress={() => send(remembering.events.Open({ line }))}
+            />
+          ))}
+        </Section>
+      )}
       <Section title="What Vivid remembers">
-        {lines.length === 0 && (
+        {others.length === 0 && (
           <Row wrap title="When you tell Vivid something that matters later, it shows up here." />
         )}
-        {lines.map((line) => (
+        {others.map((line) => (
           <Row
             key={`${line.layer}/${line.file}`}
             wrap
@@ -209,7 +227,7 @@ function Whole({ text }: { text: string }) {
  */
 function Opened({ entry, send, now }: { entry: remembering.Entry; send: Send; now: number }) {
   const close = () => send(remembering.events.Close())
-  const sheet = (line: Pick<MemoryLine, 'basis' | 'updatedAt'>, body: ReactNode) => (
+  const sheet = (line: Pick<MemoryLine, 'layer' | 'basis' | 'updatedAt'>, body: ReactNode) => (
     <Sheet title="Remembered" detail={provenance(line, now)} onClose={close}>
       {body}
     </Sheet>

@@ -19,6 +19,8 @@ const SENTENCE_LIMIT = 200
 
 /** Whether Vivid was told or worked it out, in the Person's words. */
 const BASIS = { said: 'You said', guessed: 'Vivid’s guess' } as const
+/** What a Dreamer note says in place of who said it: Vivid looked into it on its own. */
+const FOUND = 'Vivid looked into it'
 
 /**
  * What Vivid remembers about the Person: the pages it keeps standing (about them, how to reach
@@ -89,6 +91,9 @@ function Shown({
   const lines = remembering.Entry.guards.Forgetting(shown.entry)
     ? shown.lines.filter((line) => !remembering.isAt(line, open))
     : shown.lines
+  // What the Dreamer found is listed on its own, above what Vivid remembers.
+  const dreams = remembering.found(lines)
+  const others = remembering.kept(lines)
   return (
     <>
       <Pages title="About you" pages={page('person')} />
@@ -96,11 +101,24 @@ function Shown({
       <Pages title="Vivid" pages={vivid} />
       <Notice entry={shown.entry} />
       {remembering.Entry.guards.Handed(shown.entry) && <Forgotten id={shown.entry.forget} />}
+      {dreams.length > 0 && (
+        <Section title="What Vivid found">
+          {dreams.map((line) => (
+            <Line
+              key={`${line.layer}/${line.file}`}
+              line={line}
+              entry={remembering.isAt(line, open) ? shown.entry : CLOSED}
+              send={send}
+              now={now}
+            />
+          ))}
+        </Section>
+      )}
       <Section title="What Vivid remembers">
-        {lines.length === 0 && (
+        {others.length === 0 && (
           <Empty>When you tell Vivid something that matters later, it shows up here.</Empty>
         )}
-        {lines.map((line) => (
+        {others.map((line) => (
           <Line
             key={`${line.layer}/${line.file}`}
             line={line}
@@ -231,7 +249,8 @@ function Line({
             {line.description}
           </span>
           <span className="block text-label text-ink-3">
-            {BASIS[line.basis]} · <span className="tabular-nums">{when(line.updatedAt, now)}</span>
+            {line.layer === 'dreams' ? FOUND : BASIS[line.basis]} ·{' '}
+            <span className="tabular-nums">{when(line.updatedAt, now)}</span>
           </span>
         </span>
         <ChevronDown
