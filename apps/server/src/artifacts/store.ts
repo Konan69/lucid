@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { and, desc, eq, isNotNull, sql } from 'drizzle-orm'
+import { and, desc, eq } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import {
   ApprovalInvalidation,
@@ -7,10 +7,11 @@ import {
   Artifact,
   ArtifactAuthor,
   ArtifactBody,
+  ArtifactContent,
+  ArtifactNotEditable,
   ArtifactChanged,
   ArtifactDetail,
   ArtifactId,
-  ArtifactKind,
   ArtifactNote,
   ArtifactTitle,
   ArtifactVersion,
@@ -18,7 +19,6 @@ import {
   Forbidden,
   NotFound,
   ReadDocumentOutcome,
-  RunId,
   Role,
   WriteDocumentOutcome,
   type GetArtifactRequest,
@@ -26,7 +26,7 @@ import {
   type PersonId,
   type ReadDocumentRequest,
   type ReviseArtifactRequest,
-  ThreadId,
+  type ThreadId,
   type WriteDocumentRequest,
 } from '@vivid/contracts'
 import { Array, Clock, Context, Effect, Layer, Option, Schema } from 'effect'
@@ -42,33 +42,25 @@ import {
 import { Changes, Topic } from '../live/changes.ts'
 import { documentRun, Runtime } from '../runtime/client.ts'
 import { requireThread } from '../threads/access.ts'
-import { runs, threads } from '../threads/tables.ts'
 import { artifacts, artifactVersions } from './tables.ts'
+import { decodeArtifact, find, lock, named, workingRun, type Transaction } from './history.ts'
+import { loadFileContent } from './files.ts'
 import { fillDocuments, namedDocuments } from './placeholder.ts'
 import { contentDigest } from '../approvals/action.ts'
 import { invalidatePending, sendingDocument } from '../approvals/stale.ts'
 
-const Row = createSelectSchema(artifacts, {
-  id: ArtifactId,
-  threadId: ThreadId,
-  kind: ArtifactKind,
-  title: ArtifactTitle,
-  version: Artifact.fields.version,
-})
 const VersionRow = createSelectSchema(artifactVersions, {
   artifactId: ArtifactId,
   number: ArtifactVersion.fields.number,
-  body: ArtifactBody,
+  body: Schema.NullOr(ArtifactBody),
+  file: Schema.NullOr(ArtifactContent.cases.File),
   note: Schema.NullOr(ArtifactNote),
   madeBy: ArtifactAuthor,
 })
-const decodeArtifact = decodeStored(Row, 'Artifact')
 const decodeArtifactTitle = decodeStored(Schema.Struct({ title: ArtifactTitle }), 'Artifact title')
 const decodeVersion = decodeStored(VersionRow, 'Artifact version')
 const encodeAuthor = Schema.encodeEffect(ArtifactAuthor)
 const decodeRole = decodeStored(Role, 'Membership role')
-const decodeRun = decodeStored(Schema.Struct({ id: RunId }), 'document Run')
-type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
 type AccessFailure = NotFound | Forbidden | DatabaseInfrastructureError
 
 /** The document authority serves Person edits and runtime writes through the same immutable history. */
@@ -84,18 +76,21 @@ export interface ArtifactStoreService {
   readonly revise: (
     person: Person,
     request: typeof ReviseArtifactRequest.Type,
-  ) => Effect.Effect<Artifact, AccessFailure | ArtifactChanged>
+  ) => Effect.Effect<Artifact, AccessFailure | ArtifactChanged | ArtifactNotEditable>
   readonly remove: (personId: PersonId, id: ArtifactId) => Effect.Effect<void, AccessFailure>
   readonly write: (
     personId: PersonId,
     threadId: ThreadId,
     request: WriteDocumentRequest,
-  ) => Effect.Effect<typeof WriteDocumentOutcome.Type, AccessFailure | RuntimeUnavailable>
+  ) => Effect.Effect<
+    typeof WriteDocumentOutcome.Type,
+    AccessFailure | RuntimeUnavailable | ArtifactNotEditable
+  >
   readonly read: (
     personId: PersonId,
     threadId: ThreadId,
     request: typeof ReadDocumentRequest.Type,
-  ) => Effect.Effect<ReadDocumentOutcome, AccessFailure>
+  ) => Effect.Effect<ReadDocumentOutcome, AccessFailure | ArtifactNotEditable>
 }
 /** Persistence, authorization and version ordering have one owner across every transport. */
 export class ArtifactStore extends Context.Service<ArtifactStore, ArtifactStoreService>()(
@@ -109,29 +104,6 @@ function versionOf(row: typeof VersionRow.Type): ArtifactVersion {
     ? ArtifactVersion.make(fields)
     : ArtifactVersion.make({ ...fields, note: row.note })
 }
-
-/** Missing references remain not-found, without letting an inaccessible Artifact disclose its Thread. */
-const find = Effect.fn('Artifacts.find')(function* (id: ArtifactId) {
-  const database = yield* Database
-  const [row] = yield* database.run(database.select().from(artifacts).where(eq(artifacts.id, id)))
-  if (row === undefined) return yield* new NotFound({ message: 'Artifact not found' })
-  return yield* decodeArtifact(row)
-})
-
-/** A Thread row lock serializes new case-insensitive titles, revision CAS and removal together. */
-const lock = Effect.fn('Artifacts.lock')(function* (
-  tx: Transaction,
-  threadId: ThreadId,
-  personId: PersonId,
-) {
-  const [row] = yield* tx
-    .select({ id: threads.id })
-    .from(threads)
-    .where(eq(threads.id, threadId))
-    .for('update')
-  if (row === undefined) return yield* new NotFound({ message: 'Thread not found' })
-  return yield* requireThread(threadId, personId)
-})
 
 /**
  * Append bodies only after acquiring the Thread lock; the summary pointer advances in the same
@@ -203,32 +175,6 @@ const create = Effect.fn('Artifacts.create')(function* (
   return yield* decodeArtifact(yield* returned(rows, 'Artifact'))
 })
 
-/** The SQL lower comparison is also the unique-index expression, including non-ASCII PostgreSQL casing. */
-const named = (threadId: ThreadId, title: string) =>
-  and(eq(artifacts.threadId, threadId), sql`lower(${artifacts.title}) = lower(${title})`)
-
-/** Lock the exact response's admitted Run; unrelated working rows cannot change authorship. */
-const workingRun = Effect.fn('Artifacts.workingRun')(function* (
-  tx: Transaction,
-  author: { readonly threadId: ThreadId; readonly personId: PersonId; readonly runId: RunId },
-) {
-  const [run] = yield* tx
-    .select({ id: runs.id })
-    .from(runs)
-    .where(
-      and(
-        eq(runs.id, author.runId),
-        eq(runs.threadId, author.threadId),
-        eq(runs.personId, author.personId),
-        eq(runs.state, 'working'),
-        isNotNull(runs.admittedAt),
-      ),
-    )
-    .for('update')
-  if (run === undefined) return yield* new NotFound({ message: 'Working Run not found' })
-  return (yield* decodeRun(run)).id
-})
-
 /** Only the authenticated Thread's working Run can author a version; missing or ambiguous attribution writes nothing. */
 const write = Effect.fn('Artifacts.write')(function* (
   personId: PersonId,
@@ -240,7 +186,9 @@ const write = Effect.fn('Artifacts.write')(function* (
   // Check access before reading runtime history; repeat it under the lock before any write.
   yield* requireThread(threadId, personId)
   // Network lookup precedes the transaction and must still cancel if the tool leaves its response.
-  const runId = yield* documentRun(threadId, request.toolCallId).pipe(Effect.interruptible)
+  const runId = yield* documentRun(threadId, request.toolCallId, 'write_document').pipe(
+    Effect.interruptible,
+  )
   const result = yield* database.transaction((tx) =>
     Effect.gen(function* () {
       yield* lock(tx, threadId, personId)
@@ -257,6 +205,7 @@ const write = Effect.fn('Artifacts.write')(function* (
         return { artifact, created: true, changed: true }
       }
       const artifact = yield* decodeArtifact(row)
+      if (artifact.kind !== 'document') return yield* new ArtifactNotEditable({ id: artifact.id })
       const [latest] = yield* tx
         .select()
         .from(artifactVersions)
@@ -280,6 +229,7 @@ const write = Effect.fn('Artifacts.write')(function* (
   )
   if (result.changed) yield* changes.publish([Topic.thread(threadId)])
   return WriteDocumentOutcome.make({
+    artifact: { id: result.artifact.id, version: result.artifact.version },
     title: result.artifact.title,
     version: result.artifact.version,
     created: result.created,
@@ -298,6 +248,7 @@ const revise = Effect.fn('Artifacts.revise')(function* (
     Effect.gen(function* () {
       yield* lock(tx, initial.threadId, person.id)
       const current = yield* find(request.id)
+      if (current.kind !== 'document') return yield* new ArtifactNotEditable({ id: current.id })
       if (current.version !== request.from)
         return yield* new ArtifactChanged({ id: current.id, version: current.version })
       return yield* append(tx, current, {
@@ -323,12 +274,16 @@ const bindOne = Effect.fn('Artifacts.bindOne')(function* (
   threadId: ThreadId,
   title: string,
 ) {
-  const [row] = yield* tx.select().from(artifacts).where(named(threadId, title))
+  const [row] = yield* tx
+    .select()
+    .from(artifacts)
+    .where(and(named(threadId, title), eq(artifacts.kind, 'document')))
   if (row === undefined) {
+    // A file Artifact has bytes, not text to copy, so only Markdown documents can be named.
     const documents = yield* tx
       .select({ title: artifacts.title })
       .from(artifacts)
-      .where(eq(artifacts.threadId, threadId))
+      .where(and(eq(artifacts.threadId, threadId), eq(artifacts.kind, 'document')))
     const decoded = yield* Effect.forEach(documents, decodeArtifactTitle)
     return yield* new DocumentNotFound({
       title,
@@ -348,6 +303,8 @@ const bindOne = Effect.fn('Artifacts.bindOne')(function* (
   if (latest === undefined)
     return yield* new DatabaseFailure({ message: 'Newest Artifact version is missing' })
   const version = yield* decodeVersion(latest)
+  if (version.body === null)
+    return yield* new DatabaseFailure({ message: 'Document version has no body' })
   return { title, artifact, body: version.body }
 })
 
@@ -453,10 +410,14 @@ const loadDetail = Effect.fn('Artifacts.detail')(function* (
   const versions = yield* Effect.forEach(rows, decodeVersion)
   const shown = versions.find((version) => version.number === number)
   if (shown === undefined) return yield* new NotFound({ message: 'Artifact version not found' })
+  const content =
+    shown.body === null
+      ? yield* loadFileContent(tx, artifact.id, number, shown.file)
+      : ArtifactContent.cases.Document.make({ body: shown.body })
   return ArtifactDetail.make({
     artifact,
     shown: versionOf(shown),
-    body: shown.body,
+    content,
     versions: versions.map(versionOf),
   })
 })
@@ -517,13 +478,17 @@ export const artifactStoreLayer = Layer.effect(
         )
         if (row === undefined)
           return ReadDocumentOutcome.cases.Missing.make({
-            titles: documents.map((document) => document.title),
+            titles: documents
+              .filter((document) => document.kind === 'document')
+              .map((document) => document.title),
           })
         const detail = yield* provide(get(personId, { id: row.id }))
+        if (!ArtifactContent.guards.Document(detail.content))
+          return yield* new ArtifactNotEditable({ id: row.id })
         return ReadDocumentOutcome.cases.Found.make({
           title: detail.artifact.title,
           version: detail.shown.number,
-          body: detail.body,
+          body: detail.content.body,
         })
       }),
     })

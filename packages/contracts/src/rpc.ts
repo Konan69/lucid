@@ -23,6 +23,16 @@ import {
 } from './actions.js'
 import {
   ArtifactChanged,
+  ArtifactNotEditable,
+  ArtifactFileRefused,
+  ArtifactFileTooLarge,
+  ArtifactComputerUnavailable,
+  ArtifactRenderUnsupported,
+  ArtifactRenderFailed,
+  ArtifactInspectionStale,
+  InspectArtifactFileRequest,
+  InspectArtifactFileOutcome,
+  PublishArtifactFileRequest,
   ArtifactDetail,
   ArtifactListResponse,
   ArtifactResponse,
@@ -537,7 +547,7 @@ const ReviseArtifact = Rpc.make('ReviseArtifact', {
   ...call,
   payload: ReviseArtifactRequest,
   success: ArtifactResponse,
-  error: Schema.Union([RpcFailure, ArtifactChanged]),
+  error: Schema.Union([RpcFailure, ArtifactChanged, ArtifactNotEditable]),
 })
 const RemoveArtifact = Rpc.make('RemoveArtifact', { ...call, payload: { id: ArtifactId } })
 /** The server attributes a write to the authenticated Thread’s working Run; no model identifier is needed. */
@@ -545,11 +555,32 @@ const WriteDocument = Rpc.make('WriteDocument', {
   ...call,
   payload: WriteDocumentRequest,
   success: WriteDocumentOutcome,
+  error: Schema.Union([RpcFailure, ArtifactNotEditable]),
 })
 const ReadDocument = Rpc.make('ReadDocument', {
   ...call,
   payload: ReadDocumentRequest,
   success: ReadDocumentOutcome,
+  error: Schema.Union([RpcFailure, ArtifactNotEditable]),
+})
+const InspectArtifactFile = Rpc.make('InspectArtifactFile', {
+  ...call,
+  payload: InspectArtifactFileRequest,
+  success: InspectArtifactFileOutcome,
+  error: Schema.Union([
+    RpcFailure,
+    ArtifactFileRefused,
+    ArtifactFileTooLarge,
+    ArtifactComputerUnavailable,
+    ArtifactRenderUnsupported,
+    ArtifactRenderFailed,
+  ]),
+})
+const PublishArtifactFile = Rpc.make('PublishArtifactFile', {
+  ...call,
+  payload: PublishArtifactFileRequest,
+  success: WriteDocumentOutcome,
+  error: Schema.Union([RpcFailure, ArtifactInspectionStale]),
 })
 
 // ── What is waiting on the Person: questions and Approvals ─────────────────
@@ -1199,6 +1230,8 @@ export const VividRpc = RpcGroup.make(
   RemoveArtifact,
   WriteDocument,
   ReadDocument,
+  InspectArtifactFile,
+  PublishArtifactFile,
   GetInbox,
   WatchInbox,
   DecideApproval,

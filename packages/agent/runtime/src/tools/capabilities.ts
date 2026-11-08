@@ -25,6 +25,7 @@ import { Scope } from './scope.ts'
 import { defineTool } from './tool.ts'
 import * as v from 'valibot'
 import { askTools } from './ask.ts'
+import { artifactTools } from './artifacts.ts'
 import { codeTools } from './code.ts'
 import { computerTools } from './computer.ts'
 import { connectionTools } from './connections.ts'
@@ -217,6 +218,12 @@ const definitions: ReadonlyArray<{
       'Write, revise and read documents kept with the conversation, and show charts, tables, forms and pictures. Live Integration views run on the Computer and may wake it.',
     requirement: 'Product',
     mount: ({ runTool }) => documentTools(runTool),
+  },
+  {
+    description:
+      'Make Word, PDF and PNG files on the Computer, inspect a captured render, and deliver their exact bytes with the editable source kept.',
+    requirement: 'Computer',
+    mount: ({ runTool }) => artifactTools(runTool),
   },
   {
     description: 'Activate built-in skills and read their reference files.',
