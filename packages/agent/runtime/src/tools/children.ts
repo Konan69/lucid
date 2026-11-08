@@ -92,16 +92,12 @@ const helperNumber = v.pipe(
   v.description('The helper number spawn_run gave.'),
 )
 
-/**
- * Splitting work into helpers that work at the same time (`children.ts`). Only the Run answering
- * a Person has these; helpers do not. The parent Run, Person and Thread come from the call's
- * committed delivery, never from arguments.
- */
-export function childTools(wiring: Wiring) {
-  const spawn = defineTool({
+/** `spawn_run`: reserve a helper on the server, then start its task in Pi, both keyed by this call. */
+const spawnTool = (wiring: Wiring) =>
+  defineTool({
     name: Tool.spawn_run,
     description:
-      'Start a helper that works on one self-contained part of a larger task at the same time as you and others. Give it everything it needs in the brief: it cannot see this conversation or ask anyone anything. Its result comes back to you on its own as a new message; carry on meanwhile and do not check on it.',
+      'Start a helper that works on one self-contained part of a larger task at the same time as you and others. Give it everything it needs in the brief: it cannot see this conversation or ask anyone anything. Its result comes back to you on its own as a new message; carry on meanwhile and do not keep checking on it.',
     // Reserving on the server and starting the task in Pi are both keyed by this call, so a
     // rerun after a restart finds the same helper instead of starting a second.
     replay: 'safe',
@@ -181,7 +177,9 @@ export function childTools(wiring: Wiring) {
       }),
   })
 
-  const wait = defineTool({
+/** `wait_runs`: the parent waits on helpers it names and gets their answers in place. */
+const waitTool = (wiring: Wiring) =>
+  defineTool({
     name: Tool.wait_runs,
     description:
       'Wait for helpers you started and get their answers here, when your next step cannot go on without them. Otherwise do not wait: their results come back to you on their own.',
@@ -198,10 +196,7 @@ export function childTools(wiring: Wiring) {
         const helpers = yield* wiring.helpers
         // Claimed before waiting, so a result that ends meanwhile comes back here and not twice.
         yield* pi(() =>
-          api.commit(
-            (tx) => helpers.claimWait(tx, api.conversationId, runIds),
-            BACKGROUND_CONTEXT,
-          ),
+          api.commit((tx) => helpers.claimWait(tx, api.conversationId, runIds), BACKGROUND_CONTEXT),
         )
         // Stopping this wait stops only the wait; the helpers work on.
         const context = withAbortSignal(signal, BACKGROUND_CONTEXT)
@@ -218,7 +213,9 @@ export function childTools(wiring: Wiring) {
       }),
   })
 
-  const check = defineTool({
+/** `check_run`: one observed status read of a helper, never a wait. */
+const checkTool = (wiring: Wiring) =>
+  defineTool({
     name: Tool.check_run,
     description:
       'Look once at how a helper you started is going: its state, how long it has worked, the tool calls it used of its limit and the tools it used last. Only when the Person asks or a helper seems stuck; never in a loop to wait for it.',
@@ -261,7 +258,9 @@ export function childTools(wiring: Wiring) {
       }),
   })
 
-  const cancel = defineTool({
+/** `cancel_run`: stop one helper; what it already did stays done. */
+const cancelTool = (wiring: Wiring) =>
+  defineTool({
     name: Tool.cancel_run,
     description:
       'Stop a helper you started that is no longer needed. What it already did stays done.',
@@ -279,5 +278,11 @@ export function childTools(wiring: Wiring) {
       }),
   })
 
-  return [spawn, check, wait, cancel] as const
+/**
+ * Splitting work into helpers that work at the same time (`children.ts`). Only the Run answering
+ * a Person has these; helpers do not. The parent Run, Person and Thread come from the call's
+ * committed delivery, never from arguments.
+ */
+export function childTools(wiring: Wiring) {
+  return [spawnTool(wiring), checkTool(wiring), waitTool(wiring), cancelTool(wiring)] as const
 }

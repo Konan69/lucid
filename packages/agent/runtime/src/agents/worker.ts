@@ -26,7 +26,7 @@ const READING: ReadonlyArray<ToolName> = [
   Tool.list_memory,
   Tool.search_memory,
 ]
-export const WORKER_TOOLS: { readonly [Kind in WorkerKind]: ReadonlyArray<ToolName> } = {
+export const WORKER_TOOLS = {
   Researcher: READING,
   ReadOnly: [Tool.read, Tool.grep, Tool.glob, ...READING, Tool.read_skill],
   Executor: [
@@ -42,10 +42,10 @@ export const WORKER_TOOLS: { readonly [Kind in WorkerKind]: ReadonlyArray<ToolNa
     Tool.use_tool,
   ],
   ComputerUse: [Tool.browse, Tool.use_desktop, Tool.read_page],
-}
+} satisfies { readonly [Kind in WorkerKind]: ReadonlyArray<ToolName> }
 
 /** What each kind is for, in the helper's own instruction. */
-const PURPOSE: { readonly [Kind in WorkerKind]: string } = {
+const PURPOSE = {
   ReadOnly:
     'You can read files on the computer, public web pages, the Library, documents and memory. You cannot change anything.',
   Researcher:
@@ -54,7 +54,7 @@ const PURPOSE: { readonly [Kind in WorkerKind]: string } = {
     'You can read and write files and run commands on the computer, read pages, the Library, documents and memory, and use the connected Integrations. Some actions need the person to approve them first: if a tool says approval was requested, stop and say so in your answer.',
   ComputerUse:
     "You can drive the computer's browser and desktop, and read public pages. Nobody else is using the computer while you work.",
-}
+} satisfies { readonly [Kind in WorkerKind]: string }
 
 /**
  * The fixed instruction of one helper, frozen when it starts. It is not Vivid's instruction: a

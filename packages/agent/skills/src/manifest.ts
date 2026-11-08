@@ -163,7 +163,15 @@ const definitions = [
     about:
       'Runs the same lookup across a long list and returns one table, with what was and was not found.',
     starter: false,
-    needs: ['spawn_run', 'run_code', 'find_tools', 'use_tool', 'read_page', 'connect', 'ask_person'],
+    needs: [
+      'spawn_run',
+      'run_code',
+      'find_tools',
+      'use_tool',
+      'read_page',
+      'connect',
+      'ask_person',
+    ],
     connections: [['Search', 'Web Search', 'Brave Search', 'Tavily', 'Exa']],
   },
   {

@@ -329,8 +329,12 @@ const work = (wiring: Wiring) =>
     const { input } = record
     const { child: childId, startedAt } = record.state.checkpoint
     const harness = yield* wiring.harness
-    const child = yield* pi(() => runtime.conversation(childId, context))
-    if (child === undefined) return yield* new HelperFailed()
+    const child = yield* pi(() => runtime.conversation(childId, context)).pipe(
+      Effect.filterOrFail(
+        (found) => found !== undefined,
+        () => new HelperFailed(),
+      ),
+    )
     const submission = yield* pi(() =>
       child.submit(
         { type: 'input', content: input.brief, requestId: requestOf(input.runId) },
@@ -413,6 +417,23 @@ const deliver = (wiring: Wiring) =>
     )
   })
 
+/** Moves a broken helper on to its report step with a `RuntimeFault` answer. */
+const reportFault = Effect.fn('Helpers.reportFault')(
+  function* (runtime: Runtime, context: PiContext) {
+    yield* Effect.logWarning('HelperFailed')
+    const answer = yield* encodeAnswer(
+      Answer.cases.Failed.make({ failure: ChildFailure.cases.RuntimeFault.make({}) }),
+    )
+    yield* pi(() =>
+      runtime.commit(
+        () => ({ status: 'running', checkpoint: { phase: 'report', answer } }),
+        context,
+      ),
+    )
+  },
+  (effect) => Effect.ignore(effect),
+)
+
 /**
  * A step that broke goes on to report a fault, so the server never keeps a helper working that
  * the runtime gave up on. A stopped invocation cannot commit, so Pi resumes its old step instead.
@@ -420,26 +441,7 @@ const deliver = (wiring: Wiring) =>
 const faulted =
   (runtime: Runtime, context: PiContext) =>
   <A, E>(program: Effect.Effect<A, E>) =>
-    program.pipe(
-      Effect.catch(() =>
-        Effect.logWarning('HelperFailed').pipe(
-          Effect.andThen(
-            encodeAnswer(
-              Answer.cases.Failed.make({ failure: ChildFailure.cases.RuntimeFault.make({}) }),
-            ),
-          ),
-          Effect.flatMap((answer) =>
-            pi(() =>
-              runtime.commit(
-                () => ({ status: 'running', checkpoint: { phase: 'report', answer } }),
-                context,
-              ),
-            ),
-          ),
-          Effect.ignore,
-        ),
-      ),
-    )
+    program.pipe(Effect.catch(() => reportFault(runtime, context)))
 
 /** The helper's task, the background boundary that owns its conversation. */
 const helperTask = (wiring: Wiring, run: RunHelpers): Task<Input, Step, Schema.Json, object> =>
