@@ -203,7 +203,7 @@ layer(testLayer)((it) => {
         expect(wake.idempotencyKey).toBe(`child-result:${run.id}`)
         expect(wake.personId).toBe(test.personId)
         expect(wake.origin).toEqual(StoredRunOrigin.cases.ChildResult.make({ childRunId: run.id }))
-        expect(wake.message).toMatchObject({ type: 'child-result', attributes: { helper: '1' } })
+        expect(wake.message).toMatchObject({ cue: { _tag: 'ChildResult', helper: 1 } })
         // A repeated report and a late failure change nothing about how it ended.
         const late = ChildReport.cases.Ended.make({
           ending: ChildEnding.cases.Failed.make({
