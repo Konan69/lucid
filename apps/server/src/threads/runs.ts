@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNotNull, isNull, ne, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm'
 import * as Arr from 'effect/Array'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
@@ -25,9 +25,11 @@ import {
   PersonSummary,
   RunId,
   ThreadId,
+  WatchFiring,
+  type WatchId,
 } from '@vivid/contracts'
 import { unresolvedOf, type Unresolved } from '../actions/journal.ts'
-import { loadSummaries } from '../auth/access.ts'
+import { loadSummaries, ownedHere, summaryOf, type Actor } from '../auth/access.ts'
 import { announceFeed } from '../feed/changes.ts'
 import { askedBy, invalidatePending } from '../approvals/stale.ts'
 import { personTable } from '../auth/tables.ts'
@@ -647,3 +649,72 @@ export const runStoreLayer = Layer.effect(
     })
   }),
 )
+
+/**
+ * The Runs acting for this Person that are still working, in their current workspace, newest
+ * first, each with its Thread's title. A reservation the runtime never admitted stays `working`
+ * too and is listed: that is exactly the Run a Person needs to see and stop (`work/list.ts`).
+ */
+export const workingRuns = Effect.fn('RunStore.workingRuns')(function* (actor: Actor) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .select({ run: runs, title: threads.title })
+      .from(runs)
+      .innerJoin(threads, eq(threads.id, runs.threadId))
+      .where(
+        and(
+          eq(runs.state, 'working'),
+          ownedHere({ personId: runs.personId, companyId: threads.companyId }, actor),
+        ),
+      )
+      .orderBy(desc(runs.startedAt), desc(runs.id)),
+  )
+  const person = summaryOf(actor.person)
+  return yield* Effect.forEach(
+    rows,
+    Effect.fnUntraced(function* ({ run, title }) {
+      const origin = originOf(yield* decodeOrigin(run.origin), person)
+      return { run: run.id, thread: run.threadId, title, origin, startedAt: run.startedAt }
+    }),
+  )
+})
+
+/**
+ * The last Run each of these Watches started for this Person, keyed by Watch id: an event's Run
+ * for an event Watch, a timer's Run for a check-in (both keep the Watch's id in their origin). The
+ * `vivid_runs_watch` index serves it: one row per Watch, however often it has fired.
+ */
+export const lastWatchFirings = Effect.fn('RunStore.lastWatchFirings')(function* (
+  personId: PersonId,
+  watchIds: ReadonlyArray<WatchId>,
+) {
+  if (watchIds.length === 0) return new Map<string, WatchFiring>()
+  const database = yield* Database
+  const watchOf = sql<string>`${runs.origin}->>'watchId'`
+  const rows = yield* database.run(
+    database
+      .selectDistinctOn([runs.personId, watchOf], { watch: watchOf, run: runs })
+      .from(runs)
+      .where(
+        and(
+          eq(runs.personId, personId),
+          sql`${runs.origin}->>'_tag' in ('Watch', 'Checkin')`,
+          inArray(watchOf, watchIds),
+        ),
+      )
+      .orderBy(runs.personId, watchOf, desc(runs.startedAt)),
+  )
+  const firings = yield* Effect.forEach(
+    rows,
+    Effect.fnUntraced(function* ({ watch, run }) {
+      const firing = WatchFiring.make({
+        run: run.id,
+        startedAt: run.startedAt,
+        state: yield* stateOf(run),
+      })
+      return [watch, firing] as const
+    }),
+  )
+  return new Map(firings)
+})
