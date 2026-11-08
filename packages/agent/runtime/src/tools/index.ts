@@ -8,6 +8,7 @@ import { ToolScopeMissing } from './failure.ts'
 import { capabilityRegistry } from './capabilities.ts'
 import { projectNamed } from './projects.ts'
 import type { ProjectOf } from './memory.ts'
+import type { Transcripts } from './recall.ts'
 import {
   scopeLayer,
   scopedRunner,
@@ -17,13 +18,19 @@ import {
   type ResolveScope,
 } from './scope.ts'
 
+/** What the Person's cell holds locally that tools read: their Memory and their conversations. */
+export interface CellStores {
+  readonly memory: Memory['Service']
+  readonly transcripts: Transcripts
+}
+
 /** Preserve main's registration order. Resolve authority separately for every invocation, inside
  * execute, so queued submissions cannot retain another Person's RPC client or Library folder.
  * The core supplies its configured entry directory; constructing tools does no I/O. */
 export function tools(
   resolve: ResolveScope,
   resolvePerson: (call: Parameters<ResolveScope>[0]) => Effect.Effect<MemoryWriter, ToolFailure>,
-  memory: Memory['Service'],
+  { memory, transcripts }: CellStores,
   /** Tools made outside the catalogue that it mounts as they are: built-in skills and helpers. */
   {
     skills,
@@ -65,6 +72,7 @@ export function tools(
     project,
     memory,
     skills,
+    transcripts,
     children,
   })
   const mounted = registry.tools.map((definition) =>

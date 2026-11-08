@@ -9,8 +9,14 @@ import { warm } from '../data/warm'
  * `?screen`: open the Thread with Vivid's computer beside it. The phone opens this when a step
  * Vivid handed over is finished on a screen the app cannot draw (a relayed one): the same
  * Thread, signed in on the same server, with the screen in front.
+ *
+ * `?at`: open the Thread on one message, by the id its conversation gives it
+ * (`ConversationMessage.id`). Search opens a found message this way (`screen/Palette.tsx`).
  */
-const Search = Schema.Struct({ screen: Schema.optionalKey(Schema.Literal(true)) })
+const Search = Schema.Struct({
+  screen: Schema.optionalKey(Schema.Literal(true)),
+  at: Schema.optionalKey(Schema.String),
+})
 const decodeSearch = Schema.decodeUnknownOption(Search)
 
 /**
@@ -27,7 +33,7 @@ export const Route = createFileRoute('/t/$id')({
     parse: ({ id }) => ({ id: ThreadId.make(id) }),
     stringify: ({ id }) => ({ id }),
   },
-  // Anything but `screen` is dropped; a malformed one is as if it were not there.
+  // Anything but `screen` and `at` is dropped; a malformed one is as if it were not there.
   validateSearch: (search): typeof Search.Type =>
     Option.getOrElse(decodeSearch(search), () => ({})),
   loaderDeps: ({ search }) => ({ screen: search.screen === true }),

@@ -1,11 +1,14 @@
-import type { Thread } from '@vivid/contracts'
+import { useAtomValue } from '@effect/atom-react'
+import { SearchResult, type MessageHit, type Thread } from '@vivid/contracts'
+import { liveStateOf } from '@vivid/state'
 import { Option } from 'effect'
 import { useState, type ReactElement } from 'react'
 import { FlatList, View } from 'react-native'
 import { ChevronDown, ChevronRight, CircleCheck } from 'lucide-react-native'
 import { useNow } from '../../data/foreground'
 import { arrange, matching, Row, rowKey, rowsOf, type Lane } from '../../data/lanes'
-import { LiveState } from '../../data/live'
+import { LiveState, useLiveData } from '../../data/live'
+import { readingPlace } from '../../data/reading'
 import { useTheme } from '../../theme'
 import { GUTTER, Label, Notice, Press, radius, Skeleton } from '../../ui/ui'
 import { ThreadRow } from './Row'
@@ -147,7 +150,78 @@ function Said({ children }: { children: string }) {
 }
 
 /**
- * The Person's Threads, in the drawer. While searching it is every Thread that matches, flat.
+ * One message found in the Person's conversations: the Thread it is in, and the words around the
+ * match. Pressing it opens the Thread on that message, the way a Thread opens again where the
+ * Person was reading (`data/reading.ts`): the message's row is put at the top of the list.
+ */
+function FoundRow({
+  thread,
+  hit,
+  onOpen,
+}: {
+  thread: Thread
+  hit: MessageHit
+  onOpen: (thread: Thread) => void
+}) {
+  const { colors: c } = useTheme()
+  return (
+    <Press
+      accessibilityRole="button"
+      accessibilityLabel={`${thread.title}: ${hit.snippet}`}
+      onPress={() => {
+        readingPlace.keep(thread.id, { key: hit.messageId, offset: 0 })
+        onOpen(thread)
+      }}
+      style={({ pressed }) => ({
+        minHeight: 46,
+        marginHorizontal: GUTTER - 12,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        gap: 2,
+        borderRadius: radius.row,
+        backgroundColor: pressed ? c['row-hover'] : 'transparent',
+      })}
+    >
+      <Label numberOfLines={1}>{thread.title}</Label>
+      <Label size="label" tone="drawer-foreground-muted" numberOfLines={2}>
+        {hit.author === 'Person' ? `You: ${hit.snippet}` : hit.snippet}
+      </Label>
+    </Press>
+  )
+}
+
+/**
+ * Under the Threads a search matches, the messages it matches in the Person's conversations,
+ * which the server finds (`Search`). The words live apart from the Threads' list and can be out
+ * of reach while it is not, so that is said instead of passed off as nothing found.
+ */
+function FoundMessages({ onOpen }: { onOpen: (thread: Thread) => void }) {
+  const data = useLiveData()
+  const answer = liveStateOf(useAtomValue(data.findings))
+  if (!LiveState.$is('Ready')(answer)) return null
+  if (answer.value.messages === 'Unavailable')
+    return <Said>Messages could not be searched right now.</Said>
+  const found = answer.value.results.filter(SearchResult.guards.Message)
+  if (found.length === 0) return null
+  return (
+    <View>
+      <Label
+        size="caption"
+        tone="drawer-foreground-muted"
+        style={{ paddingHorizontal: GUTTER, paddingTop: 18, paddingBottom: 4, fontWeight: '600' }}
+      >
+        In messages
+      </Label>
+      {found.map(({ thread, hit }) => (
+        <FoundRow key={`${thread.id}:${hit.messageId}`} thread={thread} hit={hit} onOpen={onOpen} />
+      ))}
+    </View>
+  )
+}
+
+/**
+ * The Person's Threads, in the drawer. While searching it is every Thread that matches, flat,
+ * then the messages that match in their conversations.
  * Otherwise it is the lanes: what needs the Person, what Vivid is working on, the rest by day,
  * and what is done on a shelf at the end.
  */
@@ -176,6 +250,7 @@ function Lanes({ threads, ...props }: ListProps & { threads: ReadonlyArray<Threa
         data={matching(threads, props.query)}
         keyExtractor={(thread) => thread.id}
         ListEmptyComponent={<Said>No thread matches that.</Said>}
+        ListFooterComponent={<FoundMessages onOpen={props.onOpen} />}
         renderItem={({ item }) => <ThreadRow thread={item} now={now} {...props} />}
       />
     )

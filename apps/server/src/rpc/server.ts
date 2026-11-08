@@ -29,6 +29,7 @@ import { todoHandlers } from '../todos/handlers.ts'
 import { pushHandlers } from '../push/handlers.ts'
 import { ruleHandlers } from '../rules/handlers.ts'
 import { searchHandlers } from '../search/handlers.ts'
+import { messageSearchLayer } from '../search/messages.ts'
 import { settingsHandlers } from '../settings/handlers.ts'
 import { skillHandlers } from '../skills/handlers.ts'
 import { childHandlers } from '../runs/handlers.ts'
@@ -70,7 +71,11 @@ export const rpcHandlersLayer = VividRpc.toLayer({
   ...searchHandlers,
   ...watchHandlers,
   ...feedHandlers,
-}).pipe(Layer.provide(Layer.mergeAll(draftStoreLayer, feedStoreLayer, actionLookupLayer)))
+}).pipe(
+  Layer.provide(
+    Layer.mergeAll(draftStoreLayer, feedStoreLayer, actionLookupLayer, messageSearchLayer),
+  ),
+)
 
 /**
  * The live endpoint: one WebSocket per client, carrying every `Watch…` subscription and every

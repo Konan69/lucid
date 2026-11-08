@@ -3,6 +3,9 @@ import {
   ForgetMemoryRequest,
   MemoryAddress,
   MemoryCitation,
+  MemoryExport,
+  type MemoryLine,
+  type MemoryPage,
   MemorySource,
   MemoryWrite,
   type CorrectMemoryRequest,
@@ -11,7 +14,7 @@ import {
   type MemoryListing,
 } from '@vivid/contracts'
 import { Clock, Effect } from 'effect'
-import { requireActor } from '../auth/access.ts'
+import { requireActor, requirePerson } from '../auth/access.ts'
 import { Audit } from '../audit/record.ts'
 import { carryOut, forgetFromSettings, planForget } from '../forget/close.ts'
 import { ForgetStore } from '../forget/store.ts'
@@ -33,6 +36,30 @@ export const memoryHandlers = {
   ReadMemory: Effect.fn('Rpc.ReadMemory')(function* (input: MemoryAddress) {
     const actor = yield* requireActor()
     return yield* (yield* CellMemory).read(actor.person.id, input)
+  }),
+  /**
+   * Every entry of the Person's memory, read whole, for their download. The cell's own pages are
+   * walked to the end in its order (all layers), then each entry is read as Settings reads one, so
+   * the file holds what the cell holds and nothing is summarised.
+   */
+  ExportMemory: Effect.fn('Rpc.ExportMemory')(function* () {
+    const auth = yield* requirePerson()
+    const cell = yield* CellMemory
+    const exportedAt = yield* Clock.currentTimeMillis
+    const lines: Array<MemoryLine> = []
+    let after: MemoryListing['after'] = null
+    do {
+      const page: MemoryPage = yield* cell.list(auth.person.id, { layer: null, after, limit: 100 })
+      lines.push(...page.entries)
+      after = page.next
+    } while (after !== null)
+    const entries = yield* Effect.forEach(
+      lines,
+      (line) =>
+        cell.read(auth.person.id, MemoryAddress.make({ layer: line.layer, file: line.file })),
+      { concurrency: 4 },
+    )
+    return MemoryExport.make({ exportedAt, entries })
   }),
   /**
    * Settings writes carry the Person's authority and compare the revision they saw. A correction

@@ -27,7 +27,7 @@ const READING: ReadonlyArray<ToolName> = [
   Tool.search_memory,
 ]
 export const WORKER_TOOLS = {
-  Researcher: READING,
+  Researcher: [...READING, Tool.search_threads, Tool.read_thread],
   ReadOnly: [Tool.read, Tool.grep, Tool.glob, ...READING, Tool.read_skill],
   Executor: [
     Tool.read,
@@ -49,7 +49,7 @@ const PURPOSE = {
   ReadOnly:
     'You can read files on the computer, public web pages, the Library, documents and memory. You cannot change anything.',
   Researcher:
-    'You can read public web pages at the addresses you are given, the Library, documents and memory. You have no search engine and no computer: work from the addresses and material you were given, and say which source each finding came from.',
+    'You can read public web pages at the addresses you are given, the Library, documents, memory and the person’s earlier conversations. You have no search engine and no computer: work from the addresses and material you were given, and say which source each finding came from.',
   Executor:
     'You can read and write files and run commands on the computer, read pages, the Library, documents and memory, and use the connected Integrations. Some actions need the person to approve them first: if a tool says approval was requested, stop and say so in your answer.',
   ComputerUse:
