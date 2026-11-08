@@ -271,6 +271,7 @@ import { CreateRuleRequest, RuleListResponse, RuleResponse } from './rules.js'
 import { SearchRequest, SearchResponse, SuggestionListResponse } from './search.js'
 import { Appearance } from './appearance.js'
 import { EgressStatus } from './egress.js'
+import { StopAllWorkResponse, StopWorkResponse, WorkListResponse, WorkRef } from './work.js'
 import { PatchSettingsRequest, Settings } from './settings.js'
 import {
   SkillReadOnly,
@@ -1349,6 +1350,19 @@ const Search = Rpc.make('Search', { ...call, payload: SearchRequest, success: Se
 const ListSuggestions = Rpc.make('ListSuggestions', { ...call, success: SuggestionListResponse })
 const WatchSuggestions = Rpc.make('WatchSuggestions', { ...live, success: SuggestionListResponse })
 
+// ── Background work ────────────────────────────────────────────────────────
+/** What Vivid has going for the caller besides the reply in front of them (`work.ts`). */
+const ListWork = Rpc.make('ListWork', { ...call, success: WorkListResponse })
+const WatchWork = Rpc.make('WatchWork', { ...live, success: WorkListResponse })
+/** Stop or remove one piece of it, by the reference its listing gave. */
+const StopWork = Rpc.make('StopWork', {
+  ...call,
+  payload: { work: WorkRef },
+  success: StopWorkResponse,
+})
+/** Stop everything that stops without loss, in one call, with a line per piece of work. */
+const StopAllWork = Rpc.make('StopAllWork', { ...call, success: StopAllWorkResponse })
+
 export const VividRpc = RpcGroup.make(
   Me,
   WatchMe,
@@ -1545,4 +1559,8 @@ export const VividRpc = RpcGroup.make(
   Search,
   ListSuggestions,
   WatchSuggestions,
+  ListWork,
+  WatchWork,
+  StopWork,
+  StopAllWork,
 ).middleware(RpcAuthMiddleware)

@@ -18,6 +18,7 @@ export const SettingsSection = Schema.Literals([
   'texting',
   'devices',
   'record',
+  'work',
 ] as const)
 export type SettingsSection = typeof SettingsSection.Type
 

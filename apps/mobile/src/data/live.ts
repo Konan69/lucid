@@ -359,6 +359,8 @@ function makeLiveData(session: SignedIn) {
     todos: one((client) => client.WatchTodos()),
     /** What the Person has typed and not sent, on any device, where they are working. */
     drafts: kept((client) => client.WatchDrafts()),
+    /** What Vivid has going in the background, to see and stop (`screen/settings/Work.tsx`). */
+    work: one((client) => client.WatchWork()),
   }
 
   askAgainWhenMoved(engine, live.me)

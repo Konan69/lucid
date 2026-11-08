@@ -42,6 +42,7 @@ import { owedTools } from './owed.ts'
 import { todoTools } from './todos.ts'
 import { watchTools } from './watches.ts'
 import { checkinTools } from './checkins.ts'
+import { workTools } from './work.ts'
 import { skillTools } from './skills.ts'
 import { recallTools, type Transcripts } from './recall.ts'
 
@@ -275,6 +276,12 @@ const definitions: ReadonlyArray<{
       'Search and read the person’s earlier conversations to recover original requests, decisions and work that saved memory may not hold.',
     requirement: 'Product',
     mount: ({ runTool, transcripts }) => recallTools(runTool, transcripts),
+  },
+  {
+    description:
+      'See everything running in the background for the Person and which of it is stalled or failing, and stop all of it at once when they ask you to stop.',
+    requirement: 'Product',
+    mount: ({ runTool }) => workTools(runTool),
   },
 ]
 
