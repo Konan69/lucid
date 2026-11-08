@@ -84,7 +84,9 @@ export function VividComputer() {
         Ready: ({ value }) => (
           <Health
             health={value}
-            recovery={LiveState.$is('Ready')(recovered) ? Option.some(recovered.value) : Option.none()}
+            recovery={
+              LiveState.$is('Ready')(recovered) ? Option.some(recovered.value) : Option.none()
+            }
           />
         ),
       })}
@@ -151,7 +153,10 @@ export function Health({
               <li
                 key={step}
                 aria-current={now ? 'step' : undefined}
-                className={cn('flex items-center gap-2 text-label', now ? 'text-ink' : 'text-ink-3')}
+                className={cn(
+                  'flex items-center gap-2 text-label',
+                  now ? 'text-ink' : 'text-ink-3',
+                )}
               >
                 <span className="w-4 shrink-0 text-end tabular-nums">{place}</span>
                 <span className={cn(now && 'font-title')}>{health.STEP_WORDS[step].doing}</span>

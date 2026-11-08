@@ -56,9 +56,10 @@ export function Memory() {
  * as the contract encodes it, so the file is the same JSON the server keeps and can be read
  * without Vivid.
  */
-const exported = Effect.gen(function* () {
+const encodeExport = Schema.encodeEffect(MemoryExport)
+const exported = Effect.fn('Memory.exported')(function* () {
   const client = yield* VividRpcClient
-  return yield* Schema.encodeEffect(MemoryExport)(yield* client.ExportMemory())
+  return yield* encodeExport(yield* client.ExportMemory())
 })
 
 /** Hands the browser one file to save, named for the day it was taken. */
@@ -77,7 +78,7 @@ const save = (file: typeof MemoryExport.Encoded) => {
 const download = () =>
   void act(
     orSay(
-      Effect.map(running(exported), Result.map(save)),
+      Effect.map(running(exported()), Result.map(save)),
       'Your memory could not be downloaded. Try again.',
     ),
   )

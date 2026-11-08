@@ -55,7 +55,8 @@ export const memoryHandlers = {
     } while (after !== null)
     const entries = yield* Effect.forEach(
       lines,
-      (line) => cell.read(auth.person.id, MemoryAddress.make({ layer: line.layer, file: line.file })),
+      (line) =>
+        cell.read(auth.person.id, MemoryAddress.make({ layer: line.layer, file: line.file })),
       { concurrency: 4 },
     )
     return MemoryExport.make({ exportedAt, entries })

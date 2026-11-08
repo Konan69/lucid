@@ -11,6 +11,7 @@ import {
   ScopeEvidence,
   connectionDataClassService,
   type Connection,
+  type ConversationPart,
   type ResultQuery,
 } from '@vivid/contracts'
 import { Array as Arr, Data, Option, Schema } from 'effect'
@@ -58,7 +59,10 @@ export const accessStanding = (connection: Connection): AccessStanding =>
       ConnectionGrant.guards.Partial(connection.grant)
         ? { tone: 'waiting', words: 'Connected · some access missing' }
         : { tone: 'good', words: 'Connected' },
-    NeedsAuthorization: (): AccessStanding => ({ tone: 'waiting', words: unready(connection.grant) }),
+    NeedsAuthorization: (): AccessStanding => ({
+      tone: 'waiting',
+      words: unready(connection.grant),
+    }),
     Failed: ({ reason }): AccessStanding => ({ tone: 'bad', words: `Not working: ${reason}` }),
   })
 
@@ -97,9 +101,7 @@ const SCOPE_WORDS = new Map<string, string>([
 
 /** One scope in words: Vivid's own for the ones it asks for, else the service's name for it. */
 const scopeWord = (scope: OAuthScope) =>
-  Option.getOrElse(Option.fromUndefinedOr(SCOPE_WORDS.get(scope)), () =>
-    scope.replace(GOOGLE, ''),
-  )
+  Option.getOrElse(Option.fromUndefinedOr(SCOPE_WORDS.get(scope)), () => scope.replace(GOOGLE, ''))
 
 /** Each scope once, in words, in the order the service listed them. */
 export const scopeWords = (scopes: ReadonlyArray<OAuthScope>): ReadonlyArray<string> =>
@@ -128,7 +130,11 @@ export const grantedOf = (grant: ConnectionGrant): Granted =>
   ConnectionGrant.match(grant, {
     Unverified: (): Granted => ({ summary: 'Not checked yet', given: [], missing: [] }),
     NotRequired: (): Granted => ({ summary: 'Needs no sign-in', given: [], missing: [] }),
-    Pending: (): Granted => ({ summary: 'Nothing yet: sign-in not finished', given: [], missing: [] }),
+    Pending: (): Granted => ({
+      summary: 'Nothing yet: sign-in not finished',
+      given: [],
+      missing: [],
+    }),
     Granted: ({ scopes }): Granted => ({
       summary: ScopeEvidence.guards.Known(scopes)
         ? 'Everything Vivid asked for'
@@ -141,8 +147,16 @@ export const grantedOf = (grant: ConnectionGrant): Granted =>
       given: scopeWords(granted),
       missing: scopeWords(missing),
     }),
-    Expired: (): Granted => ({ summary: 'Nothing now: the sign-in expired', given: [], missing: [] }),
-    Revoked: (): Granted => ({ summary: 'Nothing now: access was taken away', given: [], missing: [] }),
+    Expired: (): Granted => ({
+      summary: 'Nothing now: the sign-in expired',
+      given: [],
+      missing: [],
+    }),
+    Revoked: (): Granted => ({
+      summary: 'Nothing now: access was taken away',
+      given: [],
+      missing: [],
+    }),
     ReauthorizationRequired: (): Granted => ({
       summary: 'Nothing until you sign in again',
       given: [],
@@ -221,18 +235,17 @@ const readDeclined = Schema.decodeUnknownOption(
   Schema.Struct({ ok: Schema.Literal(false), classes: Schema.NonEmptyArray(ConnectionPermission) }),
 )
 
+/** A tool call that answered, as a Thread's conversation holds it. */
+export type FinishedCall = Extract<ConversationPart, { readonly state: 'output-available' }>
+
 /**
  * The escalation a finished `use_tool` call stands for, read from its own input (which account)
  * and output (`toolOutcome` in the runtime). Any other call, or one that worked, stands for none.
  */
-export const escalationOf = (
-  toolName: string,
-  input: unknown,
-  output: unknown,
-): Option.Option<Escalation> => {
-  if (toolName !== 'use_tool') return Option.none()
-  return Option.flatMap(readAccount(input), ({ account }): Option.Option<Escalation> => {
-    const declined = readDeclined(output)
+export const escalationOf = (call: FinishedCall): Option.Option<Escalation> => {
+  if (call.toolName !== 'use_tool') return Option.none()
+  return Option.flatMap(readAccount(call.input), ({ account }): Option.Option<Escalation> => {
+    const declined = readDeclined(call.output)
     if (Option.isSome(declined)) {
       const [first, ...rest] = declined.value.classes
       return Option.some(
@@ -242,7 +255,7 @@ export const escalationOf = (
         }),
       )
     }
-    return Option.map(readScopeRefusal(output), () => Escalation.MoreAccess({ account }))
+    return Option.map(readScopeRefusal(call.output), () => Escalation.MoreAccess({ account }))
   })
 }
 
@@ -255,24 +268,27 @@ const readEvidence = Schema.decodeUnknownOption(
 /** A count as people say it: "1,284". */
 const counted = new Intl.NumberFormat()
 
-/** How much of what was asked for came back: "Read 25 of 1,284 messages", "Read 25 messages". */
+/**
+ * How much of what was asked for came back: "Read 25 of 1,284 messages", "Read 40 records". Why
+ * it is partial is said beside it (`leftOut`), never guessed into the amount.
+ */
 const amountOf = (query: ResultQuery) => {
   if (!ResultCount.guards.Known(query.fetched)) return 'Read part of it'
   const { value, unit } = query.fetched
   if (ResultCount.guards.Known(query.total) && query.total.value > value)
     return `Read ${counted.format(value)} of ${counted.format(query.total.value)} ${unit}`
-  return `Read ${counted.format(value)} ${unit}, not all of them`
+  return `Read ${counted.format(value)} ${unit}`
 }
 
-/** What was left out of a read, beyond its amount, when the reason is one a Person can act on. */
-const leftOut = (reason: typeof CoverageReason.Type): Option.Option<string> =>
+/** Why a read is partial, in a few words. */
+const leftOut = (reason: typeof CoverageReason.Type): string =>
   CoverageReason.match(reason, {
     PermissionWithheld: ({ classes }) =>
-      Option.some(`${classesSaid(classes.map((entry) => entry.dataClass))} kept out`),
-    UnsyncedRange: () => Option.some('some dates not synced yet'),
-    Pagination: () => Option.none<string>(),
-    ProviderTruncation: () => Option.none<string>(),
-    OutputClipped: () => Option.none<string>(),
+      `${classesSaid(classes.map((entry) => entry.dataClass))} kept out`,
+    UnsyncedRange: () => 'some dates not synced yet',
+    Pagination: () => 'more not read',
+    ProviderTruncation: () => 'cut short by the service',
+    OutputClipped: () => 'only part of it reached Vivid',
   })
 
 /**
@@ -280,25 +296,25 @@ const leftOut = (reason: typeof CoverageReason.Type): Option.Option<string> =>
  * it was true ("Read 25 of 1,284 messages from Gmail (Work) · as of 10:40"). Reads that were
  * complete, or did not read anything, say nothing: a reply is assumed to rest on what it read.
  *
- * `outputs` are the finished calls of one reply, as `[toolName, output]`. `at` writes a moment
- * the way the surface writes times. The source's own time is used when the service gave one;
+ * `calls` are the finished calls of one reply. `at` writes a moment the way the surface writes
+ * times. The source's own time is used when the service gave one;
  * otherwise the moment the answer arrived, which is when it was last known to be true.
  */
 export const readingOf = (
-  outputs: ReadonlyArray<readonly [string, unknown]>,
+  calls: ReadonlyArray<FinishedCall>,
   at: (moment: number) => string,
 ): Option.Option<string> => {
-  const lines = outputs.flatMap(([toolName, output]) => {
-    if (toolName !== 'use_tool') return []
+  const lines = calls.flatMap((call) => {
+    if (call.toolName !== 'use_tool') return []
     return Option.toArray(
-      Option.flatMap(readEvidence(output), ({ coverage, asOf, observedAt }) => {
+      Option.flatMap(readEvidence(call.output), ({ coverage, asOf, observedAt }) => {
         if (!ResultCoverage.guards.Partial(coverage)) return Option.none()
         const amount =
           coverage.query === null
             ? 'Read part of the answer'
             : `${amountOf(coverage.query)} from ${coverage.query.account}`
         const moment = ResultAsOf.guards.Source(asOf) ? asOf.at : observedAt
-        const notes = coverage.reasons.flatMap((reason) => Option.toArray(leftOut(reason)))
+        const notes = coverage.reasons.map(leftOut)
         return Option.some([amount, ...Arr.dedupe(notes), `as of ${at(moment)}`].join(' · '))
       }),
     )

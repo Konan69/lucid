@@ -501,7 +501,7 @@ function ToolCards({
   return tools.map((tool) => {
     if (tool.state !== 'output-available') return null
     // A call one of the Person's accounts could not make is answered where Vivid stopped.
-    const escalation = access.escalationOf(tool.toolName, tool.input, tool.output)
+    const escalation = access.escalationOf(tool)
     if (Option.isSome(escalation))
       return (
         <AccessCard
@@ -666,8 +666,7 @@ const showsCard = (tools: ReadonlyArray<ToolPart>) =>
   tools.some(
     (tool) =>
       tool.state === 'output-available' &&
-      (Option.isSome(cardFor(tool.output)) ||
-        Option.isSome(access.escalationOf(tool.toolName, tool.input, tool.output))),
+      (Option.isSome(cardFor(tool.output)) || Option.isSome(access.escalationOf(tool))),
   )
 
 /**
@@ -784,9 +783,7 @@ function ReplyFace({
  */
 const readingIn = (message: ConversationMessage) =>
   access.readingOf(
-    toolsOf(message).flatMap((tool) =>
-      tool.state === 'output-available' ? [[tool.toolName, tool.output] as const] : [],
-    ),
+    toolsOf(message).flatMap((tool) => (tool.state === 'output-available' ? [tool] : [])),
     (moment) => when(moment, Date.now()),
   )
 

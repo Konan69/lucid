@@ -143,10 +143,9 @@ const probeSays = (probe: ComputerProbe): Omit<Ability, 'name'> =>
   ComputerProbeResult.match<Omit<Ability, 'name'>>(probe.result, {
     Passed: ({ observed }) => ({
       state: 'works',
-      detail:
-        ComputerProbeObservation.guards.Disk(observed)
-          ? `${size.format(Math.min(...observed.volumes.map((volume) => volume.availableBytes)) / 1e9)} free`
-          : 'Works',
+      detail: ComputerProbeObservation.guards.Disk(observed)
+        ? `${size.format(Math.min(...observed.volumes.map((volume) => volume.availableBytes)) / 1e9)} free`
+        : 'Works',
     }),
     Failed: ({ failure }) => ({ state: 'broken', detail: failureWords(failure) }),
     NotRun: ({ reason }) =>
@@ -181,13 +180,10 @@ const abilitiesFrom = (probes: ReadonlyArray<ComputerProbe>): ReadonlyArray<Abil
   if (probes.length <= 1) return []
   return ABILITIES.map(({ name, parts }) => {
     const said = parts.map((part) =>
-      Option.match(
-        Option.fromUndefinedOr(probes.find((probe) => probe.component === part)),
-        {
-          onNone: () => ({ state: 'unchecked' as const, detail: 'Not checked' }),
-          onSome: probeSays,
-        },
-      ),
+      Option.match(Option.fromUndefinedOr(probes.find((probe) => probe.component === part)), {
+        onNone: () => ({ state: 'unchecked' as const, detail: 'Not checked' }),
+        onSome: probeSays,
+      }),
     )
     const worst = said.reduce((one, other) => (RANK[other.state] < RANK[one.state] ? other : one))
     return { name, ...worst }
@@ -246,7 +242,9 @@ export const nextStep = (health: ComputerHealth): Option.Option<(typeof LADDER)[
     Unavailable: () => Option.none(),
     Degraded: ({ probes }) => {
       const steps = probes.flatMap((probe) =>
-        ComputerProbeResult.guards.Failed(probe.result) ? Option.toArray(FIXES[probe.component]) : [],
+        ComputerProbeResult.guards.Failed(probe.result)
+          ? Option.toArray(FIXES[probe.component])
+          : [],
       )
       return Option.fromUndefinedOr(LADDER.find((step) => steps.includes(step)))
     },
@@ -274,8 +272,7 @@ export const recoveryWords = (
             `Vivid tried to ${STEP_WORDS[step].doing.toLocaleLowerCase()} at ${at(since)}; it was not the right step then.`,
           PersonRequired: ({ consequence }) =>
             `To ${STEP_WORDS[step].doing.toLocaleLowerCase()} needs you: ${consequence}`,
-          Unsupported: () =>
-            `Vivid cannot ${STEP_WORDS[step].doing.toLocaleLowerCase()} yet.`,
+          Unsupported: () => `Vivid cannot ${STEP_WORDS[step].doing.toLocaleLowerCase()} yet.`,
           OutcomeUnknown: () =>
             `Vivid tried to ${STEP_WORDS[step].doing.toLocaleLowerCase()} at ${at(since)}; whether it worked is not known.`,
         }),

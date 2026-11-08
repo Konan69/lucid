@@ -465,7 +465,7 @@ function ServiceCard({
   const waiting = waitingOn(attempt)
   const adding = saidOf(standingFor(attempt, group.service))
   /** What one account's row is told: whose it is, where a press on it stands, who may act. */
-  const told = (connection: Connection) => {
+  const told = (connection: Connection): Told => {
     const own = ConnectionOwnership.guards.Personal(connection.ownership)
     return {
       connection,
@@ -512,6 +512,28 @@ function ServiceCard({
           {add}
         </div>
       </div>
+      <Below accounts={group.accounts} told={told} keying={keying} />
+    </li>
+  )
+}
+
+/**
+ * What a service's card holds under its first line: for one account, what it can reach when that
+ * is open; for several, a row for each with the same; and the key the service asked for, typed
+ * in the card of the account it is for.
+ */
+function Below({
+  accounts,
+  told,
+  keying,
+}: {
+  accounts: ServiceAccounts['accounts']
+  told: (connection: Connection) => Told
+  keying: Option.Option<Keying>
+}) {
+  const [only, ...others] = accounts
+  return (
+    <>
       {others.length === 0 && only !== undefined && told(only).open && (
         <div className="pr-3 pb-3 pl-16">
           <AccessPanel {...told(only)} />
@@ -520,7 +542,7 @@ function ServiceCard({
       {others.length > 0 && (
         // The rows start under the service's name: the card's 12, the logo's 40 and its 12.
         <ul className="flex flex-col pr-3 pb-2 pl-16">
-          {group.accounts.map((connection) => (
+          {accounts.map((connection) => (
             <li key={connection.id} className="flex flex-col gap-2">
               <div className="flex min-h-9 items-center gap-2">
                 <AccountWords {...told(connection)} alone={false} />
@@ -532,12 +554,11 @@ function ServiceCard({
         </ul>
       )}
       {Option.isSome(keying) && (
-        // The key the service asked for, typed in the card of the account it is for.
         <div className="pr-3 pb-3 pl-16">
           <EnterKey keying={keying.value} onClose={dismiss} onAnswered={finish} />
         </div>
       )}
-    </li>
+    </>
   )
 }
 
