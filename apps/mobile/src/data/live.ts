@@ -164,18 +164,17 @@ function keepOnDevice(
 }
 
 /**
- * Builds a session's reading of the catalog of services, for the Integrations page: what is
- * typed into its search, and the part of the catalog that answers to it.
+ * Builds a session's searches that are asked on the server: the catalog of services, for the
+ * Integrations page, and "find anything", for the drawer. Each is what is typed into its field
+ * and the answer to it.
  *
- * Ported from the web (`serviceSearch`, `catalogFor` and `services` in
+ * Ported from the web (`serviceSearch`, `catalogFor`, `services`, `findQuery` and `findings` in
  * `apps/web/src/data/live.ts`). There they are the page's own; here they are made per session,
- * on the session's engine, like every query the phone has.
+ * on the session's engine, like every query the phone has, so nothing typed by one Person is
+ * still there for the next.
  */
-function makeCatalog(engine: ReturnType<typeof makeLive>) {
-  /**
-   * What the Person has typed into the catalog search. Empty asks for the most-used services.
-   * Nothing typed by one Person is still there for the next: it goes with the session.
-   */
+function makeSearches(engine: ReturnType<typeof makeLive>) {
+  /** What the Person has typed into the catalog search. Empty asks for the most-used services. */
   const serviceSearch = Atom.make('')
 
   /**
@@ -189,7 +188,16 @@ function makeCatalog(engine: ReturnType<typeof makeLive>) {
     client.FindServices({ query: asked }),
   )
 
-  return { serviceSearch, services }
+  /** What the Person has typed into the drawer's search. */
+  const findQuery = Atom.make('')
+
+  /**
+   * What the drawer's search found: Threads, Library items and the words of the Person's
+   * conversations, asked on the server so the answer is exactly what this Person may see.
+   */
+  const findings = engine.ask(findQuery, (client, query) => client.Search({ query }))
+
+  return { serviceSearch, services, findQuery, findings }
 }
 
 /**
@@ -315,7 +323,7 @@ function makeLiveData(session: SignedIn) {
     drafts: kept((client) => client.WatchDrafts()),
   }
 
-  const catalog = makeCatalog(engine)
+  const catalog = makeSearches(engine)
   // Where the Person was working when a query was last asked, for the subscription below.
   let whereabouts = Option.none<string>()
 
