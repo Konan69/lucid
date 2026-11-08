@@ -145,6 +145,11 @@ import { ApprovalStore } from './store.ts'
 import { auditAction } from './action.ts'
 import { reviewOutcome, unwatchedOutcome } from './policy.ts'
 import { Reviewer } from './review.ts'
+import { isDreamThread } from '../dreams/thread.ts'
+
+/** What Vivid is told when work in a Dreamer Thread tries anything but a read. */
+const DREAM_READS_ONLY =
+  'Work Vivid does while dreaming only reads. Nothing is changed, sent or deleted from here; put what the Person could do on the Feed instead.'
 
 /** Whether the action is on the Person's own computer: only that Person may decide an Approval for it. */
 export const usesPersonalBrowser = (action: ProposedAction) =>
@@ -221,14 +226,33 @@ export const gateLayer = Layer.effect(
         return Option.some<GateDecision>(yield* ask(approvals, actor, action, bound))
       return Option.some<GateDecision>(yield* allow(audit, actor, action))
     })
+    /**
+     * What is decided before rules: an ordinary read passes, and anything else in a Dreamer
+     * Thread is refused. The Dreamer reads every Integration and never changes anything; neither
+     * does the Run its finding wakes. Rules and review come after, and could otherwise allow it.
+     */
+    const before = Effect.fn('Gate.before')(function* (
+      actor: Actor,
+      action: ProposedAction,
+      exposure: GateExposure,
+      origin: ActionOrigin,
+    ) {
+      if (action.effect === 'read' && exposure === 'Ordinary')
+        return Option.some<GateDecision>(yield* allow(audit, actor, action))
+      if (!isDreamThread(origin.threadId)) return Option.none<GateDecision>()
+      yield* recordRefusal(
+        Refusal.cases.ActionBlocked.make({ effect: action.effect, target: action.target._tag }),
+      )
+      return Option.some<GateDecision>(GateDecision.cases.Blocked.make({ rule: DREAM_READS_ONLY }))
+    })
     return Gate.of({
       /** Ordinary reads pass; rules come first; the rest runs unless the review says a Person is needed. */
       check: Effect.fn('Gate.check')(function* (actor, action, exposure, bound) {
         // All callers previously resolved origin before Gate.check. Keep that authority check
         // here when removing the duplicated proposal field, including actions allowed immediately.
         const origin = yield* actionOrigin(actor).pipe(Effect.provideService(Database, database))
-        if (action.effect === 'read' && exposure === 'Ordinary')
-          return yield* allow(audit, actor, action)
+        const early = yield* before(actor, action, exposure, origin)
+        if (Option.isSome(early)) return early.value
         const binding = yield* rules.list(actor)
         const judged = yield* judgeBinding(judge, action, binding)
         const applicable = judged.rules

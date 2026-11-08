@@ -18,6 +18,7 @@ import { connectionHandlers } from '../connections/handlers.ts'
 import { draftHandlers } from '../drafts/handlers.ts'
 import { draftStoreLayer } from '../drafts/store.ts'
 import { feedHandlers } from '../feed/handlers.ts'
+import { dreamHandlers } from '../dreams/handlers.ts'
 import { feedStoreLayer } from '../feed/store.ts'
 import { inputHandlers } from '../inputs/handlers.ts'
 import { libraryHandlers } from '../library/handlers.ts'
@@ -68,6 +69,7 @@ export const rpcHandlersLayer = VividRpc.toLayer({
   ...searchHandlers,
   ...watchHandlers,
   ...feedHandlers,
+  ...dreamHandlers,
 }).pipe(Layer.provide(Layer.mergeAll(draftStoreLayer, feedStoreLayer, actionLookupLayer)))
 
 /**

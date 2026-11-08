@@ -3,6 +3,7 @@ import type * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import * as SchemaGetter from 'effect/SchemaGetter'
 import {
+  DreamPass,
   MessageAttachment,
   SignalCue,
   type Conflict,
@@ -19,7 +20,7 @@ import type { DatabaseInfrastructureError } from '../database/client.ts'
 
 /**
  * The cues a server producer makes itself: an Approval's outcome, an answer, a Watch's event, a
- * card's carry-on, a finished handoff, a Settings forget.
+ * card's carry-on, a finished handoff, a Settings forget, a Dreamer finding.
  */
 export const ServerCue = Schema.Union([
   SignalCue.cases.Approval,
@@ -28,6 +29,7 @@ export const ServerCue = Schema.Union([
   SignalCue.cases.CarryOn,
   SignalCue.cases.Handoff,
   SignalCue.cases.Forget,
+  SignalCue.cases.Dream,
 ])
 export type ServerCue = typeof ServerCue.Type
 
@@ -72,6 +74,8 @@ export const StoredRunOrigin = Schema.TaggedUnion({
   WatchUnrecorded: { watchName: Schema.String },
   /** A Settings Forget press woke Vivid in a background Thread to plan and carry it out. */
   Forget: {},
+  /** A Dreamer finding woke Vivid in the dream's background Thread (`dreams/handlers.ts`). */
+  Dream: { pass: DreamPass },
 })
 export type StoredRunOrigin = typeof StoredRunOrigin.Type
 
