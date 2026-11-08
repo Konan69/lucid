@@ -1,3 +1,4 @@
+import { revisionTools } from './revision.ts'
 import type { ToolRegistration } from '@earendil-works/pi-durable'
 import {
   ComputerRecoveryId,
@@ -68,6 +69,8 @@ interface RegistryInput {
   readonly project: ProjectOf
   readonly memory: Memory['Service']
   readonly skills: ReadonlyArray<ToolRegistration>
+  /** Starting, checking, waiting on and stopping helpers (`tools/children.ts`). */
+  readonly children: ReadonlyArray<ToolRegistration>
 }
 interface MountInput extends RegistryInput {
   readonly connections: ReadonlyArray<ToolRegistration>
@@ -199,6 +202,11 @@ const definitions: ReadonlyArray<{
     mount: ({ runTool }) => checkinTools(runTool),
   },
   {
+    description: 'Read and revise existing Watches and personally authored Integrations in place.',
+    requirement: 'Product',
+    mount: ({ runTool }) => revisionTools(runTool),
+  },
+  {
     description: 'Put relevant background findings on the Person’s Feed.',
     requirement: 'Product',
     mount: ({ runTool }) => feedTools(runTool),
@@ -241,6 +249,12 @@ const definitions: ReadonlyArray<{
       'Make Word, PDF and PNG files on the Computer, inspect a captured render, and deliver their exact bytes with the editable source kept.',
     requirement: 'Computer',
     mount: ({ runTool }) => artifactTools(runTool),
+  },
+  {
+    description:
+      'Start helpers that work on independent parts of a request at the same time (spawn_run), each with a complete brief; their results come back as new messages, so carry on and never poll. Check one only when asked how it is going (check_run), wait only when the next step needs them now (wait_runs), and stop one that is no longer needed (cancel_run). Helpers cannot ask the Person anything; you stay the one who answers.',
+    requirement: 'Local',
+    mount: ({ children }) => children,
   },
   {
     description: 'Activate built-in skills and read their reference files.',

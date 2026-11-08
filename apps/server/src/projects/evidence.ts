@@ -18,6 +18,7 @@ import { requireThread } from '../threads/access.ts'
 
 type Message = ConversationState['messages'][number]
 type Complete = Extract<ProjectChange, { readonly _tag: 'Complete' }>
+type Confirm = Extract<ProjectChange, { readonly _tag: 'Confirm' }>
 
 const messageIdOf = Schema.decodeUnknownOption(MessageId)
 
@@ -45,11 +46,11 @@ const cited = (messages: ReadonlyArray<Message>, reply: number, said: Complete['
 }
 
 /**
- * Resolve a completion to a proof that cites a message the caller can read. Only Vivid inside a
- * Run completes a Project: the server reads that Run's Thread, finds the reply holding the call
- * and cites the message the call names. Anything else, a Person's own call or a call that is not
- * in the conversation, leaves no source and is refused, so a Project is never done on a claim
- * nobody can open.
+ * Resolve Vivid's completion to a proof that cites a message the caller can read: the server reads
+ * the Run's Thread, finds the reply holding the call and cites the message the call names. A
+ * `Complete` from outside a Run, or a call that is not in the conversation, leaves no source and
+ * is refused, so Vivid never marks a Project done on a claim nobody can open. The Person marks it
+ * done with `Confirm` (`confirmedProof`).
  */
 export const resolveProof = Effect.fn('Projects.resolveProof')(function* (
   actor: Actor,
@@ -70,3 +71,18 @@ export const resolveProof = Effect.fn('Projects.resolveProof')(function* (
     sources: [ProjectEvidence.cases.ThreadMessage.make({ threadId, messageId: messageId.value })],
   })
 })
+
+/**
+ * The Person marking a Project done on its page: the proof is their own word, cited as them. Vivid
+ * inside a Run completes only with `Complete`, which cites a message of that Run; a Run sending
+ * `Confirm` would make a claim in the Person's name, so it is refused.
+ */
+export const confirmedProof = (actor: Actor, id: ProjectId, change: Confirm) =>
+  Option.isSome(actor.threadId)
+    ? Effect.fail(new ProjectEvidenceMissing({ id }))
+    : Effect.succeed(
+        ProjectProof.make({
+          summary: change.summary,
+          sources: [ProjectEvidence.cases.Person.make({ personId: actor.person.id })],
+        }),
+      )

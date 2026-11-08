@@ -3,10 +3,12 @@ import {
   Tool,
   CheckinFocus,
   CheckinTiming,
-  CheckinNotFound,
-  OpenWork,
+  OwedState,
+  ReviseWatchRequest,
   WatchIntent,
   WatchPurpose,
+  type Owed,
+  type Watch,
 } from '@vivid/contracts'
 import * as v from 'valibot'
 import { defineTool } from './tool.ts'
@@ -53,24 +55,46 @@ const timingOf = (input: v.InferOutput<typeof timing>) =>
     ? CheckinTiming.cases.Chosen.make({ nextAt: input.nextAt, why: input.why })
     : CheckinTiming.cases.Requested.make({ request: input.request, timezone: input.timezone })
 
+/** What the Person is still waiting on: the owed records that are open, read fresh. */
+const openOwed = Effect.fn('CheckinTools.openOwed')(function* () {
+  const { client } = yield* Scope
+  const { owed } = yield* client.ListOwed()
+  return owed.filter((record) => OwedState.isAnyOf(['Open', 'Nudged'])(record.state))
+})
+
+/**
+ * The check-ins that cover one owed record: one on that record, on its Thread, or a sweep of all
+ * open work. Explicit records only, so the model never infers work from transcripts.
+ */
+const coveringOf = (record: Owed, watches: ReadonlyArray<Watch>) =>
+  watches.flatMap((watch) => {
+    if (!WatchPurpose.guards.Checkin(watch.purpose)) return []
+    const covers = CheckinFocus.match(watch.purpose.focus, {
+      OpenWork: () => true,
+      Owed: ({ owedId }) => owedId === record.id,
+      Thread: ({ threadId }) => threadId === record.threadId,
+      Project: () => false,
+    })
+    return covers ? [modelText(watch.name)] : []
+  })
+
 /** Resolve source names within this Person's open records; Thread means the current source Thread. */
 const focusOf = Effect.fn('CheckinTools.focus')(function* (input: v.InferOutput<typeof focus>) {
-  const { client, acting } = yield* Scope
+  const { acting } = yield* Scope
   switch (input.kind) {
     case 'OpenWork':
       return CheckinFocus.cases.OpenWork.make({})
     case 'Thread':
       return CheckinFocus.cases.Thread.make({ threadId: acting.threadId })
     case 'Owed': {
-      const { work } = yield* client.ListOpenWork()
-      const owed = work.filter(OpenWork.guards.Owed)
+      const open = yield* openOwed()
       const selected = yield* Effect.fromResult(
         named(
-          owed.map((item) => ({ name: `${item.what} from ${item.from}`, item })),
+          open.map((item) => ({ name: `${item.what} from ${item.from}`, item })),
           input.name,
         ),
       )
-      return CheckinFocus.cases.Owed.make({ owedId: selected.owedId })
+      return CheckinFocus.cases.Owed.make({ owedId: selected.id })
     }
   }
 })
@@ -98,27 +122,19 @@ export function checkinTools(runTool: RunTool) {
         return runTool(
           Effect.gen(function* () {
             const { client } = yield* Scope
-            const { work } = yield* client.ListOpenWork()
+            const open = yield* openOwed()
+            const { watches } = yield* client.ListWatches()
             return {
               output: {
-                work: work.map((source) =>
-                  OpenWork.match(source, {
-                    Owed: ({ what, from, nextStep, due, checkins }) => ({
-                      kind: 'owed',
-                      name: `${modelText(what)} from ${modelText(from)}`,
-                      what: modelText(what),
-                      from: modelText(from),
-                      nextStep: modelText(nextStep),
-                      due,
-                      checkins,
-                    }),
-                    Project: ({ nextStep, checkins }) => ({
-                      kind: 'project',
-                      nextStep: modelText(nextStep),
-                      checkins,
-                    }),
-                  }),
-                ),
+                work: open.map((record) => ({
+                  kind: 'owed',
+                  name: `${modelText(record.what)} from ${modelText(record.from)}`,
+                  what: modelText(record.what),
+                  from: modelText(record.from),
+                  nextStep: modelText(record.nextStep),
+                  due: record.due,
+                  checkins: coveringOf(record, watches),
+                })),
               },
             }
           }),
@@ -134,25 +150,16 @@ export function checkinTools(runTool: RunTool) {
       run({ data, signal }) {
         return runTool(
           Effect.gen(function* () {
-            const { client, acting } = yield* Scope
-            const found = (yield* client.ListWatches()).watches.find(
-              (watch) => watch.name === data.name,
-            )
-            if (found === undefined || !WatchPurpose.guards.Checkin(found.purpose))
-              return yield* new CheckinNotFound({
-                personId: acting.personId,
+            const { client } = yield* Scope
+            // The server keeps what the check-in follows and answers CheckinNotFound for a name
+            // that is not a live check-in.
+            const response = yield* client.ReviseWatch(
+              ReviseWatchRequest.cases.Timing.make({
                 name: data.name,
-                message: 'There is no check-in by that name.',
-              })
-            return {
-              output: view(
-                (yield* client.UpdateCheckin({
-                  name: data.name,
-                  focus: found.purpose.focus,
-                  timing: timingOf(data.timing),
-                })).watch,
-              ),
-            }
+                timing: timingOf(data.timing),
+              }),
+            )
+            return { output: view(response.watch) }
           }),
           { signal, tool: 'update_checkin' },
         )

@@ -86,8 +86,8 @@ export const unwatchedOutcome = (effect: ActionEffect, review: Review): ReviewOu
  *   a Never or Ask rule, and a personal target in a shared Thread still ask or refuse.
  *   Rules and a personal Integration used in a shared Thread are decided in `gate.ts` before
  *   any review. With decisions switched off no rule can be judged, so a Person who has a Never
- *   or Ask rule is asked about every action that is not a read, and a Never rule asks where it
- *   would have refused; a Person with no rule, or only Allow rules, is not asked.
+ *   rule conservatively refuses every action that is not a read; an Ask rule asks. A Person
+ *   with no rule, or only Allow rules, is not asked.
  */
 export const reviewOutcome = (effect: ActionEffect, review: Review): ReviewOutcome =>
   Review.match(review, {

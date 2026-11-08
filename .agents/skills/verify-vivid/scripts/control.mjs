@@ -179,7 +179,7 @@ try {
     )
   } else if (action === 'help')
     console.log(
-      'verify launch | apk | doctor | behaviour <run> [--trials N] [--scenarios file] | cell state|list|start|stop|restart|move|owner-loss|evict [runtime|runtime-peer] | feature all|first|reload|tool|question|approve|deny|changed|outcome|stop|picture|code|document|watch|library|feed|projects|devices|discord|texting-discord|github|learning|name | browser <feature> | desktop | phone all|thread|name|send|tool|replies|question|approve|deny|stop|picture|document|memory|settings-memory|learning|feed|owed|move | android provision|stop|status <devbox> | android attach|status pc | cleanup | sign-in | create-thread | chat | history | stop\nOptional pi-… run ID selects retained run manifest. Evidence: .cache/verify/pi-…/',
+      'verify launch | apk | doctor | behaviour <run> [--trials N] [--scenarios file] | cell state|list|start|stop|restart|move|owner-loss|evict [runtime|runtime-peer] | feature all|first|reload|tool|question|approve|deny|changed|outcome|stop|picture|code|document|watch|library|feed|projects|devices|discord|texting-discord|github|learning|name|helpers|helperstop | browser <feature> | desktop | phone all|thread|name|send|tool|replies|question|approve|deny|stop|picture|document|memory|settings-memory|learning|feed|owed|move | android provision|stop|status <devbox> | android attach|status pc | cleanup | sign-in | create-thread | chat | history | stop\nOptional pi-… run ID selects retained run manifest. Evidence: .cache/verify/pi-…/',
     )
   else {
     const state = await selected()

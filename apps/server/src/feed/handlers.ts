@@ -5,6 +5,7 @@ import { live } from '../live/query.ts'
 import { notifyPosted } from '../notifications/attention.ts'
 import { requireThread } from '../threads/access.ts'
 import { actingRun } from '../threads/runs.ts'
+import { Database } from '../database/client.ts'
 import { FeedStore, markTold } from './store.ts'
 
 /** What a notice quotes of a post: a said card's words; a drawn card is its drawing, with none. */
@@ -44,23 +45,28 @@ export const feedHandlers = {
       return yield* new Forbidden({
         message: 'The Person is in this conversation: answer here instead of posting to the Feed.',
       })
-    const outcome = yield* (yield* FeedStore).post({
-      person: auth.person.id,
-      thread: auth.threadId,
-      postedBy,
-      request,
-    })
-    // An urgent card is told at once, with sound; an ordinary one waits on the Feed silently for
-    // the pacing pass, which tells at most one a day in a quiet waking moment (`pace.ts`).
-    if (request.urgency === 'urgent') {
-      yield* notifyPosted({
-        personId: auth.person.id,
-        thread,
-        run: postedBy,
-        post: { title: request.title, body: bodyOf(request), urgency: request.urgency },
-      })
-      yield* markTold(auth.person.id, auth.threadId)
-    }
-    return outcome
+    return yield* (yield* Database).transaction(() =>
+      Effect.gen(function* () {
+        const outcome = yield* (yield* FeedStore).post({
+          person: auth.person.id,
+          thread: auth.threadId,
+          postedBy,
+          request,
+        })
+        // An urgent card is told at once, with sound, its delivery owed in the same transaction as
+        // the card; an ordinary one waits on the Feed silently for the pacing pass, which tells at
+        // most one a day in a quiet waking moment (`pace.ts`).
+        if (request.urgency === 'urgent') {
+          yield* notifyPosted({
+            personId: auth.person.id,
+            thread,
+            run: postedBy,
+            post: { title: request.title, body: bodyOf(request), urgency: request.urgency },
+          })
+          yield* markTold(auth.person.id, auth.threadId)
+        }
+        return outcome
+      }),
+    )
   }),
 }

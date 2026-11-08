@@ -113,33 +113,6 @@ export const WatchPurpose = Schema.TaggedUnion({
 })
 export type WatchPurpose = typeof WatchPurpose.Type
 
-/** Candidates come from explicit owned records, never inferred transcript obligations. */
-export const OpenWork = Schema.TaggedUnion({
-  Owed: {
-    owedId: OwedId,
-    threadId: ThreadId,
-    what: Schema.NonEmptyString,
-    from: Schema.NonEmptyString,
-    nextStep: Schema.NonEmptyString,
-    due: Schema.NullOr(Schema.Finite),
-    checkins: Schema.Array(WatchName),
-  },
-  Project: {
-    projectId: ProjectId,
-    threadId: ThreadId,
-    nextStep: Schema.NonEmptyString,
-    checkins: Schema.Array(WatchName),
-  },
-})
-export type OpenWork = typeof OpenWork.Type
-/** One owner-scoped inventory for every surface and the runtime tool adapter. */
-export const OpenWorkResponse = Schema.Struct({ work: Schema.Array(OpenWork) })
-export interface OpenWorkResponse extends Schema.Schema.Type<typeof OpenWorkResponse> {}
-
-/** Updating intent invalidates the old arm until a fresh receipt confirms the new operation. */
-export const UpdateCheckinRequest = Schema.Struct({ name: WatchName, ...checkin })
-export interface UpdateCheckinRequest extends Schema.Schema.Type<typeof UpdateCheckinRequest> {}
-
 /** An Event Watch with the same name is not a live check-in. */
 export class CheckinNotFound extends Schema.TaggedError<CheckinNotFound>()(
   'CheckinNotFound',
@@ -261,3 +234,16 @@ export interface WatchResponse extends Schema.Schema.Type<typeof WatchResponse> 
 /** Pending, Active and Paused Watches; Stopped and Completed records remain terminal history. */
 export const WatchListResponse = Schema.Struct({ watches: Schema.Array(Watch) })
 export interface WatchListResponse extends Schema.Schema.Type<typeof WatchListResponse> {}
+
+/**
+ * Revise a live Watch in place, keeping its identity. `Filters`: replace its complete filters and
+ * instruction. `Timing`: choose a check-in's next time, keeping what it follows; the old timer is
+ * disarmed until a fresh receipt confirms the new one (`watches/checkins.ts`).
+ */
+export const ReviseWatchRequest = Schema.TaggedUnion({
+  Filters: { name: WatchName, arguments: WatchArguments, instruction: WatchInstruction },
+  Timing: { name: WatchName, timing: CheckinTiming },
+})
+export type ReviseWatchRequest = typeof ReviseWatchRequest.Type
+export type ReviseWatchFilters = typeof ReviseWatchRequest.cases.Filters.Type
+export type ReviseCheckinTiming = typeof ReviseWatchRequest.cases.Timing.Type

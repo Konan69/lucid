@@ -19,7 +19,7 @@ import type { DatabaseInfrastructureError } from '../database/client.ts'
 
 /**
  * The cues a server producer makes itself: an Approval's outcome, an answer, a Watch's event, a
- * check-in's timer, a card's carry-on, a finished handoff, a Settings forget.
+ * check-in's timer, a card's carry-on, a finished handoff, a Settings forget, a helper's result.
  */
 export const ServerCue = Schema.Union([
   SignalCue.cases.Approval,
@@ -27,8 +27,10 @@ export const ServerCue = Schema.Union([
   SignalCue.cases.Watch,
   SignalCue.cases.Checkin,
   SignalCue.cases.CarryOn,
+  SignalCue.cases.Shell,
   SignalCue.cases.Handoff,
   SignalCue.cases.Forget,
+  SignalCue.cases.ChildResult,
 ])
 export type ServerCue = typeof ServerCue.Type
 
@@ -75,6 +77,8 @@ export const StoredRunOrigin = Schema.TaggedUnion({
   Forget: {},
   /** A check-in's timer fired and woke Vivid in a background Thread to return to open work. */
   Checkin: { watchId: WatchId, watchName: Schema.String, eventId: Schema.NonEmptyString },
+  /** A helper ended and its result came back to the Thread (`runs/store.ts`). */
+  ChildResult: { childRunId: RunId },
 })
 export type StoredRunOrigin = typeof StoredRunOrigin.Type
 

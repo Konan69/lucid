@@ -242,6 +242,8 @@ export const automaticallyNotifies = Effect.fn('RunStore.automaticallyNotifies')
     Forget: () => false,
     // A check-in is work nobody is watching too: the Person hears about it only through the Feed.
     Checkin: () => false,
+    // A helper's result continues the Person's own request: its answer is news like a reply.
+    ChildResult: () => true,
   })
 })
 const decodeState = decodeStored(
@@ -271,6 +273,7 @@ const originOf = (origin: StoredRunOrigin, person: PersonSummary) =>
     Forget: (): RunOrigin => RunOrigin.cases.Forget.make({ person }),
     Checkin: ({ watchId, watchName, eventId }): RunOrigin =>
       RunOrigin.cases.Checkin.make({ person, watchId, watchName, eventId }),
+    ChildResult: (): RunOrigin => RunOrigin.cases.ChildResult.make({ person }),
   })
 
 const ENDED = {

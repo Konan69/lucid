@@ -14,7 +14,7 @@ import {
 import { requireThread } from '../threads/access.ts'
 import { notifiesFrom } from '../threads/place.ts'
 import { actingRun } from '../threads/runs.ts'
-import { recordNotice } from './notifier.ts'
+import { oweNotice, recordNotice } from './notifier.ts'
 
 /** The Run owns deduplication; repeated tool execution cannot create a second identical notice. */
 export const notifyPerson = Effect.fn('Notifications.notifyPerson')(function* (input: {
@@ -79,7 +79,7 @@ export const notifyPosted = Effect.fn('Notifications.notifyPosted')(function* (i
       .update(JSON.stringify([input.run, 'posted', input.post]))
       .digest('hex'),
   )
-  return yield* recordNotice({
+  return yield* oweNotice({
     id,
     notice: {
       personId: input.personId,

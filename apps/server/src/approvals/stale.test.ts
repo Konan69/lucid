@@ -56,6 +56,8 @@ const runtime = Layer.succeed(
   Runtime.of({
     admit: () => Effect.die('Stale approval tests do not admit deliveries'),
     settled: () => Effect.never,
+    child: () => Effect.die('Stale approval tests start no helpers'),
+    stopChild: () => Effect.succeed(false),
     stop: () => Effect.succeed(true),
     watch: () => Stream.never,
     read: () => Effect.die('Stale approval tests do not read history'),

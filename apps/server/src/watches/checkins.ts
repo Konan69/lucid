@@ -8,7 +8,6 @@ import {
   CheckinTiming,
   CheckinNotFound,
   CheckinNotScheduled,
-  OpenWork,
   OwedState,
   TimerOperationKey,
   TimerReceipt,
@@ -19,7 +18,7 @@ import {
   type ConnectionId,
   type RunId,
   type Owed,
-  type UpdateCheckinRequest,
+  type ReviseCheckinTiming,
 } from '@vivid/contracts'
 import { companyColumnOf, findPerson, type Actor } from '../auth/access.ts'
 import { workspaceIn } from '../auth/session.ts'
@@ -36,15 +35,6 @@ export const awaiting = () =>
     operationKey: TimerOperationKey.make(NodeCrypto.randomUUID()),
   })
 
-/** Match explicit record identity; a Thread is open only because one of these records names it. */
-const matches = (focus: CheckinFocus, work: OpenWork) =>
-  CheckinFocus.match(focus, {
-    OpenWork: () => true,
-    Owed: ({ owedId }) => OpenWork.guards.Owed(work) && work.owedId === owedId,
-    Thread: ({ threadId }) => work.threadId === threadId,
-    Project: ({ projectId }) => OpenWork.guards.Project(work) && work.projectId === projectId,
-  })
-
 /** Source closure evidence is the persisted resolution or drop reason, not event text. */
 const ending = (record: Owed) =>
   OwedState.match(record.state, {
@@ -55,25 +45,6 @@ const ending = (record: Owed) =>
   })
 const operation = Schema.decodeUnknownOption(Schema.Struct({ operationKey: TimerOperationKey }))
 const receipt = Schema.decodeUnknownOption(TimerReceipt)
-
-/** Project each owned obligation with the Watches that cover it. */
-const sourceOf = (record: Owed, watches: ReadonlyArray<WatchRecord>) => {
-  const source = OpenWork.cases.Owed.make({
-    owedId: record.id,
-    threadId: record.threadId,
-    what: record.what,
-    from: record.from,
-    nextStep: record.nextStep,
-    due: record.due,
-    checkins: [],
-  })
-  const checkins = watches.flatMap(({ watch }) =>
-    WatchPurpose.guards.Checkin(watch.purpose) && matches(watch.purpose.focus, source)
-      ? [watch.name]
-      : [],
-  )
-  return OpenWork.cases.Owed.make({ ...source, checkins })
-}
 
 /** Only names and product facts enter model context; source identifiers remain server metadata. */
 const sourceContext = (records: ReadonlyArray<Owed>) =>
@@ -101,7 +72,13 @@ const sourceReading = Effect.fn('Checkins.read')(function* (
   )
   if (companyColumnOf(workspace) !== record.companyId)
     return yield* new NotFound({ message: 'Thread not found' })
-  const actor: Actor = { person: person.value, workspace, by: 'vivid', threadId: Option.none() }
+  const actor: Actor = {
+    person: person.value,
+    workspace,
+    by: 'vivid',
+    threadId: Option.none(),
+    helper: Option.none(),
+  }
   const records = yield* owed.list(actor)
   return AvailableCheckinFocus.match(purpose.focus, {
     Owed: ({ owedId }) => {
@@ -175,15 +152,6 @@ export const watchCheckins = Effect.fn('Watches.checkins')(function* () {
   const events = yield* ExecutorEvents
   const publish = (record: WatchRecord) => changes.publish([Topic.person(record.personId)])
 
-  /** Return only explicit open obligations, with existing check-ins so the model does not duplicate them. */
-  const list = Effect.fn('Checkins.list')(function* (actor: Actor) {
-    const watches = yield* store.list(actor)
-    const records = (yield* owed.list(actor)).filter((record) =>
-      OwedState.isAnyOf(['Open', 'Nudged'])(record.state),
-    )
-    return records.map((record) => sourceOf(record, watches))
-  })
-
   /** Validate ownership before persisting a source identity supplied over RPC. */
   const validate = Effect.fn('Checkins.validate')(function* (
     actor: Actor,
@@ -213,7 +181,7 @@ export const watchCheckins = Effect.fn('Watches.checkins')(function* () {
   /** Reset arming before dispatch. A superseded receipt cannot restore the old intent. */
   const update = Effect.fn('Checkins.update')(function* (
     actor: Actor,
-    request: UpdateCheckinRequest,
+    request: ReviseCheckinTiming,
   ) {
     const missing = () =>
       new CheckinNotFound({
@@ -224,9 +192,9 @@ export const watchCheckins = Effect.fn('Watches.checkins')(function* () {
     const found = yield* store.named(actor, request.name)
     if (Option.isNone(found) || !WatchPurpose.guards.Checkin(found.value.watch.purpose))
       return yield* missing()
-    yield* validate(actor, request.focus)
+    // The check-in keeps what it follows; only its next time changes.
     const purpose = WatchPurpose.cases.Checkin.make({
-      focus: request.focus,
+      focus: found.value.watch.purpose.focus,
       timing: request.timing,
       arming: awaiting(),
     })
@@ -261,7 +229,6 @@ export const watchCheckins = Effect.fn('Watches.checkins')(function* () {
   })
   return {
     planCheckin: plan,
-    listOpenWork: list,
     updateCheckin: update,
     confirmTimer: (
       actor: Actor,

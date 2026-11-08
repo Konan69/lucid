@@ -91,6 +91,7 @@ const fixture = Effect.fn('ThreadAnnouncements.fixture')(function* () {
     workspace: Workspace.cases.Company.make({ company, role: 'member' }),
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   })
   return { creator, ben, cy, dee, company, id, actor }
 })

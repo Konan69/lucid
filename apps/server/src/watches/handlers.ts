@@ -10,7 +10,9 @@ import {
   ServiceUnavailable,
   WatchListResponse,
   WatchResponse,
+  type CompleteWatchRequest,
   type CreateWatchRequest,
+  ReviseWatchRequest,
   type FindAppEventsRequest,
   type StopWatchRequest,
 } from '@vivid/contracts'
@@ -25,12 +27,6 @@ import {
 } from './apps.ts'
 import { ExecutorEventsFailure } from './events.ts'
 import { Watches, type WatchEventUnknown } from './lifecycle.ts'
-import { live } from '../live/query.ts'
-import {
-  OpenWorkResponse,
-  type UpdateCheckinRequest,
-  type CompleteWatchRequest,
-} from '@vivid/contracts'
 import type { WatchNameTaken } from './store.ts'
 
 /**
@@ -73,12 +69,12 @@ const resolved = <A, R>(
   actor: Actor,
   effect: Effect.Effect<
     A,
+    | NotFound
     | ExecutorEventsFailure
     | WatchAccountUnknown
     | WatchAccountNotReady
     | WatchAccountShared
     | DatabaseInfrastructureError
-    | NotFound
     | WatchEventUnknown
     | WatchNameTaken
     | WatchConnectionRemoved,
@@ -150,20 +146,31 @@ export const watchHandlers = {
     const watch = yield* resolved(actor, (yield* Watches).create(actor, request))
     return WatchResponse.make({ watch })
   }),
+  /**
+   * The named Watch stays owned by the current Actor throughout revision: new filters and
+   * instruction, or a check-in's next time (`ReviseWatchRequest`).
+   */
+  ReviseWatch: Effect.fn('Rpc.ReviseWatch')(function* (request: ReviseWatchRequest) {
+    const actor = yield* requireActor()
+    if (ReviseWatchRequest.guards.Timing(request))
+      return WatchResponse.make({ watch: yield* (yield* Watches).updateCheckin(actor, request) })
+    const watch = yield* resolved(
+      actor,
+      (yield* Watches).revise(actor, request).pipe(
+        Effect.catchTag('WatchMissing', () =>
+          Effect.fail(
+            new NotFound({
+              message: 'No Watch has that name, or it changed while revising. Read it again.',
+            }),
+          ),
+        ),
+      ),
+    )
+    return WatchResponse.make({ watch })
+  }),
   ListWatches: Effect.fn('Rpc.ListWatches')(function* () {
     return yield* listed(yield* requireActor())
   }),
-  ListOpenWork: Effect.fn('Rpc.ListOpenWork')(function* () {
-    return OpenWorkResponse.make({
-      work: yield* (yield* Watches).listOpenWork(yield* requireActor()),
-    })
-  }),
-  UpdateCheckin: Effect.fn('Rpc.UpdateCheckin')(function* (request: UpdateCheckinRequest) {
-    return WatchResponse.make({
-      watch: yield* (yield* Watches).updateCheckin(yield* requireActor(), request),
-    })
-  }),
-  WatchWatches: () => live('WatchWatches', [], listed),
   CompleteWatch: Effect.fn('Rpc.CompleteWatch')(function* (request: CompleteWatchRequest) {
     const watch = yield* (yield* Watches)
       .complete(yield* requireActor(), request.name, request.evidence)

@@ -603,6 +603,7 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
           workspace: Workspace.cases.Personal.make({}),
           by: 'person' as const,
           threadId: Option.none<ThreadId>(),
+          helper: Option.none(),
         })
         expect(opened._tag).toBe('Opened')
         expect(yield* items(test.ada)).toEqual([])

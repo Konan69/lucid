@@ -19,6 +19,7 @@ import {
   WatchPurpose,
   type TimerOperationKey,
   type RunId,
+  type ReviseWatchFilters,
 } from '@vivid/contracts'
 import { ownedHere, type Actor } from '../auth/access.ts'
 import { Database, decodeStored, encodeStored, returned } from '../database/client.ts'
@@ -236,11 +237,50 @@ const makeWrites = (database: Database['Service']) => {
     return yield* Effect.forEach(rows, record).pipe(Effect.map(first))
   })
 
+  /**
+   * Compare the saved callback so a concurrent revision or stop cannot be overwritten. A Watch
+   * paused for a sign-in stays paused under its revised filters; the Connection being Ready again
+   * resumes it (`progress.ts`). Its condition and purpose are not part of a revision and stay.
+   */
+  const revise = Effect.fn('WatchStore.revise')(function* (
+    previous: WatchRecord,
+    request: ReviseWatchFilters,
+    callbackUrl: string,
+    refreshBefore: number,
+  ) {
+    const now = yield* Clock.currentTimeMillis
+    const lifecycle = WatchState.guards.Paused(previous.watch.state)
+      ? { state: 'Paused' as const, stateData: yield* encodeState(previous.watch.state) }
+      : { state: 'Active' as const, stateData: null }
+    const rows = yield* database.run(
+      database
+        .update(watches)
+        .set({
+          arguments: request.arguments,
+          instruction: request.instruction,
+          callbackUrl,
+          ...lifecycle,
+          refreshBefore,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(watches.id, previous.watch.id),
+            eq(watches.callbackUrl, previous.callbackUrl),
+            live,
+          ),
+        )
+        .returning(),
+    )
+    return yield* Effect.forEach(rows, record).pipe(Effect.map(first))
+  })
+
   return {
     insertPending,
     activate,
     discard,
     stop,
+    revise,
     ...makeProgressWrites(database),
     ...makePurposeWrites(database),
   }

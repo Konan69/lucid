@@ -15,6 +15,7 @@ import {
   Watch,
   WatchState,
   type CreateWatchRequest,
+  type ReviseWatchFilters,
   type WatchStopReason,
 } from '@vivid/contracts'
 import { companyColumnOf, type Actor } from '../auth/access.ts'
@@ -140,6 +141,54 @@ const outcomeUnknown = (failure: ExecutorEventsFailure) =>
  * was interrupted, died with its process, or failed between Executor's grant and activation.
  */
 export const RECOVER_AFTER_MS = 60_000
+
+/** A revision owns its grant and compare-and-set; the ordinary lifecycle keeps its original key. */
+function makeRevision(input: {
+  readonly store: WatchStore['Service']
+  readonly events: ExecutorEvents['Service']
+  readonly publish: (record: WatchRecord) => Effect.Effect<void>
+  readonly subscribe: (record: WatchRecord) => ReturnType<ExecutorEvents['Service']['subscribe']>
+  readonly base: string
+}) {
+  const { store, events, publish, subscribe, base } = input
+  /** Grant the revised filters before committing; a failed grant leaves the saved Watch intact.
+   * A fresh callback rejects deliveries from the old subscription even if unsubscribe is lost. */
+  const revise = Effect.fn('Watches.revise')(function* (actor: Actor, request: ReviseWatchFilters) {
+    const found = yield* store.named(actor, request.name)
+    if (Option.isNone(found)) return yield* new WatchMissing({})
+    const previous = found.value
+    const callbackUrl = `${base}/api/watches/${previous.watch.id}?revision=${NodeCrypto.randomUUID()}`
+    const proposed = {
+      ...previous,
+      callbackUrl,
+      watch: { ...previous.watch, arguments: request.arguments },
+    }
+    const grant = yield* subscribe(proposed)
+    const revised = yield* store.revise(
+      previous,
+      request,
+      callbackUrl,
+      grant.refreshBefore.getTime(),
+    )
+    if (Option.isNone(revised)) return yield* new WatchMissing({})
+    yield* events
+      .unsubscribe({
+        name: previous.subscribedName,
+        arguments: previous.watch.arguments,
+        url: previous.callbackUrl,
+      })
+      .pipe(
+        Effect.tapError((failure) =>
+          Effect.logWarning('Previous Watch subscription could not be removed', failure._tag),
+        ),
+        Effect.ignore,
+      )
+    yield* publish(revised.value)
+    return (yield* store.present(actor, revised.value)).watch
+  })
+
+  return revise
+}
 
 /** Build the service over its stores, Executor and the server's address and secret. */
 const make = Effect.fn('Watches.make')(function* () {
@@ -291,6 +340,7 @@ const make = Effect.fn('Watches.make')(function* () {
   return {
     create,
     ...checks,
+    revise: makeRevision({ store, events, publish, subscribe, base }),
     find,
     stop,
     complete: progress.complete,

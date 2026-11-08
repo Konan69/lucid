@@ -225,6 +225,43 @@ const makePush = Effect.fn('Push.make')(function* () {
   return Push.of({ deliver, reconcile })
 })
 
+/** A durable device obligation can settle independently of every other target. */
+export const deliverTarget = Effect.fn('Push.deliverTarget')(function* (input: {
+  readonly personId: PersonId
+  readonly notificationId: NotificationId
+  readonly targetId: PushTarget['id']
+}) {
+  const database = yield* Database
+  const adapter = yield* PushAdapter
+  const targets = yield* PushTargets
+  const presence = yield* Presence
+  const rows = yield* database.run(
+    database
+      .select()
+      .from(notifications)
+      .where(
+        and(eq(notifications.id, input.notificationId), eq(notifications.personId, input.personId)),
+      ),
+  )
+  const row = rows[0]
+  // Deletion cancels delivery. Revalidation below preserves current access and session policy.
+  if (row === undefined) return
+  const notice = yield* decodeNotice(row)
+  const opens = yield* opensOf(notice)
+  if (Option.isNone(opens)) return
+  const target = (yield* targets.active(input.personId)).find(({ id }) => id === input.targetId)
+  if (target === undefined) return
+  const payload = PushPayload.make({
+    notificationId: input.notificationId,
+    title: notice.title.slice(0, 180),
+    body: notice.body.replace(/\s+/gu, ' ').trim().slice(0, 280),
+    opens: opens.value,
+    // The owed job sounds exactly as a direct delivery would: by the notice's kind.
+    sound: SOUND[notice.kind],
+  })
+  yield* makeSend({ database, adapter, targets, presence })(notice, payload, target)
+})
+
 export interface PushService {
   readonly deliver: (
     personId: PersonId,

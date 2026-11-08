@@ -16,6 +16,7 @@ import {
   SignalCue,
   RunOrigin,
   WatchId,
+  ReviseWatchRequest,
 } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
 import { Clock, Effect, Layer, Option, Queue, Ref, type Redacted } from 'effect'
@@ -194,11 +195,10 @@ describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
               }),
             ),
           )
-          const updated = yield* watching.updateCheckin(actor, {
-            name: watch.name,
-            focus: purpose.focus,
-            timing: purpose.timing,
-          })
+          const updated = yield* watching.updateCheckin(
+            actor,
+            ReviseWatchRequest.cases.Timing.make({ name: watch.name, timing: purpose.timing }),
+          )
           if (!WatchPurpose.guards.Checkin(updated.purpose))
             return expect.fail('Expected an updated check-in')
           expect(updated.purpose.arming.operationKey).not.toBe(key)
@@ -287,7 +287,6 @@ describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
             return expect.fail('Expected the admitted check-in Run')
           expect(completed.value.watch.state.runId).toBe(run.id)
           expect(run.origin.watchId).toBe(watch.id)
-          expect(yield* watching.listOpenWork(actor)).toEqual([])
           expect(
             (yield* post(
               subscribed.url,
@@ -391,6 +390,40 @@ describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
         expect(answered).toEqual({ status: 200, text: '{"challenge":"tok_123"}' })
         const forged = yield* post(url, challenge, secret, Option.some('v1,AAAA'))
         expect(forged.status).toBe(401)
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('keeps prior runs and ignores retired callbacks after a condition revision', () =>
+      Effect.gen(function* () {
+        const post = yield* receiver()
+        const { actor, watch, url, secret } = yield* activeWatch()
+        expect((yield* post(url, event('before-revision'), secret, Option.none())).status).toBe(200)
+        const prior = yield* deliveriesOf(watch.id)
+        yield* Queue.offer((yield* Executor).answers, {
+          id: 'revised',
+          refreshBefore: new Date(7 * 24 * 60 * 60_000),
+        })
+        const revised = yield* (yield* Watches).revise(
+          actor,
+          ReviseWatchRequest.cases.Filters.make({
+            name: watch.name,
+            arguments: { folder: 'important' },
+            instruction: 'Summarize important mail.',
+          }),
+        )
+        const subscribed = yield* Queue.take((yield* Executor).subscribed)
+        expect(revised.id).toBe(watch.id)
+        expect((yield* post(url, event('stale-subscription'), secret, Option.none())).status).toBe(
+          200,
+        )
+        expect(yield* deliveriesOf(watch.id)).toEqual(prior)
+        expect(
+          (yield* post(subscribed.url, event('after-revision'), secret, Option.none())).status,
+        ).toBe(200)
+        const delivered = yield* deliveriesOf(watch.id)
+        expect(delivered).toHaveLength(2)
+        expect(delivered[0]).toEqual(prior[0])
+        expect(JSON.stringify(delivered[1])).toContain(revised.instruction)
       }).pipe(Effect.scoped),
     )
 

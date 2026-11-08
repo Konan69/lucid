@@ -262,6 +262,9 @@ const accept = Effect.fn('Http.Watch.accept')(function* () {
   const decoded = yield* decodeBody(body).pipe(Effect.mapError(() => new WatchBodyInvalid({})))
   if (isVerification(decoded))
     return HttpServerResponse.jsonUnsafe({ challenge: decoded.challenge }, { status: 200 })
+  // Retired subscription callbacks are acknowledged without waking Vivid after a revision.
+  if (new URL(request.url, record.callbackUrl).search !== new URL(record.callbackUrl).search)
+    return HttpServerResponse.jsonUnsafe({ received: true }, { status: 200 })
   if (WatchState.guards.Paused(record.watch.state))
     return HttpServerResponse.jsonUnsafe({ received: true }, { status: 200 })
   if (yield* (yield* WatchedApps).needsAuthorization(record.connectionId)) {

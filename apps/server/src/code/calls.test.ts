@@ -65,6 +65,8 @@ import { Runtime } from '../runtime/client.ts'
 import { FeedStore, feedStoreLayer } from '../feed/store.ts'
 import { feedHandlers } from '../feed/handlers.ts'
 import { cardIdOf } from '../feed/read.ts'
+import { workLayer } from '../database/work.ts'
+import { pushTargetsLayer } from '../push/targets.ts'
 import { silentPushLayer } from '../push/testing.ts'
 import { PostRequest, WatchId } from '@vivid/contracts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
@@ -97,6 +99,8 @@ const testLayer = codeCallsLayer.pipe(
   Layer.provideMerge(feedStoreLayer),
   // A post now tells the Person; this suite's claim is the post, not its delivery.
   Layer.provideMerge(silentPushLayer),
+  Layer.provideMerge(pushTargetsLayer.pipe(Layer.provide(silentChangesLayer))),
+  Layer.provideMerge(workLayer),
   Layer.provideMerge(codeSourceLayer),
   Layer.provideMerge(Layer.mock(Runtime, history([]))),
 )

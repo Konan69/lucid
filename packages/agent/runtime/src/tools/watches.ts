@@ -179,3 +179,5 @@ function endingTools(runTool: RunTool) {
     }),
   ] as const
 }
+
+export { view as watchView }

@@ -1,9 +1,19 @@
+import { ReviseWatchRequest } from './watches.js'
+import {
+  ReadMadeIntegrationRequest,
+  MadeIntegrationSource,
+  ReviseMadeIntegrationRequest,
+} from './connections.js'
 import * as Schema from 'effect/Schema'
 import * as Rpc from 'effect/rpc/Rpc'
 import * as RpcGroup from 'effect/rpc/RpcGroup'
 import * as RpcMiddleware from 'effect/rpc/RpcMiddleware'
 import { CapabilityFacts } from './capabilities.js'
 import {
+  ShellSnapshot,
+  StartShellRequest,
+  ReadShellRequest,
+  WaitShellRequest,
   ComputerHealth,
   ComputerRecoveryOutcome,
   GetComputerHealthRequest,
@@ -65,10 +75,8 @@ import type { AuthContext } from './auth.js'
 import {
   CreateWatchRequest,
   CompleteWatchRequest,
-  UpdateCheckinRequest,
   CheckinNotFound,
   CheckinNotScheduled,
-  OpenWorkResponse,
   WatchRunRequired,
   WatchEndConditionRequired,
   FindAppEventsRequest,
@@ -296,6 +304,13 @@ import {
   DeliveryScopeRequest,
   AcknowledgeRunDeliveryRequest,
 } from './threads.js'
+import {
+  ChildRun,
+  ChildRunDetail,
+  ChildRunRequest,
+  SettleChildRunRequest,
+  SpawnChildRunRequest,
+} from './runs.js'
 
 /**
  * Every product call a Vivid client makes to the application server, declared once.
@@ -546,6 +561,38 @@ const GetDeliveryScope = Rpc.make('GetDeliveryScope', {
   ...call,
   payload: DeliveryScopeRequest,
   success: DeliveryScope,
+})
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+/**
+ * The runtime reserving one helper for the Run answering now. Only Vivid's own calls may: a
+ * Person's client never starts one, and a helper never starts another.
+ */
+const SpawnChildRun = Rpc.make('SpawnChildRun', {
+  ...call,
+  payload: SpawnChildRunRequest,
+  success: ChildRun,
+})
+/** The runtime reporting that a helper's work started or ended. Only Vivid or that helper may. */
+const SettleChildRun = Rpc.make('SettleChildRun', {
+  ...call,
+  payload: SettleChildRunRequest,
+  success: ChildRun,
+})
+/** One helper, with its result once it ended. Anyone who can see its Thread, or Vivid there. */
+const GetChildRun = Rpc.make('GetChildRun', {
+  ...call,
+  payload: ChildRunRequest,
+  success: ChildRunDetail,
+})
+/**
+ * Stops one helper and answers once its work ended. Anyone who may stop its Thread, or the Run
+ * that started it. Work it already did is not undone.
+ */
+const CancelChildRun = Rpc.make('CancelChildRun', {
+  ...call,
+  payload: ChildRunRequest,
+  success: ChildRun,
 })
 
 // ── Artifacts ──────────────────────────────────────────────────────────────
@@ -799,14 +846,6 @@ const CreateWatch = Rpc.make('CreateWatch', {
   success: WatchResponse,
 })
 const ListWatches = Rpc.make('ListWatches', { ...call, success: WatchListResponse })
-const ListOpenWork = Rpc.make('ListOpenWork', { ...call, success: OpenWorkResponse })
-const UpdateCheckin = Rpc.make('UpdateCheckin', {
-  ...call,
-  payload: UpdateCheckinRequest,
-  success: WatchResponse,
-  error: Schema.Union([RpcFailure, CheckinNotFound]),
-})
-const WatchWatches = Rpc.make('WatchWatches', { ...live, success: WatchListResponse })
 const CompleteWatch = Rpc.make('CompleteWatch', {
   ...call,
   error: Schema.Union([RpcFailure, WatchRunRequired, WatchEndConditionRequired]),
@@ -819,6 +858,24 @@ const StopWatch = Rpc.make('StopWatch', {
   success: WatchResponse,
 })
 
+/** In-place revisions retain the product identity and its history. */
+const ReviseWatch = Rpc.make('ReviseWatch', {
+  ...call,
+  payload: ReviseWatchRequest,
+  success: WatchResponse,
+  error: Schema.Union([RpcFailure, CheckinNotFound]),
+})
+const ReadMadeIntegration = Rpc.make('ReadMadeIntegration', {
+  ...call,
+  payload: ReadMadeIntegrationRequest,
+  success: MadeIntegrationSource,
+})
+const ReviseMadeIntegration = Rpc.make('ReviseMadeIntegration', {
+  ...call,
+  payload: ReviseMadeIntegrationRequest,
+  success: MadeIntegrationSource,
+})
+
 // ── Projects ───────────────────────────────────────────────────────────────
 const ListProjects = Rpc.make('ListProjects', { ...call, success: ProjectListResponse })
 const WatchProjects = Rpc.make('WatchProjects', { ...live, success: ProjectListResponse })
@@ -827,7 +884,10 @@ const CreateProject = Rpc.make('CreateProject', {
   payload: CreateProjectRequest,
   success: Project,
 })
-/** Vivid recording a Project's objective, progress or completion, against the revision it read. */
+/**
+ * A Project's objective, progress or completion, against the revision the writer read: Vivid from
+ * a Run, or the Person setting the goal or marking it done on the Project's page.
+ */
 const UpdateProject = Rpc.make('UpdateProject', {
   payload: UpdateProjectRequest,
   success: Project,
@@ -1117,6 +1177,26 @@ const ComputerShell = Rpc.make('ComputerShell', {
   payload: ComputerShellRequest,
   success: ComputerShellOutcome,
 })
+const StartShell = Rpc.make('StartShell', {
+  ...call,
+  payload: StartShellRequest,
+  success: ShellSnapshot,
+})
+const ReadShell = Rpc.make('ReadShell', {
+  ...call,
+  payload: ReadShellRequest,
+  success: ShellSnapshot,
+})
+const WaitShell = Rpc.make('WaitShell', {
+  ...call,
+  payload: WaitShellRequest,
+  success: ShellSnapshot,
+})
+const StopShell = Rpc.make('StopShell', {
+  ...call,
+  payload: ReadShellRequest,
+  success: ShellSnapshot,
+})
 const ComputerFileRead = Rpc.make('ComputerFileRead', {
   ...call,
   payload: ComputerFileReadRequest,
@@ -1286,6 +1366,10 @@ export const VividRpc = RpcGroup.make(
   StopThread,
   BePresent,
   GetDeliveryScope,
+  SpawnChildRun,
+  SettleChildRun,
+  GetChildRun,
+  CancelChildRun,
   ListArtifacts,
   WatchArtifacts,
   GetArtifact,
@@ -1328,10 +1412,10 @@ export const VividRpc = RpcGroup.make(
   ReadNotifications,
   FindAppEvents,
   CreateWatch,
+  ReviseWatch,
+  ReadMadeIntegration,
+  ReviseMadeIntegration,
   ListWatches,
-  ListOpenWork,
-  UpdateCheckin,
-  WatchWatches,
   CompleteWatch,
   StopWatch,
   ListProjects,
@@ -1404,6 +1488,10 @@ export const VividRpc = RpcGroup.make(
   StopComputer,
   HoldComputer,
   ComputerShell,
+  StartShell,
+  ReadShell,
+  WaitShell,
+  StopShell,
   ComputerFileRead,
   ComputerFileWrite,
   Browse,

@@ -1,3 +1,4 @@
+import { commandWorkerLayer } from './computers/commands.ts'
 import * as NodeHttp from 'node:http'
 import { migrationLayer } from './connections/migration.ts'
 import * as Effect from 'effect/Effect'
@@ -54,6 +55,7 @@ import { changesLayer } from './live/changes.ts'
 import { tallyLayer } from './live/tally.ts'
 import { titleModelLayer } from './threads/model.ts'
 import { threadTitlesLayer } from './threads/generation.ts'
+import { notificationDeliveryLayer } from './notifications/delivery.ts'
 import { notifierLayer } from './notifications/notifier.ts'
 import { observabilityLayer } from './observability/export.ts'
 import { notificationStoreLayer } from './notifications/store.ts'
@@ -72,6 +74,7 @@ import { requestLimit } from './rpc/requests.ts'
 import { cellMemoryLayer, runtimeLayer } from './runtime/client.ts'
 import { settingsStoreLayer } from './settings/store.ts'
 import { skillStoreLayer } from './skills/store.ts'
+import { childRunsLayer } from './runs/store.ts'
 import { conversationLayer } from './threads/delivery.ts'
 import { presenceLayer } from './threads/presence.ts'
 import { runStoreLayer } from './threads/runs.ts'
@@ -149,12 +152,13 @@ const serverProgram = Effect.gen(function* () {
   const replying = channelRepliesLayer.pipe(Layer.provideMerge(channels))
   const named = threadTitlesLayer.pipe(Layer.provide(titleModelLayer), Layer.provideMerge(replying))
   const conversation = conversationLayer.pipe(Layer.provideMerge(named))
+  const helpers = childRunsLayer.pipe(Layer.provideMerge(conversation))
   const accounts = Layer.mergeAll(
     connectionStoreLayer,
     toolEffectsLayer,
     computerStoreLayer,
     egressLayer,
-  ).pipe(Layer.provideMerge(conversation))
+  ).pipe(Layer.provideMerge(helpers))
   const trust = Layer.mergeAll(approvalStoreLayer, inputStoreLayer).pipe(
     Layer.provideMerge(actionRunnerLayer),
     Layer.provideMerge(accounts),
@@ -173,11 +177,13 @@ const serverProgram = Effect.gen(function* () {
   )
   const background = Layer.mergeAll(
     migrationLayer,
+    commandWorkerLayer,
     watchRenewalLayer,
     feedPacingLayer,
     channelWorkerLayer,
     approvalSweeperLayer,
     pushReceiptsLayer,
+    notificationDeliveryLayer,
     libraryIngestionLayer(ingestionBackoff, extractPdf),
     PersistedQueue.layerCleanup(),
   )

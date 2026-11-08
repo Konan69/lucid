@@ -72,6 +72,7 @@ export const person = Effect.fn('WatchTest.person')(function* () {
     workspace: Workspace.cases.Personal.make({}),
     by: 'vivid',
     threadId: Option.none(),
+    helper: Option.none(),
   } satisfies Actor
 })
 

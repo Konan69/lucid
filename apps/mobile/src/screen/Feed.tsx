@@ -1,21 +1,24 @@
 import {
   DisplaySource,
   FeedPost,
+  type Approval,
   type FeedAction,
   type FeedCardId,
   type ThreadId,
 } from '@vivid/contracts'
-import { feed, makeWhen, owed, thisReader, todos, type DeviceWaiting } from '@vivid/state'
+import { allowing, feed, makeWhen, owed, thisReader, todos, type DeviceWaiting } from '@vivid/state'
 import { Check } from 'lucide-react-native'
 import { Data, Option } from 'effect'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { FlatList, Pressable, View, type ViewToken } from 'react-native'
 import Animated, { LinearTransition, ReduceMotion } from 'react-native-reanimated'
+import { useApprovalDecision, useInbox } from '../data/approvals'
 import { answer, close, markSeen, usePleased, usePresses } from '../data/feed'
 import { closeOwed, useStandings } from '../data/owed'
 import { closeTodo, useTodoStandings } from '../data/todos'
 import { LiveState, useLive, useLiveData, useLiveValue } from '../data/live'
 import { Computer } from './chat/Device'
+import { Decide } from './feed/Decide'
 import { Display } from '../parts/display'
 import { HoldMenu } from '../t3/Menu'
 import { useTheme } from '../theme'
@@ -55,9 +58,6 @@ const LOOK = {
  * the Person picked. One entry per card: a new post replaces the old one, so the map holds no
  * more than the cards the Person has opened this session, each with its latest post's choices.
  */
-/** Where a posted card came from, when the post says (`FeedFrom`); nothing for no post. */
-const fromOf = (post: Option.Option<FeedPost>) =>
-  Option.flatMap(post, (made) => Option.fromNullOr(made.from))
 
 const remembered = new Map<string, { readonly post: string; readonly chosen: feed.Chosen }>()
 
@@ -112,6 +112,8 @@ export function Feed() {
   // The moment the page was opened, which every time on it is said against; read once.
   const [now] = useState(() => Date.now())
   const date = today.format(now)
+
+  const inbox = useInbox()
 
   // A card that a press has folded leaves the list until Vivid posts again.
   const shown = view.waiting.filter(
@@ -196,6 +198,7 @@ export function Feed() {
                 at={item.since}
                 post={Option.fromNullOr(item.post)}
                 ask={{ title: item.from, words: 'Vivid is working on this now.' }}
+                asked={Option.none()}
                 reply={Option.none()}
                 now={now}
                 remember={Option.none()}
@@ -205,6 +208,7 @@ export function Feed() {
             Waiting: ({ item }) => (
               <Waiting
                 item={item}
+                asked={feed.approvalOf(item, inbox)}
                 press={Option.fromUndefinedOr(presses.get(item.card))}
                 now={now}
                 onAnswer={(words) => answer(data, item, words)}
@@ -626,6 +630,7 @@ function Track({ record, now }: { record: owed.Waiting; now: number }) {
  */
 function Waiting({
   item,
+  asked,
   press,
   now,
   onAnswer,
@@ -633,6 +638,8 @@ function Waiting({
   onOpen,
 }: {
   item: feed.Waiting
+  /** The Approval the work stopped on that this Person decides, if it did (`feed.approvalOf`). */
+  asked: Option.Option<Approval>
   press: Option.Option<feed.Press>
   now: number
   onAnswer: (words: string) => void
@@ -642,7 +649,11 @@ function Waiting({
   const post = Option.fromNullOr(item.post)
   // Folded by a press on this post: it takes no room and no touch, but stays mounted, so its
   // display keeps what the Person chose for when a failed send brings it back.
-  const folded = feed.folds(item, press)
+  const deciding = useApprovalDecision()
+  // Decided here, the Approval is never pending again: the card folds until the Feed moves on.
+  const folded =
+    feed.folds(item, press) ||
+    Option.exists(asked, (approval) => allowing.sentOn(deciding, approval.id))
   return (
     <Animated.View
       pointerEvents={folded ? 'none' : 'auto'}
@@ -661,6 +672,9 @@ function Waiting({
         at={item.at}
         post={post}
         ask={{ title: item.from, words: feed.askedWords(item) }}
+        asked={Option.map(asked, (approval) => (
+          <Decide approval={approval} />
+        ))}
         reply={Option.some({
           // Only a send for this very post holds its buttons: an older post's send still on its
           // way does not stop the Person answering the one now shown.
@@ -690,6 +704,24 @@ interface Reply {
 }
 
 /**
+ * Where a card came from, in Vivid's words, under its title: Muse's rule that every unasked item
+ * says where it came from (`FeedFrom`). No post, or a card from before it was kept, says nothing.
+ */
+function Source({ post }: { post: Option.Option<FeedPost> }) {
+  return Option.match(
+    Option.flatMap(post, (made) => Option.fromNullOr(made.from)),
+    {
+      onNone: () => null,
+      onSome: (from) => (
+        <Label size="label" tone="ink-3" numberOfLines={1} style={{ marginTop: 2 }}>
+          From {from}
+        </Label>
+      ),
+    },
+  )
+}
+
+/**
  * One card: a quiet row of where it is from (which opens the Thread) and when, then one of the
  * post's two cases (`FeedPost`), as on the web (`apps/web/src/screen/feed/Card.tsx`):
  *
@@ -703,6 +735,7 @@ function Card({
   at,
   post,
   ask,
+  asked,
   reply,
   now,
   remember,
@@ -713,6 +746,11 @@ function Card({
   at: number
   post: Option.Option<FeedPost>
   ask: { readonly title: string; readonly words: string }
+  /**
+   * The Approval the work stopped on, to decide here (`Decide`), a send drawn as its draft: it
+   * stands in for `ask.words`, or follows the post when there is one.
+   */
+  asked: Option.Option<ReactNode>
   reply: Option.Option<Reply>
   now: number
   /** Where this card's choices are kept across being scrolled away (`remembered`), if anywhere. */
@@ -789,18 +827,9 @@ function Card({
           </Pressable>
         )}
       </View>
-      {/* Where the card came from, in Vivid's words, under the title: Muse's rule that every
-          unasked item says where it came from. A card from before it was kept says nothing. */}
-      {Option.match(fromOf(post), {
-        onNone: () => null,
-        onSome: (from) => (
-          <Label size="label" tone="ink-3" numberOfLines={1} style={{ marginTop: 2 }}>
-            From {from}
-          </Label>
-        ),
-      })}
+      <Source post={post} />
       {Option.match(post, {
-        onNone: () => said(ask.words, Option.none()),
+        onNone: () => Option.getOrElse(asked, () => said(ask.words, Option.none())),
         onSome: FeedPost.match({
           Drawn: ({ display }) => (
             <View style={{ marginTop: 12 }}>
@@ -818,6 +847,7 @@ function Card({
           Said: ({ words, actions }) => said(words, Option.some(actions)),
         }),
       })}
+      {Option.isSome(post) && Option.getOrNull(asked)}
     </View>
   )
 }

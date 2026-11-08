@@ -39,7 +39,7 @@ import { Presence } from '../threads/presence.ts'
 import { automaticallyNotifies, RunStore, TurnReservation } from '../threads/runs.ts'
 import { threads } from '../threads/tables.ts'
 import { PushConfig } from './config.ts'
-import { Push, pushLayer } from './delivery.ts'
+import { deliverTarget, Push, pushLayer } from './delivery.ts'
 import { pushHandlers } from './handlers.ts'
 import { PushReceipt } from './receipts.ts'
 import { pushDeliveries } from './tables.ts'
@@ -70,7 +70,7 @@ const withFeed = <A, E, R>(program: Effect.Effect<A, E, R>) =>
  */
 const backgroundRun = Effect.fn('Test.backgroundRun')(function* () {
   const owner = yield* fixture()
-  yield* (yield* PushTargets).register({
+  const target = yield* (yield* PushTargets).register({
     personId: owner.person.id,
     sessionId: owner.sessionId,
     destination: owner.destination,
@@ -102,7 +102,27 @@ const backgroundRun = Effect.fn('Test.backgroundRun')(function* () {
     workspace: owner.auth.workspace,
     threadId: owner.threadId,
   })
-  return { owner, auth }
+  /**
+   * Repays every notice this Person is owed on their phone, as the durable delivery job does
+   * (`notifications/delivery.ts`): one `deliverTarget` per notice, whose claim ledger sends each
+   * notice at most once however often it is called.
+   */
+  const deliverOwed = Effect.fn('Test.deliverOwed')(function* () {
+    const rows = yield* owner.database.run(
+      owner.database
+        .select({ id: notifications.id })
+        .from(notifications)
+        .where(eq(notifications.personId, owner.person.id))
+        .orderBy(notifications.createdAt),
+    )
+    for (const row of rows)
+      yield* deliverTarget({
+        personId: owner.person.id,
+        notificationId: NotificationId.make(row.id),
+        targetId: target.id,
+      })
+  })
+  return { owner, auth, deliverOwed }
 })
 
 const encodePayload = Schema.encodeSync(Schema.fromJsonString(PushPayload))
@@ -438,7 +458,7 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
       () =>
         withFeed(
           Effect.gen(function* () {
-            const { owner, auth } = yield* backgroundRun()
+            const { owner, auth, deliverOwed } = yield* backgroundRun()
             const post = PostRequest.cases.Said.make({
               title: 'Ada wrote about the contract',
               words: 'She asks whether Friday still holds.',
@@ -455,21 +475,25 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
                 workspace: owner.auth.workspace,
                 by: 'person',
                 threadId: Option.none(),
+                helper: Option.none(),
               })
               return listed.map(({ kind, opens }) => ({ kind, opens }))
             })
             // An ordinary post goes on the Feed silently: no notice and no push yet.
             yield* feedHandlers.Post(post).pipe(Effect.provideService(AuthContext, auth))
+            yield* deliverOwed()
             expect(yield* Ref.get(probe.sent)).toEqual([])
             expect(yield* listedKinds()).toEqual([])
             // Outside waking hours (the test clock starts at midnight UTC) the pacing pass holds it.
             yield* paceOnce()
+            yield* deliverOwed()
             expect(yield* Ref.get(probe.sent)).toEqual([])
             // At ten in the morning, with nobody looking and no conversation going, it is told once,
             // quietly; a second pass the same day tells nothing more.
             yield* TestClock.adjust('10 hours')
             yield* paceOnce()
             yield* paceOnce()
+            yield* deliverOwed()
             const quiet = yield* Ref.get(probe.sent)
             expect(quiet).toHaveLength(1)
             expect(quiet[0]).toMatchObject({
@@ -487,6 +511,7 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
             const posting = feedHandlers.Post(urgent).pipe(Effect.provideService(AuthContext, auth))
             yield* posting
             yield* posting
+            yield* deliverOwed()
             const all = yield* Ref.get(probe.sent)
             expect(all).toHaveLength(2)
             expect(all[1]).toMatchObject({ body: urgent.words, opens: feed, sound: 'Audible' })

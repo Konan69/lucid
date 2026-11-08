@@ -1,7 +1,7 @@
 import { DisplaySource, FeedPost, type FeedAction, type FeedCardId } from '@vivid/contracts'
 import { makeWhen, thisReader } from '@vivid/state'
 import { Option } from 'effect'
-import type { Ref } from 'react'
+import type { ReactNode, Ref } from 'react'
 import { Display } from '../../parts/Display'
 import { Button } from '../../ui/button'
 
@@ -28,13 +28,16 @@ export interface Reply {
  * - `Said`: nothing to draw, so a sentence or two under the title, and the card's buttons, the way out
  *   first and the answer last (v9 of the 13 October design: "yh buttons are better").
  *
- * With no post, the work's own state in words stands as a said card with no buttons.
+ * With no post, the work's own state in words stands as a said card with no buttons, unless the
+ * work stopped on an Approval this Person decides: then the card body is that Approval to decide
+ * (`asked`, `Decide.tsx`), a send drawn as its draft, under a post when there is one.
  */
 export function Card({
   card,
   at,
   post,
   ask,
+  asked,
   reply,
   seen,
   now,
@@ -47,6 +50,8 @@ export function Card({
   post: Option.Option<FeedPost>
   /** What the card says when Vivid posted nothing: the work's own state in words. */
   ask: { readonly title: string; readonly words: string }
+  /** The Approval the work stopped on, to decide here; it stands in for `ask.words`. */
+  asked: Option.Option<ReactNode>
   reply: Option.Option<Reply>
   /** Watches the card into view, for a card not yet looked at. */
   seen?: Ref<HTMLElement>
@@ -98,7 +103,7 @@ export function Card({
         },
       )}
       {Option.match(post, {
-        onNone: () => said(ask.words, Option.none()),
+        onNone: () => Option.getOrElse(asked, () => said(ask.words, Option.none())),
         onSome: FeedPost.match({
           Drawn: ({ display }) => (
             <div className="mt-3">
@@ -114,6 +119,7 @@ export function Card({
           Said: ({ words, actions }) => said(words, Option.some(actions)),
         }),
       })}
+      {Option.isSome(post) && Option.getOrNull(asked)}
     </article>
   )
 }
