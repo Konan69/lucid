@@ -9,6 +9,7 @@ import * as ImagePicker from 'expo-image-picker'
 import { AssetField, MediaType, Query, requestPermissionsAsync } from 'expo-media-library'
 import { chooseAttachments, uploadDocument, type Attached } from './documents'
 import type { LiveData } from './live'
+import { telemetryLayer } from './tracing'
 
 /**
  * The phone's side of attaching files to a message (`attaching` in `@vivid/state`): the system's
@@ -164,7 +165,7 @@ const services = (data: LiveData, shared: boolean) =>
  * library the first time; a library that is not allowed is no photos, and the sheet keeps its
  * Photos tile, which needs no access.
  */
-export const recentPhotos = Atom.make(
+export const recentPhotos = Atom.runtime(telemetryLayer).atom(
   Effect.gen(function* () {
     const allowed = yield* Effect.tryPromise(() => requestPermissionsAsync(false, ['photo']))
     if (!allowed.granted) return []

@@ -151,13 +151,12 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
       ),
     )
     // A reply transport failure must not prevent Thread state or notifications from settling.
-    yield* channels
-      .ended({ runId: run.id, threadId: run.threadId, settlement })
-      .pipe(
-        Effect.catch((error) =>
-          Effect.logWarning('A channel reply could not be sent', { reason: error._tag }),
-        ),
-      )
+    yield* channels.ended({ runId: run.id, threadId: run.threadId, settlement }).pipe(
+      Effect.withErrorReporting,
+      Effect.catch((error) =>
+        Effect.logWarning('A channel reply could not be sent', { reason: error._tag }),
+      ),
+    )
     const quiet =
       Settlement.guards.Completed(settlement) &&
       !(yield* automaticallyNotifies(run.id).pipe(Effect.provideService(Database, database)))
@@ -248,6 +247,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
     if (observed.has(run.id)) return Effect.void
     observed.add(run.id)
     return observe(run).pipe(
+      Effect.withErrorReporting,
       Effect.catch((error) => Effect.logError('A Run could not be settled', error._tag)),
       Effect.ensuring(Effect.sync(() => observed.delete(run.id))),
       Effect.forkIn(scope),
@@ -356,6 +356,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
   function resume(run: WorkingRun) {
     return personOf(run.personId).pipe(
       Effect.flatMap((person) => follow({ id: run.id, threadId: run.threadId, person })),
+      Effect.withErrorReporting,
       Effect.catch(() => Effect.logWarning('A working Run has nobody behind it any more')),
     )
   }

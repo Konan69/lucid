@@ -48,6 +48,7 @@ const Action = Schema.Struct({
 const Summary = Schema.Struct({ id: Schema.String, detectorIds: Schema.Array(Schema.String) })
 const Workflow = Schema.Struct({
   ...Summary.fields,
+  organizationId: Schema.String,
   name: Schema.String,
   enabled: Schema.Boolean,
   environment: Schema.NullOr(Schema.String),
@@ -85,6 +86,7 @@ async function api(path, schema, method = 'GET', body) {
 /** Existing issue-owner routing is preserved; no new recipient or notification integration is invented. */
 function desired(workflow, project) {
   return {
+    id: workflow.id,
     name:
       project === '4512198452772864'
         ? 'Vivid backend new or regressed errors'
@@ -94,18 +96,32 @@ function desired(workflow, project) {
     detectorIds: workflow.detectorIds,
     config: { frequency: 60 },
     triggers: {
+      organizationId: workflow.organizationId,
       logicType: 'any-short',
       conditions: ['first_seen_event', 'regression_event'].map((type) => ({
         type,
         comparison: true,
         conditionResult: true,
       })),
+      actions: [],
     },
-    actionFilters: workflow.actionFilters.map((filter) => ({
-      logicType: filter.logicType,
-      conditions: filter.conditions,
-      actions: filter.actions,
-    })),
+    // Match the UI's workflow payload: new actions have no database ID from an old filter group.
+    actionFilters: [
+      {
+        organizationId: workflow.organizationId,
+        logicType: 'any-short',
+        conditions: [],
+        actions: [
+          {
+            type: 'email',
+            integrationId: null,
+            config: { targetType: 'issue_owners', targetDisplay: null, targetIdentifier: '' },
+            data: { fallthroughType: 'ActiveMembers' },
+            status: 'active',
+          },
+        ],
+      },
+    ],
   }
 }
 
@@ -134,6 +150,19 @@ for (const project of ['4512198452772864', '4512198445760512']) {
     const triggers = actual.triggers.conditions.map((condition) => condition.type)
     if (!triggers.includes('first_seen_event') || !triggers.includes('regression_event'))
       throw new Error(`Sentry workflow ${existing.id} is missing incident triggers`)
+    if (
+      !actual.actionFilters.some((filter) =>
+        filter.actions.some(
+          (action) =>
+            action.type === 'email' &&
+            action.status === 'active' &&
+            action.config.targetType === 'issue_owners' &&
+            action.data.fallthroughType === 'ActiveMembers',
+        ),
+      )
+    )
+      throw new Error(`Sentry workflow ${existing.id} has no active issue-owner email routing`)
+    plans[plans.length - 1].actual = actual
   }
 }
 const result = { mode: apply ? 'applied-and-read-back' : 'plan', workflows: plans }

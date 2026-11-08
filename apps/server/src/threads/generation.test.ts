@@ -22,6 +22,7 @@ import {
   Cause,
   Deferred,
   Effect,
+  ErrorReporter,
   Fiber,
   Layer,
   Logger,
@@ -434,6 +435,7 @@ layer(databaseLayer)((it) => {
 
     it.effect('logs a model defect with Thread context without failing the settled Run', () => {
       const logs: unknown[] = []
+      const reports: Array<Error> = []
       const logger = Logger.make((event) => {
         logs.push(event.message)
       })
@@ -450,6 +452,8 @@ layer(databaseLayer)((it) => {
         yield* Queue.take(test.requests)
         yield* Deferred.failCause(test.completion, Cause.die(new Error('Title provider defect')))
         yield* Deferred.await(test.finished)
+        expect(reports).toHaveLength(1)
+        expect(reports.map((error) => error.message).join('\n')).toContain('Title provider defect')
         expect(logs).toContainEqual([
           'Thread title generation failed',
           { thread: test.threadId, cause: expect.stringContaining('Title provider defect') },
@@ -460,7 +464,14 @@ layer(databaseLayer)((it) => {
             RunState.guards.Completed(run.state),
           ),
         ).toBe(true)
-      }).pipe(Effect.scoped, Effect.provideService(Logger.CurrentLoggers, new Set([logger])))
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(Logger.CurrentLoggers, new Set([logger])),
+        Effect.provideService(
+          ErrorReporter.CurrentErrorReporters,
+          new Set([ErrorReporter.make(({ error }) => reports.push(error))]),
+        ),
+      )
     })
 
     it.effect('leaves a Person title alone after a finished Run', () =>
