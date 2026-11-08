@@ -113,6 +113,15 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
     go: () => void openSettings('memory'),
   },
   {
+    key: 'do:work',
+    title: 'What Vivid is doing',
+    detail: 'See what runs in the background, and stop it',
+    words: 'background running stop cancel everything watches stuck stalled',
+    icon: <PlaceMark place="work" />,
+    keys: Option.none(),
+    go: () => void openSettings('work'),
+  },
+  {
     key: 'do:settings',
     title: 'Settings',
     detail: 'Appearance, time zone, notifications, people, rules',

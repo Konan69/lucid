@@ -36,6 +36,7 @@ import { skillHandlers } from '../skills/handlers.ts'
 import { childHandlers } from '../runs/handlers.ts'
 import { threadHandlers } from '../threads/handlers.ts'
 import { watchHandlers } from '../watches/handlers.ts'
+import { workHandlers } from '../work/handlers.ts'
 import { requestProtocolLayer } from './requests.ts'
 import { liveProtocolLayer } from './link.ts'
 
@@ -58,6 +59,10 @@ export const rpcHandlersLayer = Layer.mergeAll(
     'ReviseWatch',
     'ListWatches',
     'StopWatch',
+    'ListWork',
+    'WatchWork',
+    'StopWork',
+    'StopAllWork',
   ).toLayer({
     ...artifactHandlers,
     ...channelHandlers,
@@ -95,6 +100,10 @@ export const rpcHandlersLayer = Layer.mergeAll(
   VividRpc.toLayerHandler('ReviseWatch', watchHandlers.ReviseWatch),
   VividRpc.toLayerHandler('ListWatches', watchHandlers.ListWatches),
   VividRpc.toLayerHandler('StopWatch', watchHandlers.StopWatch),
+  VividRpc.toLayerHandler('ListWork', workHandlers.ListWork),
+  VividRpc.toLayerHandler('WatchWork', workHandlers.WatchWork),
+  VividRpc.toLayerHandler('StopWork', workHandlers.StopWork),
+  VividRpc.toLayerHandler('StopAllWork', workHandlers.StopAllWork),
 ).pipe(
   Layer.provide(
     Layer.mergeAll(draftStoreLayer, feedStoreLayer, actionLookupLayer, messageSearchLayer),

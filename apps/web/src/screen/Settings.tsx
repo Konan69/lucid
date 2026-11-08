@@ -14,6 +14,7 @@ import { People } from './settings/People'
 import { Record } from './settings/Record'
 import { Rules } from './settings/Rules'
 import { Texting } from './settings/Texting'
+import { Work } from './settings/Work'
 import { Dialog, DialogClose, DialogContent, DialogTitle } from '../ui/dialog'
 import { useSurface } from '../ui/Layer'
 
@@ -27,6 +28,7 @@ interface Entry {
 const YOURS: ReadonlyArray<Entry> = [
   { id: 'general', label: 'General', place: 'general' },
   { id: 'memory', label: 'What Vivid knows', place: 'memory' },
+  { id: 'work', label: 'What Vivid is doing', place: 'work' },
   { id: 'texting', label: 'Text Vivid', place: 'texting' },
   { id: 'devices', label: 'Devices', place: 'devices' },
 ]
@@ -46,6 +48,7 @@ const TITLE = {
   memory: 'What Vivid knows',
   texting: 'Text Vivid',
   record: 'Record',
+  work: 'What Vivid is doing',
 } satisfies Record<SettingsSection, string>
 
 /**
@@ -106,6 +109,7 @@ export function Settings({ me, section }: { me: MeResponse; section: SettingsSec
               {section === 'memory' && <Memory />}
               {section === 'texting' && <Texting />}
               {section === 'record' && <Record />}
+              {section === 'work' && <Work />}
             </div>
           </div>
         </div>

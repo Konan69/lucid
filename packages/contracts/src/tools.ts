@@ -76,6 +76,8 @@ export const ToolName = Schema.Literals([
   'write_memory',
   'search_threads',
   'read_thread',
+  'list_work',
+  'stop_all_work',
 ])
 export type ToolName = typeof ToolName.Type
 

@@ -254,7 +254,7 @@ export const connectionOf = Effect.fn('Connections.connectionOf')(function* (
 })
 
 /** Only catalogue services support allocating another account from Settings. */
-function connectionOrigin(service: ServiceId): Connection['origin'] {
+export function connectionOrigin(service: ServiceId): Connection['origin'] {
   if (service.startsWith(MADE)) return 'Made'
   if (service.startsWith(IMPORTED)) return 'Address'
   return 'Catalogue'
