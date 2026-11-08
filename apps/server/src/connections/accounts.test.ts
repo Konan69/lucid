@@ -139,7 +139,7 @@ describe.skipIf(!testDatabaseConfigured)('several accounts on one Integration', 
             expect(other.connectionId).toBe(home.id)
 
             const inputAt = (yield* Ref.get(probe.inputs)).length
-            const used = yield* connectionHandlers
+            const { outcome: used } = yield* connectionHandlers
               .UseTool(toolRequest(resolved.connectionId, 'read'))
               .pipe(Effect.provideService(AuthContext, vivid))
             expect(used).toEqual(ToolOutcome.cases.Completed.make({ output: { ok: true } }))

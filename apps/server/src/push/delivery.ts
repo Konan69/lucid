@@ -6,6 +6,7 @@ import {
   CompanyId,
   NotFound,
   NotificationId,
+  NotificationOpens,
   PersonId,
   PushOutcome,
   PushPayload,
@@ -16,6 +17,7 @@ import { Database, decodeStored, encodeStored, returned } from '../database/clie
 import { notifications } from '../notifications/tables.ts'
 import { observeFailures } from '../observability/failure.ts'
 import { canSee, findThread } from '../threads/access.ts'
+import { opensAt } from '../threads/place.ts'
 import { Presence } from '../threads/presence.ts'
 import { PushAdapter } from './adapter.ts'
 import { PushAcceptance, PushReceipt } from './receipts.ts'
@@ -45,11 +47,17 @@ const RECEIPT_RETENTION_MS = 24 * 60 * 60_000
  * tickets owed; the cadence adds up to one minute to provider confirmation visibility. */
 const RECEIPT_CADENCE = '1 minute'
 
-/** Push quotes only an existing Notification, with the recipient's current Thread access checked. */
-const readable = Effect.fn('Push.readable')(function* (notice: typeof NoticeRow.Type) {
-  if (notice.conversationId === null) return true
+/**
+ * Push quotes only an existing Notification, with the recipient's current Thread access checked:
+ * where the notice opens (`opensAt`), or none while its Thread is gone or out of their reach.
+ */
+const opensOf = Effect.fn('Push.opensOf')(function* (notice: typeof NoticeRow.Type) {
+  if (notice.conversationId === null)
+    return Option.some(NotificationOpens.cases.Notifications.make({}))
   const thread = yield* findThread(notice.conversationId)
-  return Option.isSome(thread) && (yield* canSee(thread.value.id, notice.personId))
+  if (Option.isNone(thread) || !(yield* canSee(thread.value.id, notice.personId)))
+    return Option.none<NotificationOpens>()
+  return Option.some(opensAt(thread.value))
 })
 
 interface DeliveryServices {
@@ -102,8 +110,8 @@ const makeAttempt = (services: DeliveryServices) =>
     if (active === undefined) return PushReceipt.cases.Failed.make({ reason: 'SessionEnded' })
     if (yield* services.presence.present(notice.personId))
       return PushReceipt.cases.Failed.make({ reason: 'Present' })
-    if (!(yield* readable(notice).pipe(Effect.provideService(Database, services.database))))
-      return PushReceipt.cases.Failed.make({ reason: 'AccessLost' })
+    const opens = yield* opensOf(notice).pipe(Effect.provideService(Database, services.database))
+    if (Option.isNone(opens)) return PushReceipt.cases.Failed.make({ reason: 'AccessLost' })
     return yield* services.adapter.send(active.destination, payload).pipe(
       Effect.map((acceptance) => PushReceipt.cases.Sent.make({ acceptance })),
       Effect.catchTags({
@@ -183,15 +191,15 @@ const makePush = Effect.fn('Push.make')(function* () {
     if (row === undefined) return yield* new NotFound({ message: 'Notification not found.' })
     const notice = yield* decodeNotice(row)
     if (yield* presence.present(personId)) return PushOutcome.cases.Present.make({})
-    if (!(yield* readable(notice).pipe(Effect.provideService(Database, database))))
-      return PushOutcome.cases.NoTargets.make({})
+    const opens = yield* opensOf(notice).pipe(Effect.provideService(Database, database))
+    if (Option.isNone(opens)) return PushOutcome.cases.NoTargets.make({})
     const active = yield* targets.active(personId)
     if (active.length === 0) return PushOutcome.cases.NoTargets.make({})
     const payload = PushPayload.make({
       notificationId,
       title: notice.title.slice(0, 180),
       body: notice.body.replace(/\s+/gu, ' ').trim().slice(0, 280),
-      threadId: notice.conversationId,
+      opens: opens.value,
     })
     return summarize(yield* Effect.forEach(active, (target) => send(notice, payload, target)))
   })

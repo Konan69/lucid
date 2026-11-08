@@ -141,7 +141,10 @@ layer(testDatabaseLayer)((it) => {
                 [['approval']],
               )
             }
-            expect(yield* Ref.get(observed.notices)).toEqual([])
+            // An Approval waits on the Person wherever it was raised, so it is one notice.
+            expect((yield* Ref.get(observed.notices)).map((notice) => notice.kind)).toEqual(
+              expected === 'ApprovalRequired' ? ['needs-you'] : [],
+            )
           }).pipe(Effect.scoped, Effect.provide(context))
         }),
       )

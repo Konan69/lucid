@@ -1,6 +1,9 @@
 import {
   ComputerScreen,
   ComputerSession,
+  CoverageReason,
+  ResultCoverage,
+  type IntegrationResult,
   computerScreenAddress,
   type NoDeviceConnected,
 } from '@vivid/contracts'
@@ -25,6 +28,7 @@ import type {
 
 export interface ToolResult {
   readonly output: Schema.Json
+  readonly integration?: IntegrationResult
   /** Only Computer tools supply a source; Person receipts cannot advertise the cloud viewer. */
   readonly computer?: 'person' | 'vivid'
   readonly terminate?: boolean
@@ -96,6 +100,45 @@ export function boundOutput(value: Schema.Json): Schema.Json {
     return result.value
   }
   return { value: result.value, truncated: true }
+}
+
+/** Evidence is never clipped alongside payload. Delivered coverage records clipping and retains source coverage. */
+export function boundIntegrationOutput(
+  output: Schema.Json,
+  result: IntegrationResult,
+): Schema.Json {
+  const payload = bounded(output)
+  const query = ResultCoverage.match(result.coverage, {
+    Complete: (entry) => entry.query,
+    Partial: (entry) => entry.query,
+    Unknown: (entry) => entry.query,
+    NotRead: () => null,
+    NotApplicable: () => null,
+  })
+  const coverage = payload.truncated
+    ? ResultCoverage.cases.Partial.make({
+        query,
+        reasons: ResultCoverage.guards.Partial(result.coverage)
+          ? [...result.coverage.reasons, CoverageReason.cases.OutputClipped.make({})]
+          : [CoverageReason.cases.OutputClipped.make({})],
+      })
+    : result.coverage
+  const value = payload.value
+  if (!isObject(value))
+    return {
+      output: value,
+      coverage,
+      sourceCoverage: result.coverage,
+      asOf: result.asOf,
+      observedAt: result.observedAt,
+    }
+  return Object.fromEntries([
+    ...Object.entries(value),
+    ['coverage', coverage],
+    ['sourceCoverage', result.coverage],
+    ['asOf', result.asOf],
+    ['observedAt', result.observedAt],
+  ])
 }
 
 /** Document bodies have their own reading budget; metadata and every other tool retain the ordinary limits. */
@@ -231,7 +274,10 @@ export const settle = Effect.fn('Tools.settle')(function* (
     }),
   )
   return {
-    output: modelOutput(result.output, tool, Option.fromUndefinedOr(result.computer)),
+    output:
+      result.integration === undefined
+        ? modelOutput(result.output, tool, Option.fromUndefinedOr(result.computer))
+        : boundIntegrationOutput(result.output, result.integration),
     terminate: result.terminate === true,
   }
 })

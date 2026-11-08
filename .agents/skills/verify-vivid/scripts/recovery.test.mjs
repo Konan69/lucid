@@ -4,6 +4,7 @@ import * as NodeFSP from 'node:fs/promises'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeEvents from 'node:events'
 import * as NodeOS from 'node:os'
+import * as NodeHttp from 'node:http'
 const testCache = await NodeFSP.mkdtemp(NodeOS.tmpdir() + '/vivid-recovery-')
 process.env.VIVID_VERIFY_CACHE = testCache
 process.env.VIVID_VERIFY_DEPENDENCIES = testCache + '/dependencies'
@@ -11,10 +12,10 @@ NodeTest.after(() => NodeFSP.rm(testCache, { recursive: true, force: true }))
 const { root, skill, identity, command, alive, boot } = await import('./process.mjs')
 
 /** Exercise the actual CLI after a captured process exits; no lifecycle seam is mocked. */
-async function cli(args) {
+async function cli(args, env = {}) {
   const child = NodeChildProcess.spawn(skill + '/verify', args, {
     cwd: root,
-    env: { ...process.env, VIVID_VERIFY_DEVBOX: 'invalid-test-host' },
+    env: { ...process.env, VIVID_VERIFY_DEVBOX: 'invalid-test-host', ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   let output = ''
@@ -192,3 +193,55 @@ NodeTest.test(
     await NodeFSP.access(link + '/effect')
   },
 )
+
+/** A run's Computer is a Boat machine with no label: cleanup deletes exactly the id its database
+ * bound, records Boat's answers, and a second cleanup finds it gone and sends nothing. */
+NodeTest.test('cleanup deletes the captured Boat machine once and converges', async (context) => {
+  const state = await fixture(context)
+  state.computer = 'disposable'
+  await NodeFSP.writeFile(state.evidence + '/state.json', JSON.stringify(state, null, 2))
+  const id = 'bx_verifytest'
+  await NodeFSP.writeFile(
+    state.evidence + '/machines.json',
+    JSON.stringify([{ intent: crypto.randomUUID(), id }]),
+  )
+  const requests = []
+  let present = true
+  const boat = NodeHttp.createServer((request, response) => {
+    requests.push({ method: request.method, url: request.url })
+    response.setHeader('content-type', 'application/json')
+    if (request.headers.authorization !== 'Bearer verify-test-key') response.statusCode = 401
+    else if (request.url !== '/sandboxes/' + id || !present) response.statusCode = 404
+    else if (request.method === 'GET')
+      return response.end(JSON.stringify({ sandbox: { createdAt: new Date().toISOString() } }))
+    else if (request.method === 'DELETE' && request.headers['x-ascii-confirm-delete'] === id) {
+      present = false
+      response.statusCode = 202
+      return response.end(JSON.stringify({ operation: { id: 'bdop_test', status: 'pending' } }))
+    } else response.statusCode = 409
+    response.end('{}')
+  })
+  context.after(() => boat.close())
+  await NodeEvents.once(boat.listen(0, '127.0.0.1'), 'listening')
+  const env = {
+    VIVID_VERIFY_BOAT_URL: 'http://127.0.0.1:' + boat.address().port,
+    VIVID_BOAT_API_KEY: 'verify-test-key',
+  }
+  for (const pass of [1, 2]) {
+    const result = await cli(['cleanup', state.run], env)
+    NodeAssert.equal(result.code, 0, result.output)
+    NodeAssert.ok(!result.output.includes('verify-test-key'), 'Cleanup printed the Boat key')
+    NodeAssert.equal(requests.filter((request) => request.method === 'DELETE').length, 1, pass)
+  }
+  const { Schema } = await import('effect')
+  const { decodeText } = await import('./receipts.mjs')
+  const Receipt = Schema.Struct({ outcome: Schema.String, get: Schema.Number })
+  const passes = decodeText(
+    Schema.Array(Schema.Struct({ receipts: Schema.Array(Receipt) })),
+    await NodeFSP.readFile(state.evidence + '/computer-cleanup.json', 'utf8'),
+  )
+  NodeAssert.deepEqual(
+    passes.map((entry) => entry.receipts.map((receipt) => [receipt.outcome, receipt.get])),
+    [[['deleted', 404]], [['absent', 404]]],
+  )
+})

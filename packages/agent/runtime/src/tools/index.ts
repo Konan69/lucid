@@ -6,20 +6,7 @@ import type { ToolFailure } from './result.ts'
 import { defineTool as durableTool, type ToolRegistration } from '@earendil-works/pi-durable'
 import { NobodyToActFor } from '../client.ts'
 import { ToolScopeMissing } from './failure.ts'
-import { askTools } from './ask.ts'
-import { codeTools } from './code.ts'
-import { computerTools } from './computer.ts'
-import { connectionTools } from './connections.ts'
-import { documentTools } from './documents.ts'
-import { libraryTools } from './library.ts'
-import { memoryTools } from './memory.ts'
-import { notifyTools } from './notify.ts'
-import { feedTools } from './feed.ts'
-import { followTools } from './follow.ts'
-import { projectTools } from './projects.ts'
-import { owedTools } from './owed.ts'
-import { todoTools } from './todos.ts'
-import { watchTools } from './watches.ts'
+import { capabilityRegistry } from './capabilities.ts'
 import {
   scopeLayer,
   scopedRunner,
@@ -28,7 +15,6 @@ import {
   Scope,
   type ResolveScope,
 } from './scope.ts'
-import { skillTools } from './skills.ts'
 
 /** Preserve main's registration order. Resolve authority separately for every invocation, inside
  * execute, so queued submissions cannot retain another Person's RPC client or Library folder.
@@ -37,7 +23,8 @@ export function tools(
   resolve: ResolveScope,
   resolvePerson: (call: Parameters<ResolveScope>[0]) => Effect.Effect<MemoryAuthority, ToolFailure>,
   memory: Memory['Service'],
-): ToolRegistration[] {
+  skills: ReadonlyArray<ToolRegistration>,
+) {
   const authority = new NodeAsyncHooks.AsyncLocalStorage<Layer.Layer<Scope, ToolFailure>>()
   /** Node's invocation-local storage keeps concurrent calls isolated while sharing warm tools. */
   const current = () => {
@@ -59,7 +46,8 @@ export function tools(
       )
     return resolvePerson(call)
   }, memory)
-  return catalogue(runTool, run, runMemory).map((definition) =>
+  const registry = capabilityRegistry({ runTool, run, runMemory, memory, skills })
+  const mounted = registry.tools.map((definition) =>
     durableTool({
       ...definition,
       execute(args, api, context) {
@@ -69,29 +57,5 @@ export function tools(
       },
     }),
   )
-}
-
-/** A single catalogue owns registration order for discovery and invocation. */
-function catalogue(
-  runTool: ReturnType<typeof toolRunner>,
-  run: ReturnType<typeof scopedRunner>,
-  runMemory: ReturnType<typeof memoryRunner>,
-): ToolRegistration[] {
-  return [
-    ...computerTools(runTool, run),
-    ...libraryTools(runTool),
-    ...connectionTools(runTool),
-    ...askTools(runTool),
-    ...followTools(),
-    ...memoryTools(runMemory),
-    ...notifyTools(runTool),
-    ...skillTools(runTool),
-    ...watchTools(runTool),
-    ...feedTools(runTool),
-    ...projectTools(runTool),
-    ...owedTools(runTool),
-    ...todoTools(runTool),
-    ...codeTools(runTool),
-    ...documentTools(runTool),
-  ]
+  return { tools: mounted, reading: registry.reading }
 }

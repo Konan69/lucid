@@ -2,6 +2,7 @@ import { defineTool } from './tool.ts'
 import {
   Tool,
   ConnectionStep,
+  ConnectionState,
   AddIntegrationOutcome,
   MakeIntegrationOutcome,
   MakeIntegrationRequest,
@@ -41,7 +42,7 @@ export function connectionTools(runTool: RunTool) {
     defineTool({
       name: Tool.find_tools,
       description:
-        'Find Integration tools for a concrete request. Returns call expressions and TypeScript signatures, plus Integrations that could be connected to help. The call expression works inside run_code; here, pass the same account and tool to use_tool. withheld counts matching tools on an account whose name cannot be shown; tell the person to rename that Integration if they need it.',
+        'Find Integration tools for a concrete request. Usable authorization does not prove every scope is granted; use_tool reports grant refusals and read coverage. Returns call expressions and TypeScript signatures, plus Integrations that could be connected to help. The call expression works inside run_code; here, pass the same account and tool to use_tool. withheld counts matching tools on an account whose name cannot be shown; tell the person to rename that Integration if they need it.',
       input: v.object({ summary, query: text('What you need to do or find.', 200) }),
       /** Account names are assigned by the server before ranking and limiting discovery. */
       run({ data, signal }) {
@@ -181,7 +182,7 @@ function useTool(runTool: RunTool) {
   return defineTool({
     name: Tool.use_tool,
     description:
-      'Call one Integration tool that find_tools returned. input is the JSON object the tool’s signature takes, exactly as find_tools showed it: never a string, and never wrapped with an account; account chooses the account. If the call is rejected, read the tool’s signature with find_tools, correct the input and call again. If approval is requested, stop and wait.',
+      'Call one Integration tool that find_tools returned. input is the JSON object the tool’s signature takes, exactly as find_tools showed it: never a string, and never wrapped with an account; account chooses the account. If the call is rejected, read the tool’s signature with find_tools, correct the input and call again. If approval is requested, stop and wait. Report partial or unknown coverage when it affects the answer. observedAt is receipt time; only a Source asOf is a provider timestamp.',
     input: v.object({
       account: text('The exact account name returned by find_tools.', 300),
       tool: text('The exact tool name returned by find_tools.', 200),
@@ -206,7 +207,22 @@ function useTool(runTool: RunTool) {
           const input = yield* decodeToolInput(data.input).pipe(
             Effect.mapError(() => new InvalidRequest({ message: 'Tool input must be JSON.' })),
           )
-          const match = yield* client.ResolveTool({ account: data.account, tool: data.tool })
+          // Saved names resolve even after discovery observes authorization loss. UseTool rechecks the tool.
+          const { connections } = yield* client.ListConnections()
+          const connection = connections.find(
+            (entry) => entry.account.toLowerCase() === data.account.trim().toLowerCase(),
+          )
+          const resolve = client.ResolveTool({ account: data.account, tool: data.tool })
+          const match =
+            connection === undefined
+              ? yield* resolve
+              : yield* ConnectionState.guards.Ready(connection.state)
+                  ? resolve.pipe(
+                      Effect.catchTag('NotFound', () =>
+                        Effect.succeed({ connectionId: connection.id, name: data.tool }),
+                      ),
+                    )
+                  : Effect.succeed({ connectionId: connection.id, name: data.tool })
           const outcome = yield* client.UseTool({
             connectionId: match.connectionId,
             tool: match.name,
@@ -215,11 +231,17 @@ function useTool(runTool: RunTool) {
             rationale: data.rationale,
           })
           if (
-            ToolOutcome.isAnyOf(['Blocked', 'ConnectionNotReady', 'Rejected', 'OutcomeUnknown'])(
-              outcome,
-            )
+            ToolOutcome.isAnyOf([
+              'Blocked',
+              'ConnectionNotReady',
+              'Rejected',
+              'OutcomeUnknown',
+              'ScopeRequired',
+              'PermissionDeclined',
+              'Unsupported',
+            ])(outcome.outcome)
           )
-            yield* warnFailure('use_tool', outcome._tag)
+            yield* warnFailure('use_tool', outcome.outcome._tag)
           return toolOutcome(outcome)
         }),
         { signal, tool: 'use_tool' },

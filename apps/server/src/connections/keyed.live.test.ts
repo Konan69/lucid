@@ -136,7 +136,7 @@ describe.skipIf(!enabled)('keyed MCP product acceptance', () => {
                 /(?:^|\.)get_me$/u.test(candidate.name),
               )
               if (accountTool === undefined) expect.fail('Expected an authenticated account read')
-              const read = yield* connectionHandlers
+              const { outcome: read } = yield* connectionHandlers
                 .UseTool({
                   connectionId: result.step.connection.id,
                   tool: accountTool.name,
@@ -157,7 +157,7 @@ describe.skipIf(!enabled)('keyed MCP product acceptance', () => {
                 .pipe(Effect.provideService(AuthContext, other))
               expect(hidden.tools).toHaveLength(0)
               expect(yield* store.records(memberActor)).toHaveLength(0)
-              const refused = yield* connectionHandlers
+              const { outcome: refused } = yield* connectionHandlers
                 .UseTool({
                   connectionId: result.step.connection.id,
                   tool: 'get_me',

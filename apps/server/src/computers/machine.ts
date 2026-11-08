@@ -1,5 +1,7 @@
 import type * as NodeStream from 'node:stream'
 import {
+  type ComputerProbe,
+  type ComputerRecoveryStep,
   type BrowseResult,
   type BrowserAction,
   type CommandResult,
@@ -25,15 +27,8 @@ export interface MachineScreen {
 }
 
 /** Lifecycle observation carries no viewer authority; Vivid never needs a screen permission to act. */
-const lifecycleStates = {
-  Absent: ComputerState.cases.Absent.fields,
-  Starting: ComputerState.cases.Starting.fields,
-  Running: { since: ComputerState.cases.Running.fields.since },
-  Stopped: ComputerState.cases.Stopped.fields,
-  Failed: ComputerState.cases.Failed.fields,
-} satisfies Record<keyof typeof ComputerState.cases, Schema.Struct.Fields>
-export const MachineState = Schema.TaggedUnion(lifecycleStates)
-export type MachineState = typeof MachineState.Type
+export { ComputerLifecycle as MachineState } from '@vivid/contracts'
+import { ComputerLifecycle as MachineState } from '@vivid/contracts'
 
 /** A command or browser step cannot run against an absent or stopped machine. */
 export class MachineNotRunning extends Schema.TaggedError<MachineNotRunning>()(
@@ -302,8 +297,26 @@ export interface MachineConversation {
   >
 }
 
+/** Recovery is closed at the provider boundary; no caller-supplied command can reach it. */
+export const MachineRecovery = Schema.TaggedUnion({
+  Applied: {},
+  Refused: {},
+  Unsupported: { reason: Schema.String },
+})
+export type MachineRecovery = typeof MachineRecovery.Type
+
 /** One machine boundary; ownership, approvals, receipts, and RPC remain application concerns. */
 export interface MachineOperations {
+  readonly health: (input: {
+    readonly key: MachineKey
+    readonly egress: boolean
+  }) => Effect.Effect<ReadonlyArray<ComputerProbe>, MachineFailure>
+  readonly recover: (input: {
+    readonly key: MachineKey
+    readonly step: ComputerRecoveryStep
+    readonly probes: ReadonlyArray<ComputerProbe>
+  }) => Effect.Effect<MachineRecovery, MachineFailure>
+
   /** Import into the same Chrome profile as browser work. Values stay on the private channel. */
   readonly copySignIn: (input: {
     readonly key: MachineKey

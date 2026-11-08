@@ -289,6 +289,8 @@ const providerLayer = Layer.effect(
         Effect.fail(new MachineOperationFailed({ operation })),
       )
     return Machine.of({
+      health: unused('health'),
+      recover: unused('recover'),
       copySignIn: unused('copySignIn'),
       status,
       inspect,

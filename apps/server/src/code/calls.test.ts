@@ -65,6 +65,7 @@ import { Runtime } from '../runtime/client.ts'
 import { FeedStore, feedStoreLayer } from '../feed/store.ts'
 import { feedHandlers } from '../feed/handlers.ts'
 import { cardIdOf } from '../feed/read.ts'
+import { silentPushLayer } from '../push/testing.ts'
 import { RunOrigin } from '@vivid/contracts'
 import { CodeComputer } from './computer.ts'
 import { RuleStore } from '../rules/store.ts'
@@ -93,6 +94,8 @@ const dependencies = Layer.mergeAll(codeAuthorityLayer, publicPageLayer).pipe(
 const testLayer = codeCallsLayer.pipe(
   Layer.provideMerge(dependencies),
   Layer.provideMerge(feedStoreLayer),
+  // A post now tells the Person; this suite's claim is the post, not its delivery.
+  Layer.provideMerge(silentPushLayer),
   Layer.provideMerge(codeSourceLayer),
   Layer.provideMerge(Layer.mock(Runtime, history([]))),
 )
@@ -1044,10 +1047,12 @@ describe.skipIf(!testDatabaseConfigured)(
                 Layer.fresh(codeCallsLayer),
               ).pipe(Effect.provideService(ConnectionStore, changing))
               expect(CodeOutcome.guards.Completed(outcome)).toBe(true)
-              expect(outcome).toHaveProperty('result', {
-                ok: false,
-                reason: 'This display runs automatically. Use a button to make changes.',
-                problems: [],
+              expect(outcome).toMatchObject({
+                result: {
+                  ok: false,
+                  reason: 'This display runs automatically. Use a button to make changes.',
+                  problems: [],
+                },
               })
               expect(yield* Ref.get((yield* ConnectionProbe).calls)).toBe(0)
               expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toEqual([])
@@ -1309,13 +1314,15 @@ describe.skipIf(!testDatabaseConfigured)(
                 ),
                 Layer.fresh(codeCallsLayer),
               ).pipe(Effect.provideService(Executor, provider))
-              expect(outcome).toHaveProperty('result', {
-                first: {
-                  ok: false,
-                  reason: 'Correct the input',
-                  problems: ['repoName: required'],
+              expect(outcome).toMatchObject({
+                result: {
+                  first: {
+                    ok: false,
+                    reason: 'Correct the input',
+                    problems: ['repoName: required'],
+                  },
+                  next: { ok: true, output: { corrected: true } },
                 },
-                next: { ok: true, output: { corrected: true } },
               })
               expect(outcome.calls.map((call) => call.end)).toEqual(['refused', 'completed'])
             }),

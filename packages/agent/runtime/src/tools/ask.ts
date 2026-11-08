@@ -22,11 +22,14 @@ const question = v.object({
       'Zero to six choices; use an empty list and allowsOwnAnswer true for written words.',
     ),
   ),
-  several: v.pipe(
-    v.boolean(),
-    v.description(
-      'True only when more than one option can truly apply together; false for alternatives.',
+  several: v.optional(
+    v.pipe(
+      v.boolean(),
+      v.description(
+        'True only when more than one option can truly apply together; omit for alternatives.',
+      ),
     ),
+    false,
   ),
   allowsOwnAnswer: v.pipe(
     v.boolean(),

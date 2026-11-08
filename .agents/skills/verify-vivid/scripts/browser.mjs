@@ -7,7 +7,7 @@ import { command, json, identity, alive } from './process.mjs'
 import { stopCaptured } from './recovery.mjs'
 import { control } from './socket.mjs'
 import { rpc, settled, history, chat, conversation } from './wire.mjs'
-import { features, stop, png } from './drive.mjs'
+import { features, stop, png, program, ranProgram } from './drive.mjs'
 import { watchBrowser } from './watchbrowser.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
 import { readBrowser } from './readbrowser.mjs'
@@ -19,6 +19,7 @@ import { owedBrowser } from './owedbrowser.mjs'
 import { todosBrowser } from './todosbrowser.mjs'
 import { offerBrowser } from './offer.mjs'
 import { libraryBrowser } from './librarybrowser.mjs'
+import { pushBrowser } from './push.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { createElement } = web('react')
@@ -49,11 +50,15 @@ function normaliseReply(text) {
 }
 
 const missing = {
-  code: 'No disposable Person Computer authority',
+  integrations:
+    'Grant and result evidence presentation awaits the Claude UI unit; see features/integrations.md',
+  capabilities: 'Backend-only unit. The Computer panel UI unit owns its browser recipe.',
+  computer: 'Backend-only unit. The Computer panel UI unit owns its browser recipe.',
   discord: 'No browser recipe for the Discord Key form and Allow card yet',
   github: 'No browser recipe for the GitHub Key form yet',
 }
 const recipes = {
+  code: { check: 'code' },
   approve: { check: 'approve' },
   deny: { check: 'deny' },
   changed: { check: 'changed' },
@@ -64,6 +69,7 @@ const recipes = {
   name: { check: 'name' },
   memory: { check: 'memory' },
   learning: { check: 'learning' },
+  push: { check: 'push' },
   devices: { check: 'devices' },
   watch: { check: 'watch' },
   feed: { check: 'feed' },
@@ -105,6 +111,11 @@ const specialRecipes = {
     scope:
       'File-picker upload, worker readiness, original-file tab, search, real model citation and reload',
   },
+  code: {
+    drive: codeBrowser,
+    scope:
+      "Composer Send, one run_code program on the synthetic Person's new Boat Computer, its file read back through Boat, the reply bubble before and after reload",
+  },
   approve: {
     drive: approve,
     scope: 'Real Verify Pulse approval card, Allow, one provider event and reload',
@@ -129,7 +140,8 @@ const specialRecipes = {
   },
   watch: {
     drive: watchBrowser,
-    scope: 'browser Connect, model Watch, real Executor delivery, Feed reload and Disconnect',
+    scope:
+      'browser Connect, model Watch, real Executor delivery, the posted notice shown by the worker and routed to the Feed (the press itself is not driven), Feed reload and Disconnect',
   },
   replies: {
     drive: offerBrowser,
@@ -166,6 +178,11 @@ const specialRecipes = {
     scope:
       'Web Settings name form, the name after reload, and Vivid answering with it in a Thread. See scope.json for phone and shared-Thread subcases.',
   },
+  push: {
+    drive: pushBrowser,
+    scope:
+      'Settings row on and off, the server holding this browser once, and a real notify_person reaching the service worker; see scope.json.',
+  },
   settings: {
     drive: settingsBrowser,
     scope:
@@ -174,6 +191,29 @@ const specialRecipes = {
 }
 for (const name of features)
   assert.ok(recipes[name] || missing[name], 'Unmapped browser feature ' + name)
+
+/** The program is asked through the composer; since 26 October 2026 a Thread draws no step
+ * rows, so the browser proves the reply bubble and the HTTP history proves the receipt. */
+async function codeBrowser(state, id, directory, client) {
+  const asked = program(state)
+  await client.capture('before')
+  await client.run(['find', 'label', 'Message Vivid', 'fill', asked.phrase])
+  await client.run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
+  await settled(state, id, 1, 'Completed', directory)
+  const page = await history(state, id, directory)
+  await ranProgram(state, page, asked, directory)
+  for (const stage of ['after', 'reloaded']) {
+    if (stage === 'reloaded') await client.run(['reload'])
+    await client.run([
+      'wait',
+      '--fn',
+      `document.querySelectorAll('[data-vivid-bubble]').length > 0`,
+    ])
+    await client.capture(stage)
+  }
+  const reloaded = await history(state, id, directory, 'reloaded-history')
+  assert.deepEqual(reloaded.messages, page.messages)
+}
 
 /** Read semantic DOM through the owned browser, with the serialized result retained as evidence. */
 async function dom(run, expression) {
@@ -384,11 +424,13 @@ async function journey(state, feature) {
     evidence: directory,
   }
   const reason =
-    ['memory', 'question', 'approve', 'deny', 'changed', 'owed', 'todos', 'name'].includes(
+    ['memory', 'question', 'approve', 'deny', 'changed', 'owed', 'todos', 'name', 'code'].includes(
       feature,
     ) && state.modelKind !== 'real'
       ? feature + ' requires a real model.'
-      : missing[feature]
+      : feature === 'code' && state.computer !== 'disposable'
+        ? 'Needs a disposable Person Computer. Launch had no VIVID_BOAT_API_KEY.'
+        : missing[feature]
   const stopBlocked = feature === 'stop' && state.modelKind !== 'real'
   if (reason || stopBlocked) {
     const verdict = {

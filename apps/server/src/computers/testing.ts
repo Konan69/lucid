@@ -13,6 +13,13 @@ import { Machine, MachineNotRunning, type MachineKey } from './machine.ts'
 export const absentMachineLayer = Layer.succeed(
   Machine,
   Machine.of({
+    health: Effect.fn('Machine.absent.health')(({ key }: { readonly key: MachineKey }) =>
+      Effect.fail(new MachineNotRunning({ key })),
+    ),
+    recover: Effect.fn('Machine.absent.recover')(({ key }: { readonly key: MachineKey }) =>
+      Effect.fail(new MachineNotRunning({ key })),
+    ),
+
     copySignIn: Effect.fn('Machine.absent.copySignIn')(({ key }: { readonly key: MachineKey }) =>
       Effect.fail(new MachineNotRunning({ key })),
     ),

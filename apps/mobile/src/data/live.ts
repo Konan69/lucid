@@ -33,6 +33,7 @@ import { createContext, useContext } from 'react'
 import { followThemeAtom, themeAtom } from './appearance'
 import { makeDeviceDecisions } from './devices'
 import { makeNaming } from './name'
+import { makeNotifying } from './notifying'
 import { makeConnecting } from './connecting'
 import { makeSending } from './sending'
 import { door } from './door'
@@ -371,7 +372,6 @@ function makeLiveData(session: SignedIn) {
   // the session's registry and socket are made: every screen, sheet and card of the session
   // presses and draws from it, and an attempt outlives whichever of them began it.
   const connecting = makeConnecting({ engine, connections: live.connections.atom })
-  const devices = makeDeviceDecisions(engine)
   const naming = makeNaming(engine, live.me)
 
   followLook(engine, live)
@@ -426,7 +426,7 @@ function makeLiveData(session: SignedIn) {
     ...catalog,
     /** Connecting an Integration: the session's one machine (`data/connecting.ts`). */
     connecting,
-    devices,
+    devices: makeDeviceDecisions(engine),
     /** The Person changing their own name in Settings (`data/name.ts`). */
     naming,
     /**
@@ -439,6 +439,7 @@ function makeLiveData(session: SignedIn) {
      * here for the reason `connecting` is: a delivery on its way outlives the screen that sent it.
      */
     sending: makeSending(engine),
+    notifying: makeNotifying(engine), // Notifications while the app is closed.
     gone,
     seenThread,
     typingIn,

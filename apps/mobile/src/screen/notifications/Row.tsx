@@ -2,7 +2,7 @@ import type { Notification } from '@vivid/contracts'
 import type { NoticeFace } from '@vivid/state'
 import { Option } from 'effect'
 import { I18nManager, useWindowDimensions, View } from 'react-native'
-import { Check, Hand, Share2, UserPlus, type LucideIcon } from 'lucide-react-native'
+import { Check, Hand, Newspaper, Share2, UserPlus, type LucideIcon } from 'lucide-react-native'
 import { relativeTime } from '../../data/lanes'
 import { MOBILE_TYPOGRAPHY } from '../../data/typography'
 import { useTheme, type Colors } from '../../theme'
@@ -24,6 +24,7 @@ const KIND = {
   'needs-you': { icon: Hand, ink: 'status-attention', fill: 'status-attention-soft' },
   shared: { icon: Share2, ink: 'ink-2', fill: 'wash-pressed' },
   invited: { icon: UserPlus, ink: 'ink-2', fill: 'wash-pressed' },
+  posted: { icon: Newspaper, ink: 'ink-2', fill: 'wash-pressed' },
 } as const satisfies Record<
   Notification['kind'],
   { icon: LucideIcon; ink: keyof Colors; fill: keyof Colors }

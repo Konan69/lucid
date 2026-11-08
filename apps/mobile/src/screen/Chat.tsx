@@ -62,6 +62,7 @@ import { inFront, onCatchUp } from '../data/foreground'
 import { drawnFrom } from '../data/heard'
 import { heardIn } from '../data/hearing'
 import { LiveState, useLiveData, useLiveValue, useLiveWhen } from '../data/live'
+import { offerNotifications } from '../data/notifying'
 import {
   doingOf,
   isShown,
@@ -402,6 +403,8 @@ function useSend(
    * are a new message with a key of their own.
    */
   function say(words: string, pictures: ReadonlyArray<attaching.Picture>) {
+    // Once only, while the Person was never asked (`data/notifying.ts`).
+    offerNotifications(data)
     name(words)
     const delivery = deliveryOf(unsent, words, pictures, randomUUID)
     const retried = drawn.unsent.some((failed) => failed.delivery.key === delivery.key)

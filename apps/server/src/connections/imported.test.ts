@@ -144,7 +144,7 @@ describe.skipIf(!testDatabaseConfigured)('An Integration added by address with s
             )
 
             const before = (yield* Ref.get(remote.requests)).length
-            const outcome = yield* useTool(personalActor, {
+            const { outcome } = yield* useTool(personalActor, {
               connectionId: added.step.connection.id,
               tool: 'read',
               input: {},
@@ -159,7 +159,7 @@ describe.skipIf(!testDatabaseConfigured)('An Integration added by address with s
               expect.objectContaining({ tool: 'read', input: { accountId: 'account', input: {} } }),
             ])
 
-            const otherOutcome = yield* useTool(personalActor, {
+            const { outcome: otherOutcome } = yield* useTool(personalActor, {
               connectionId: other.connection.id,
               tool: 'read',
               input: {},

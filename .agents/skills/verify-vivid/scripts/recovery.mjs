@@ -3,6 +3,7 @@ import { root, boot, alive, command, json, cache, dependencyLink } from './proce
 import { control } from './socket.mjs'
 import { remoteCleanup } from './remote.mjs'
 import { phoneCleanup } from './phonecleanup.mjs'
+import { capture, release } from './computers.mjs'
 
 /** The retained manifest grants cleanup authority only for canonical paths and the exact run name.
  * A forged/corrupt record cannot direct deletion at another directory, container or the app DB. */
@@ -109,10 +110,18 @@ except (ProcessLookupError, FileNotFoundError):
   }
 }
 
-/** Abandoned-run cleanup depends only on its recorded authority, not a lost control socket.
- * Docker absence is success; presence requires the exact label before removal. Evidence survives. */
+/** Machine ids are read from the disposable database before it stops, and the machines are
+ * deleted only after the server that could start them again has stopped. */
 export async function recover(state) {
   await owned(state)
+  await capture(state)
+  const result = await stopRun(state)
+  return { ...result, computers: await release(state) }
+}
+
+/** Abandoned-run cleanup depends only on its recorded authority, not a lost control socket.
+ * Docker absence is success; presence requires the exact label before removal. Evidence survives. */
+async function stopRun(state) {
   await NodeFSP.rm(state.scratch + '/provider.json', { force: true })
   if (await supervisorAlive(state)) {
     try {

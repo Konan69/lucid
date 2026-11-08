@@ -6,7 +6,7 @@ Model requirement: real. Browser control asks the shipped model to use `browse` 
 
 The built Electron app chooses the disposable server, opens Google in a separate system browser, cancels that attempt, and signs in with the run's existing email identity. Its installation appears Pending. Allow brings its native device stream online. A message asks Vivid to open and read Example Domain in the app's Browser. Revoke ends the stream.
 
-The egress socket is separate from the device stream. A successful WebSocket upgrade does not prove routing through a Person Computer. The disposable server has no such Computer or Boat authority.
+The egress socket is separate from the device stream. A successful WebSocket upgrade does not prove routing through a Person Computer. With VIVID_BOAT_API_KEY the disposable server can create the synthetic Person's Computer (see [code](code.md)), but no recipe drives its browser through this egress yet.
 
 ## How to get to it (user POV)
 
@@ -31,6 +31,6 @@ The command closes native processes in finally. Normal cleanup and abandoned-run
 
 - A supported verdict covers the Linux development app only. An unavailable model records blocked and fails the command; other action or cleanup failures record failed. A screenshot alone cannot prove a server decision or model action.
 - Google grant/session trade: blocked. Launch supplies a synthetic Google client. Even an existing web session leaves for Google through the desktop start endpoint. The recipe proves outbound handoff and Cancel; it signs in separately through the real email form.
-- Egress routing: blocked without a disposable running Person Computer and Boat/SSH authority. GetEgress Waiting and a socket upgrade are separate from device Connected. Neither proves Routing, tunneled bytes or public exit IP.
+- Egress routing: blocked: no recipe yet. The Computer authority it needs is configured when Launch has VIVID_BOAT_API_KEY; the journey still has to start the Computer, turn egress on and read the exit through the desktop. GetEgress Waiting and a socket upgrade are separate from device Connected. Neither proves Routing, tunneled bytes or public exit IP.
 - Windows app control, native notices, protocol activation, cookie import/encryption and foreground behavior require an isolated Windows installation. Linux does not advertise Windows apps. macOS Keychain, native focus/menus and installation require macOS. Installers, updates and packaged resources require packaged binaries on the target OS. Those claims stay blocked.
 - Example Domain must be reachable from the devbox. Keep every process on Xvfb and every profile in scratch. Never use the owner's display, installed profile, production account or real Computer identity.
