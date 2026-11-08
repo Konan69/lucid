@@ -3,9 +3,7 @@ import { witnessed } from './budget.ts'
 
 /**
  * OpenRouter, which speaks OpenAI's Chat Completions and routes the same GLM 5.3 Flash Vivid
- * answers with elsewhere. Declared on 20 October 2026, when the Experiential Labs organization ran
- * out of credits (`429 insufficient_credits`) and the OpenCode Go key expired
- * (`401 api_key_expired`), so production Vivid could not answer at all. One base address, one key
+ * answers with elsewhere. One base address, one key
  * (`OPENROUTER_API_KEY`), and the model named by OpenRouter's own id, which itself holds a slash:
  * `VIVID_MODEL` is `openrouter/z-ai/glm-5.3-flash` (the model catalog splits a specifier at its first slash).
  *

@@ -1,6 +1,9 @@
 import * as NodeAssert from 'node:assert/strict'
+import * as NodeFSP from 'node:fs/promises'
+import * as NodePath from 'node:path'
 import { history, json, rpc } from './wire.mjs'
 import { MemorySource } from '@vivid/contracts'
+import { learned } from './learning.mjs'
 
 /** Only successful renamed tools count; prose claiming to remember is insufficient. */
 const calls = (page, run, name) =>
@@ -57,7 +60,12 @@ async function preference(state, id, ui) {
   return { marker, entry }
 }
 
-/** A new Thread must recall the first Thread's memory through the renamed read_memory tool. */
+/**
+ * A new Thread must answer from the first Thread's memory. A new Thread has no other source for
+ * the project's meeting time, so the answer is the proof. The prompt tells Vivid to use an index
+ * line directly when it is enough and to call read_memory only when it is not, so either path
+ * passes; the receipt records which one was taken.
+ */
 export async function memory(state, id, ui) {
   const { marker, entry } = await preference(state, id, ui)
   const next = await ui.create('Recall ' + marker)
@@ -65,11 +73,12 @@ export async function memory(state, id, ui) {
   const recalled = await ui.completed(next, 1, 'recalled')
   NodeAssert.match(recalled.reply, /noon/iu)
   NodeAssert.match(recalled.reply, /writ/iu)
-  NodeAssert.ok(
-    calls(recalled.page, recalled.detail.runs[0], 'read_memory').some(
-      (call) => call.output.file === entry.file && call.output.layer === entry.layer,
-    ),
-    'Recall did not read the same entry through read_memory',
+  const read = calls(recalled.page, recalled.detail.runs[0], 'read_memory').some(
+    (call) => call.output.file === entry.file && call.output.layer === entry.layer,
+  )
+  await NodeFSP.writeFile(
+    NodePath.join(ui.directory, 'recall-path.json'),
+    JSON.stringify({ path: read ? 'read_memory' : 'index', file: entry.file }, null, 2),
   )
   await ui.visible('noon')
   await ui.capture('recalled')
@@ -149,31 +158,46 @@ export async function settingsMemory(state, id, ui) {
   await ui.capture('forgotten-reopened')
 }
 
-/** The reply must not save this fact. A CellRun entry and a new Thread's answer prove learning. */
+/** Both native and HTTP journeys judge the same fact after its learner task is terminal. */
+export async function learningFact(state, directory, marker, exchange) {
+  const run = exchange.detail.runs[0]
+  const writes = calls(exchange.page, run, 'write_memory')
+  await learned(state, run.submissionId, directory)
+  const { entries } = await remembered(state, directory, marker, 'learned')
+  NodeAssert.equal(entries.length, 1, 'The fact must be saved once after learning completes')
+  NodeAssert.match(entries[0].body, /green tea/iu)
+  if (writes.length > 0) {
+    NodeAssert.equal(writes.length, 1, 'The reply wrote the fact more than once')
+    NodeAssert.equal(entries[0].file, writes[0].output.file)
+    NodeAssert.equal(entries[0].layer, writes[0].output.layer)
+    NodeAssert.ok(
+      !MemorySource.guards.CellRun(entries[0].authority.source),
+      'Learner rewrote the reply-saved fact',
+    )
+  } else {
+    NodeAssert.ok(
+      MemorySource.guards.CellRun(entries[0].authority.source),
+      'The learner did not save the fact',
+    )
+  }
+  await json(directory + '/learning-path.json', {
+    path: writes.length > 0 ? 'reply' : 'learner',
+  })
+}
+
+/** The learner backs up reply writes. Wait for its native terminal receipt before counting facts. */
 export async function learning(state, id, ui) {
   const marker = 'Teacup-' + crypto.randomUUID().slice(0, 8)
   await ui.send(
     `For project ${marker}, I always choose green tea at the planning sessions. Just acknowledge briefly.`,
   )
   const exchange = await ui.completed(id, 1, 'exchange')
-  NodeAssert.equal(
-    calls(exchange.page, exchange.detail.runs[0], 'write_memory').length,
-    0,
-    'The reply wrote memory itself, so this exchange cannot prove background learning',
-  )
+  await learningFact(state, ui.directory, marker, exchange)
   await ui.capture('exchange')
   const next = await ui.create('Learning recall ' + marker)
   await ui.send(`What drink do I always choose at the planning sessions for project ${marker}?`)
   const recalled = await ui.completed(next, 1, 'learning-recalled')
   NodeAssert.match(recalled.reply, /green tea/iu)
-  const { entries } = await remembered(state, ui.directory, marker, 'learned')
-  NodeAssert.ok(
-    entries.some(
-      (entry) =>
-        MemorySource.guards.CellRun(entry.authority.source) && /green tea/iu.test(entry.body),
-    ),
-    'No matching CellRun memory at the observed public snapshot',
-  )
   await ui.visible('green tea')
   await ui.capture('learning-recalled')
   await json(ui.directory + '/scope.json', {
@@ -181,7 +205,7 @@ export async function learning(state, id, ui) {
     reason:
       'The launcher does not forward VIVID_DECISIONS into native Worker vars; runtime defaults off.',
     observation:
-      'Public memory is checked after a real new-Thread recall, without sleeps or polling. There is no public learner-completion stream. A missing entry can be a still-pending task, not proof learning never runs.',
+      'LearnedRun and its terminal native task are observed before the public memory snapshot and new-Thread recall. Reply writes and learner writes must leave exactly one matching entry.',
   })
   await history(state, id, ui.directory, 'original-after-learning')
 }

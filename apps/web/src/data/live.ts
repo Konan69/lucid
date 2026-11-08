@@ -64,6 +64,8 @@ export const live = {
   feed: one((client) => client.WatchFeed()),
   /** Who owes the Person what, which Vivid keeps and chases (`screen/feed/Owed.tsx`). */
   owed: one((client) => client.WatchOwed()),
+  /** The Person's own to-do list, which Vivid adds to and ticks off (`screen/feed/Todos.tsx`). */
+  todos: one((client) => client.WatchTodos()),
   /** What the Person has typed and not sent, on any device, where they are working. */
   drafts: kept((client) => client.WatchDrafts()),
 }

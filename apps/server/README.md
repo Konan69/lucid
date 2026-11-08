@@ -78,7 +78,7 @@ these, and the failure names the variable (`requiredSetting` in `src/config.ts`)
 - **Away notifications:** `VIVID_PUSH_VAPID_PUBLIC`, `VIVID_PUSH_VAPID_PRIVATE` and
   `VIVID_PUSH_SUBJECT`.
 - **Models:** replies come from OpenCode Go in the runtime (`OPENCODE_API_KEY`); the server's own
-  title and decision calls default to OpenRouter, `OPENROUTER_API_KEY`. Set `VIVID_SERVER_MODEL_PROVIDER=explabs` to select ExpLabs with `EXPLABS_API_KEY`.
+  title and decision calls use OpenRouter, `OPENROUTER_API_KEY`.
 - **Sign-in with Google:** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `GOOGLE_REDIRECT_URI`.
 
 There is no server that runs without one of them, and no local stand-in for any of them. What can

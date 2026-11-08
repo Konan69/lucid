@@ -5,15 +5,19 @@ import { and, asc, eq, gt, lt, lte, sql } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
+import * as Data from 'effect/Data'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
-import * as Struct from 'effect/Struct'
 import {
   Approval,
+  ApprovalBinding,
+  ApprovalChanged,
   ApprovalDecision,
+  ApprovalExpired,
   ApprovalId,
+  ApprovalInvalidation,
   ApprovalState,
   AuditEvent,
   CompanyId,
@@ -36,6 +40,7 @@ import { Audit, AuditAttribution, recordAudit } from '../audit/record.ts'
 import {
   Database,
   decodeStored,
+  encodeStored,
   returned,
   type DatabaseInfrastructureError,
 } from '../database/client.ts'
@@ -46,7 +51,9 @@ import { RuleStore } from '../rules/store.ts'
 import { readableBy, requireThread } from '../threads/access.ts'
 import { notifiesFrom } from '../threads/place.ts'
 import { threads } from '../threads/tables.ts'
-import { Conversation, DeliveryMessage } from '../threads/conversation.ts'
+import { Conversation } from '../threads/conversation.ts'
+import { artifacts } from '../artifacts/tables.ts'
+import { connections } from '../connections/tables.ts'
 import {
   usesPersonalBrowser,
   ActionOrigin,
@@ -64,7 +71,8 @@ import {
   settle,
 } from '../actions/journal.ts'
 import { approvals } from './tables.ts'
-import { Signal, encodeSignal } from './signal.ts'
+import { Conclusion, Signal, approvalKey, encodeSignal, owed } from './signal.ts'
+import { invalidatePending } from './stale.ts'
 import { replaySignals, type SignalWriter } from './replay.ts'
 
 /** Replay supplies the selection and fences; this domain owns both complete signal writes. */
@@ -109,38 +117,49 @@ const fields = createSelectSchema(approvals, {
   personId: PersonId,
   companyId: Schema.NullOr(CompanyId),
   action: ProposedAction,
+  binding: Schema.NullOr(ApprovalBinding),
+  invalidation: Schema.NullOr(ApprovalInvalidation),
   signal: Signal,
 }).fields
 const undecided = { decidedBy: Schema.Null, decidedAt: Schema.Null }
 const decided = { decidedBy: PersonId, decidedAt: Schema.Finite }
 const unfinished = { finishedAt: Schema.Null, outcome: Schema.Null }
 const finished = { finishedAt: Schema.Finite, outcome: Schema.String }
+const ended = { finishedAt: Schema.Finite, outcome: Schema.Null }
+/** Only an invalidated row says why; every other row has no invalidation. */
+const valid = { ...fields, invalidation: Schema.Null }
 
-/** Each stored status declares its exact columns; inconsistent historical rows fail at ingress. */
+/**
+ * Each stored status declares its exact columns; inconsistent historical rows fail at ingress.
+ * A pending row always has its binding: the migration that added bindings closed every pending
+ * row raised before them, so a pending row without one is corrupt, never an older shape.
+ */
 const Row = Schema.Union([
-  Schema.Struct({ ...fields, status: Schema.Literal('pending'), ...undecided, ...unfinished }),
-  Schema.Struct({ ...fields, status: Schema.Literal('executing'), ...decided, ...unfinished }),
-  Schema.Struct({ ...fields, status: Schema.Literal('succeeded'), ...decided, ...finished }),
-  Schema.Struct({ ...fields, status: Schema.Literal('failed'), ...decided, ...finished }),
   Schema.Struct({
-    ...fields,
-    status: Schema.Literal('unknown'),
-    ...decided,
-    finishedAt: Schema.Finite,
-    outcome: Schema.Null,
-  }),
-  Schema.Struct({ ...fields, status: Schema.Literal('denied'), ...decided, ...unfinished }),
-  Schema.Struct({
-    ...fields,
-    status: Schema.Literal('expired'),
+    ...valid,
+    status: Schema.Literal('pending'),
+    binding: ApprovalBinding,
     ...undecided,
-    finishedAt: Schema.Finite,
-    outcome: Schema.Null,
+    ...unfinished,
   }),
-  Schema.Struct({ ...fields, status: Schema.Literal('withdrawn'), ...undecided, ...finished }),
+  Schema.Struct({ ...valid, status: Schema.Literal('executing'), ...decided, ...unfinished }),
+  Schema.Struct({ ...valid, status: Schema.Literal('succeeded'), ...decided, ...finished }),
+  Schema.Struct({ ...valid, status: Schema.Literal('failed'), ...decided, ...finished }),
+  Schema.Struct({ ...valid, status: Schema.Literal('unknown'), ...decided, ...ended }),
+  Schema.Struct({ ...valid, status: Schema.Literal('denied'), ...decided, ...unfinished }),
+  Schema.Struct({ ...valid, status: Schema.Literal('expired'), ...undecided, ...ended }),
+  Schema.Struct({ ...valid, status: Schema.Literal('withdrawn'), ...undecided, ...finished }),
+  Schema.Struct({
+    ...fields,
+    status: Schema.Literal('invalidated'),
+    invalidation: ApprovalInvalidation,
+    ...undecided,
+    ...ended,
+  }),
 ]).pipe(Schema.toTaggedUnion('status'))
 const decodeRow = decodeStored(Row, 'Approval')
 const encodeAction = Schema.encodeEffect(ProposedAction)
+const encodeBinding = encodeStored(ApprovalBinding, 'Approval binding')
 
 /** A missing Person is corrupt persistence, never an invented identity on an Approval. */
 const personSummary = (
@@ -213,6 +232,13 @@ const stateOf = (
           reason: value.outcome,
         }),
       ),
+    invalidated: (value) =>
+      Effect.succeed(
+        ApprovalState.cases.Invalidated.make({
+          invalidatedAt: value.finishedAt,
+          reason: value.invalidation,
+        }),
+      ),
   })
 
 /** Decodes once at row ingress and batches identity lookup to avoid one query per Approval. */
@@ -231,6 +257,7 @@ const viewDecoded = Effect.fn('Approvals.viewDecoded')(function* (
         runId: row.runId,
         action: row.action,
         digest: row.digest,
+        binding: row.binding,
         askedOf: yield* personSummary(people, row.personId),
         state: yield* stateOf(row, people),
         createdAt: row.createdAt,
@@ -253,14 +280,24 @@ export interface ApprovalStoreService {
   readonly inbox: (
     actor: Actor,
   ) => Effect.Effect<ReadonlyArray<Approval>, DatabaseInfrastructureError>
+  /** Raises an Approval for `action`, bound to what it was prepared against (`binding`). */
   readonly raise: (
     actor: Actor,
     action: ProposedAction,
+    binding: ApprovalBinding,
   ) => Effect.Effect<Approval, NotFound | DatabaseInfrastructureError>
   readonly decide: (
     actor: Actor,
     request: DecideApprovalRequest,
-  ) => Effect.Effect<Approval, NotFound | Conflict | InvalidRequest | DatabaseInfrastructureError>
+  ) => Effect.Effect<
+    Approval,
+    | NotFound
+    | Conflict
+    | InvalidRequest
+    | ApprovalChanged
+    | ApprovalExpired
+    | DatabaseInfrastructureError
+  >
   readonly withdraw: (
     actor: Actor,
     id: ApprovalId,
@@ -307,7 +344,111 @@ const requireDecisionAuthority = Effect.fn('Approvals.requireDecisionAuthority')
     return yield* new InvalidRequest({ message: 'This kind of action is always asked about' })
 })
 
-/** Thread access permits decisions; Person-browser permission additionally belongs to its owner. */
+type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
+type PendingRow = typeof Row.cases.pending.Type
+
+/**
+ * What the binding depended on that is no longer true, if anything.
+ *
+ * The Integration and the documents are read under share locks, taken before the claim locks the
+ * Approval's own row. Every write that changes one of them locks its own record first and the
+ * Approvals second (`stale.ts`), so both sides take locks in the same order and a claim racing a
+ * change waits for it instead of deadlocking with it.
+ */
+const drift = Effect.fn('Approvals.drift')(function* (tx: Transaction, row: PendingRow) {
+  if (ActionTarget.guards.Connection(row.action.target)) {
+    const connectionId = row.action.target.connectionId
+    const [current] = yield* tx
+      .select({ generation: connections.authorizationGeneration })
+      .from(connections)
+      .where(eq(connections.id, connectionId))
+      .for('share')
+    const generation = current === undefined ? null : current.generation
+    if (generation !== row.binding.connectionGeneration)
+      return Option.some(
+        ApprovalInvalidation.cases.ConnectionChanged.make({ connectionId, generation }),
+      )
+  }
+  for (const precondition of row.binding.preconditions) {
+    const [current] = yield* tx
+      .select({ version: artifacts.version })
+      .from(artifacts)
+      .where(eq(artifacts.id, precondition.artifactId))
+      .for('share')
+    const version = current === undefined ? null : current.version
+    if (version !== precondition.version)
+      return Option.some(
+        ApprovalInvalidation.cases.ContentChanged.make({
+          artifactId: precondition.artifactId,
+          version,
+        }),
+      )
+  }
+  return Option.none<ApprovalInvalidation>()
+})
+
+/**
+ * How a claim's transaction ended: it moved the Approval out of pending; what the Approval approved
+ * had changed, so it is invalidated (now, or already by the write that changed it); or another
+ * decision got there first.
+ */
+type ClaimEnd = Data.TaggedEnum<{
+  Claimed: { readonly row: typeof approvals.$inferSelect }
+  Changed: {}
+  Taken: {}
+}>
+const ClaimEnd = Data.taggedEnum<ClaimEnd>()
+
+/** The move out of pending, when the binding still holds. One conditional UPDATE: one winner. */
+const move = Effect.fn('Approvals.move')(function* (
+  tx: Transaction,
+  row: typeof Row.Type,
+  decision: {
+    readonly actor: Actor
+    readonly request: DecideApprovalRequest
+    readonly now: number
+  },
+) {
+  const { actor, request, now } = decision
+  const scope = eq(approvals.id, row.id)
+  const written = yield* tx
+    .update(approvals)
+    .set({
+      status: ApprovalDecision.guards.Deny(request.decision) ? 'denied' : 'executing',
+      decidedBy: actor.person.id,
+      decidedAt: now,
+      signal: yield* encodeSignal(decisionSignal(row, request.decision, actor.person.id)),
+      signalDueAt: now,
+    })
+    .where(
+      and(
+        scope,
+        eq(approvals.digest, request.digest),
+        eq(approvals.status, 'pending'),
+        gt(approvals.expiresAt, now),
+      ),
+    )
+    .returning()
+  const claimed = written[0]
+  if (claimed !== undefined) {
+    yield* announceFeed(tx, [row.threadId])
+    return ClaimEnd.Claimed({ row: claimed })
+  }
+  // A change that closed it since it was read is a changed Approval, not a decision that won.
+  const [current] = yield* tx.select({ status: approvals.status }).from(approvals).where(scope)
+  return current !== undefined && current.status === 'invalidated'
+    ? ClaimEnd.Changed()
+    : ClaimEnd.Taken()
+})
+
+/**
+ * Thread access permits decisions; Person-browser permission additionally belongs to its owner.
+ *
+ * Before the move out of pending, the claim checks the binding again inside its transaction:
+ * a change can commit after the Approval was drawn and before the Person pressed. If the binding
+ * no longer holds, the Approval is invalidated in that same transaction and the claim answers
+ * `ApprovalChanged`; the invalidation commits even though the decision is refused.
+ */
 const claim = Effect.fn('Approvals.claim')(function* (
   actor: Actor,
   request: DecideApprovalRequest,
@@ -321,37 +462,27 @@ const claim = Effect.fn('Approvals.claim')(function* (
   const thread = yield* requireThread(row.threadId, actor.person.id)
   if (row.digest !== request.digest)
     return yield* new Conflict({ message: 'Approval digest differs' })
+  if (Row.guards.invalidated(row)) return yield* new ApprovalChanged({ id: row.id })
   const now = yield* Clock.currentTimeMillis
   if (Row.guards.expired(row) || (Row.guards.pending(row) && row.expiresAt <= now))
-    return yield* new Conflict({ message: 'This request ran out' })
+    return yield* new ApprovalExpired({ id: row.id })
   yield* requireDecisionAuthority(actor, row, request, thread.audience)
-  const rows = yield* database.transaction((tx) =>
+  const end = yield* database.transaction((tx) =>
     Effect.gen(function* () {
-      const written = yield* tx
-        .update(approvals)
-        .set({
-          status: ApprovalDecision.guards.Deny(request.decision) ? 'denied' : 'executing',
-          decidedBy: actor.person.id,
-          decidedAt: now,
-          signal: yield* encodeSignal(decisionSignal(row, request.decision, actor.person.id)),
-          signalDueAt: now,
-        })
-        .where(
-          and(
-            scope,
-            eq(approvals.digest, request.digest),
-            eq(approvals.status, 'pending'),
-            gt(approvals.expiresAt, now),
-          ),
-        )
-        .returning()
-      if (written.length > 0) yield* announceFeed(tx, [row.threadId])
-      return written
+      const changedBy = Row.guards.pending(row) ? yield* drift(tx, row) : Option.none()
+      if (Option.isNone(changedBy)) return yield* move(tx, row, { actor, request, now })
+      yield* invalidatePending(tx, scope, changedBy.value)
+      return ClaimEnd.Changed()
     }),
   )
-  const claimed = rows[0]
-  if (claimed === undefined) return yield* new Conflict({ message: 'Approval already decided' })
-  const result = yield* decodeRow(claimed)
+  if (ClaimEnd.$is('Changed')(end)) {
+    yield* changed(actor, Topic.thread(row.threadId))
+    yield* deliver(row.id)
+    return yield* new ApprovalChanged({ id: row.id })
+  }
+  if (ClaimEnd.$is('Taken')(end))
+    return yield* new Conflict({ message: 'Approval already decided' })
+  const result = yield* decodeRow(end.row)
   if (Row.guards.denied(result)) {
     // Only the winning SQL claim decides Denied; reads, delivery and repeat decisions do not.
     yield* recordRefusal(
@@ -363,47 +494,6 @@ const claim = Effect.fn('Approvals.claim')(function* (
   }
   return result
 })
-
-/** Only terminal outcomes have a signal body; execution first records an Awaiting debt. */
-const Conclusion = Schema.Union([
-  ApprovalState.cases.Denied.mapFields(Struct.pick(['_tag'])),
-  ApprovalState.cases.Expired.mapFields(Struct.pick(['_tag'])),
-  ApprovalState.cases.Succeeded.mapFields(Struct.pick(['_tag', 'result'])),
-  ApprovalState.cases.Failed.mapFields(Struct.pick(['_tag', 'reason'])),
-  ApprovalState.cases.OutcomeUnknown.mapFields(Struct.pick(['_tag'])),
-]).pipe(Schema.toTaggedUnion('_tag'))
-
-/** The decision and eventual settlement share one runtime delivery identity. */
-const approvalKey = (id: ApprovalId) => `approval-${id}`
-
-/** Freeze the outcome text in the settlement write so no later projection is needed for replay. */
-const owed = (
-  id: ApprovalId,
-  summary: string,
-  conclusion: typeof Conclusion.Type,
-  deciderId: PersonId | null,
-) => {
-  const body = Conclusion.match(conclusion, {
-    Expired: () => `Expired: ${summary}. This request ran out. The action was not run.`,
-    Denied: () => `Denied: ${summary}. The action was not run.`,
-    Succeeded: ({ result }) => `Approved: ${summary}. Result: ${result.slice(0, 4000)}`,
-    Failed: ({ reason }) => `Approved: ${summary}. Failed: ${reason.slice(0, 4000)}`,
-    OutcomeUnknown: () =>
-      `Approved: ${summary}. The outcome is unknown. Check the service; never retry this action automatically.`,
-  })
-  return Signal.cases.Owed.make({
-    idempotencyKey: approvalKey(id),
-    deciderId,
-    message: DeliveryMessage.cases.Signal.make({
-      type: 'approval',
-      body,
-      attributes: {
-        approval: id,
-        outcome: Conclusion.guards.Expired(conclusion) ? 'expired' : conclusion._tag,
-      },
-    }),
-  })
-}
 
 /** A refusal already knows its result; permission owes the result of the once-only action. */
 const decisionSignal = (row: typeof Row.Type, decision: ApprovalDecision, deciderId: PersonId) =>
@@ -435,7 +525,7 @@ const finish = Effect.fn('Approvals.finish')(function* (
       outcome: null,
     }),
   })
-  const conclusion = ActionOutcome.match<typeof Conclusion.Type>(outcome, {
+  const conclusion = ActionOutcome.match<Conclusion>(outcome, {
     Succeeded: ({ result }) => Conclusion.cases.Succeeded.make({ result }),
     Failed: ({ reason }) => Conclusion.cases.Failed.make({ reason }),
     Unknown: () => Conclusion.cases.OutcomeUnknown.make({}),
@@ -557,7 +647,11 @@ const decide = Effect.fn('Approvals.decide')(function* (
 }, Effect.uninterruptible)
 
 /** A digest-scoped transaction lock deduplicates simultaneous proposals across server processes. */
-const raise = Effect.fn('Approvals.raise')(function* (actor: Actor, action: ProposedAction) {
+const raise = Effect.fn('Approvals.raise')(function* (
+  actor: Actor,
+  action: ProposedAction,
+  bound: ApprovalBinding,
+) {
   if (actor.by !== 'vivid' || Option.isNone(actor.threadId))
     return yield* new NotFound({ message: 'Approval needs a Vivid Thread' })
   const origin = yield* actionOrigin(actor)
@@ -571,7 +665,8 @@ const raise = Effect.fn('Approvals.raise')(function* (actor: Actor, action: Prop
   const encoded = yield* encodeAction(action).pipe(
     Effect.mapError(() => new DatabaseFailure({ message: 'Approval action could not be encoded' })),
   )
-  const digest = actionDigest(encoded, threadId, actor.person.id)
+  const binding = yield* encodeBinding(bound)
+  const digest = actionDigest({ action: encoded, binding, threadId, personId: actor.person.id })
   const result = yield* database.transaction((tx) =>
     Effect.gen(function* () {
       yield* tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${digest}, 0))`)
@@ -599,6 +694,7 @@ const raise = Effect.fn('Approvals.raise')(function* (actor: Actor, action: Prop
           companyId: companyColumnOf(actor.workspace),
           action: encoded,
           digest,
+          binding,
           status: 'pending',
           expiresAt: now + 24 * 60 * 60 * 1000,
           createdAt: now,
@@ -791,7 +887,7 @@ export const approvalStoreLayer = Layer.effect(
         )
         return yield* run(view(rows.map((row) => row.approval)))
       }),
-      raise: (actor, action) => run(raise(actor, action)),
+      raise: (actor, action, binding) => run(raise(actor, action, binding)),
       decide: (actor, request) => run(decide(actor, request)),
       withdraw: (actor, id) => run(withdraw(actor, id)),
       expire: run(expire()),

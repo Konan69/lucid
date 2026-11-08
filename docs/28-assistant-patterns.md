@@ -1,11 +1,13 @@
 # Assistant patterns: what the category ships, what Vivid takes, and what is decided
 
-Status: decisions and contracts, not built. Written 27 October 2026 from the leaked instructions
-of Grok Bot, Meta Muse, OpenAI Dots and Codex (GPT-6 Astra), mined on 26 October (the corpus is
-`~/ref/system-prompts-mined/`, ignored; eight reference documents with every rule quoted and
-cited, three feature maps of Vivid, and `SYNTHESIS.md`). This page is what lands in the codebase:
-the patterns, the owner's decisions in his words, the Vivid shape each takes, and what is still
-open. It is the brief for the overhaul that follows the celld cutover ([docs/27](27-runtime-cells.md)).
+Status: decisions and contracts from 27 October 2026. Layered memory and learning after settlement
+are implemented in the Person cell (`packages/agent/runtime/src/memory.ts`, `openMemory`;
+`packages/agent/runtime/src/learning.ts`, `learning`). Planned upkeep and the Dreamer remain
+separate from that implementation. Other sections retain their original design status.
+
+Historical source material came from Grok Bot, Meta Muse, OpenAI Dots and Codex instructions,
+mined on 26 October. This page records those patterns, the owner's decisions, the Vivid shape,
+and what remains open. [Runtime cells](27-runtime-cells.md) describes the current host.
 
 Vocabulary is Vivid's ([AGENTS.md](../AGENTS.md)): Person, Thread, Run, Watch, Feed, Integration,
 Library, Artifact, Computer, Procedure. Source names (box, dot, routine, dreamer, heartbeat) appear
@@ -102,10 +104,14 @@ know."), `muse/USER.md` ("What you know about the person you're helping. Build t
 and don't assume what they haven't told you… You're getting to know a person, not building a
 dossier.").
 
-**Vivid shape.** Three records in the Person's cell (section 4): `self` (name, character, vibe,
-emoji; the name a Person gave Vivid wins, `context.name`), `soul` (the standing truths above,
-editable by Vivid), `person` (what it knows about the Person). An edit to `self` or `soul` is
-said to the Person in the next reply, in one sentence. Settings shows the current `self`.
+**Vivid today.** `self`, `soul`, and `person` are standing pages in the Person's cell. Written
+pages reach each response whole. The Person's chosen name takes precedence over `self`
+(`packages/contracts/src/memory.ts`, `StandingLayer`;
+`packages/agent/runtime/src/context.ts`, `listed`). `write_memory` permits these pages and tells
+the model to disclose changes to `self` or `soul`. Settings reads and corrects saved entries
+through the same cell store (`packages/agent/runtime/src/tools/memory.ts`, `memoryTools`;
+`apps/server/src/runtime/handlers.ts`, `memoryHandlers`). The model filling in its identity over
+time remains the chosen behavior, not a guarantee that every page exists.
 
 ## 3. Speaking unasked
 
@@ -135,7 +141,7 @@ judged by the same review as a foreground one (`approvals/policy.ts`).
   firing, a Dreamer finding) and why. Ordinary ones wait for the Person's waking hours and a
   quiet stretch and go at most once a day; urgent ones go at once. Pacing is a rule in the
   server, not a setting; the Person changes it by saying so, and the words go into the
-  `attention` note (section 4).
+  `attention` page (section 4).
 - A next step Vivid noticed is offered as one sentence with a yes button; nothing starts until
   the yes.
 - Work nobody is watching (a Watch firing, a check-in, the Dreamer) may not send, spend or
@@ -147,13 +153,13 @@ judged by the same review as a foreground one (`approvals/policy.ts`).
 
 ## 4. Memory in layers
 
-**Decided.** "We need the memory layers that Muse has, not flat notes."
+**Historical decision, 27 October.** "We need the memory layers that Muse has, not flat notes."
 
-Source: Muse keeps `MEMORY.md` (curated: facts, preferences, commitments), dated notes under
-`~/memory/` ("the full trail"), a bank of three files (`experience.md` "episodic experiences and
+Historical sources. Muse keeps `MEMORY.md` (curated: facts, preferences, commitments), dated notes under
+`memory/` ("the full trail"), a bank of three files (`experience.md` "episodic experiences and
 what happened, distilled", `opinions.md` "stable preferences, opinions, and value judgements",
-`world.md` "durable facts about the world and the user's circumstances"), `~/memory/people/` and
-`~/memory/groups/` ("a page per person and group… ordered by closeness"), `~/dreams/` (nightly
+`world.md` "durable facts about the world and the user's circumstances"), `memory/people/` and
+`memory/groups/` ("a page per person and group… ordered by closeness"), `dreams/` (nightly
 reflections and repair threads), and `PROACTIVE_PREFERENCES.md`. Background runs maintain them:
 memory upkeep hourly, relationships hourly, dreaming nightly, a quiet-moment pass after a
 substantial conversation (`muse/docs/self_improvement.md:5`). Grok Bot has three tiers (profile in
@@ -162,42 +168,57 @@ replacement (`grok-bot/grok-bot.md:152`). Dots separates `/user_notes/` (authori
 only) from `/agent_notes/` (research, written by the Dreamer, who may only suggest changes up)
 (`dots/dreamer.md:7`).
 
-**Vivid today.** One layer: notes, one file per thing, written by the model during a reply
-in the Person cell. Helix is removed from the server. No identity, no
-dated trail, no bank, no people pages, no background consolidation, no told-versus-guessed mark.
+**Vivid today.** The cell stores layered Markdown entries with `said` or `guessed` basis,
+source authority, time, and revision (`packages/contracts/src/memory.ts`, `SavedMemory`).
+The current write tool accepts standing pages and curated `memory`. Other layers are part of
+the storage, read, list, and search contracts; their planned background writers are not built
+(`packages/agent/runtime/src/tools/memory.ts`, `memoryTools`).
 
-**Vivid shape.** Tables in the Person's cell ([runtime cells](27-runtime-cells.md), "the notes and dreams tables of the
-memory design"), one vocabulary:
+| Layer                    | Current behavior                                                           |
+| ------------------------ | -------------------------------------------------------------------------- |
+| `self`, `soul`, `person` | Standing pages, writable during a reply and from Settings                  |
+| `memory`                 | Curated entries, writable during a reply, from Settings, or by the learner |
+| `days`, `bank`, `people` | Stored layer vocabulary; scheduled upkeep remains planned                  |
+| `dreams`, `research`     | Stored layer vocabulary; the Dreamer remains planned                       |
+| `attention`              | Standing page, writable during a reply and from Settings                   |
 
-| Layer                    | What it holds                                                                       | Who writes it                                   |
-| ------------------------ | ----------------------------------------------------------------------------------- | ----------------------------------------------- |
-| `self`, `soul`, `person` | Section 2                                                                           | Vivid in a reply; said to the Person            |
-| `memory`                 | Curated facts, preferences, commitments. One row per thing; a newer row supersedes  | Vivid in a reply; the upkeep run                |
-| `days`                   | The dated trail: what happened each day, distilled                                  | The upkeep run, after a conversation goes quiet |
-| `bank`                   | `experience`, `opinions`, `world` as Muse defines them                              | The upkeep run                                  |
-| `people`                 | One page per person in the Person's life, ordered by closeness                      | The upkeep run                                  |
-| `dreams`                 | Nightly reflection: what worked, what ruptured, who the Person is becoming; repairs | The Dreamer (section 5)                         |
-| `attention`              | What to tell, never tell, when, how; in the Person's words                          | Vivid, from a correction                        |
-| `research`               | The Dreamer's findings and checkpoints; never authoritative                         | The Dreamer                                     |
+Sources are `packages/contracts/src/memory.ts` (`MemoryLayer`, `StandingLayer`),
+`packages/agent/runtime/src/tools/memory.ts` (`memoryTools`), and
+`apps/server/src/runtime/handlers.ts` (`memoryHandlers`). Settings can correct entries in every
+layer through `CorrectMemory`.
 
-Every row carries `said` or `guessed` (told by the Person, or inferred), a source (the Thread and
-message, or the run), and a time. Forgetting a thing retracts it across every layer, the Watches
-that mention it, and queued work, before Vivid says it is forgotten (Muse `forget.plan` and
-`forget.confirm`, `muse/skills/forget/SKILL.md:21`). Personal memory lives only in the Person
-cell. Helix is removed (decision 8 below).
+Standing bodies are included whole. Other entries have one index line each, newest first,
+within an 8,000-character serialized budget. Listing and SQLite FTS5 search reach entries beyond
+that index, and `read_memory` pages long bodies. The snapshot stays frozen for one response
+(`packages/agent/runtime/src/memory.ts`, `INDEX_BUDGET`, `index`, `list`, `search`;
+`packages/agent/runtime/src/context.ts`, `loadContext`, `listed`).
 
-The index the model sees each reply stays one line per row, newest first, within its budget
-(`context.ts`); `self`, `soul`, `person` and `attention` are always in it.
+Learning is cell-owned. The settlement follower captures each Person's exchange before releasing
+its delivery context, then admits one deduplicated native Pi task. Jev gates each Person's
+exchange when `VIVID_DECISIONS=on` and an OpenRouter key is available. Decisions default off;
+an unavailable or failed decision considers the exchange for learning. A task-owned learner
+can read, list, search, and write curated `memory` only. It carries host-derived `CellRun`
+authority and a stable submission request id (`packages/agent/runtime/src/settled.ts`, `followSettlements`;
+`packages/agent/runtime/src/settings.ts`, `decisionLayer`;
+`packages/agent/runtime/src/learning.ts`, `consider`, `gate`, `learn`, `learnerAuthority`;
+`packages/agent/runtime/src/agents/learner.ts`, `learnerDefinition`).
+
+Full forgetting across layers, Watches, queued work, and frozen context remains a separate
+contract. Today `delete_memory` retracts one local entry at its revision and returns
+`forget_complete: false` (`packages/agent/runtime/src/tools/memory.ts`, `memoryTools`).
+
+History. Helix was removed from personal memory. Its retained service and volume remain
+migration resources (`infra/railway.ts`, `railwayResources`).
 
 ## 5. The Dreamer
 
-**Decided.** "I still want the Dreamer." Dots: "A Dreamer child researches your mail, calendar and
+**Historical decision, 27 October.** "I still want the Dreamer." Dots: "A Dreamer child researches your mail, calendar and
 work between conversations. It never contacts you. It reports to the parent only when it learned
 something useful and new, or hit a blocker. Otherwise it saves notes and stays quiet. Deadlines
 first, with consequence. Negative results count when they change what to do. One run a night,
 while you sleep, re-reads the day and re-orients your priorities."
 
-Source: `dots/dreamer.md:1` ("You do background research for the user's main personal assistant,
+Historical source. `dots/dreamer.md:1` ("You do background research for the user's main personal assistant,
 the parent… The parent decides what to do or tell the user"), `:5` ("Never contact the user or
 anyone else. Don't act for them… Don't edit /user_notes/ or /action_items.md; tell the parent
 what is worth adding"), `:8` ("call automations.notify_parent once… if you learned something
@@ -205,8 +226,10 @@ useful and new… If you have nothing like this to report, save your progress in
 stay quiet"), `:82` (nightly reflection around 3am local: gather preferences, re-orient
 priorities, update `user_state.md`).
 
-**Vivid shape.** A Run of a second kind in the Person's cell, on the cell's alarm
-([runtime cells](27-runtime-cells.md), "Dreaming runs in the cell on its alarm"): after a conversation goes quiet, and once a
+**Planned Vivid shape.** The Dreamer is unbuilt. The current learner writes curated memory only
+(`packages/agent/runtime/src/agents/learner.ts`, `learnerDefinition`). The planned Dreamer runs
+in the Person's cell using Pi tasks and the shared alarm ([runtime cells](27-runtime-cells.md)),
+after a conversation goes quiet, and once a
 night at about 03:00 in the Person's time zone. It gets read tools only: every connected Integration, reads only (**decided 27 October: "yes,
 every integration, read-only"**), the Library, the web, the memory layers, writes `research` and `dreams`, and ends with one _finding_
 to the main Run or nothing. A finding is a Signal, not a message: Vivid reads it the way it reads
@@ -288,7 +311,8 @@ Each with the default this page assumes until the owner says otherwise.
    after a substantial conversation, at most a few a day (Muse).
 7. **Said versus guessed in replies.** Does Vivid say which when it uses a guessed fact?
    Default: it says "i think" for guessed and states said facts plainly.
-8. **Helix.** Removed (28 October). Personal memory lives only in the Person cell. The old
-   production service and volume remain retained for the one-time migration.
+8. **Historical Helix decision, 28 October.** Removed from personal memory. The old service and
+   volume remain retained for migration (`infra/railway.ts`, `railwayResources`). Personal memory
+   is cell-owned (`apps/cells/src/main.ts`, `Person`).
 9. **Procedure demonstrations.** Built after the Computer records a screen; not in the first
    cut.

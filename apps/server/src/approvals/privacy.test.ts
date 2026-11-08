@@ -15,7 +15,7 @@ import { threads } from '../threads/tables.ts'
 import { approvalHandlers } from './handlers.ts'
 import { ApprovalStore, approvalStoreLayer } from './store.ts'
 import { approvals } from './tables.ts'
-import { connectionAction, fixture, trustTestServices } from './testing.ts'
+import { fixture, trustTestServices } from './testing.ts'
 
 /**
  * Retain the disposable fixture and unrelated ports, replacing its Changes with real LISTEN/NOTIFY.
@@ -87,7 +87,11 @@ layer(testDatabaseLayer)((it) => {
               by: 'vivid',
               threadId: Option.some(test.companyId),
             } satisfies Actor
-            const approval = yield* (yield* ApprovalStore).raise(addressed, connectionAction)
+            const approval = yield* (yield* ApprovalStore).raise(
+              addressed,
+              test.connectionAction,
+              test.bound,
+            )
             const request = yield* (yield* InputStore).ask(addressed, question)
             const before = yield* records(test.companyId)
             const load = inbox(test.owner)
@@ -125,7 +129,8 @@ layer(testDatabaseLayer)((it) => {
             const test = yield* fixture()
             const approval = yield* (yield* ApprovalStore).raise(
               test.companyVivid,
-              connectionAction,
+              test.connectionAction,
+              test.bound,
             )
             const request = yield* (yield* InputStore).ask(test.companyVivid, question)
             const load = inbox(test.member)

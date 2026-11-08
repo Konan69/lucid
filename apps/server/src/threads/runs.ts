@@ -7,6 +7,7 @@ import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import {
+  ApprovalInvalidation,
   DatabaseFailure,
   Conflict,
   DeliveryScope,
@@ -28,6 +29,7 @@ import {
 import { unresolvedOf, type Unresolved } from '../actions/journal.ts'
 import { loadSummaries } from '../auth/access.ts'
 import { announceFeed } from '../feed/changes.ts'
+import { askedBy, invalidatePending } from '../approvals/stale.ts'
 import { personTable } from '../auth/tables.ts'
 import {
   Database,
@@ -526,6 +528,14 @@ const makeEnd = (database: DatabaseService) =>
           .returning({ thread: runs.threadId })
         const row = rows[0]
         if (row === undefined) return false
+        // A Run the Person stopped takes its open asks with it; a Run that only finished does not,
+        // because asking and then waiting for the answer is how a Run normally ends.
+        if (RunEnding.guards.Stopped(ending))
+          yield* invalidatePending(
+            tx,
+            askedBy(id),
+            ApprovalInvalidation.cases.RunStopped.make({ runId: id }),
+          )
         // Settlement dates the Feed's history even when admission failed before delivery's touch.
         yield* tx.update(threads).set({ updatedAt: now }).where(eq(threads.id, row.thread))
         yield* announceFeed(tx, [row.thread])

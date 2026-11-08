@@ -2,7 +2,7 @@ import { ThreadId, type ProjectId } from '@vivid/contracts'
 import { sending, titleFromMessage } from '@vivid/state'
 import { Data, Effect, Option, Result } from 'effect'
 import { useMemo } from 'react'
-import { changing } from './app'
+import { change, changing } from './app'
 import { live } from './live'
 import { beginThread, useSending, warmConversation } from './sending'
 import { router } from '../router'
@@ -98,3 +98,16 @@ export const openThread = (projectId: ProjectId | null = scope.filing()) =>
   })
 
 export { live }
+
+/**
+ * Tells Vivid to go on in a Thread once a card's wait is over ("GitHub is connected"). It is sent
+ * as a `carry-on` signal (`CarryOnRequest`), which no surface draws, so it never reads as words
+ * the Person said. It is tried twice, as a message is; when both fail the card is still the thing
+ * the Thread waits on and offers its own Carry on (`ConnectionAction` in `screen/thread/Cards.tsx`).
+ */
+export const carryOn = (thread: ThreadId, body: string) => {
+  const key = crypto.randomUUID()
+  void change((client) =>
+    client.CarryOnThread({ threadId: thread, body, key }).pipe(Effect.retry({ times: 1 })),
+  )
+}

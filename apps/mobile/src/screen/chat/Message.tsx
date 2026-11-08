@@ -252,7 +252,7 @@ function FromVivid({
                   detail={detail}
                   me={around.me}
                   live={latest && !working}
-                  onContinue={onContinue}
+                  thread={thread}
                 />
               ),
             }),

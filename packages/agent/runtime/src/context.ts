@@ -1,10 +1,12 @@
 import * as Clock from 'effect/Clock'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
+import * as Schema from 'effect/Schema'
 import {
   ComputerInventory,
   ConnectionState,
   DEFAULT_APPEARANCE,
+  PersonName,
   type VividName,
 } from '@vivid/contracts'
 import { asActing, type Acting, type ProductService } from './client.ts'
@@ -27,6 +29,7 @@ export const emptyContext = VividContext.make({
   apps: [],
   integrations: [],
   name: DEFAULT_APPEARANCE.name,
+  person: Option.none(),
 })
 
 /**
@@ -130,6 +133,39 @@ export const namedAs = (name: VividName): ReadonlyArray<string> =>
         `Here you have been given the name ${name}. Answer to it and use it when you say who you are. If someone asks what you are, you are ${name}, their Vivid.`,
       ]
 
+const isPersonName = Schema.is(PersonName)
+
+/**
+ * What the Person Vivid acts for is called, read from the server's one source (the Better Auth
+ * user's name, through `Me`) at the start of every response, so a name changed in Settings is
+ * used from the next answer on. In a shared Thread the acting Person is whoever sent this
+ * message, so it is their name and not the Thread creator's (`ThreadOrigin.creatorName`, which is
+ * kept only for authority and is never updated).
+ *
+ * A name set in Settings always passes `PersonName`; one a sign-in provider gave may not, and then
+ * nothing is said rather than a name repaired into something the Person never wrote. A failed
+ * read says nothing too: answering without the name is better than failing the response.
+ */
+const loadPerson = Effect.fn('Context.loadPerson')(
+  function* (product: ProductService, acting: Option.Option<Acting>) {
+    const me = yield* asActing(product, acting, (client) => client.Me())
+    return Option.liftPredicate(me.person.name, isPersonName)
+  },
+  Effect.orElseSucceed(() => Option.none<PersonName>()),
+)
+
+/**
+ * The line that tells the model who it is working for, by name and never by identifier. The
+ * name is one line with no backslash (`PersonName`), so it cannot pose as a second instruction.
+ */
+export const workingFor = (person: Option.Option<PersonName>): ReadonlyArray<string> =>
+  Option.match(person, {
+    onNone: () => [],
+    onSome: (name) => [
+      `The person you are working for in this message is called ${name}. That is the name they asked to be called; use it when you address them or they ask what their name is.`,
+    ],
+  })
+
 const HOUR = 3_600_000
 
 /**
@@ -169,9 +205,10 @@ export const loadContext = Effect.fn('Context.load')(function* (
         asOf: readClock(),
         integrations: loadIntegrations(product, acting),
         name: loadName(product, acting),
+        person: loadPerson(product, acting),
         apps: loadApps(product, acting),
       },
-      { concurrency: 7 },
+      { concurrency: 8 },
     ),
   )
 })

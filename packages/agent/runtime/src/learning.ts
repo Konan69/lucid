@@ -19,6 +19,7 @@ import { Effect, Layer, Option, Schema } from 'effect'
 import { Decision, DecisionModel } from 'effect/ai'
 import { INSTRUCTIONS, learnerDefinition } from './agents/learner.ts'
 import { Product } from './client.ts'
+import { withoutCorrections } from './correction.ts'
 import { DeliveryRecord, Kept } from './deliveries.ts'
 import {
   isDeliveryEntry,
@@ -258,7 +259,7 @@ const capture = Effect.fn('Learning.capture')(function* (
   if (first === undefined) return []
   const thread = yield* threadOf(harness, first.conversationId)
   if (Option.isNone(thread)) return []
-  const entries = yield* history(harness, first.conversationId)
+  const entries = withoutCorrections(yield* history(harness, first.conversationId))
   const owned = new Set(inputs.flatMap((input) => (input.entry === undefined ? [] : [input.entry])))
   const start = entries.findIndex((entry) => owned.has(entry.id))
   if (start < 0) return []

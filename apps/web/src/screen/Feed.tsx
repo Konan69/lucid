@@ -5,6 +5,7 @@ import {
   makeWhen,
   owed,
   thisReader,
+  todos,
   workspaceKey,
   type DeviceList,
 } from '@vivid/state'
@@ -19,6 +20,7 @@ import { useAppearance } from '../data/vivid'
 import { Alive } from '../ui/Alive'
 import { Card } from './feed/Card'
 import { Owed } from './feed/Owed'
+import { Todos } from './feed/Todos'
 import { Computer } from './thread/Device'
 import { Composer } from './thread/Composer'
 
@@ -40,7 +42,7 @@ const today = new Intl.DateTimeFormat(thisReader().locale, {
  * The page is the "tide table" direction of 27 October 2026. The head is the date beside Vivid's
  * living face and one sentence about what the Person is waiting on ("5 people owe you. Adaeze is
  * a day late."), or, with nothing owed, the Feed's standing line. Then the waiting-on list, the
- * page's hero (`feed/Owed.tsx`). Beside it on a wide screen (under it on a narrow one) is what
+ * page's hero (`feed/Owed.tsx`), and under it the Person's own to-do list (`feed/Todos.tsx`). Beside it on a wide screen (under it on a narrow one) is what
  * needs the Person, one card each, Vivid's work in hand, and what is handled. The composer stays at
  * the foot, because a Feed with no way to start a Thread was rejected ("I can't start a thread
  * from here").
@@ -53,6 +55,7 @@ export function Feed({ me, onOpen }: { me: MeResponse; onOpen: (thread: ThreadId
   const items = LiveState.$is('Ready')(state) ? state.value.items : []
   const devices = useLiveValue(live.devices)
   const owedList = useLiveValue(live.owed)
+  const todoList = useLiveValue(live.todos)
   return (
     <FeedView
       me={me}
@@ -61,23 +64,29 @@ export function Feed({ me, onOpen }: { me: MeResponse; onOpen: (thread: ThreadId
         onNone: () => [],
         onSome: (list) => owed.waitingOf(list.owed),
       })}
+      toDo={Option.match(todoList, {
+        onNone: () => [],
+        onSome: (list) => todos.openOf(list.todos),
+      })}
       devices={devices}
       onOpen={onOpen}
     />
   )
 }
 
-/** The Feed drawn from its items and the waiting-on list: everything above, with no query of its own. */
+/** The Feed drawn from its items, the waiting-on list and the to-do list: everything above, with no query of its own. */
 export function FeedView({
   me,
   items,
   waiting,
+  toDo,
   devices,
   onOpen,
 }: {
   me: MeResponse
   items: (typeof FeedResponse.Type)['items']
   waiting: ReadonlyArray<owed.Waiting>
+  toDo: ReadonlyArray<todos.Open>
   devices: Option.Option<DeviceList>
   onOpen: (thread: ThreadId) => void
 }) {
@@ -130,6 +139,7 @@ export function FeedView({
 
         <div className="mt-8 flex min-w-0 flex-col gap-8 lg:col-span-3">
           {waiting.length > 0 && <Owed waiting={waiting} now={now} onOpen={onOpen} />}
+          {toDo.length > 0 && <Todos open={toDo} now={now} onOpen={onOpen} />}
           {(Option.isSome(view.computer) || view.waiting.length > 0) && (
             <section aria-labelledby="needs-heading" className="flex flex-col">
               <h2 id="needs-heading" className="px-1 pb-2 text-label font-title text-ink-3">

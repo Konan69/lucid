@@ -30,7 +30,8 @@ export function memorySteps() {
       name: 'replace',
       prompt: `That has changed: for project ${project}, I now prefer meetings after three, because mornings are for writing.`,
       change: 'replace',
-      body: /after (three|3)/iu,
+      // The model may write the time as 15:00 or 3pm (r5, pi-20261029174146416-946cdf01).
+      body: /after (?:three|3(?![0-9])|15[:.h]?00)/iu,
       says: [],
     },
     {

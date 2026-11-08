@@ -65,23 +65,37 @@ const closedPort = Effect.fn('ProxyTest.closedPort')(function* () {
 
 /** Starts the proxy on free ports. `attached` waits for its own word that a tunnel came or went. */
 const computerProxy = Effect.fn('ProxyTest.computerProxy')(function* () {
-  const child = yield* Effect.acquireRelease(
-    Effect.sync(() =>
-      NodeChildProcess.spawn(process.execPath, [proxyFile, '0', '0'], {
-        stdio: ['ignore', 'pipe', 'inherit'],
-      }),
-    ),
-    (spawned) => Effect.sync(() => spawned.kill()),
-  )
-  const said = yield* Queue.unbounded<typeof Said.Type>()
+  const said = yield* Queue.unbounded<typeof Said.Type, Cause.Done>()
   const exited = yield* Deferred.make<void>()
-  child.on('exit', () => Deferred.doneUnsafe(exited, Effect.void))
-  let rest = ''
-  child.stdout.on('data', (chunk: Buffer) => {
-    const lines = `${rest}${chunk.toString('utf8')}`.split('\n')
-    rest = lines.pop() ?? ''
-    for (const line of lines) Option.map(decodeSaid(line), (fact) => Queue.offerUnsafe(said, fact))
-  })
+  const closed = yield* Deferred.make<void>()
+  yield* Effect.acquireRelease(
+    Effect.sync(() => {
+      const spawned = NodeChildProcess.spawn(process.execPath, [proxyFile, '0', '0'], {
+        stdio: ['ignore', 'pipe', 'inherit'],
+      })
+      // Capture termination before yielding so startup failure cannot strand a readiness wait.
+      spawned.on('error', (error) => Queue.failCauseUnsafe(said, Cause.die(error)))
+      spawned.on('exit', () => Deferred.doneUnsafe(exited, Effect.void))
+      spawned.on('close', () => {
+        Queue.endUnsafe(said)
+        Deferred.doneUnsafe(closed, Effect.void)
+      })
+      let rest = ''
+      spawned.stdout.on('data', (chunk: Buffer) => {
+        const lines = `${rest}${chunk.toString('utf8')}`.split('\n')
+        rest = lines.pop() ?? ''
+        for (const line of lines)
+          Option.map(decodeSaid(line), (fact) => Queue.offerUnsafe(said, fact))
+      })
+      return spawned
+    }),
+    (spawned) =>
+      Effect.gen(function* () {
+        if (!(yield* Deferred.isDone(closed))) spawned.kill()
+        // close follows exit and pipe closure. Killing alone leaves the owned process unproved.
+        yield* Deferred.await(closed)
+      }),
+  )
   const first = yield* Queue.take(said)
   if (!('proxy' in first)) return yield* Effect.die('The proxy did not say where it listens')
   const attached = Effect.fn(function* (want: boolean) {
@@ -449,6 +463,60 @@ describe('the Computer’s egress proxy', () => {
     }),
   )
 
+  it.live('a fragmented header and body carry a frame at the exact size limit', () =>
+    Effect.gen(function* () {
+      const { proxy, tunnel } = yield* attachedProxy()
+      const page = yield* browser(proxy.ports.proxy, connect('site.example:443'))
+      yield* page.until(ESTABLISHED)
+      const open = yield* tunnel.frame
+      const payload = Buffer.alloc(EGRESS_FRAME_LIMIT - 5, 'x')
+      payload.write('complete', payload.length - 8)
+      const wire = lengthPrefixed(
+        encodeEgressFrame(EgressFrame.cases.Data.make({ stream: open.stream, payload })),
+      )
+      // Split the length itself, the stream header, and the payload across socket writes.
+      yield* tunnel.raw(wire.subarray(0, 1))
+      yield* tunnel.raw(wire.subarray(1, 3))
+      yield* tunnel.raw(wire.subarray(3, 7))
+      for (let at = 7; at < wire.length; at += 16_381)
+        yield* tunnel.raw(wire.subarray(at, at + 16_381))
+      expect(yield* page.until('complete')).toBe(payload.toString('utf8'))
+      yield* tunnel.say(EgressFrame.cases.End.make({ stream: open.stream }))
+      yield* page.closed
+      expect(yield* proxy.exited).toBe(false)
+    }),
+  )
+
+  it.live('coalesced frames keep their stream, order and half-close after an empty frame', () =>
+    Effect.gen(function* () {
+      const { proxy, tunnel } = yield* attachedProxy()
+      const first = yield* browser(proxy.ports.proxy, connect('first.example:443'))
+      yield* first.until(ESTABLISHED)
+      const one = (yield* tunnel.frame).stream
+      const second = yield* browser(proxy.ports.proxy, connect('second.example:443'))
+      yield* second.until(ESTABLISHED)
+      const two = (yield* tunnel.frame).stream
+      const frames = [
+        EgressFrame.cases.Data.make({ stream: one, payload: Buffer.from('alpha') }),
+        EgressFrame.cases.Data.make({ stream: two, payload: Buffer.from('other') }),
+        EgressFrame.cases.Data.make({ stream: one, payload: Buffer.from('omega') }),
+        EgressFrame.cases.End.make({ stream: one }),
+        EgressFrame.cases.End.make({ stream: two }),
+      ]
+      yield* tunnel.raw(
+        Buffer.concat([
+          lengthPrefixed(new Uint8Array(0)),
+          ...frames.map((frame) => lengthPrefixed(encodeEgressFrame(frame))),
+        ]),
+      )
+      expect(yield* first.until('omega')).toBe('alphaomega')
+      expect(yield* second.until('other')).toBe('other')
+      yield* first.closed
+      yield* second.closed
+      expect(yield* proxy.exited).toBe(false)
+    }),
+  )
+
   it.live('frames that are short, unknown or for no stream are passed over', () =>
     Effect.gen(function* () {
       const { proxy, tunnel } = yield* attachedProxy()
@@ -670,7 +738,8 @@ describe('the Computer’s egress proxy', () => {
   it.live('all the connections of a tunnel together are held to the link’s budget', () =>
     Effect.gen(function* () {
       const { proxy, tunnel } = yield* attachedProxy()
-      // Each is under its own budget; together they are over the link's.
+      // Each burst is below the stream budget; their total exceeds the link budget.
+      // Kernel buffering means sent bytes do not prove the exact logical boundary.
       const each = EGRESS_STREAM_BUDGET - (2 << 20)
       const count = Math.ceil(EGRESS_LINK_BUDGET / each)
       const streams: Array<EgressStream> = []

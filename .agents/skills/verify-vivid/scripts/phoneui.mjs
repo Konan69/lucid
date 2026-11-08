@@ -40,6 +40,8 @@ export function phoneUI(state, run, directory) {
     return snapshot
   }
   const menu = async () => {
+    // Relaunch can return before accessibility content. Back on that empty frame exits Vivid.
+    await run(['wait', 'label="Open menu" || label="Close menu" || label="Close"', '60000'])
     const snapshot = await run(['snapshot', '-i', '--force-full'])
     if (!snapshot.includes('"Close menu"') && !snapshot.includes('"Open menu"'))
       await run(['back', '--settle'])

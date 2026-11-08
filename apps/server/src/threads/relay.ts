@@ -5,6 +5,7 @@ import {
   InvalidRequest,
   NotFound,
   type SendToThreadRequest,
+  type CarryOnRequest,
   type ThreadId,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
@@ -80,4 +81,25 @@ export const sendToThread = Effect.fn('Rpc.SendToThread')(function* (request: Se
   const run = runs.find((candidate) => candidate.id === receipt.runId)
   if (run === undefined) return yield* new NotFound({ message: 'Admitted Run not found' })
   return { run }
+})
+
+/** Preserve the card's signal identity and Person authority through native admission. */
+export const carryOnThread = Effect.fn('Rpc.CarryOnThread')(function* (request: CarryOnRequest) {
+  const auth = yield* requirePerson()
+  const thread = yield* requireThread(request.threadId, auth.person.id)
+  yield* (yield* Conversation).admit({
+    threadId: thread.id,
+    personId: auth.person.id,
+    speaker: DeliverySpeaker.cases.Acting.make({}),
+    message: DeliveryMessage.cases.Signal.make({
+      type: 'carry-on',
+      body: request.body,
+      attributes: {},
+    }),
+    origin: StoredRunOrigin.cases.Message.make({
+      fingerprint: messageFingerprint(request.body, []),
+    }),
+    idempotencyKey: messageKey(auth.person.id, request.key),
+    clientKey: request.key,
+  })
 })

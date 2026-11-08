@@ -240,6 +240,13 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     publicDomain: true,
     healthcheckPath: '/health',
     healthcheckTimeout: 120,
+    /**
+     * Idle, Executor sends nothing (Railway's network metrics read zero for hours on
+     * 3 November 2026) yet holds about 1 GB, billed by the minute. Railway sleeps a service after
+     * ten minutes without outbound packets and wakes it on the next inbound request, public or
+     * private, so the first call after a quiet spell waits for its start.
+     */
+    sleepApplication: true,
     env: {
       PORT: String(ports.executor),
       EXECUTOR_OAUTH_CALLBACK_URL: `https://\${{${serviceNames.server}.RAILWAY_PUBLIC_DOMAIN}}/api/connections/return`,
@@ -325,12 +332,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       VIVID_CELL_VARS: cellVariables(environment, privateUrl(serviceNames.server, ports.server)),
       VIVID_RUNTIME_URL: cellsUrl,
       VIVID_RUNTIME_TOKEN: environment.runtimeToken,
-      EXPLABS_API_KEY: environment.modelGatewayKey,
-      ...Option.match(environment.openRouterKey, {
-        onNone: () => ({}),
-        onSome: (key) => ({ OPENROUTER_API_KEY: key }),
-      }),
-      ...whenSet('VIVID_SERVER_MODEL_PROVIDER', environment.serverModelProvider),
+      OPENROUTER_API_KEY: environment.openRouterKey,
       ...computerAccess(environment),
       ...executorAccess(environment),
       ...textingAccess(environment),

@@ -2,7 +2,7 @@
 
 **Nothing lives here.** Live checks sit beside the code they prove as `.live.test.ts` files
 (`apps/server/src/**`), skipped unless their test configuration and real credentials are present.
-Memory model suites require `VIVID_LIVE_MEMORY=1` and `EXPLABS_API_KEY`; storage-backed live
+Memory model suites require `VIVID_LIVE_MEMORY=1` and `OPENROUTER_API_KEY`; storage-backed live
 checks also need isolated Helix (`VIVID_TEST_HELIX_URL`) and disposable PostgreSQL
 (`VIVID_TEST_DATABASE_URL`). Ordinary memory privacy, graph and idempotency tests use real
 isolated storage with deterministic provider inputs and need no model credentials. For

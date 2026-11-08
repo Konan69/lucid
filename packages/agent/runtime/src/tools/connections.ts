@@ -62,7 +62,7 @@ export function connectionTools(runTool: RunTool) {
     defineTool({
       name: Tool.connect,
       description:
-        'Offer an integration as a secure connect card for the person. Use it for a service named in unconnected by find_tools. A person can have several accounts on one integration: to add one more account on a service they already connected (a second Gmail, their work GitHub), whether they told you to connect it or the account they asked for is not among theirs, set another to true and say in reason which account it is.',
+        'Offer an integration as a secure connect card for the person. The card shows only the service, so in the same reply, before you call this, write one short sentence to the person in your own voice that hands them the card. Use it for a service named in unconnected by find_tools. A person can have several accounts on one integration: to add one more account on a service they already connected (a second Gmail, their work GitHub), whether they told you to connect it or the account they asked for is not among theirs, set another to true and say in reason which account it is.',
       input: v.object({
         summary,
         service: text(
@@ -70,7 +70,7 @@ export function connectionTools(runTool: RunTool) {
           200,
         ),
         reason: text(
-          'One sentence said to the person, in your own voice, shown on the card: why this needs the integration, or which other account it is. Say "you", never "the person". For example: "You asked me to add another GitHub account."',
+          'Why this needs the integration, or which other account it is, in one sentence. The person does not see it: the card shows only the service, so say your own short sentence to them in your reply before the card. For example: "You asked me to add another GitHub account."',
           400,
         ),
         another: v.optional(

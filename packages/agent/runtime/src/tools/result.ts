@@ -210,7 +210,9 @@ export const settle = Effect.fn('Tools.settle')(function* (
       NobodyToActFor: () => failure('There is no person behind this message to act for.'),
       MemoryConflict: ({ address, actual }) =>
         failure(
-          `The ${address.layer}/${address.file} revision changed to ${actual}. Read it before replacing or retracting it.`,
+          actual === 0
+            ? `No entry has been written at ${address.layer}/${address.file}. To create it, omit expected_revision or use 0.`
+            : `The ${address.layer}/${address.file} revision changed to ${actual}. Read that exact file and use its revision before replacing or retracting it.`,
         ),
       MemoryMissing: ({ address, revision }) =>
         failure(

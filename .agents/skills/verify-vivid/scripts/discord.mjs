@@ -64,7 +64,7 @@ const discordApi =
 /** A personal Integration in a Company-shared Thread always asks, reads included (gate.ts,
  * PersonalInShared). Each Pending Approval is allowed through the DecideApproval the Allow card
  * sends, then WatchThread waits for the Decision Run it starts. Ends when nothing is Pending. */
-async function allowPending(state, id, { runs, step }, directory) {
+export async function allowPending(state, id, { runs, step }, directory) {
   let detail = await settled(state, id, runs, 'Completed', directory)
   for (let decisions = 0; ; decisions++) {
     const pending = detail.approvals.find((approval) =>
@@ -197,7 +197,7 @@ async function cleanUp(state, { api, channel, nonce, cleanup }, directory) {
 
 /** Any copy of the token in retained evidence is replaced and fails the feature. Private scratch
  * (instance/) is deleted by Cleanup and is not evidence. */
-async function redact(evidence, token, directory) {
+export async function redact(evidence, token, directory) {
   const found = []
   for (const entry of await NodeFSP.readdir(evidence, { recursive: true, withFileTypes: true })) {
     const file = NodePath.join(entry.parentPath, entry.name)
@@ -208,7 +208,7 @@ async function redact(evidence, token, directory) {
     await NodeFSP.writeFile(file, text.replaceAll(token, '<redacted>'))
   }
   await json(directory + '/redaction.json', { found })
-  NodeAssert.deepEqual(found, [], 'Discord token reached evidence')
+  NodeAssert.deepEqual(found, [], 'A token reached evidence')
 }
 
 /** Connect Discord with a bot token, post through an Approval from a Company Thread, read Discord

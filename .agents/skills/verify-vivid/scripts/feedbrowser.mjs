@@ -154,7 +154,7 @@ export async function feedBrowser(state, id, directory, browser) {
     const item = list.items.find((entry) => entry.thread === id)
     NodeAssert.equal(item._tag, 'Waiting')
     NodeAssert.equal(item.post, null)
-    const visible = `Array.from(document.querySelectorAll('article')).some(card => card.querySelector('h2 button')?.textContent.trim() === ${JSON.stringify(title)} && card.innerText.includes('Vivid has a question for you. Open it to answer.'))`
+    const visible = `Array.from(document.querySelectorAll('article')).some(card => card.getAttribute('aria-label') === ${JSON.stringify(title)} && card.innerText.includes('Vivid has a question for you. Open it to answer.'))`
     await run(['open', state.web + '/feed'])
     await run(['wait', '--fn', visible])
     await observed.painted()

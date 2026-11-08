@@ -35,6 +35,16 @@
     "symbols": ["<module>"]
   },
   {
+    "file": "packages/agent/runtime/src/continuity.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["resume", "continuityHooks"]
+  },
+  {
+    "file": "packages/agent/runtime/src/correction.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["correctionHooks"]
+  },
+  {
     "file": "packages/agent/runtime/src/response.ts",
     "classification": "third-party-adapter",
     "symbols": ["nameAnswerer", "joinHooks", "settlement"]
@@ -113,7 +123,12 @@
       "#remote",
       "#arm",
       "alarm",
-      "settled"
+      "settled",
+      "#answer",
+      "#carryUntilQuiet",
+      "#route",
+      "#wake",
+      "<module>"
     ]
   },
   {

@@ -39,7 +39,14 @@ const failingDatabase = (
     delete: database.delete.bind(database),
     refreshMaterializedView: database.refreshMaterializedView.bind(database),
     execute: database.execute.bind(database),
-    transaction: database.transaction,
+    // A write in its own transaction (a sign-in change, which closes stale Approvals with it)
+    // meets the same outage as a single statement.
+    transaction: Effect.fn('Database.Test.transactionFailure')(function* <A, E, R>(
+      operation: Parameters<typeof database.transaction<A, E, R>>[0],
+    ) {
+      if (yield* Ref.get(unavailable)) return yield* failure
+      return yield* database.transaction(operation)
+    }),
     run: Effect.fn('Database.Test.connectionFailure')(function* <A, E, R>(
       query: Effect.Effect<A, E, R>,
     ) {

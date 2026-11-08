@@ -271,7 +271,7 @@ const probeLayer = Layer.effectContext(
       ),
     })
     const gate = Gate.of({
-      check: Effect.fn('Gate.Test.check')(function* (actor, action, exposure) {
+      check: Effect.fn('Gate.Test.check')(function* (actor, action, exposure, binding) {
         yield* Ref.update(probe.checked, (checked) => [...checked, { action, exposure }])
         const decision = yield* Ref.get(probe.decision)
         if (decision === 'Allowed') return GateDecision.cases.Allowed.make({})
@@ -286,6 +286,7 @@ const probeLayer = Layer.effectContext(
             runId: null,
             action,
             digest: 'test-digest',
+            binding,
             askedOf: summaryOf(actor.person),
             state: ApprovalState.cases.Pending.make({ expiresAt: now + 60_000 }),
             createdAt: now,

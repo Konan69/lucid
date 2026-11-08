@@ -1,6 +1,5 @@
 import * as NodeHttp from 'node:http'
 import { migrationLayer } from './connections/migration.ts'
-import { refusedLayer } from './connections/refused.ts'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as PersistedQueue from 'effect/persistence/PersistedQueue'
@@ -60,6 +59,7 @@ import { observabilityLayer } from './observability/export.ts'
 import { notificationStoreLayer } from './notifications/store.ts'
 import { projectStoreLayer } from './projects/store.ts'
 import { owedStoreLayer } from './owed/store.ts'
+import { todoStoreLayer } from './todos/store.ts'
 import { pushConfigLayer } from './push/config.ts'
 import { pushAdapterLayer } from './push/adapter.ts'
 import { pushLayer, pushReceiptsLayer } from './push/delivery.ts'
@@ -113,6 +113,7 @@ const serverProgram = Effect.gen(function* () {
     settingsStoreLayer,
     projectStoreLayer,
     owedStoreLayer,
+    todoStoreLayer,
     threadStoreLayer,
     runStoreLayer,
     notificationStoreLayer,
@@ -169,7 +170,6 @@ const serverProgram = Effect.gen(function* () {
   )
   const background = Layer.mergeAll(
     migrationLayer,
-    refusedLayer,
     watchRenewalLayer,
     channelWorkerLayer,
     approvalSweeperLayer,

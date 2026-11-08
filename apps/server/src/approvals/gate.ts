@@ -4,6 +4,7 @@ import * as Schema from 'effect/Schema'
 import {
   Approval,
   RunId,
+  type ApprovalBinding,
   ThreadId,
   NotFound,
   type Person,
@@ -88,11 +89,16 @@ export interface GateService {
    * no review (decisions switched off or unavailable) a `write` runs and a `destructive` action
    * asks. If a rule that could forbid the action could not be weighed, the answer is to ask.
    * Unwatched work asks before a non-read unless reviewed as contained. An unwatched destructive action always asks.
+   *
+   * `bound` is what the action was prepared against: the sign-in of the Integration it uses and
+   * the Thread documents whose text it carries. An Approval raised here is bound to it and goes
+   * stale when any of it changes.
    */
   readonly check: (
     actor: Actor,
     action: ProposedAction,
     exposure: GateExposure,
+    bound: ApprovalBinding,
   ) => Effect.Effect<GateDecision, NotFound | DatabaseInfrastructureError>
 }
 
@@ -171,9 +177,10 @@ const ask = Effect.fn('Gate.ask')(function* (
   approvals: ApprovalStore['Service'],
   actor: Actor,
   action: ProposedAction,
+  bound: ApprovalBinding,
 ) {
   return GateDecision.cases.ApprovalRequired.make({
-    approval: yield* approvals.raise(actor, action),
+    approval: yield* approvals.raise(actor, action, bound),
   })
 })
 
@@ -202,6 +209,7 @@ export const gateLayer = Layer.effect(
       actor: Actor,
       action: ProposedAction,
       origin: ActionOrigin,
+      bound: ApprovalBinding,
     ) {
       if (action.effect === 'read') return Option.none()
       const thread = yield* requireThread(origin.threadId, actor.person.id).pipe(
@@ -210,12 +218,12 @@ export const gateLayer = Layer.effect(
       if (thread.place !== 'Background') return Option.none()
       const review = yield* reviewer.review(actor, action)
       if (unwatchedOutcome(action.effect, review) === 'Ask')
-        return Option.some<GateDecision>(yield* ask(approvals, actor, action))
+        return Option.some<GateDecision>(yield* ask(approvals, actor, action, bound))
       return Option.some<GateDecision>(yield* allow(audit, actor, action))
     })
     return Gate.of({
       /** Ordinary reads pass; rules come first; the rest runs unless the review says a Person is needed. */
-      check: Effect.fn('Gate.check')(function* (actor, action, exposure) {
+      check: Effect.fn('Gate.check')(function* (actor, action, exposure, bound) {
         // All callers previously resolved origin before Gate.check. Keep that authority check
         // here when removing the duplicated proposal field, including actions allowed immediately.
         const origin = yield* actionOrigin(actor).pipe(Effect.provideService(Database, database))
@@ -255,9 +263,9 @@ export const gateLayer = Layer.effect(
           BindingJudgment.guards.Uncertain(judged) ||
           exposure === 'PersonalInShared'
         )
-          return yield* ask(approvals, actor, action)
+          return yield* ask(approvals, actor, action, bound)
         // A standing Allow and a high "asked" score never authorize outward background work.
-        const background = yield* checkUnwatched(actor, action, origin)
+        const background = yield* checkUnwatched(actor, action, origin, bound)
         if (Option.isSome(background)) return background.value
         // An Allow rule is the Person's standing request for an undoable action. It does not
         // settle a destructive one: applicability is a 0.5 match (`rules/judge.ts`), too loose
@@ -267,7 +275,7 @@ export const gateLayer = Layer.effect(
         if (!reviewable(action)) return yield* allow(audit, actor, action)
         const review = yield* reviewer.review(actor, action)
         if (reviewOutcome(action.effect, review) === 'Ask')
-          return yield* ask(approvals, actor, action)
+          return yield* ask(approvals, actor, action, bound)
         return yield* allow(audit, actor, action)
       }),
     })

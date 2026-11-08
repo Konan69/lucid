@@ -37,8 +37,8 @@ Inspect `memory/verdict.json` and `browser/memory/verdict.json`. Each recipe ret
 
 These recipes now check the native local-retraction receipt and have not been proven on cells.
 Cell-backed Launch and Doctor are required first. The earlier real-model attempts were also
-blocked by OpenRouter HTTP 401 and insufficient Experiential Labs credits. A working shipped
-model key and funded `EXPLABS_API_KEY` authority remain prerequisites. Then run Launch, Doctor,
+blocked by model-provider authentication and credit failures. A working shipped
+model key and funded `OPENROUTER_API_KEY` authority remain prerequisites. Then run Launch, Doctor,
 both Memory recipes, and Cleanup on the same unchanged head. Formatting and syntax checks do not
 establish runtime proof.
 

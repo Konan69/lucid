@@ -71,7 +71,7 @@ describe('Google Integrations', () => {
           Effect.provide(context),
         )
       }).pipe(Effect.scoped)
-      expect(without.map((entry) => entry.name)).toEqual([...names, 'Discord'])
+      expect(without.map((entry) => entry.name)).toEqual([...names, 'GitHub', 'Discord'])
     }),
   )
 

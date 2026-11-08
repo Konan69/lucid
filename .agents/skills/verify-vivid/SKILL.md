@@ -21,7 +21,7 @@ For a devbox, run `~/bin/devbox-pick` and use the Cloudbox alias it prints. Neve
 
 On the selected host inspect `uptime`, `nproc`, `free -g` and `docker ps`. Use a separate checkout of the intended commit. Install with `pnpm install --frozen-lockfile`. Require Node 24+, pinned pnpm, Docker, celld 0.6.2 and a native MinIO binary on PATH, Python 3 with pidfd, flock, agent-browser 0.39.0 or later and Chrome. The cells package owns pinned esbuild through its manifest. Install a compatible agent-browser version as a devbox prerequisite before launch. Keep dependencies and caches out of Boat snapshots with `.boxignore`.
 
-Set `VIVID_VERIFY_KEY_FILE` to an explicit private env file, or export the provider keys for this run. No development env or CLI auth store is read automatically. Only EXPLABS_API_KEY, OPENROUTER_API_KEY and OPENCODE_API_KEY are read. Never print or retain credentials in evidence. Do not copy [local Claude settings](../../../.claude/settings.local.json) or CLI auth stores into the proof checkout or evidence. For a remote checkout, copy only these keys into a mode-0600 private file on the selected host; delete it after cleanup. OPENROUTER_API_KEY is required by the server title model. No production infrastructure setting is imported.
+Set `VIVID_VERIFY_KEY_FILE` to an explicit private env file, or export the provider keys for this run. No development env or CLI auth store is read automatically. Only OPENROUTER_API_KEY and OPENCODE_API_KEY are read. Never print or retain credentials in evidence. Do not copy [local Claude settings](../../../.claude/settings.local.json) or CLI auth stores into the proof checkout or evidence. For a remote checkout, copy only these keys into a mode-0600 private file on the selected host; delete it after cleanup. The server title and decision models require OPENROUTER_API_KEY. No production infrastructure setting is imported.
 
 `VIVID_VERIFY_MODEL` selects a shipped model id. With a key available the default is a real model, preferring the shipped default `opencode-go/glm-5.3-flash` when its key exists. Explicit `rehearsal/script` proves plumbing only. Every feature file states its model requirement. Read [boundaries](references/boundaries.md) for unavailable external authorities.
 
@@ -45,6 +45,8 @@ conversation through the real gateway. The Worker health route has no selected-m
 only a real-model journey proves that provider works.
 
 ## Drive the touched feature
+
+For private Mail and Calendar model measurements, read [behaviour](features/behaviour.md). Set `VIVID_VERIFY_WORLD` to an outside-checkout private directory before Launch, then run `verify behaviour <run> --trials 1` after Doctor and Cleanup afterwards. The scenario file stays private. This command records provenance, OpenUI parsing and wiring, tools, persisted effects and Connect ordering from real chat history. Its evidence never copies world files. Rehearsal is refused. It needs no browser recipe and makes no visual or native-client claim.
 
 ```sh
 .agents/skills/verify-vivid/verify feature first pi-<id>

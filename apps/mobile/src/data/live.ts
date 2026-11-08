@@ -32,6 +32,7 @@ import * as Atom from 'effect/reactivity/Atom'
 import { createContext, useContext } from 'react'
 import { followThemeAtom, themeAtom } from './appearance'
 import { makeDeviceDecisions } from './devices'
+import { makeNaming } from './name'
 import { makeConnecting } from './connecting'
 import { makeSending } from './sending'
 import { door } from './door'
@@ -306,6 +307,8 @@ function makeLiveData(session: SignedIn) {
     feed: one((client) => client.WatchFeed()),
     /** Who owes the Person what, which Vivid keeps and chases (`screen/Feed.tsx`). */
     owed: one((client) => client.WatchOwed()),
+    /** The Person's own to-do list, which Vivid adds to and ticks off (`screen/Feed.tsx`). */
+    todos: one((client) => client.WatchTodos()),
     /** What the Person has typed and not sent, on any device, where they are working. */
     drafts: kept((client) => client.WatchDrafts()),
   }
@@ -369,6 +372,7 @@ function makeLiveData(session: SignedIn) {
   // presses and draws from it, and an attempt outlives whichever of them began it.
   const connecting = makeConnecting({ engine, connections: live.connections.atom })
   const devices = makeDeviceDecisions(engine)
+  const naming = makeNaming(engine, live.me)
 
   followLook(engine, live)
 
@@ -423,6 +427,8 @@ function makeLiveData(session: SignedIn) {
     /** Connecting an Integration: the session's one machine (`data/connecting.ts`). */
     connecting,
     devices,
+    /** The Person changing their own name in Settings (`data/name.ts`). */
+    naming,
     /**
      * What Vivid remembers about the Person, read from their cell. There is no watch on it: the
      * Memory screen begins a new reading each time it is opened (`screen/settings/Memory.tsx`).

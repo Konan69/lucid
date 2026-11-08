@@ -1,4 +1,4 @@
-import { approve, deny } from './approval.mjs'
+import { approve, changed, deny } from './approval.mjs'
 import { outcome } from './outcome.mjs'
 import { question as realQuestion } from './question.mjs'
 import * as NodeFSP from 'node:fs/promises'
@@ -10,12 +10,17 @@ import { assertTable } from './table.mjs'
 import { devices } from './devices.mjs'
 import { reading } from './reading.mjs'
 import { settingsProof } from './settingsproof.mjs'
+import { nameProof } from './nameproof.mjs'
 import { watch } from './watch.mjs'
 import { memory } from './memory.mjs'
+import { learningFact } from './phonememory.mjs'
 import { feed } from './feed.mjs'
 import { owed } from './owed.mjs'
+import { todos } from './todos.mjs'
 import { offer } from './offer.mjs'
 import { discordProof, discordBlocked } from './discord.mjs'
+import { githubProof, githubBlocked } from './github.mjs'
+import { library } from './library.mjs'
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { pictureAddress } = await import(web.resolve('@vivid/state'))
 
@@ -27,6 +32,7 @@ export const features = [
   'question',
   'approve',
   'deny',
+  'changed',
   'outcome',
   'stop',
   'picture',
@@ -36,11 +42,15 @@ export const features = [
   'library',
   'feed',
   'owed',
+  'todos',
   'devices',
   'reading',
   'settings',
+  'name',
   'memory',
+  'learning',
   'discord',
+  'github',
 ]
 export const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
@@ -387,6 +397,34 @@ async function picture(state, id, directory) {
   NodeAssert.equal(response.headers.get('x-content-type-options'), 'nosniff')
   NodeAssert.deepEqual(bytes, Buffer.from(png, 'base64'))
 }
+/** The same learning assertion as Android, driven through public HTTP on a devbox without a phone. */
+async function learning(state, id, directory) {
+  NodeAssert.equal(state.modelKind, 'real', 'Learning needs a real model')
+  const marker = 'Teacup-' + crypto.randomUUID().slice(0, 8)
+  await chat(
+    state,
+    id,
+    `For project ${marker}, I always choose green tea at the planning sessions. Just acknowledge briefly.`,
+    directory,
+  )
+  const detail = await settled(state, id, 1, 'Completed', directory)
+  const page = await history(state, id, directory, 'exchange')
+  await learningFact(state, directory, marker, { detail, page })
+  const next = await thread(state, directory, 'Learning recall ' + marker)
+  await chat(
+    state,
+    next,
+    `What drink do I always choose at the planning sessions for project ${marker}?`,
+    directory,
+  )
+  await settled(state, next, 1, 'Completed', directory)
+  const recalled = await history(state, next, directory, 'recalled')
+  NodeAssert.match(
+    words({ messages: recalled.messages.filter((message) => message.role === 'assistant') }),
+    /green tea/iu,
+  )
+}
+
 const recipes = {
   first,
   reload,
@@ -396,23 +434,28 @@ const recipes = {
   question,
   approve,
   deny,
+  changed,
   outcome,
   picture,
   document,
   devices,
   feed,
   memory,
+  learning,
   owed,
+  todos,
   watch,
   reading,
   settings: settingsProof,
+  name: nameProof,
   discord: discordProof,
+  github: githubProof,
+  library,
 }
 const blocked = {
   code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
-  library:
-    'HTTP ingestion and browser Library recipes have not been implemented; the full product worker is mounted.',
   ...discordBlocked(),
+  ...githubBlocked(),
 }
 /** Every feature gets an independent Thread and retained verdict; failure never skips the rest. */
 export async function drive(state, feature) {
@@ -423,12 +466,16 @@ export async function drive(state, feature) {
       ? blocked
       : {
           ...blocked,
+          name: 'Name requires a real model; rehearsal cannot answer what the Person is called.',
           approve: 'Approval requires a real model.',
           deny: 'Denial requires a real model.',
+          changed: 'A stale ask requires a real model.',
           outcome: 'Action receipts require a real model to make the write.',
           stop: 'Stop requires a real model; rehearsal cannot prove interruption.',
           memory: 'Memory requires a real model; rehearsal cannot prove the memory tools.',
           owed: 'Tracking requires a real model; rehearsal cannot prove it.',
+          todos: 'The list requires a real model; rehearsal cannot prove it.',
+          library: 'Library requires a real model; rehearsal cannot prove retrieval and citation.',
         }
   let failed = false
   for (const name of chosen) {

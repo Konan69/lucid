@@ -1,4 +1,4 @@
-import { ApprovalState, type Approval, type PersonId } from '@vivid/contracts'
+import { ApprovalInvalidation, ApprovalState, type Approval, type PersonId } from '@vivid/contracts'
 import { Array as Arr, Option } from 'effect'
 
 /** The Approval that is up over the composer, and how many are waiting on this Person with it. */
@@ -24,3 +24,23 @@ export const approvalUp = (
   )
   return Option.map(Arr.head(mine), (approval) => ({ approval, waiting: mine.length }))
 }
+
+/**
+ * What an Approval that changed under its ask says where it was, on every surface: what changed,
+ * in the Person's words, and nothing to press. When the work is still wanted, Vivid asks again with
+ * a fresh one, which appears as a new ask beside it.
+ */
+export const changedLine = (reason: ApprovalInvalidation) =>
+  ApprovalInvalidation.match(reason, {
+    ContentChanged: ({ version }) =>
+      version === null
+        ? 'The document was removed after this was asked.'
+        : 'The document changed after this was asked.',
+    ConnectionChanged: ({ generation }) =>
+      generation === null
+        ? 'The integration was removed after this was asked.'
+        : 'The integration changed after this was asked.',
+    AuthorityChanged: () => 'No longer yours to answer.',
+    RunStopped: () => 'Stopped before it was answered.',
+    Superseded: () => 'This changed after it was asked.',
+  })

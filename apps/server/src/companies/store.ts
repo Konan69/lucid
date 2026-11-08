@@ -6,6 +6,7 @@ import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import {
+  ApprovalInvalidation,
   Appearance,
   AuditEvent,
   Company,
@@ -27,6 +28,7 @@ import {
   type InviteMembershipRequest,
   type SessionId,
 } from '@vivid/contracts'
+import { askedOfMember, invalidatePending } from '../approvals/stale.ts'
 import { appendAudit, AuditAttribution } from '../audit/record.ts'
 import { announce, Topic } from '../live/changes.ts'
 import { loadSummaries } from '../auth/access.ts'
@@ -720,6 +722,12 @@ const makeRemove = (database: DatabaseService) =>
         const current = yield* memberById(tx, companyId, membershipId)
         const member = yield* refuseOwner(current.member)
         yield* tx.delete(membershipTable).where(eq(membershipTable.id, member.membershipId))
+        // What was asked of them in this Company can no longer be theirs to allow.
+        yield* invalidatePending(
+          tx,
+          askedOfMember(member.person.id, current.companyId),
+          ApprovalInvalidation.cases.AuthorityChanged.make({ membershipId: member.membershipId }),
+        )
         yield* leaveCompanySessions(tx, member.person.id, current.companyId)
         yield* appendAudit(
           tx,

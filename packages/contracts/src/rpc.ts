@@ -4,11 +4,16 @@ import * as RpcGroup from 'effect/rpc/RpcGroup'
 import * as RpcMiddleware from 'effect/rpc/RpcMiddleware'
 import { ConversationFrame } from './conversation.js'
 import {
+  ApprovalChanged,
+  ApprovalExpired,
+  ApprovalResponse,
+  DecideApprovalRequest,
+} from './approvals.js'
+import {
   ActionReconciliationRequired,
   ReconcileActionRequest,
   ReconcileActionResponse,
 } from './actions.js'
-import { ApprovalResponse, DecideApprovalRequest } from './approvals.js'
 import {
   ArtifactChanged,
   ArtifactDetail,
@@ -153,6 +158,7 @@ import {
   LibraryFolderId,
   LibraryItemId,
   MembershipId,
+  PersonName,
   RuleId,
   SkillId,
   ThreadId,
@@ -194,6 +200,13 @@ import {
   ResolveOwedRequest,
   DropOwedRequest,
 } from './owed.js'
+import {
+  Todo,
+  TodoListResponse,
+  AddTodoRequest,
+  CompleteTodoRequest,
+  DropTodoRequest,
+} from './todos.js'
 import { ComputerInventory } from './applications.js'
 import { CreateRuleRequest, RuleListResponse, RuleResponse } from './rules.js'
 import { SearchRequest, SearchResponse, SuggestionListResponse } from './search.js'
@@ -218,6 +231,7 @@ import {
   ThreadDetail,
   ConversationTooLarge,
   SendToThreadRequest,
+  CarryOnRequest,
   SendToThreadResponse,
   UnsupportedAttachment,
   InvalidAttachment,
@@ -312,6 +326,15 @@ const Post = Rpc.make('Post', {
 // ── The signed-in Person and where they are working ────────────────────────
 const Me = Rpc.make('Me', { ...call, success: MeResponse })
 const WatchMe = Rpc.make('WatchMe', { ...live, success: MeResponse })
+/**
+ * What the signed-in Person is called, changed by them in Settings. Vivid reads the name through
+ * `Me` at the start of each response, so the next answer uses it. Only the Person can change it.
+ */
+const SetPersonName = Rpc.make('SetPersonName', {
+  ...call,
+  payload: { name: PersonName },
+  success: MeResponse,
+})
 /** Creates a Company on purpose and moves the session into it. */
 const CreateCompany = Rpc.make('CreateCompany', {
   ...call,
@@ -409,6 +432,11 @@ const SendToThread = Rpc.make('SendToThread', {
     TooManyAttachments,
     PicturesRequirePrivateThread,
   ]),
+})
+/** A connection card's continuation uses the same authenticated socket as ordinary sends. */
+const CarryOnThread = Rpc.make('CarryOnThread', {
+  ...call,
+  payload: CarryOnRequest,
 })
 const CreateThread = Rpc.make('CreateThread', {
   ...call,
@@ -510,9 +538,9 @@ const ReadDocument = Rpc.make('ReadDocument', {
 const GetInbox = Rpc.make('GetInbox', { ...call, success: Inbox })
 const WatchInbox = Rpc.make('WatchInbox', { ...live, success: Inbox })
 const DecideApproval = Rpc.make('DecideApproval', {
-  ...call,
   payload: DecideApprovalRequest,
   success: ApprovalResponse,
+  error: Schema.Union([RpcFailure, ApprovalChanged, ApprovalExpired]),
 })
 /** Withdraws an Approval the Person no longer wants decided, leaving the action undone. */
 const WithdrawApproval = Rpc.make('WithdrawApproval', { ...call, payload: { id: ApprovalId } })
@@ -663,6 +691,17 @@ const UpdateOwed = Rpc.make('UpdateOwed', { ...call, payload: UpdateOwedRequest,
 const NudgedOwed = Rpc.make('NudgedOwed', { ...call, payload: NudgedOwedRequest, success: Owed })
 const ResolveOwed = Rpc.make('ResolveOwed', { ...call, payload: ResolveOwedRequest, success: Owed })
 const DropOwed = Rpc.make('DropOwed', { ...call, payload: DropOwedRequest, success: Owed })
+
+// ── The Person's to-do list ───────────────────────────────────────────────
+const ListTodos = Rpc.make('ListTodos', { ...call, success: TodoListResponse })
+const WatchTodos = Rpc.make('WatchTodos', { ...live, success: TodoListResponse })
+const AddTodo = Rpc.make('AddTodo', { ...call, payload: AddTodoRequest, success: Todo })
+const CompleteTodo = Rpc.make('CompleteTodo', {
+  ...call,
+  payload: CompleteTodoRequest,
+  success: Todo,
+})
+const DropTodo = Rpc.make('DropTodo', { ...call, payload: DropTodoRequest, success: Todo })
 
 // ── Library (metadata; bytes travel over plain HTTP) ───────────────────────
 const ListLibrary = Rpc.make('ListLibrary', {
@@ -1018,6 +1057,7 @@ const WatchSuggestions = Rpc.make('WatchSuggestions', { ...live, success: Sugges
 export const VividRpc = RpcGroup.make(
   Me,
   WatchMe,
+  SetPersonName,
   GetBuild,
   WatchBuild,
   CreateCompany,
@@ -1043,6 +1083,7 @@ export const VividRpc = RpcGroup.make(
   WatchThread,
   WatchConversation,
   SendToThread,
+  CarryOnThread,
   CreateThread,
   OpenFirstThread,
   PatchThread,
@@ -1101,6 +1142,11 @@ export const VividRpc = RpcGroup.make(
   NudgedOwed,
   ResolveOwed,
   DropOwed,
+  ListTodos,
+  WatchTodos,
+  AddTodo,
+  CompleteTodo,
+  DropTodo,
   ListLibrary,
   WatchLibrary,
   GetLibraryItem,

@@ -1,5 +1,6 @@
 import * as NodeCrypto from 'node:crypto'
 import * as NodeAssert from 'node:assert/strict'
+import * as NodeFSP from 'node:fs/promises'
 import { Redacted, Schema } from 'effect'
 import { ConnectionState, ConnectionStep, WatchState, RunOrigin } from '@vivid/contracts'
 import { observe } from './observation.mjs'
@@ -89,6 +90,36 @@ export async function connectPulse(state, directory) {
   })
   NodeAssert.ok(ConnectionState.guards.Ready(connected.connection.state))
   return integrationOf(state, connected.connection, directory)
+}
+
+/** World apps follow the same public Connect flow as Pulse, including the masked secrets step. */
+export async function connectWorld(state, directory, names = ['Mail', 'Calendar']) {
+  NodeAssert.equal(state.modelKind, 'real', 'World behaviour needs a real model')
+  const integrations = {}
+  for (const name of names) {
+    const service = name.toLowerCase()
+    const services = await rpc(state, 'FindServices', { query: name })
+    NodeAssert.ok(
+      services.services.some((candidate) => candidate.id === service),
+      name + ' not offered',
+    )
+    const begun = await rpc(state, 'BeginConnection', {
+      service,
+      from: 'Web',
+      name: null,
+      shared: false,
+    })
+    NodeAssert.ok(ConnectionStep.guards.EnterKey(begun))
+    const connected = await rpc(state, 'CompleteConnection', {
+      id: begun.connection.id,
+      fields: { code: Redacted.make('world-local') },
+    })
+    NodeAssert.ok(ConnectionState.guards.Ready(connected.connection.state))
+    const target = directory + '/' + service
+    await NodeFSP.mkdir(target, { recursive: true })
+    integrations[name] = await integrationOf(state, connected.connection, target)
+  }
+  return integrations
 }
 
 /** Observe the dedicated app Vivid claimed, after either HTTP or browser Connect. */

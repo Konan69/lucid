@@ -157,7 +157,7 @@ describe('the runtime over HTTP', () => {
     ),
   )
 
-  it.effect('stores long Markdown and reads every page through the entry tools', () =>
+  it.effect('creates and pages long Markdown without a revision', () =>
     scenario((given, runtime) =>
       Effect.gen(function* () {
         const body = '# Plan\n\n' + 'A lasting detail.\n'.repeat(400) + '\nThe final detail.'
@@ -167,7 +167,6 @@ describe('the runtime over HTTP', () => {
               summary: 'Remember the plan',
               layer: 'memory',
               file: 'plan.md',
-              expected_revision: 0,
               basis: 'said',
               kind: 'workstream',
               description: 'The complete plan',
@@ -270,12 +269,15 @@ describe('the runtime over HTTP', () => {
             [fauxText('The draft is ready.'), fauxToolCall('suggest_replies', { replies })],
             { stopReason: 'toolUse' },
           ),
+          // What the model wrote when it was asked again after the suggestions: never asked now.
           fauxAssistantMessage('Ready when you are.'),
         ])
         const receipt = yield* admit(runtime, ada, delivery('thread-1', 'suggestions'))
         expect(yield* settled(runtime, ada, 'thread-1', receipt.submissionId)).toMatchObject({
+          reply: 'The draft is ready.',
           toolCalls: 1,
         })
+        expect(given.faux.state.callCount).toBe(1)
         const response = yield* runtime.send(`${threadPath(ada, 'thread-1')}/state`, {
           method: 'GET',
         })
@@ -290,6 +292,7 @@ describe('the runtime over HTTP', () => {
             output: { ok: true },
           }),
         )
+        expect(JSON.stringify(state.messages)).not.toContain('Ready when you are.')
       }),
     ),
   )

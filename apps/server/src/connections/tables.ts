@@ -1,4 +1,4 @@
-import { bigint, index, jsonb, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core'
+import { bigint, index, integer, jsonb, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core'
 import { companyColumn, epoch, personColumn } from '../database/owner.ts'
 
 /**
@@ -41,6 +41,11 @@ export const connections = pgTable(
     // Existing trips returned to the web; each new client trip writes its own surface.
     returnsTo: text('returns_to').notNull().default('Web'),
     reason: text('reason'),
+    // Raised by every write that changes the authorization (a sign-in, a lost sign-in, a failure,
+    // a migration of its references), so an Approval bound to the account as it was signed in can
+    // tell it is no longer that account. `updated_at` is a clock reading, which can repeat or step
+    // back; this only rises.
+    authorizationGeneration: integer('authorization_generation').notNull().default(0),
     createdAt: epoch('created_at').notNull(),
     updatedAt: epoch('updated_at').notNull(),
   },

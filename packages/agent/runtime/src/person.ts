@@ -18,6 +18,8 @@ import { Memory } from './memory.ts'
 import { learning } from './learning.ts'
 import type { DecisionModel } from 'effect/ai'
 import { Models } from './models.ts'
+import { correctionHooks } from './correction.ts'
+import { continuityHooks } from './continuity.ts'
 import { joinHooks } from './response.ts'
 import { followSettlements } from './settled.ts'
 import { BuiltinSkills } from './skills.ts'
@@ -122,7 +124,8 @@ export const openPerson = Effect.fn('Person.open')(function* (
   registry.install(
     definition({
       tools: all,
-      hooks: [joinHooks(run, opened)],
+      // The run's own record goes first: Pi stops calling `onYield` hooks after the first that continues.
+      hooks: [joinHooks(run, opened), continuityHooks(run, opened), correctionHooks(run, opened)],
       frozen: (conversationId) =>
         run(Effect.flatMap(opened, (harness) => opening(harness, conversationId))),
     }),
