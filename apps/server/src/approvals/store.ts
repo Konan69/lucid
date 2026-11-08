@@ -18,6 +18,7 @@ import {
   ApprovalExpired,
   ApprovalId,
   ApprovalInvalidation,
+  ApprovalPrecondition,
   ApprovalState,
   AuditEvent,
   CompanyId,
@@ -60,7 +61,7 @@ import {
   ActionOutcome,
   ActionRunner,
 } from './gate.ts'
-import { actionDigest, auditAction } from './action.ts'
+import { actionDigest, auditAction, canonical } from './action.ts'
 import {
   Claim,
   claim as claimOperation,
@@ -369,6 +370,7 @@ const drift = Effect.fn('Approvals.drift')(function* (tx: Transaction, row: Pend
       )
   }
   for (const precondition of row.binding.preconditions) {
+    if (!ApprovalPrecondition.guards.ArtifactVersion(precondition)) continue
     const [current] = yield* tx
       .select({ version: artifacts.version })
       .from(artifacts)
@@ -384,6 +386,43 @@ const drift = Effect.fn('Approvals.drift')(function* (tx: Transaction, row: Pend
       )
   }
   return Option.none<ApprovalInvalidation>()
+})
+
+/** Provider reads stay outside SQL locks. Only their comparison is consumed by the existing
+ * claim transaction, which invalidates and owes the same fresh-ask signal as document drift.
+ * A disappeared or unreadable draft/page cannot keep its old permission. Database failures
+ * leave the ask pending and send nothing. Denials never contact the outside service. */
+const externalDrift = Effect.fn('Approvals.externalDrift')(function* (
+  actor: Actor,
+  row: PendingRow,
+) {
+  const external = row.binding.preconditions.filter(
+    ApprovalPrecondition.isAnyOf(['BrowserPage', 'MailEnvelope']),
+  )
+  const first = external[0]
+  if (first === undefined) return Option.none<ApprovalInvalidation>()
+  const invalidation = ApprovalInvalidation.cases.ExternalStateChanged.make({ source: first._tag })
+  const current = yield* (yield* ActionRunner)
+    .inspect({
+      person: actor.person,
+      workspace: actor.workspace,
+      action: row.action,
+      phase: 'Deciding',
+      origin:
+        row.runId === null
+          ? ActionOrigin.cases.RuntimeThread.make({ threadId: row.threadId })
+          : ActionOrigin.cases.Run.make({ threadId: row.threadId, runId: row.runId }),
+    })
+    .pipe(
+      Effect.asSome,
+      Effect.catchTags({
+        InvalidRequest: () => Effect.succeedNone,
+        NotFound: () => Effect.succeedNone,
+      }),
+    )
+  return Option.isSome(current) && canonical(current.value) === canonical(external)
+    ? Option.none<ApprovalInvalidation>()
+    : Option.some(invalidation)
 })
 
 /**
@@ -466,9 +505,14 @@ const claim = Effect.fn('Approvals.claim')(function* (
   if (Row.guards.expired(row) || (Row.guards.pending(row) && row.expiresAt <= now))
     return yield* new ApprovalExpired({ id: row.id })
   yield* requireDecisionAuthority(actor, row, request, thread.audience)
+  const external =
+    Row.guards.pending(row) && !ApprovalDecision.guards.Deny(request.decision)
+      ? yield* externalDrift(actor, row)
+      : Option.none<ApprovalInvalidation>()
   const end = yield* database.transaction((tx) =>
     Effect.gen(function* () {
-      const changedBy = Row.guards.pending(row) ? yield* drift(tx, row) : Option.none()
+      const local = Row.guards.pending(row) ? yield* drift(tx, row) : Option.none()
+      const changedBy = Option.isNone(local) ? external : local
       if (Option.isNone(changedBy)) return yield* move(tx, row, { actor, request, now })
       yield* invalidatePending(tx, scope, changedBy.value)
       return ClaimEnd.Changed()
