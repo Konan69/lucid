@@ -12,7 +12,7 @@ export {
   artifactPreparations,
 } from '../artifacts/tables.ts'
 export { approvals } from '../approvals/tables.ts'
-export { channelLinks, channelMessages, channelReplies } from '../channels/tables.ts'
+export { channelCodes, channelLinks, channelMessages, channelReplies } from '../channels/tables.ts'
 export { auditEntries } from '../audit/tables.ts'
 export {
   computerRecoveries,

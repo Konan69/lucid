@@ -7,16 +7,16 @@ import { ChannelProvider, type ChannelInbound } from './provider.ts'
  * caps at one minute; shutdown interrupts recovery rather than imposing a daemon lifetime. */
 const RECONNECT_INITIAL = '2 seconds'
 const RECONNECT_CEILING = Duration.seconds(60)
-const backoff = Schedule.exponential(RECONNECT_INITIAL).pipe(
+export const channelBackoff = Schedule.exponential(RECONNECT_INITIAL).pipe(
   Schedule.jittered,
   Schedule.modifyDelay(({ duration }) => Effect.succeed(Duration.min(duration, RECONNECT_CEILING))),
 )
 /** Progress is the reconnect input; reset the policy without losing the scoped connection lifetime. */
 export const channelReconnect = Schedule.fromStep(
   Effect.gen(function* () {
-    let step = yield* Schedule.toStep(backoff)
+    let step = yield* Schedule.toStep(channelBackoff)
     return Effect.fn('Channels.reconnectStep')(function* (now: number, received: boolean) {
-      if (received) step = yield* Schedule.toStep(backoff)
+      if (received) step = yield* Schedule.toStep(channelBackoff)
       return yield* step(now, undefined)
     })
   }).pipe(Effect.withSpan('Channels.reconnectSchedule')),

@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm'
 import { Channel, PersonId, RunId, ThreadId } from '@vivid/contracts'
 import { Clock, Context, Effect, Layer, Option, Schema } from 'effect'
 import { Database, decodeStored } from '../database/client.ts'
-import { type ChannelInbound } from './provider.ts'
+import { ChannelPlace, type ChannelInbound } from './provider.ts'
 import { channelMessages, channelReplies } from './tables.ts'
 
 const Route = Schema.Struct({
@@ -11,6 +11,7 @@ const Route = Schema.Struct({
   channel: Channel,
   since: Schema.Number.check(Schema.isFinite()),
   threadId: ThreadId,
+  place: Schema.optionalKey(Schema.NullOr(ChannelPlace)),
 })
 export type ChannelRoute = typeof Route.Type
 const decodeRoute = decodeStored(Route, 'channel reply route')
@@ -45,6 +46,7 @@ const makeLedger = Effect.fn('Channels.makeLedger')(function* () {
           channel: input.channel,
           since: input.since,
           threadId: input.threadId,
+          place: input.place === undefined ? null : input.place,
           status: 'awaiting',
           updatedAt: yield* Clock.currentTimeMillis,
         })

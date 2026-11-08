@@ -13,8 +13,14 @@ import { live } from './live'
  * work as Effects.
  */
 export interface TextingActs {
-  /** Gives the Person's number to a channel, or asks for a new code for the same number. */
-  readonly connect: (channel: Channel, written: string) => Promise<Option.Option<string>>
+  /**
+   * Gives the Person's number to a channel (none on Discord, `KNOWN_BY`), or asks for a new code
+   * the same way.
+   */
+  readonly connect: (
+    channel: Channel,
+    written: Option.Option<string>,
+  ) => Promise<Option.Option<string>>
   /** Takes the Person's number off a channel. */
   readonly disconnect: (channel: Channel) => Promise<Option.Option<string>>
 }

@@ -34,6 +34,7 @@ import { pushProof } from './push.mjs'
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { pictureAddress } = await import(web.resolve('@vivid/state'))
 
+import { textingDiscordProof, textingDiscordBlocked } from './textingdiscord.mjs'
 export const features = [
   'capabilities',
   'computer',
@@ -68,6 +69,7 @@ export const features = [
   'discord',
   'github',
   'push',
+  'texting-discord',
 ]
 export const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
@@ -600,11 +602,13 @@ const recipes = {
   github: githubProof,
   library,
   push: pushProof,
+  'texting-discord': textingDiscordProof,
 }
 const blocked = {
   handoff: 'No proof-owned Computer: a handoff is prepared and filled on a disposable Person Computer.',
   ...discordBlocked(),
   ...githubBlocked(),
+  ...textingDiscordBlocked(),
 }
 /** Every feature gets an independent Thread and retained verdict; failure never skips the rest. */
 export async function drive(state, feature) {

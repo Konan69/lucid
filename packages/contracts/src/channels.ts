@@ -1,12 +1,15 @@
 import { Schema } from 'effect'
 
-/** The product vocabulary is closed even while Vivid texts on iMessage only. */
-export const Channel = Schema.Literals(['iMessage', 'WhatsApp'])
+/** The product vocabulary is closed. Discord is offered only where the server has a Discord bot. */
+export const Channel = Schema.Literals(['iMessage', 'WhatsApp', 'Discord'])
 export type Channel = typeof Channel.Type
 
-/** Canonical sender identity: international phone number or lower-case email address. */
+/**
+ * Canonical sender identity: international phone number, lower-case email address, or a Discord
+ * account as `discord:` and its user id.
+ */
 export const ChannelAddress = Schema.String.check(
-  Schema.isPattern(/^(?:\+[1-9]\d{1,14}|[^\s@]+@[^\s@]+\.[^\s@]+)$/u),
+  Schema.isPattern(/^(?:\+[1-9]\d{1,14}|[^\s@]+@[^\s@]+\.[^\s@]+|discord:[1-9]\d{16,19})$/u),
 ).pipe(Schema.brand('ChannelAddress'))
 export type ChannelAddress = typeof ChannelAddress.Type
 
@@ -29,6 +32,9 @@ export class ChannelUnavailable extends Schema.TaggedError<ChannelUnavailable>()
  *   Typing a number proves nothing: without this step anyone could attach someone else's phone
  *   and read that person's replies. The code is short-lived and shown only to the Person who
  *   asked for it, so it is kept readable and comes back on every watch, not once.
+ * - `Awaiting`: for a channel where the Person has no number to give (Discord), Vivid learns who
+ *   they are from the first message carrying `code` sent to `textTo`. Until then no account is
+ *   theirs, and a message without the code from anyone is ignored.
  * - `Connected`: messages from `address` are this Person's, and Vivid answers at `textTo`.
  *
  * `textTo` is per Person: the provider assigns each enrolled number the number it must text.
@@ -42,6 +48,7 @@ export const ChannelStanding = Schema.TaggedUnion({
     code: Schema.String,
     expiresAt: Schema.Finite,
   },
+  Awaiting: { textTo: ChannelAddress, code: Schema.String, expiresAt: Schema.Finite },
   Connected: { address: ChannelAddress, textTo: ChannelAddress, since: Schema.Finite },
 })
 export type ChannelStanding = typeof ChannelStanding.Type
@@ -56,8 +63,15 @@ export interface ChannelLink extends Schema.Schema.Type<typeof ChannelLink> {}
 export const ChannelListResponse = Schema.Struct({ channels: Schema.Array(ChannelLink) })
 export interface ChannelListResponse extends Schema.Schema.Type<typeof ChannelListResponse> {}
 
-/** The Person's own number on the channel. It is decoded as an address before anything is sent. */
-export const ConnectChannelRequest = Schema.Struct({ channel: Channel, address: Schema.String })
+/**
+ * The Person's own number on the channel. It is decoded as an address before anything is sent.
+ * A channel that learns the account from the code (Discord) takes no address; a phone channel
+ * without one is refused with `ChannelAddressInvalid`.
+ */
+export const ConnectChannelRequest = Schema.Struct({
+  channel: Channel,
+  address: Schema.optionalKey(Schema.String),
+})
 export interface ConnectChannelRequest extends Schema.Schema.Type<typeof ConnectChannelRequest> {}
 
 export const ChannelLinkResponse = Schema.Struct({ link: ChannelLink })

@@ -36,6 +36,7 @@ Read the touched feature before launching. A verdict belongs to the recorded com
 - [Learning](learning.md).
 - [The Person's name](name.md).
 - [Teaching a task](procedure.md).
+- [Text Vivid on Discord](texting-discord.md).
 - [Desktop app](desktop.md).
 - [Notifications while away](push.md).
 
