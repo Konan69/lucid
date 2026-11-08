@@ -120,15 +120,39 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
     })
   })
 
-  /** The conditional Run ending and every notice debt belong to one SQL commit. */
+  /** Owes the notice a settled Run earns; a completion whose origin is quiet (`automaticallyNotifies`) earns none. */
+  const owe = Effect.fn('Conversation.owe')(function* (
+    run: Followed,
+    settlement: Settlement,
+    thread: StoredThread,
+  ) {
+    const quiet =
+      Settlement.guards.Completed(settlement) &&
+      !(yield* automaticallyNotifies(run.id).pipe(Effect.provideService(Database, database)))
+    if (!quiet) yield* announce(thread, run.person.id, settlement)
+  })
+
+  /**
+   * The conditional Run ending and its notice debt commit together, so a notice is owed exactly
+   * when the Run ends. Owing runs in its own savepoint: a notice that cannot be owed rolls back to
+   * it and is logged, and the Run still ends. Without the savepoint a failed owe rolled back the
+   * ending too, and the Run stayed Working through every restart that tried again.
+   */
   const end = Effect.fn('Conversation.end')(function* (run: Followed, settlement: Settlement) {
     const changed = yield* runs.end(run.id, endingOf(settlement))
     if (!changed) return false
     const thread = yield* findThread(run.threadId).pipe(Effect.provideService(Database, database))
-    const quiet =
-      Settlement.guards.Completed(settlement) &&
-      !(yield* automaticallyNotifies(run.id).pipe(Effect.provideService(Database, database)))
-    if (!quiet && Option.isSome(thread)) yield* announce(thread.value, run.person.id, settlement)
+    if (Option.isNone(thread)) return true
+    yield* database
+      .transaction(() => owe(run, settlement, thread.value))
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logError('A settled Run could not owe its notice', {
+            runId: run.id,
+            reason: error._tag,
+          }),
+        ),
+      )
     return true
   })
 
