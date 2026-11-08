@@ -101,8 +101,8 @@ across an owner move. A PG-adapter test or rehearsal does not prove those claims
   These kinds are persisted names. Preserve their meaning and stored content through the host change.
 - Product calls use the generated `/api/rpc` contract through `VividRpcClient`.
 - The default model is `opencode-go/glm-5.3-flash`, served by OpenCode Go
-  (`src/providers/opencode.ts`, key `OPENCODE_API_KEY`). The Experiential Labs gateway stays
-  declared (`src/providers/explabs.ts`, key `EXPLABS_API_KEY`). `VIVID_MODEL` may select another
+  (`src/providers/opencode.ts`, key `OPENCODE_API_KEY`). OpenRouter is also
+  declared (`src/providers/openrouter.ts`, key `OPENROUTER_API_KEY`). `VIVID_MODEL` may select another
   model those files declare. Do not add a retry, fallback or stream-wrapping layer around the
   provider: the request budget is the Harness's `settings.stream` (`providers/budget.ts`) and
   generation retries are Pi's.

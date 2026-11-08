@@ -6,7 +6,8 @@ import { asked, offered } from './offer.mjs'
 import { streaming, textOf } from './phoneui.mjs'
 import { control } from './socket.mjs'
 import { observe } from './observation.mjs'
-import { InputAnswer } from '@vivid/contracts'
+import { FeedItem, InputAnswer, OwedState } from '@vivid/contracts'
+import { OWED_PROMPT, trackedReceipt, trackedRecord } from './owed.mjs'
 
 const longReply =
   'Begin with amber-orchid. Write a detailed 3000-word guide to planning a community garden directly in this reply as plain paragraphs. Do not create a document or ask questions. End with orchid-complete.'
@@ -15,17 +16,20 @@ const saved = (page) => page.messages.map(({ id, role, parts }) => ({ id, role, 
 /** Type and send on Android, observe streaming, then prove both navigation and process recovery. */
 export async function send(state, id, ui) {
   await ui.send(longReply)
+  // Observe the stream immediately. Capturing the reduced-motion orb must not delay it.
+  const active = streaming(state, id, ui.directory)
+  active.catch(() => {})
   await ui.visible('Vivid: Thinking')
   await ui.capture('reduced-orb-first')
   await ui.capture('reduced-orb-second')
-  await streaming(state, id, ui.directory)
-  await ui.visible('amber-orchid')
-  await ui.capture('streaming')
+  await active
   const first = await ui.completed(id, 1, 'first')
   NodeAssert.match(first.reply, /amber-orchid/iu)
   // A reopened Thread shows its newest words, so the long reply's closing marker is on screen
   // and its opening marker is scrolled away. Durable history proves the whole reply survived.
   NodeAssert.match(first.reply, /orchid-complete/iu)
+  await ui.visible('orchid-complete')
+  await ui.capture('sent')
   await ui.create('Phone away ' + crypto.randomUUID().slice(0, 8))
   await ui.visit(id)
   await ui.visible('orchid-complete')
@@ -96,10 +100,12 @@ export async function question(state, id, ui) {
 
 /** Android Stop must abort the observed submission and retain its partial through reopen. */
 export async function stop(state, id, ui) {
-  await ui.send(longReply)
+  await ui.send(
+    'I need a thorough community garden handbook, at least 12000 words. Start with amber-orchid and write it here in plain paragraphs, covering land, soil, water, budgets, governance and the first five growing seasons. End with orchid-complete. Keep going until the handbook is complete.',
+  )
   const active = await streaming(state, id, ui.directory)
-  await ui.visible('amber-orchid')
-  await ui.capture('before-stop')
+  // The current interactive snapshot is the Stop receipt. Captures before pressing let a slow
+  // emulator consume the remaining reply; the public active.json already retains its partial.
   await ui.press('Stop Vivid')
   const ended = await settled(state, id, 1, 'Stopped', ui.directory)
   NodeAssert.equal(ended.runs[0].id, active.run.id)
@@ -176,32 +182,66 @@ export async function move(state, id, ui) {
   await ui.capture('after-move')
 }
 
-/** A real offscreen Run must become unread; the phone's drawer has titles and no preview text. */
+/** Feed lists the real completed Conversation under Handled, regardless of its read attention. */
 export async function feed(state, id, ui) {
-  await ui.send(longReply)
-  await streaming(state, id, ui.directory)
+  await ui.send('Reply with the two words amber orchid only.')
+  await ui.completed(id, 1, 'completed')
+  await ui.menu()
+  await ui.press('Feed')
+  const list = await observe(state, {
+    tag: 'WatchFeed',
+    payload: null,
+    accept: (value) =>
+      value.items.some((item) => item.thread === id && FeedItem.guards.Settled(item)),
+  })
+  await json(ui.directory + '/handled.json', list)
+  const detail = await rpc(state, 'GetThread', { id }, ui.directory, 'handled-thread')
+  await ui.visible('Handled')
+  await ui.visible(detail.thread.title)
+  await ui.capture('feed-handled')
+  await json(ui.directory + '/scope.json', {
+    claim: 'The completed Conversation appears under Handled on the phone Feed.',
+    unsupported: 'Read attention and drawer previews are separate from Feed settlement.',
+  })
+}
+
+/** The native waiting-on row resolves through its hold menu, then stays gone after relaunch. */
+export async function owed(state, id, ui) {
+  await ui.send(OWED_PROMPT)
+  const done = await ui.completed(id, 1, 'tracked')
+  await trackedReceipt(state, id, done.detail.runs[0].submissionId, ui.directory)
+  const record = await trackedRecord(state, id, ui.directory, 'listed')
+  await ui.menu()
+  await ui.press('Feed')
+  await ui.visible('Waiting on')
+  await ui.visible(record.what)
+  await ui.capture('waiting')
+  const snapshot = await ui.run(['snapshot', '-i', '--force-full'])
+  const rows = snapshot
+    .split('\n')
+    .filter((line) => line.includes('[button]') && line.includes(record.what))
+  NodeAssert.equal(rows.length, 1, 'Expected one native waiting-on row\n' + snapshot)
+  await ui.run(['longpress', rows[0].match(/@e\d+(?:~s\d+)?/u)[0]])
+  await ui.press('Received')
+  await observe(state, {
+    tag: 'WatchOwed',
+    payload: null,
+    accept: (value) =>
+      value.owed.some((item) => item.id === record.id && OwedState.guards.Resolved(item.state)),
+  })
+  await ui.run(['wait', 'absent', 'label=' + JSON.stringify(record.what), '60000'])
+  await ui.capture('received')
+  await ui.run(['close', 'work.vivid.mobile'])
+  await ui.run(['open', 'work.vivid.mobile', '--relaunch'])
   await ui.menu()
   await ui.press('Feed')
   await ui.visible('Message Vivid')
-  await ui.capture('feed-open')
-  await ui.completed(id, 1, 'offscreen')
-  const list = await observe(state, {
-    tag: 'WatchThreads',
-    payload: null,
-    accept: (value) =>
-      value.threads.some((thread) => thread.id === id && thread.attention === 'Unread'),
-  })
-  await json(ui.directory + '/unread.json', list)
-  const unread = list.threads.find((entry) => entry.id === id)
-  await ui.menu()
-  await ui.visible(unread.title)
-  await ui.capture('unread-list')
-  await json(ui.directory + '/scope.json', {
-    claim:
-      'Feed opened; an offscreen completed Thread became Unread and is visible in the phone list.',
-    unsupported:
-      'Last-message previews are deliberately absent in screen/home/Row.tsx. Bold text and the unread dot need screenshot inspection.',
-  })
+  await ui.run(['wait', 'absent', 'label=' + JSON.stringify(record.what), '60000'])
+  NodeAssert.equal(
+    (await trackedRecord(state, id, ui.directory, 'resolved')).state._tag,
+    'Resolved',
+  )
+  await ui.capture('received-reopened')
 }
 
 /** Push real PNG bytes into Android's media store, select through its system picker, then reopen. */

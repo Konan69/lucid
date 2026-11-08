@@ -14,7 +14,7 @@ const settings = ConfigProvider.layer(
 )
 
 /** Redirect only the transport to a real local server after recording the selected provider URL.
- * No ExpLabs credential exists in this fixture, so a hidden dependence fails Layer acquisition. */
+ * Only its OpenRouter credential exists in this fixture. */
 const provider = (
   requests: Queue.Queue<HttpClientRequest.HttpClientRequest>,
   response: Schema.Json,
@@ -48,7 +48,7 @@ const requestBody = (request: HttpClientRequest.HttpClientRequest) => {
 
 /** The same adapters used in production select one configured provider for every kind of model call. */
 describe('OpenRouter server adapters', () => {
-  it.effect('completes structured text without an ExpLabs credential', () =>
+  it.effect('completes structured text with the OpenRouter credential', () =>
     Effect.gen(function* () {
       const requests = yield* Queue.unbounded<HttpClientRequest.HttpClientRequest>()
       const acquired = yield* Layer.build(

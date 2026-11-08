@@ -45,8 +45,7 @@ in progress; this document authorizes no production deploy or live-data change.
 
 ## Models and rehearsal
 
-`src/providers/opencode.ts` declares OpenCode Go and `src/providers/explabs.ts` the Experiential
-Labs gateway. `VIVID_MODEL` selects a declared model; the current default is
+`src/providers/opencode.ts` declares OpenCode Go and `src/providers/openrouter.ts` OpenRouter. `VIVID_MODEL` selects a declared model; the current default is
 `opencode-go/glm-5.3-flash`. Vivid adds no model retry or fallback layer. Pi handles generation
 retries and continuation from its durable tasks.
 

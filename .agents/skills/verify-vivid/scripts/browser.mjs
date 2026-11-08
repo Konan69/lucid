@@ -12,11 +12,13 @@ import { watchBrowser } from './watchbrowser.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
 import { readBrowser } from './readbrowser.mjs'
 import { settingsBrowser } from './settingsbrowser.mjs'
-import { memoryBrowser } from './memorybrowser.mjs'
+import { learningBrowser, memoryBrowser } from './memorybrowser.mjs'
+import { nameBrowser } from './namebrowser.mjs'
 import { feedBrowser } from './feedbrowser.mjs'
 import { owedBrowser } from './owedbrowser.mjs'
 import { todosBrowser } from './todosbrowser.mjs'
 import { offerBrowser } from './offer.mjs'
+import { libraryBrowser } from './librarybrowser.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { createElement } = web('react')
@@ -49,8 +51,8 @@ function normaliseReply(text) {
 const missing = {
   code: 'No disposable Person Computer authority',
   handoff: 'No proof-owned Computer',
-  library: 'No browser ingestion recipe yet',
   discord: 'No browser recipe for the Discord Key form and Allow card yet',
+  github: 'No browser recipe for the GitHub Key form yet',
 }
 const recipes = {
   approve: { check: 'approve' },
@@ -60,13 +62,16 @@ const recipes = {
   stop: { check: 'stop' },
   reading: { check: 'reading' },
   settings: { check: 'settings' },
+  name: { check: 'name' },
   memory: { check: 'memory' },
+  learning: { check: 'learning' },
   devices: { check: 'devices' },
   watch: { check: 'watch' },
   feed: { check: 'feed' },
   owed: { check: 'owed' },
   todos: { check: 'todos' },
   replies: { check: 'replies' },
+  library: { check: 'library' },
   first: {
     phrase:
       'Write a detailed 1000-word guide to planning a community garden. Write directly in this reply as plain paragraphs. Do not create a document or ask questions.',
@@ -91,6 +96,16 @@ const recipes = {
   },
 }
 const specialRecipes = {
+  learning: {
+    drive: learningBrowser,
+    scope:
+      'Composer fact, native learner completion, one surviving memory entry and new-Thread recall through the web.',
+  },
+  library: {
+    drive: libraryBrowser,
+    scope:
+      'File-picker upload, worker readiness, original-file tab, search, real model citation and reload',
+  },
   approve: {
     drive: approve,
     scope: 'Real Verify Pulse approval card, Allow, one provider event and reload',
@@ -146,6 +161,11 @@ const specialRecipes = {
     drive: readBrowser,
     scope:
       'One web session, 52 Threads, repeat suppression, eviction after 50 remembered standings, unchanged standing after rename, real offscreen reply and one read on return. See scope.json for blocked subcases.',
+  },
+  name: {
+    drive: nameBrowser,
+    scope:
+      'Web Settings name form, the name after reload, and Vivid answering with it in a Thread. See scope.json for phone and shared-Thread subcases.',
   },
   settings: {
     drive: settingsBrowser,
@@ -286,18 +306,12 @@ async function rendered(run, kind) {
   }
 }
 
-/** Reload only after observing actual model text. A completed reply cannot prove reconnect. */
+/** Reload on admitted work. A provider may publish its text only in the terminal frame, so
+ * waiting for a text chunk first can consume the entire reply and miss a valid reconnect. */
 async function reloadStreaming(state, id, directory, run) {
   for await (const active of conversation(state, id, { directory, name: 'before-reload-stream' })) {
     assert.equal(active.settlements.length, 0, 'Reply settled before mid-stream reload')
-    const streaming = active.messages.some(
-      (message) =>
-        message.purpose === 'assistant' &&
-        message.parts.some(
-          (part) => part.type === 'text' && part.state === 'streaming' && part.text.trim(),
-        ),
-    )
-    if (!active.working || !streaming) continue
+    if (!active.working || !active.messages.some((message) => message.role === 'user')) continue
     await json(directory + '/midstream.json', active)
     await run(['reload'])
     return active
@@ -371,8 +385,9 @@ async function journey(state, feature) {
     evidence: directory,
   }
   const reason =
-    ['memory', 'question', 'approve', 'deny', 'changed', 'owed', 'todos'].includes(feature) &&
-    state.modelKind !== 'real'
+    ['memory', 'question', 'approve', 'deny', 'changed', 'owed', 'todos', 'name'].includes(
+      feature,
+    ) && state.modelKind !== 'real'
       ? feature + ' requires a real model.'
       : missing[feature]
   const stopBlocked = feature === 'stop' && state.modelKind !== 'real'
@@ -575,7 +590,7 @@ async function journey(state, feature) {
             : feature === 'reload'
               ? 'reopen existing Thread, reload saved history, send contextual follow-up and reload both turns'
               : feature === 'first'
-                ? 'real streamed reply, mid-stream reload, same entries, completed reply and reload'
+                ? 'reload during admitted model work, same entries, completed reply and reload'
                 : 'composer send, rendered content and reload',
       }
     }

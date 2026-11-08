@@ -25,7 +25,7 @@ import {
 } from '@vivid/contracts'
 import memoryMigration from './memory/migrations/20261028123228_memory/migration.sql'
 import searchMigration from './memory/migrations/20261028123228_memory-search/migration.sql'
-import { Config, ConfigProvider, Effect, Option, Schema } from 'effect'
+import { Config, ConfigProvider, Deferred, Effect, Exit, Option, Schema } from 'effect'
 import { skills } from './skills.ts'
 
 type CellPerson = Awaited<ReturnType<typeof openCell>>['person']
@@ -34,29 +34,49 @@ type CellPerson = Awaited<ReturnType<typeof openCell>>['person']
 const moving: ReadonlySet<TaskInspection['state']['kind']> = new Set(['running', 'ready'])
 
 /**
- * Keep the native event that admitted or woke work alive until that work stops committing.
- * celld admits a transaction only inside a live event (`op_gate_acquire`); a commit after the
- * event ended fails with "the cell event ended before it could acquire an input gate", and Pi
- * fails the whole Session on any commit error. Pi's `waitForIdle` deliberately stops at
- * background tasks, and learning is one: it is started after the reply settles, by the
- * settlement follower, so the reply's idle let its event end while the learner still streamed
- * `pi.live` partials. So this waits for idle, then the follower, then every task that can
- * still commit now, and repeats until none is left. Sleeping and waiting tasks are left to the
- * alarm, which arms from `wake()` and holds its own event the same way.
+ * Resolve once this Person has no work that can commit now: foreground idle, the settlement
+ * follower drained (it starts learning), and no task running or ready. Learning is a
+ * background task, which Pi's `waitForIdle` deliberately does not wait for. It waits for the
+ * next commit and looks again, never for a task to finish: a task that goes to sleep or waits
+ * on another stops committing without ending. Sleeping and waiting tasks are left to the
+ * alarm, which arms from `wake()` and wakes them through the carrier like any other work.
  */
 const settled = Effect.fn('Cell.settled')(function* (person: CellPerson) {
   const { harness } = person
   for (;;) {
     yield* Effect.tryPromise(() => harness.waitForIdle(BACKGROUND_CONTEXT))
     yield* person.quiet
-    const { tasks } = yield* Effect.tryPromise(() => harness.inspect(BACKGROUND_CONTEXT))
-    const live = tasks.filter((task) => moving.has(task.state.kind))
-    if (live.length === 0) return
-    yield* Effect.tryPromise(() =>
-      Promise.all(live.map((task) => harness.waitForTask(task.record.id, BACKGROUND_CONTEXT))),
+    // Listen before looking, so a commit between the look and the wait is not missed.
+    const committed = yield* Deferred.make<void>()
+    const stop = harness.subscribeCommits(() => {
+      Deferred.doneUnsafe(committed, Effect.void)
+    })
+    const live = yield* Effect.tryPromise(() => harness.inspect(BACKGROUND_CONTEXT)).pipe(
+      Effect.map(({ tasks }) => tasks.some((task) => moving.has(task.state.kind))),
+      Effect.tap((busy) => (busy ? Deferred.await(committed) : Effect.void)),
+      Effect.ensuring(Effect.sync(stop)),
     )
+    if (!live) return
   }
 })
+
+/** Host work the carrier runs inside its own event. It never rejects; it answers its caller. */
+type Job = () => Promise<void>
+
+/** A carrier job threw before answering: the router or the alarm's wake. celld answers 500. */
+class CarrierFailed extends Schema.TaggedError<CarrierFailed>()(
+  'CarrierFailed',
+  { cause: Schema.Defect() },
+  { title: 'Person cell could not answer' },
+) {}
+const failed = (cause: unknown) => Exit.fail(CarrierFailed.make({ cause }))
+
+/** The event that runs this Person's Pi work, and the work queued for it. */
+interface Carrier {
+  readonly jobs: Job[]
+  /** Wakes the carrier's loop when a job is queued or ends. */
+  wake: () => void
+}
 
 /** Only the native celld capabilities this host uses, matching celld 0.6.2 DurableObjectState. */
 interface CellState {
@@ -106,6 +126,7 @@ const personOption = Schema.decodeUnknownOption(PersonId)
 /** One celld cell owns all Threads created by one Person, their Harness, and their memory. */
 export class Person extends DurableObject<CellState, Environment> {
   readonly #state: CellState
+  #carrier: Option.Option<Carrier> = Option.none()
   readonly #ready: Promise<{
     readonly runtime: Awaited<ReturnType<typeof openCell>>
     readonly memory: Effect.Success<ReturnType<typeof openMemory>>
@@ -117,7 +138,10 @@ export class Person extends DurableObject<CellState, Environment> {
     this.#ready = state.blockConcurrencyWhile(() => this.#open(environment))
   }
 
-  /** Opening uses only local SQLite and configuration. Recovery starts after the alarm is armed. */
+  /**
+   * Opening uses only local SQLite and configuration. Recovery starts in the carrier, after the
+   * alarm is armed here, so recovered tasks run in an event that outlives them.
+   */
   // @effect-diagnostics-next-line asyncFunction:off -- celld invokes this native host adapter through its Promise API.
   async #open(environment: Environment) {
     const fallback = Date.now() + HEARTBEAT
@@ -185,8 +209,81 @@ export class Person extends DurableObject<CellState, Environment> {
       if (closed.reason === 'failed') this.#state.abort('Pi storage failed')
     })
     await this.#arm(runtime.person.harness.wake())
-    runtime.person.harness.resume()
     return { runtime, memory }
+  }
+
+  /**
+   * Queue `job` on the carrier event, making this event the carrier when none is live.
+   *
+   * celld admits a transaction only from a continuation whose event is still live
+   * (`op_gate_acquire`, `js.rs`); a later commit fails with "the cell event ended before it could
+   * acquire an input gate" and Pi fails the whole Session. A continuation belongs to the event
+   * that registered it, and Pi's scheduler starts every reserved task from whichever call began
+   * its drain loop (`scheduler.js` `#kick`, `#drain`), so any event can end up owning any task.
+   * Holding every request's own event until the Person was quiet kept those continuations alive,
+   * but one held event per request piled up while Threads and learning overlapped, and celld
+   * refused the cell (`cell_overload_refused in_flight=64`, verify at e66553a22). So all Pi work
+   * runs here instead, from one event that ends only when nothing can commit now: celld holds
+   * one event for the Person's work, plus the requests it is answering.
+   */
+  #carry(job: Job) {
+    const carrier = Option.getOrElse(this.#carrier, () => this.#launch())
+    carrier.jobs.push(job)
+    carrier.wake()
+  }
+
+  /** The carrier's life is this event's `waitUntil`; the loop ends it once the Person is quiet. */
+  #launch(): Carrier {
+    const carrier: Carrier = { jobs: [], wake: () => {} }
+    this.#carrier = Option.some(carrier)
+    this.#state.waitUntil(
+      this.#carryUntilQuiet(carrier).finally(() => {
+        // A failed Harness ends the carrier early; queued jobs still answer their callers.
+        if (Option.isSome(this.#carrier) && this.#carrier.value === carrier)
+          this.#carrier = Option.none()
+        for (const job of carrier.jobs.splice(0)) void job()
+      }),
+    )
+    return carrier
+  }
+
+  /**
+   * Start each queued job from this loop, so its continuations belong to the carrier event, and
+   * end when no job runs and `settled` resolves with nothing queued. The loop's own awaits are
+   * registered here, so it resumes in the carrier whichever event wakes it; an Effect fiber would
+   * resume on the waker's event instead. The carrier is released in the same turn as the final
+   * check, so a job queued after it starts the next carrier instead of joining one that is ending.
+   */
+  // @effect-diagnostics-next-line asyncFunction:off -- celld holds the carrier event through this Promise.
+  async #carryUntilQuiet(carrier: Carrier) {
+    const { runtime } = await this.#ready
+    const { person } = runtime
+    // Work a lost instance left, and due sleeps, start inside the carrier.
+    person.harness.resume()
+    let running = 0
+    for (;;) {
+      const woken = Deferred.makeUnsafe<boolean>()
+      carrier.wake = () => {
+        Deferred.doneUnsafe(woken, Effect.succeed(false))
+      }
+      for (let job = carrier.jobs.shift(); job !== undefined; job = carrier.jobs.shift()) {
+        running++
+        void job().then(() => {
+          running--
+          carrier.wake()
+        })
+      }
+      // A new job interrupts the wait for quiet; the loop starts it and waits again once it ends.
+      const quiet = await Effect.runPromise(
+        running > 0
+          ? Deferred.await(woken)
+          : Effect.raceFirst(settled(person).pipe(Effect.as(true)), Deferred.await(woken)),
+      )
+      if (quiet && carrier.jobs.length === 0) {
+        this.#carrier = Option.none()
+        return
+      }
+    }
   }
 
   /** Native RPC is a real ingress, so decode its reply before exposing it to entry tools. */
@@ -214,25 +311,73 @@ export class Person extends DurableObject<CellState, Environment> {
     else await this.#state.storage.setAlarm(at)
   }
 
-  /** Arm before the router can submit or abort work, as Pi's first-party DO example requires. */
+  /**
+   * Answer through the carrier. The request body is read here, because it is this event's I/O,
+   * and the router runs in the carrier.
+   */
   // @effect-diagnostics-next-line asyncFunction:off -- celld invokes this native host adapter through its Promise API.
   async fetch(request: Request) {
+    const body = request.method === 'GET' ? null : await request.arrayBuffer()
+    const copy = new Request(request.url, {
+      method: request.method,
+      headers: request.headers,
+      body,
+    })
+    const head = Deferred.makeUnsafe<Response, CarrierFailed>()
+    this.#carry(() => this.#answer(copy, head))
+    return Effect.runPromise(Deferred.await(head))
+  }
+
+  /**
+   * Route in the carrier and pump the body there too: pulling a stream runs its producer, and a
+   * settlement or state stream calls into Pi when it is pulled. A client that goes away cancels
+   * the pipe, which ends this answer; it is not a failure.
+   */
+  // @effect-diagnostics-next-line asyncFunction:off -- The carrier runs native host jobs as Promises.
+  async #answer(request: Request, head: Deferred.Deferred<Response, CarrierFailed>) {
+    const routed = await this.#route(request).then(Exit.succeed, failed)
+    if (Exit.isFailure(routed) || routed.value.body === null) {
+      Deferred.doneUnsafe(head, routed)
+      return
+    }
+    const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>()
+    Deferred.doneUnsafe(head, Effect.succeed(new Response(readable, routed.value)))
+    await routed.value.body.pipeTo(writable).then(
+      () => undefined,
+      () => undefined,
+    )
+  }
+
+  /** Arm before the router can submit or abort work, as Pi's first-party DO example requires. */
+  // @effect-diagnostics-next-line asyncFunction:off -- The carrier runs native host jobs as Promises.
+  async #route(request: Request) {
     const { runtime } = await this.#ready
     if (request.method === 'POST')
       await this.#arm({ ...runtime.person.harness.wake(), active: true })
     const response = await runtime.fetch(request)
-    this.#state.waitUntil(Effect.runPromise(settled(runtime.person)))
     await this.#arm(runtime.person.harness.wake())
     return response
   }
 
-  /** An alarm resumes due native tasks and work interrupted by a lost owner. */
+  /** An alarm resumes due native tasks and work interrupted by a lost owner, in the carrier. */
   // @effect-diagnostics-next-line asyncFunction:off -- celld invokes this native host adapter through its Promise API.
   async alarm() {
+    const done = Deferred.makeUnsafe<void, CarrierFailed>()
+    this.#carry(() =>
+      this.#wake()
+        .then(Exit.succeed, failed)
+        .then((exit) => {
+          Deferred.doneUnsafe(done, exit)
+        }),
+    )
+    await Effect.runPromise(Deferred.await(done))
+  }
+
+  // @effect-diagnostics-next-line asyncFunction:off -- The carrier runs native host jobs as Promises.
+  async #wake() {
     const { runtime } = await this.#ready
     await this.#arm({ ...runtime.person.harness.wake(), active: true })
     runtime.person.harness.resume()
-    this.#state.waitUntil(Effect.runPromise(settled(runtime.person)))
     await this.#arm(runtime.person.harness.wake())
   }
 

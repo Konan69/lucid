@@ -47,6 +47,10 @@
       "name": "Exa"
     },
     {
+      "id": "curated/github-com-mcp",
+      "name": "GitHub"
+    },
+    {
       "id": "curated/notion-com-mcp",
       "name": "Notion"
     },
@@ -14365,6 +14369,7 @@
     "mcp/calendly",
     "curated/teams-chats",
     "curated/linear-app-mcp",
+    "curated/github-com-mcp",
     "mcp/asana",
     "openapi/trello-com",
     "mcp/atlassian",
@@ -14585,6 +14590,19 @@
       "operator": null,
       "worksNow": true,
       "authScheme": "none",
+      "sourceKind": "mcp",
+      "classifier": "Reviewed"
+    },
+    {
+      "id": "curated/github-com-mcp",
+      "name": "GitHub",
+      "tier": "Core",
+      "kind": "developer",
+      "why": "What most people use every day.",
+      "auth": "PersonKey",
+      "operator": null,
+      "worksNow": true,
+      "authScheme": "pat",
       "sourceKind": "mcp",
       "classifier": "Reviewed"
     },
@@ -61064,5 +61082,13 @@
       "classifier": "Reviewed"
     }
   ],
-  "keyed": {}
+  "keyed": {
+    "curated/github-com-mcp": {
+      "address": "https://api.githubcopilot.com/mcp/",
+      "host": "api.githubcopilot.com",
+      "header": "Authorization",
+      "prefix": "Bearer ",
+      "instruction": "Use a fine-grained or classic GitHub personal access token with permissions for the tools you need."
+    }
+  }
 }

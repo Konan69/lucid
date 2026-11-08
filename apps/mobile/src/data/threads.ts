@@ -7,6 +7,7 @@ import { draft } from './drafts'
 import type { Delivery } from './delivery'
 import { firstKey, type Way } from './first'
 import { refusalOf, type LiveData } from './live'
+import * as App from './app'
 
 /**
  * Starting, speaking in and changing Threads.
@@ -30,6 +31,16 @@ export class Undelivered extends Schema.TaggedError<Undelivered>()(
 /** What a Person is told when a message left the phone and is not known to have arrived. */
 export const UNDELIVERED =
   'That message did not reach Vivid. Check your connection and send it again.'
+
+/** A card resumes Vivid as an internal signal, with one key shared by its retry. */
+export const carryOn = (data: LiveData, thread: ThreadId, body: string) => {
+  const key = randomUUID()
+  void App.start(
+    data.changing((client) =>
+      client.CarryOnThread({ threadId: thread, body, key }).pipe(Effect.retry({ times: 1 })),
+    ),
+  )
+}
 
 /**
  * Delivers one message into a Thread, described and not yet started. The server turns it into an

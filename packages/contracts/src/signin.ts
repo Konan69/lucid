@@ -252,9 +252,17 @@ const fieldOf = (pair: string): Option.Option<readonly [string, string]> => {
  * browser's does. A link that is not the return link, or carries no return, is nothing.
  */
 export const readPhoneSignInReturn = (link: string): Option.Option<SignInReturn> => {
-  const [place, query] = link.split('?')
-  if (place !== PHONE_SIGN_IN_RETURN || query === undefined) return Option.none()
-  const fields = query.split('&').map(fieldOf)
+  // iOS hands the sign-in sheet's link back as its URL's `absoluteString`, which may carry a
+  // trailing slash on the place or a fragment; neither changes which return it is.
+  const cut = link.search(/#/u)
+  const bare = cut === -1 ? link : link.slice(0, cut)
+  const mark = bare.indexOf('?')
+  if (mark === -1 || bare.slice(0, mark).replace(/\/$/u, '') !== PHONE_SIGN_IN_RETURN)
+    return Option.none()
+  const fields = bare
+    .slice(mark + 1)
+    .split('&')
+    .map(fieldOf)
   return Option.flatMap(Option.all(fields), (pairs) => readSignInReturn(Object.fromEntries(pairs)))
 }
 

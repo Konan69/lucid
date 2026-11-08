@@ -843,9 +843,10 @@ function Messages({
           them are exactly the same width at every window size. */}
         <ol
           ref={arriving}
-          className="mx-auto flex min-h-full w-full max-w-(--thread-max-w) shrink-0 flex-col gap-5 py-5 sm:py-6"
+          className="mx-auto flex min-h-full w-full max-w-(--thread-max-w) shrink-0 flex-col gap-5 pb-5 sm:pb-6"
         >
-          {/* Vivid at the top, part of the conversation: it scrolls away with it. */}
+          {/* Vivid at the top, part of the conversation: it scrolls away with it. No padding above
+            it: the bar already leaves room, and the owner asked twice for the face to sit higher. */}
           {hero}
           {/* Not while Vivid is working: the line at the foot is the truer thing to show. */}
           {!ready && empty && !working && (

@@ -12,7 +12,6 @@ import { publicAddress as publicIp } from '../code/address.ts'
 import { PageReader, publicPageLayer } from '../code/page.ts'
 import { ReadPageOutcome } from '@vivid/contracts'
 import { ConnectionAddressRefusal } from '@vivid/contracts'
-import { refusedHost } from './curation.ts'
 import { ExecutorSourceUnsupported, ExecutorImportQueryUnsupported } from './source.ts'
 
 /** Invalid addresses never carry their supplied value, which might contain a pasted credential. */
@@ -61,8 +60,6 @@ export function publicAddress(value: string) {
 }
 
 const invalid = () => ConnectionAddressInvalid.make({ reason: 'not a public web address' })
-/** A service Vivid refuses (`refused.ts`), whichever address or redirect led to it. */
-const refused = () => ConnectionAddressInvalid.make({ reason: 'Vivid does not offer this service' })
 const Spec = Schema.Struct({
   openapi: Schema.String,
   paths: Schema.Record(Schema.String, Schema.Json),
@@ -151,7 +148,6 @@ const readMcp = Effect.fn('Connections.readMcp')(function* (
   ).pipe(Effect.mapError(() => ConnectionAddressUnreachable.make({})))
   let address = initial
   for (let hop = 0; hop <= 5; hop++) {
-    if (refusedHost(address.hostname)) return yield* refused()
     const response = yield* client
       .execute(HttpClientRequest.setUrl(request, address.href))
       .pipe(Effect.mapError(() => ConnectionAddressUnreachable.make({})))
@@ -196,7 +192,6 @@ const readAddress = Effect.fn('Connections.readAddress')(function* (
   let address = publicAddress(value)
   for (let hop = 0; hop <= 5; hop++) {
     if (address === undefined) return yield* invalid()
-    if (refusedHost(address.hostname)) return yield* refused()
     const response = yield* client
       .get(address.href)
       .pipe(Effect.mapError(() => ConnectionAddressUnreachable.make({})))

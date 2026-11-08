@@ -27,7 +27,7 @@ import { RunStore } from './runs.ts'
 import { LiveLink } from '../rpc/link.ts'
 import { ThreadStore, type Shared } from './store.ts'
 import { openFirstThread } from './arrival.ts'
-import { sendToThread, watchConversation } from './relay.ts'
+import { carryOnThread, sendToThread, watchConversation } from './relay.ts'
 
 /** Product records beside the conversation. The gateway carries conversation state; these
  * records say who participates, whom each Run acts for, what is waiting and who is looking. */
@@ -157,6 +157,7 @@ export const threadHandlers = {
   }),
   WatchConversation: watchConversation,
   SendToThread: sendToThread,
+  CarryOnThread: carryOnThread,
   StopThread: Effect.fn('Rpc.StopThread')(function* ({ id }: { readonly id: ThreadId }) {
     const auth = yield* requirePerson()
     yield* requireThread(id, auth.person.id)

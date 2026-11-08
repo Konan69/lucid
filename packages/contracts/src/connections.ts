@@ -535,7 +535,6 @@ export const ConnectionAddressRefusal = Schema.Literals([
   'documentation page has no OpenAPI specification link',
   'not an MCP server or OpenAPI specification',
   'unsupported integration authorization or specification',
-  'Vivid does not offer this service',
 ])
 
 /** Existing authorization steps remain the single source of truth for client card payloads. */

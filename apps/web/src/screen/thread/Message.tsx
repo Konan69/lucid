@@ -27,6 +27,7 @@ import {
 import { Data, Option, Schema } from 'effect'
 import { AlarmClock, Check, Copy as CopyIcon } from 'lucide-react'
 import { memo, useState } from 'react'
+import { carryOn } from '../../data/threads'
 import { Display } from '../../parts/Display'
 import { PersonAvatar } from '../../ui/Person'
 import { cn } from '../../ui/cn'
@@ -473,13 +474,11 @@ function ToolCards({
   tools,
   context,
   live,
-  onContinue,
 }: {
   tools: ReadonlyArray<ToolPart>
   context: ThreadContext
   /** Whether this reply is the newest thing in the Thread and Vivid has finished it. */
   live: boolean
-  onContinue: (text: string) => void
 }) {
   return tools.map((tool) => {
     if (tool.state !== 'output-available') return null
@@ -496,7 +495,7 @@ function ToolCards({
             authorization={wanted.authorization}
             awaited={wanted.awaited}
             current={live}
-            onContinue={onContinue}
+            onCarryOn={(words) => carryOn(context.thread, words)}
           />
         )
       case 'approval': {
@@ -710,12 +709,7 @@ function FromVivid({
               />
             ) : (
               <div key={`work-${segment.from}`} className={making ? ARRIVING : 'contents'}>
-                <ToolCards
-                  tools={segment.tools}
-                  context={context}
-                  live={latest && !working}
-                  onContinue={onContinue}
-                />
+                <ToolCards tools={segment.tools} context={context} live={latest && !working} />
               </div>
             ),
           )}

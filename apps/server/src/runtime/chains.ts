@@ -42,7 +42,7 @@ const chainPerson = Effect.fn('ThreadProof.person')(function* () {
   const origin = yield* Config.URL('PUBLIC_URL')
   const model = yield* Config.NonEmptyString('VIVID_MODEL')
   expect(model.startsWith('rehearsal/'), 'A real model is required').toBe(false)
-  yield* Config.Redacted('EXPLABS_API_KEY')
+  yield* Config.Redacted('OPENROUTER_API_KEY')
   const database = yield* Database
   const email = `${NodeCrypto.randomUUID()}@example.test`
   yield* Effect.addFinalizer(() =>

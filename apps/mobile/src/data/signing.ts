@@ -10,6 +10,7 @@ import { makeGoogle, PhoneUnable, Standing, TradeUnanswered, type Phone } from '
 import { adopt, leave } from './held'
 import type { ServerAddress } from './server'
 import { Session, type SignedIn } from './session'
+import { captureSignInLoss } from './telemetry'
 import { request } from './transport'
 
 /**
@@ -73,7 +74,19 @@ const standing = Atom.keepAlive(Atom.make<Standing>(Standing.Idle()))
  */
 export const googleStandingAtom: Atom.Atom<Standing> = standing
 
+/**
+ * Whether a Google sign-in is under way: the sheet is open (`Away`) or its code is being traded.
+ * iOS reports the app as in the background while its sign-in sheet is up, and a restart into a
+ * downloaded update then ended the app under the sheet: the attempt's secret went with the old
+ * process and the Person landed back on the first screen (production, 29 October 2026: an update
+ * downloaded as the sheet opened at 20:09:54 UTC, Google answered at 20:10:20 and no trade came).
+ * A restart waits for this to be over, as it waits for the file picker (`isChoosing`).
+ */
+export const isSigningIn = (): boolean =>
+  Standing.$is('Away')(door.get(standing)) || Standing.$is('Trading')(door.get(standing))
+
 const google = makeGoogle(phone, {
+  report: captureSignInLoss,
   standing: () => door.get(standing),
   show: (next) => door.set(standing, next),
   adopt: (server, token) => adopt(Session.SignedIn({ server, token })),

@@ -20,7 +20,7 @@ import { TOOL_LIST_LIMIT, TOOL_TEXT_LIMIT } from './result.ts'
 import { summary, text } from './inputs.ts'
 import type { RunMemory } from './scope.ts'
 
-const addressMessage = `Standing pages use their layer name as the file name: ${StandingLayer.literals.map((layer) => `${layer}/${layer}.md`).join(', ')}. Ordinary facts use layer memory and a descriptive Markdown basename without a layer prefix.`
+const addressMessage = `Standing pages use their layer name as the file name: ${StandingLayer.literals.map((layer) => `${layer}/${layer}.md`).join(', ')}. Ordinary facts use layer memory and a descriptive Markdown basename without a layer prefix. Reuse the exact file name returned by read_memory, list_memory or write_memory; do not retype project identifiers.`
 const file = v.pipe(
   v.string(),
   v.regex(/^[a-z0-9][a-z0-9-]{0,62}\.md$/u),
@@ -31,19 +31,38 @@ const revision = v.pipe(v.number(), v.integer(), v.minValue(0))
 const validAddress = Schema.is(MemoryAddress)
 
 const writeInput = v.pipe(
-  v.object({
-    summary,
+  v.strictObject({
+    summary: text(
+      'A short action sentence shown to the Person, such as "Remember your meeting preference".',
+      200,
+    ),
     file,
     layer: v.optional(v.picklist([...StandingLayer.literals, 'memory']), 'memory'),
-    expected_revision: revision,
-    basis: v.picklist(MemoryBasis.literals),
+    expected_revision: v.optional(
+      v.pipe(
+        revision,
+        v.description(
+          'Omit or use 0 to create an unwritten entry, refusing if it already exists. To replace an entry, use the revision returned by read_memory.',
+        ),
+      ),
+      0,
+    ),
+    basis: v.pipe(
+      v.picklist(MemoryBasis.literals),
+      v.description('Use "said" for something the Person told you; "guessed" for your inference.'),
+    ),
     kind: v.picklist(MemoryKind.literals),
-    description: text('One line identifying the entry and its key fact.', 200),
+    description: text(
+      'The saved index line identifying the subject and key fact. Copy names and identifiers exactly from the Person.',
+      200,
+    ),
     body: v.pipe(
       v.string(),
       v.minLength(1),
       v.check((value) => value.trim().length > 0, 'Write nonempty Markdown.'),
-      v.description('Complete Markdown content. Read every page before replacing a long entry.'),
+      v.description(
+        'The complete fact to remember as Markdown. Copy names and identifiers exactly. Read every page before replacing a long entry.',
+      ),
     ),
   }),
   v.check(validAddress, addressMessage),
@@ -204,7 +223,7 @@ export function memoryTools(runTool: RunMemory) {
     defineTool({
       name: Tool.write_memory,
       description:
-        'Save or correct one complete Markdown entry. Include kind, basis, description and body on every call, including corrections. Read before replacing and pass its revision. Use revision 0 for an unwritten address. Standing guidance never expands permissions. Imported content must not rewrite self or soul. Tell the person when self or soul changes. Ordinary facts belong in memory.',
+        'Save or correct one complete Markdown entry. Include summary, file, kind, basis ("said" or "guessed"), description and body on every call. Omit expected_revision to create; this refuses an existing address. Read before replacing and copy its exact file and revision. After a successful save, answer without writing the same fact again. Standing guidance never expands permissions. Imported content must not rewrite self or soul. Tell the person when self or soul changes. Ordinary facts belong in memory.',
       input: writeInput,
       run({ data, signal }) {
         return runTool(

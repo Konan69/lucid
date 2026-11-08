@@ -1,6 +1,5 @@
 import * as NodeHttp from 'node:http'
 import { migrationLayer } from './connections/migration.ts'
-import { refusedLayer } from './connections/refused.ts'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as PersistedQueue from 'effect/persistence/PersistedQueue'
@@ -171,7 +170,6 @@ const serverProgram = Effect.gen(function* () {
   )
   const background = Layer.mergeAll(
     migrationLayer,
-    refusedLayer,
     watchRenewalLayer,
     channelWorkerLayer,
     approvalSweeperLayer,

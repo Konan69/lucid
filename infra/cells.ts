@@ -1,11 +1,10 @@
-import * as Cloudflare from 'alchemy/Cloudflare'
 import * as RemovalPolicy from 'alchemy/RemovalPolicy'
 import * as Output from 'alchemy/Output'
 import * as Railway from 'alchemy/Railway'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Redacted from 'effect/Redacted'
-import { requiredSecret, type InfrastructureEnvironment } from './env.ts'
+import type { InfrastructureEnvironment } from './env.ts'
 import type { DeploymentTarget } from './targets.ts'
 
 /** celld deploy reads Worker bindings from config vars, never from its process environment. */
@@ -16,11 +15,7 @@ export const cellVariables = (environment: InfrastructureEnvironment, serverUrl:
       VIVID_SERVER_URL: serverUrl,
       VIVID_MODEL: environment.model,
       OPENCODE_API_KEY: Redacted.value(environment.openCodeKey),
-      EXPLABS_API_KEY: Redacted.value(environment.modelGatewayKey),
-      ...Option.match(environment.openRouterKey, {
-        onNone: () => ({}),
-        onSome: (key) => ({ OPENROUTER_API_KEY: Redacted.value(key) }),
-      }),
+      OPENROUTER_API_KEY: Redacted.value(environment.openRouterKey),
       // Learning in the cell asks Jev first; absent means the cell's own default, which is off.
       ...Option.match(environment.decisions, {
         onNone: () => ({}),
@@ -38,22 +33,26 @@ const nodes = [
 /** Every node's private address: the server moves to the next one when a node cannot be reached. */
 export const cellsUrl = nodes.map(({ name }) => `http://${name}.railway.internal:5173`).join(',')
 
-/** Infrastructure owns storage and nodes. The server's pre-deploy step publishes the Worker. */
+/**
+ * Infrastructure owns storage and nodes. The server's pre-deploy step publishes the Worker.
+ * The bucket is Railway's own, in the services' region, so a deploy needs no second cloud account:
+ * celld only asks of it S3 conditional writes (`celld diagnose`, proved on 30 October 2026).
+ */
 export const railwayCells = Effect.fn('railwayCells')(function* (
   project: Railway.Project,
   target: DeploymentTarget,
 ) {
-  const accessKey = yield* requiredSecret('VIVID_CELLS_ACCESS_KEY_ID')
-  const secretKey = yield* requiredSecret('VIVID_CELLS_SECRET_ACCESS_KEY')
-  const bucket = yield* Cloudflare.R2.Bucket('CellsStorage', {
+  const bucket = yield* Railway.Bucket('CellsStorage', {
+    project,
     name: `${target.stackName}-cells`,
+    region: 'ams',
   }).pipe(RemovalPolicy.retain())
   const storage = {
-    CELLD_BUCKET: Output.map(bucket.bucketName, (name) => `s3://${name}`),
-    S3_ENDPOINT: Output.map(bucket.accountId, (id) => `https://${id}.r2.cloudflarestorage.com`),
-    AWS_REGION: 'auto',
-    AWS_ACCESS_KEY_ID: accessKey,
-    AWS_SECRET_ACCESS_KEY: secretKey,
+    CELLD_BUCKET: Output.map(bucket.s3BucketName, (name) => `s3://${name}`),
+    S3_ENDPOINT: bucket.endpoint,
+    AWS_REGION: bucket.s3Region,
+    AWS_ACCESS_KEY_ID: bucket.accessKeyId,
+    AWS_SECRET_ACCESS_KEY: bucket.secretAccessKey,
   }
   for (const node of nodes) {
     const service = yield* Railway.Service(node.id, {
@@ -62,13 +61,18 @@ export const railwayCells = Effect.fn('railwayCells')(function* (
       image: 'ghcr.io/denoland/celld:v0.6.2',
       port: 5173,
       publicDomain: false,
-      healthcheckPath: '/.well-known/celld/health',
+      // Railway refuses a dotted path, and the Worker's own liveness answers without opening a cell.
+      healthcheckPath: '/health',
       env: {
         ...storage,
         CELLD_ADDR: '[::]:5173',
         CELLD_INTERNAL_ADDR: '[::]:8081',
         CELLD_ADVERTISE: `${node.name}.railway.internal:8081`,
         CELLD_WATCH: '/var/lib/celld',
+        // Unset, an idle cell leaves memory only under pressure or at the residency cap
+        // (celld docs/README.md, "A resident cell"), so every opened Person stays loaded and
+        // billed. Five quiet minutes hibernate it; its next request wakes it on the same node.
+        CELLD_IDLE_EVICT_S: '300',
       },
     })
     yield* Railway.Volume(`${node.id}Data`, { project, service, mountPath: '/var/lib/celld' })

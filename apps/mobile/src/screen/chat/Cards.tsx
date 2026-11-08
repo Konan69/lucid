@@ -1,8 +1,13 @@
-import { ApprovalState, type Approval, type PersonId, type ThreadDetail } from '@vivid/contracts'
+import {
+  ApprovalState,
+  type Approval,
+  type PersonId,
+  type ThreadDetail,
+  type ThreadId,
+} from '@vivid/contracts'
 import { Option } from 'effect'
 import { changedLine } from '@vivid/state'
 import { View } from 'react-native'
-import type { Say } from '../../data/delivery'
 import { Card, cardOf, type ToolPart } from '../../data/message'
 import { Label } from '../../ui/ui'
 import { IntegrationCard } from '../integration/Card'
@@ -25,7 +30,7 @@ export function Cards({
   tools,
   detail,
   me,
-  onContinue,
+  thread,
   live,
 }: {
   tools: ReadonlyArray<ToolPart>
@@ -33,7 +38,7 @@ export function Cards({
   me: PersonId
   /** Only the newest reply is answerable, once Vivid has stopped working. */
   live: boolean
-  onContinue: Say
+  thread: ThreadId
 }) {
   return tools.map((tool) => {
     return Option.match(cardOf(tool), {
@@ -47,7 +52,7 @@ export function Cards({
             detail={detail}
             me={me}
             live={live}
-            onContinue={onContinue}
+            thread={thread}
           />
         </View>
       ),
@@ -69,7 +74,7 @@ function Drawn({
   detail,
   me,
   live,
-  onContinue,
+  thread,
 }: {
   /** The tool call this card stands for, which is what names its one "carry on". */
   call: string
@@ -78,7 +83,7 @@ function Drawn({
   me: PersonId
   /** Whether this is the newest reply and Vivid has stopped: only then is a card still asking. */
   live: boolean
-  onContinue: (text: string) => void
+  thread: ThreadId
 }) {
   return Card.$match(card, {
     Approval: ({ id }) =>
@@ -103,7 +108,7 @@ function Drawn({
         authorization={authorization}
         awaited={awaited}
         current={live}
-        onContinue={onContinue}
+        thread={thread}
       />
     ),
   })

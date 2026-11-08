@@ -154,6 +154,7 @@ import {
   LibraryFolderId,
   LibraryItemId,
   MembershipId,
+  PersonName,
   RuleId,
   SkillId,
   ThreadId,
@@ -235,6 +236,7 @@ import {
   ThreadDetail,
   ConversationTooLarge,
   SendToThreadRequest,
+  CarryOnRequest,
   SendToThreadResponse,
   UnsupportedAttachment,
   InvalidAttachment,
@@ -328,6 +330,15 @@ const Post = Rpc.make('Post', {
 // ── The signed-in Person and where they are working ────────────────────────
 const Me = Rpc.make('Me', { ...call, success: MeResponse })
 const WatchMe = Rpc.make('WatchMe', { ...live, success: MeResponse })
+/**
+ * What the signed-in Person is called, changed by them in Settings. Vivid reads the name through
+ * `Me` at the start of each response, so the next answer uses it. Only the Person can change it.
+ */
+const SetPersonName = Rpc.make('SetPersonName', {
+  ...call,
+  payload: { name: PersonName },
+  success: MeResponse,
+})
 /** Creates a Company on purpose and moves the session into it. */
 const CreateCompany = Rpc.make('CreateCompany', {
   ...call,
@@ -425,6 +436,11 @@ const SendToThread = Rpc.make('SendToThread', {
     TooManyAttachments,
     PicturesRequirePrivateThread,
   ]),
+})
+/** A connection card's continuation uses the same authenticated socket as ordinary sends. */
+const CarryOnThread = Rpc.make('CarryOnThread', {
+  ...call,
+  payload: CarryOnRequest,
 })
 const CreateThread = Rpc.make('CreateThread', {
   ...call,
@@ -1087,6 +1103,7 @@ const WatchSuggestions = Rpc.make('WatchSuggestions', { ...live, success: Sugges
 export const VividRpc = RpcGroup.make(
   Me,
   WatchMe,
+  SetPersonName,
   GetBuild,
   WatchBuild,
   CreateCompany,
@@ -1112,6 +1129,7 @@ export const VividRpc = RpcGroup.make(
   WatchThread,
   WatchConversation,
   SendToThread,
+  CarryOnThread,
   CreateThread,
   OpenFirstThread,
   PatchThread,

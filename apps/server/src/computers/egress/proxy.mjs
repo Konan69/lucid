@@ -296,15 +296,25 @@ const tunnels = NodeNet.createServer((socket) => {
   const tunnel = { socket, streams: new Map(), last: 0 }
   attached = tunnel
   say({ attached: true })
-  let waiting = NOTHING
+  // Each frame owns its backing buffer. TCP fragments copy only their new bytes, and queued
+  // payload views cannot retain a coalesced burst or an intermediate unfinished prefix.
+  let waiting = { kind: 'Header', bytes: Buffer.allocUnsafe(4), used: 0 }
   socket.on('data', (chunk) => {
-    waiting = waiting.length === 0 ? chunk : Buffer.concat([waiting, chunk])
-    while (waiting.length >= 4) {
-      const size = waiting.readUInt32BE(0)
-      if (size > FRAME_LIMIT) return detach(tunnel)
-      if (waiting.length < 4 + size) return undefined
-      received(tunnel, waiting.subarray(4, 4 + size))
-      waiting = waiting.subarray(4 + size)
+    let offset = 0
+    while (offset < chunk.length) {
+      const count = Math.min(waiting.bytes.length - waiting.used, chunk.length - offset)
+      chunk.copy(waiting.bytes, waiting.used, offset, offset + count)
+      waiting.used += count
+      offset += count
+      if (waiting.used < waiting.bytes.length) continue
+      if (waiting.kind === 'Header') {
+        const size = waiting.bytes.readUInt32BE(0)
+        if (size > FRAME_LIMIT) return detach(tunnel)
+        waiting = { kind: 'Frame', bytes: Buffer.allocUnsafeSlow(size), used: 0 }
+        if (size > 0) continue
+      }
+      received(tunnel, waiting.bytes)
+      waiting = { kind: 'Header', bytes: Buffer.allocUnsafe(4), used: 0 }
     }
     return undefined
   })

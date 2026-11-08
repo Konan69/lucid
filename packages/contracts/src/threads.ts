@@ -49,6 +49,14 @@ export const SendToThreadRequest = Schema.Struct({
 )
 export interface SendToThreadRequest extends Schema.Schema.Type<typeof SendToThreadRequest> {}
 
+/** A card resumes Vivid without presenting its nudge as words the Person said. */
+export const CarryOnRequest = Schema.Struct({
+  threadId: ThreadId,
+  body: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(2000)),
+  key: SendToThreadRequest.fields.key,
+})
+export interface CarryOnRequest extends Schema.Schema.Type<typeof CarryOnRequest> {}
+
 /** A conversation whose whole state is larger than the relay sends cannot open on any device. */
 export class ConversationTooLarge extends Schema.TaggedError<ConversationTooLarge>()(
   'ConversationTooLarge',
@@ -297,6 +305,8 @@ export const SignalType = Schema.Literals([
   'first-conversation',
   // An Integration event a Watch subscribed to (`watches.ts`), delivered into a background Thread.
   'event',
+  // A card telling Vivid to go on (`CarryOnRequest`); no client draws it.
+  'carry-on',
   // The Person finished a step Vivid handed them on its Computer (`inputs/handoff.ts`).
   'handoff',
 ] as const)

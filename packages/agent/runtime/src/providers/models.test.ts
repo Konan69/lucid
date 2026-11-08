@@ -51,7 +51,7 @@ function answer(response: NodeHttp.ServerResponse) {
 }
 
 describe('Harness model composition', () => {
-  it.effect("selects main's default and keeps both gateways' declared capabilities and costs", () =>
+  it.effect("selects main's default and keeps the gateways' declared capabilities and costs", () =>
     Effect.gen(function* () {
       const { models, model, modelName } = yield* configured({})
       expect(modelName).toBe('opencode-go/glm-5.3-flash')
@@ -61,8 +61,6 @@ describe('Harness model composition', () => {
       ).toEqual([
         'opencode-go/glm-5.3-flash',
         'opencode-go/glm-5.3',
-        'explabs/glm-5.3-flash-abliterated',
-        'explabs/glm-5.3-flash',
         'openrouter/z-ai/glm-5.3-flash',
         'openrouter/deepseek/deepseek-v4.1-flash-1017',
       ])
@@ -75,16 +73,7 @@ describe('Harness model composition', () => {
           maxTokens: candidate.id === 'deepseek/deepseek-v4.1-flash-1017' ? 393_216 : 131_072,
         })
       }
-      const flash = models.getModel('explabs', 'glm-5.3-flash')
-      if (flash === undefined) throw new Error('Missing Experiential Labs flash')
-      expect(flash.cost).toEqual({
-        input: 0.075,
-        output: 0.25,
-        cacheRead: 0.015,
-        cacheWrite: 0,
-      })
       expect(yield* Effect.promise(() => models.getAuth('opencode-go'))).toBeUndefined()
-      expect(yield* Effect.promise(() => models.getAuth('explabs'))).toBeUndefined()
     }),
   )
 
@@ -94,14 +83,14 @@ describe('Harness model composition', () => {
       Effect.gen(function* () {
         for (const name of [
           'opencode-go/glm-5.3',
-          'explabs/glm-5.3-flash',
-          'explabs/glm-5.3-flash-abliterated',
+          'openrouter/z-ai/glm-5.3-flash',
+          'openrouter/deepseek/deepseek-v4.1-flash-1017',
         ]) {
           const selected = yield* configured({ VIVID_MODEL: name })
           expect(`${selected.model.provider}/${selected.model.modelId}`).toBe(name)
           expect(selected.models.getProvider('rehearsal')).toBeUndefined()
         }
-        for (const name of ['', 'rehearsalish/script', 'rehearsal/missing', 'explabs/missing']) {
+        for (const name of ['', 'rehearsalish/script', 'rehearsal/missing', 'openrouter/missing']) {
           const result = yield* Effect.result(configured({ VIVID_MODEL: name }))
           expect(Result.isFailure(result)).toBe(true)
           if (Result.isFailure(result)) {
@@ -150,11 +139,11 @@ describe('Harness model composition', () => {
         answer(response)
       })
       const { models, model, settings } = yield* configured({
-        VIVID_MODEL: 'explabs/glm-5.3-flash',
-        EXPLABS_API_KEY: 'invented-explabs-test-key',
+        VIVID_MODEL: 'openrouter/z-ai/glm-5.3-flash',
+        OPENROUTER_API_KEY: 'invented-openrouter-test-key',
       })
       const gateway = models.getProvider(model.provider)
-      if (gateway === undefined) throw new Error('Missing Experiential Labs provider')
+      if (gateway === undefined) throw new Error('Missing OpenRouter provider')
       models.setProvider(local(gateway, baseUrl))
       const selected = models.getModel(model.provider, model.modelId)
       if (selected === undefined) throw new Error('Missing gateway model')
@@ -172,8 +161,8 @@ describe('Harness model composition', () => {
         expect(contentText(result.content)).toBe('ready')
       }
       expect(sent.map((headers) => headers.authorization)).toEqual([
-        'Bearer invented-explabs-test-key',
-        'Bearer invented-explabs-test-key',
+        'Bearer invented-openrouter-test-key',
+        'Bearer invented-openrouter-test-key',
       ])
       expect(sent.map((headers) => headers['x-opencode-session'])).toEqual([undefined, undefined])
     }).pipe(Effect.scoped),

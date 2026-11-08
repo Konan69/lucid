@@ -3,7 +3,9 @@ import type { AssistantMessage, ToolResultMessage, UserMessage } from '@earendil
 import type { EntryRecord, JsonObject } from '@earendil-works/pi-durable'
 import type { ConversationState } from '@vivid/contracts'
 import { Array as Arr, Option, Order, Predicate, Schema } from 'effect'
+import type * as Types from 'effect/Types'
 import { withoutCorrections } from '../correction.ts'
+import { CONTINUATION_ENTRY, continued } from '../continuity.ts'
 import { isDeliveryEntry, MessageData, SIGNAL_ENTRY, SignalData } from '../delivery.ts'
 import { RESPONSE_ENTRY, ResponseData, RUN_ENTRY, RunData } from '../response.ts'
 
@@ -71,7 +73,9 @@ const Block = Schema.Union([
  * gone the moment the next request begins (`generation.ts`, the `retry` and `request` phases). A block this reading does not know (a kind a later Pi adds) is left out, not failed on.
  */
 const Live = Schema.Struct({
-  run: Schema.optionalKey(Schema.Struct({ inputs: Schema.Array(Schema.Finite) })),
+  run: Schema.optionalKey(
+    Schema.Struct({ inputs: Schema.Array(Schema.Finite), taskId: Schema.optionalKey(Schema.Int) }),
+  ),
   generation: Schema.optionalKey(
     Schema.Struct({
       message: Schema.optionalKey(Schema.Struct({ content: Schema.Array(Schema.Unknown) })),
@@ -385,7 +389,7 @@ function runsOf(entries: ReadonlyArray<EntryRecord>, known: Known): Array<Run> {
     if (isInput(entry)) {
       const run = current === undefined || !known.joined.has(entry.id) ? begin(entry) : current
       run.inputs.push(entry)
-    } else if (entry.kind === 'pi.assistant' || entry.kind === 'pi.tool-result') {
+    } else if (['pi.assistant', 'pi.tool-result', CONTINUATION_ENTRY].includes(entry.kind)) {
       // Writing with no delivery before it in what is known (the transcript's start was not
       // read) is still a reply, and is drawn as a run that begins there.
       const run = current === undefined ? begin(entry) : current
@@ -445,21 +449,53 @@ function answer(parts: Array<Part>, result: ToolResultMessage) {
   )
 }
 
-/** Walk committed reply parts and the live tail in order. Pi commits failed attempts too,
- * so an unfinished message is visible only until another message or model request replaces it. */
+/** Keep an adopted prefix and its suffix in one text part. Clients separate distinct parts
+ * with paragraphs, which would split a word or Markdown construct cut off by recovery. */
+const continuedParts = () => {
+  const parts: Part[] = []
+  let prefix = Option.none<Types.Mutable<Extract<Part, { type: 'text' }>>>()
+  return {
+    parts,
+    append(next: ReadonlyArray<Part>, continuing: boolean) {
+      for (const part of next) {
+        if (part.type !== 'text') {
+          parts.push(part)
+          if (part.type === 'dynamic-tool') prefix = Option.none()
+        } else if (Option.isNone(prefix)) {
+          const text = { ...part }
+          parts.push(text)
+          if (continuing) prefix = Option.some(text)
+        } else {
+          prefix.value.text += part.text
+          prefix.value.state = part.state
+          if (!continuing) prefix = Option.none()
+        }
+      }
+    },
+  }
+}
+
+/** Walk committed reply parts and the live tail in order. Recovery keeps adopted words;
+ * other unfinished attempts are visible until another message or request replaces them. */
 function replyParts(written: ReadonlyArray<EntryRecord>, tail: Tail) {
+  const adopted = continued(written)
   const arriving = liveParts(tail.partial)
   const last = Arr.findLast(written, (entry) => Option.isSome(assistantOf(entry)))
-  const parts: Array<Part> = []
+  const joined = continuedParts()
   for (const entry of written) {
     const result = resultOf(entry)
-    if (Option.isSome(result)) answer(parts, result.value)
+    if (Option.isSome(result)) answer(joined.parts, result.value)
     const message = assistantOf(entry)
     if (Option.isNone(message)) continue
-    if (unfinished(message.value) && (!Option.contains(last, entry) || tail.replacing)) continue
-    parts.push(...saidParts(message.value))
+    const resuming =
+      message.value.stopReason === 'aborted' &&
+      (adopted.has(entry.id) || (Option.isSome(tail.task) && entry.byTaskId === tail.task.value))
+    if (!resuming && unfinished(message.value) && (!Option.contains(last, entry) || tail.replacing))
+      continue
+    joined.append(saidParts(message.value), resuming)
   }
-  return [...parts, ...arriving]
+  joined.append(arriving, false)
+  return joined.parts
 }
 
 /**
@@ -588,11 +624,12 @@ interface Kept {
 interface Tail {
   readonly partial: ReadonlyArray<unknown>
   readonly replacing: boolean
+  readonly task: Option.Option<number>
 }
 
 /** No tail: one value, so a run that is not answering compares equal to itself. */
 const NO_PARTIAL: ReadonlyArray<unknown> = []
-const NO_TAIL: Tail = { partial: NO_PARTIAL, replacing: false }
+const NO_TAIL: Tail = { partial: NO_PARTIAL, replacing: false, task: Option.none() }
 
 const same = (left: ReadonlyArray<unknown>, right: ReadonlyArray<unknown>) =>
   left.length === right.length && left.every((value, index) => value === right[index])
@@ -625,11 +662,14 @@ export function projector() {
         : live.generation.message.content
     // A generation with no `retry` is a request in progress; with one, Pi is waiting to try again.
     const replacing = live.generation !== undefined && live.generation.retry === undefined
+    const task = Option.flatMap(Option.fromUndefinedOr(live.run), (run) =>
+      Option.fromUndefinedOr(run.taskId),
+    )
     const seen = new Set<number>()
     const messages = runs.flatMap((run) => {
       // Only the run that is answering has a tail: a partial left in `pi.live` is its own.
       const answering = Option.isSome(running) && run === lastRun
-      const tail = answering ? { partial, replacing } : NO_TAIL
+      const tail = answering ? { partial, replacing, task } : NO_TAIL
       const submissions = run.inputs.map((entry) => known.submissions.get(entry.id))
       const from = [
         ...run.inputs,
@@ -637,6 +677,7 @@ export function projector() {
         Option.getOrUndefined(Option.map(run.response, (response) => response.entry)),
         tail.partial,
         tail.replacing,
+        Option.getOrUndefined(tail.task),
         ...submissions,
         ...submissions.map((submission) =>
           submission === undefined ? undefined : known.outcomes.get(submission),

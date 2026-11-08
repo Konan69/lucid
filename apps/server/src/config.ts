@@ -129,35 +129,15 @@ export const optionalSetting = <A>(
     Effect.mapError(() => configError(name, expected)),
   )
 
-/** One explicit provider choice governs the server's title and decision requests.
- * This is independent of the runtime's VIVID_MODEL. Selecting OpenRouter never reads the ExpLabs key. */
-export const ModelProvider = Schema.Literals(['explabs', 'openrouter'])
-const modelProviders = {
-  explabs: {
-    url: 'https://api.experientiallabs.ai/v1',
-    keyVariable: 'EXPLABS_API_KEY',
-    titleModel: 'glm-5.3-flash',
-  },
-  openrouter: {
-    url: 'https://openrouter.ai/api/v1',
-    keyVariable: 'OPENROUTER_API_KEY',
-    titleModel: 'z-ai/glm-5.3-flash',
-  },
-} satisfies Record<
-  typeof ModelProvider.Type,
-  { readonly url: string; readonly keyVariable: string; readonly titleModel: string }
->
-
-/** Resolve defaults and the selected credential once in each owning Layer; invalid settings
- * fail launch through the server's redacted configuration error boundary. */
+/** Server title and decision calls use OpenRouter with one redacted credential. */
 export const serverModelGateway = Effect.gen(function* () {
-  const provider = Option.getOrElse(
-    yield* optionalSetting('VIVID_SERVER_MODEL_PROVIDER', ModelProvider, 'explabs or openrouter'),
-    () => 'openrouter' as const,
-  )
-  const selected = modelProviders[provider]
-  const key = yield* requiredSetting(selected.keyVariable, settingSecret, 'the model provider key')
-  return { provider, url: selected.url, titleModel: selected.titleModel, key }
+  const key = yield* requiredSetting('OPENROUTER_API_KEY', settingSecret, 'the model provider key')
+  return {
+    provider: 'openrouter' as const,
+    url: 'https://openrouter.ai/api/v1',
+    titleModel: 'z-ai/glm-5.3-flash',
+    key,
+  }
 }).pipe(Effect.withSpan('ServerConfig.modelGateway'))
 
 const loadDatabaseUrl = Effect.fn('ServerConfig.loadDatabaseUrl')(function* () {
