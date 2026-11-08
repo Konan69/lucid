@@ -34,6 +34,7 @@ import { createContext, useContext } from 'react'
 import { followThemeAtom, themeAtom } from './appearance'
 import { makeDecisions } from './approvals'
 import { makeHandoffCalls } from './handing'
+import { makeArtifacts } from './artifact'
 import { makeNaming } from './name'
 import { makeGoal } from './goal'
 import { makeNotifying } from './notifying'
@@ -253,6 +254,24 @@ function followLook(
 }
 
 /**
+ * A query that ended because it was not the Person's to see ("people", in their own space) was
+ * answered for where they were, and an ended query asks nothing more. The web asks them again
+ * when the Person moves (`whereabouts` in `apps/web/src/data/live.ts`); the phone did not, so
+ * People opened in a Company still said what it had said in the Person's own space. When they
+ * move, every ended query is asked again; nothing else would ask it.
+ */
+function askAgainWhenMoved(engine: ReturnType<typeof makeLive>, me: LiveQuery<MeResponse>) {
+  // Where the Person was working when a query was last asked.
+  let whereabouts = Option.none<string>()
+  engine.registry.subscribe(me.atom, (result) => {
+    const now = whereaboutsOf(result)
+    if (Equal.equals(now, whereabouts)) return
+    whereabouts = now
+    engine.reopen()
+  })
+}
+
+/**
  * Builds the live data of one session: one socket, opened as the signed-in Person, and a query
  * for every `Watch…` call the app draws from.
  */
@@ -342,20 +361,7 @@ function makeLiveData(session: SignedIn) {
     drafts: kept((client) => client.WatchDrafts()),
   }
 
-  // Where the Person was working when a query was last asked, for the subscription below.
-  let whereabouts = Option.none<string>()
-
-  // A query that ended because it was not the Person's to see ("people", in their own space) was
-  // answered for where they were, and an ended query asks nothing more. The web asks them again
-  // when the Person moves (`whereabouts` in `apps/web/src/data/live.ts`); the phone did not, so
-  // People opened in a Company still said what it had said in the Person's own space. When they
-  // move, every ended query is asked again; nothing else would ask it.
-  engine.registry.subscribe(live.me.atom, (result) => {
-    const now = whereaboutsOf(result)
-    if (Equal.equals(now, whereabouts)) return
-    whereabouts = now
-    engine.reopen()
-  })
+  askAgainWhenMoved(engine, live.me)
 
   const onDevice = keepOnDevice(engine, session, {
     me: live.me,
@@ -457,6 +463,8 @@ function makeLiveData(session: SignedIn) {
     handing: makeHandoffCalls(engine),
     ...makeForms(engine, live),
     helpers: makeHelpers(engine), // Stopping a helper and reading its result (`data/children.ts`).
+    /** What Vivid made: its live queries, the editor and the share sheet (`data/artifact.ts`). */
+    artifacts: makeArtifacts(engine, session),
     /**
      * What Vivid remembers about the Person, read from their cell. There is no watch on it: the
      * Memory screen begins a new reading each time it is opened (`screen/settings/Memory.tsx`).
