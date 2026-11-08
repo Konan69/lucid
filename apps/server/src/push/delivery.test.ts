@@ -444,6 +444,7 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
             workspace: owner.auth.workspace,
             by: 'person',
             threadId: Option.none(),
+            helper: Option.none(),
           })
           expect(listed.notifications.map(({ kind, opens }) => ({ kind, opens }))).toEqual([
             { kind: 'posted', opens: feed },

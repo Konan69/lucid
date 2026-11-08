@@ -13,6 +13,7 @@ import {
   NotFound,
   RunId,
   RuntimeChildAnswer,
+  SignalCue,
   type ChildReport,
   type ChildStopCause,
   type PersonId,
@@ -272,9 +273,10 @@ const makeChildRuns = Effect.fn('ChildRuns.make')(function* () {
       personId: person.value,
       speaker: DeliverySpeaker.cases.Vivid.make({}),
       message: DeliveryMessage.cases.Signal.make({
-        type: 'child-result',
-        body: resultBody(run, result.value),
-        attributes: { helper: String(run.number) },
+        cue: SignalCue.cases.ChildResult.make({
+          body: resultBody(run, result.value),
+          helper: run.number,
+        }),
       }),
       origin: StoredRunOrigin.cases.ChildResult.make({ childRunId: id }),
       idempotencyKey: `child-result:${id}`,

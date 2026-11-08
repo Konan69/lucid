@@ -113,6 +113,7 @@ const fixture = Effect.fn('Helpers.test.fixture')(function* () {
             turn: 2,
             origin: RunOrigin.cases.ChildResult.make({ person: summary }),
             state: RunState.cases.Working.make({}),
+            outcome: null,
             startedAt: 0,
           }),
         ),

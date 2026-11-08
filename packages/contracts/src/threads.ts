@@ -397,6 +397,8 @@ export type ApprovalOutcome = typeof ApprovalOutcome.Type
  * - `CarryOn`: a card telling Vivid to go on (`CarryOnRequest`); no client draws it.
  * - `Handoff`: the Person finished a step Vivid handed them on its Computer, named by its handoff.
  * - `Forget`: a Settings Forget press, with the instruction to plan and carry it out in `body`.
+ * - `ChildResult`: a helper this Thread's Vivid started ended; `helper` is its number in the
+ *   Thread, the only name the model has for one, and `body` says how it ended (`runs.ts`).
  */
 export const SignalCue = Schema.TaggedUnion({
   Message: { body: Schema.String },
@@ -413,6 +415,10 @@ export const SignalCue = Schema.TaggedUnion({
   CarryOn: { body: Schema.String },
   Handoff: { body: Schema.String, handoff: HandoffId },
   Forget: { body: Schema.String },
+  ChildResult: {
+    body: Schema.String,
+    helper: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0)),
+  },
 })
 export type SignalCue = typeof SignalCue.Type
 
@@ -426,6 +432,7 @@ export const signalTypes = {
   CarryOn: 'carry-on',
   Handoff: 'handoff',
   Forget: 'forget',
+  ChildResult: 'child-result',
 } as const satisfies Record<SignalCue['_tag'], SignalType>
 
 /**
