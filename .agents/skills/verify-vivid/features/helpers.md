@@ -30,7 +30,7 @@ Evidence: `helpers/`, `helperstop/`, `browser/helpers/` and `browser/helperstop/
 ## Blocked subcases
 
 - Executor and ComputerUse helpers: blocked: no proof-owned Computer. ReadOnly reads the Computer's files: blocked for the same reason. The Researcher kind is the one proved.
-- `wait_runs` and `cancel_run` by Vivid itself are not asked for here; the DB-backed suite `apps/server/src/runs/store.test.ts` covers a Vivid stop staying quiet.
+- `wait_runs`, `check_run` and `cancel_run` by Vivid itself are not asked for here; the DB-backed suite `apps/server/src/runs/store.test.ts` covers a Vivid stop staying quiet.
 - Thread Stop with helpers at work, restart and cell owner moves across spawn, report and stop are not driven.
 - Phone and desktop native rows need their own device runs.
 
