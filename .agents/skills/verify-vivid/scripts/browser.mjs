@@ -10,6 +10,7 @@ import { control } from './socket.mjs'
 import { rpc, settled, history, chat, conversation } from './wire.mjs'
 import { features, stop, png, program, ranProgram } from './drive.mjs'
 import { watchBrowser } from './watchbrowser.mjs'
+import { procedureBrowser } from './procedurebrowser.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
 import { readBrowser } from './readbrowser.mjs'
 import { settingsBrowser } from './settingsbrowser.mjs'
@@ -72,6 +73,7 @@ const recipes = {
   memory: { check: 'memory' },
   learning: { check: 'learning' },
   push: { check: 'push' },
+  procedure: { check: 'procedure' },
   devices: { check: 'devices' },
   watch: { check: 'watch' },
   feed: { check: 'feed' },
@@ -145,10 +147,15 @@ const specialRecipes = {
     scope:
       'Actual Stop control during a real streamed reply, Stopped Run and interrupted reply after reload',
   },
+  procedure: {
+    drive: procedureBrowser,
+    scope:
+      'A walkthrough with a correction taught through the composer, learned once without being done, and applied in a second Thread after reload; see scope.json.',
+  },
   watch: {
     drive: watchBrowser,
     scope:
-      'browser Connect, model Watch, real Executor delivery, the posted notice shown by the worker and routed to the Feed (the press itself is not driven), Feed reload and Disconnect',
+      'browser Connect, model Watch, real Executor delivery of an event past 4,000 characters, the posted notice shown by the worker and routed to the Feed (the press itself is not driven), Feed reload, the event shown whole in its Thread after reload, and Disconnect',
   },
   replies: {
     drive: offerBrowser,
@@ -431,7 +438,7 @@ async function journey(state, feature) {
     evidence: directory,
   }
   const reason =
-    ['memory', 'question', 'approve', 'deny', 'changed', 'outcome', 'owed', 'todos', 'name', 'code'].includes(
+    ['memory', 'procedure', 'question', 'approve', 'deny', 'changed', 'outcome', 'owed', 'todos', 'name', 'code'].includes(
       feature,
     ) && state.modelKind !== 'real'
       ? feature + ' requires a real model.'

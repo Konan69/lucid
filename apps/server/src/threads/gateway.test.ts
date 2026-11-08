@@ -6,6 +6,7 @@ import {
   PersonId,
   RunId,
   RuntimeSubmissionId,
+  SignalCue,
   ThreadId,
 } from '@vivid/contracts'
 import { and, eq } from 'drizzle-orm'
@@ -357,7 +358,7 @@ layer(foundation, { excludeTestServices: true })((it) => {
         const body = 'GitHub is connected. Carry on.'
         const sent = yield* send(test, body)
         expect(sent.message).toEqual(
-          DeliveryMessage.cases.Signal.make({ type: 'carry-on', body, attributes: {} }),
+          DeliveryMessage.cases.Signal.make({ cue: SignalCue.cases.CarryOn.make({ body }) }),
         )
       }).pipe(Effect.scoped),
     )

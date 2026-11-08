@@ -166,6 +166,18 @@ function boundDocument(value: Schema.Json): Schema.Json {
   }
 }
 
+/**
+ * A saved procedure is followed step by step, so its instructions are read whole: one cut at the
+ * ordinary 4,000-character limit drops the steps and rules at its end, which a Person taught it
+ * last. Saving caps them at 20,000 characters (`SaveSkillRequest`), which bounds this read;
+ * every other field keeps the ordinary limits.
+ */
+function boundProcedure(value: Schema.Json): Schema.Json {
+  if (!isObject(value) || !Predicate.isString(value.instructions)) return boundOutput(value)
+  const { instructions, ...fields } = value
+  return { ...boundedRecord(fields).value, instructions }
+}
+
 /** Product failures are safe sentences; driver payloads and supplied credentials never escape. */
 function failure(message: string) {
   return Effect.succeed<ToolResult>({
@@ -219,6 +231,7 @@ function modelOutput(
 ): Schema.Json {
   if (tool === 'run_code') return output
   if (tool === 'read_document') return boundDocument(output)
+  if (tool === 'read_skill') return boundProcedure(output)
   return boundOutput(withComputer(output, tool, computer))
 }
 

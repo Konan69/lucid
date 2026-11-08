@@ -30,9 +30,8 @@ import {
   RuntimeUnavailable,
   type ConversationFrame,
   type DeliveryScope,
-  type MessageAttachment,
+  type RuntimeDelivery,
   type PersonId,
-  type RuntimeRunRequest,
   type ThreadOrigin,
 } from '@vivid/contracts'
 import { ServerConfig } from '../config.ts'
@@ -90,25 +89,10 @@ export interface ConversationRead {
   readonly suffix: string
 }
 
-/** Only the two server-built deliveries can cross this boundary; signal kinds stay contract-typed. */
-export type RuntimeMessage =
-  | {
-      readonly kind: 'user'
-      readonly body: string
-      readonly attachments?: ReadonlyArray<MessageAttachment>
-    }
-  | {
-      readonly kind: 'signal'
-      readonly body: string
-      readonly type: RuntimeRunRequest['type']
-      readonly tagName: RuntimeRunRequest['type']
-      readonly attributes: RuntimeRunRequest['attributes']
-    }
-
 /** One delivery for the runtime to accept, in the server's terms. */
 export interface AdmissionInput {
   readonly threadId: ThreadId
-  readonly message: RuntimeMessage
+  readonly message: RuntimeDelivery
   readonly origin: ThreadOrigin
   readonly clientKey?: string
   readonly idempotencyKey: string
@@ -121,27 +105,13 @@ const admissionBody = (input: AdmissionInput): RuntimeAdmissionBody => {
   const addressed = {
     threadId: input.threadId,
     idempotencyKey: input.idempotencyKey,
-    body: input.message.body,
+    delivery: input.message,
     turn: input.turn,
     scope: input.scope,
     initialData: input.origin,
   }
   // Only a client's send has a key of the client's; a delivery the server made sends none.
-  const shared =
-    input.clientKey === undefined ? addressed : { ...addressed, clientKey: input.clientKey }
-  if (input.message.kind === 'signal')
-    return {
-      ...shared,
-      type: input.message.type,
-      attachments: [],
-      attributes: input.message.attributes,
-    }
-  return {
-    ...shared,
-    type: 'message',
-    attachments: input.message.attachments === undefined ? [] : input.message.attachments,
-    attributes: {},
-  }
+  return input.clientKey === undefined ? addressed : { ...addressed, clientKey: input.clientKey }
 }
 
 /** Transport errors cannot prove whether an idempotent delivery reached durable storage. */

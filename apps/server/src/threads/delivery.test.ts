@@ -27,6 +27,9 @@ import {
   RuntimeSettlement,
   SendToThreadRequest,
   ThreadId,
+  RuntimeDelivery,
+  SignalCue,
+  WatchId,
 } from '@vivid/contracts'
 import { eq, inArray } from 'drizzle-orm'
 import {
@@ -483,9 +486,36 @@ const said = (threadId: ThreadId, personId: PersonId): Delivery => ({
 
 /** Each producer keeps its actual origin while the common delivery seam handles contention. */
 const signals = [
-  { type: 'event', origin: StoredRunOrigin.cases.Watch.make({ watchName: 'Review' }) },
-  { type: 'approval', origin: StoredRunOrigin.cases.Decision.make({}) },
-  { type: 'answer', origin: StoredRunOrigin.cases.Decision.make({}) },
+  {
+    type: 'event',
+    origin: StoredRunOrigin.cases.Watch.make({
+      watchId: WatchId.make('watch-test'),
+      watchName: 'Review',
+      eventId: 'event-1',
+      event: 'message.received',
+      occurredAt: '2026-10-29T09:00:00Z',
+    }),
+    cue: SignalCue.cases.Watch.make({
+      name: 'Review',
+      event: 'message.received',
+      occurredAt: '2026-10-29T09:00:00Z',
+      instruction: 'Review it.',
+      data: { said: 'event: independent server words' },
+    }),
+  },
+  {
+    type: 'approval',
+    origin: StoredRunOrigin.cases.Decision.make({}),
+    cue: SignalCue.cases.Approval.make({
+      body: 'approval: independent server words',
+      outcome: 'Succeeded',
+    }),
+  },
+  {
+    type: 'answer',
+    origin: StoredRunOrigin.cases.Decision.make({}),
+    cue: SignalCue.cases.Answer.make({ body: 'answer: independent server words' }),
+  },
 ] as const
 
 layer(
@@ -546,10 +576,16 @@ layer(
           const delivered = deliveries[0]
           if (delivered === undefined) expect.fail('Missing admitted message')
           // The Person's words reach the runtime as written: nothing is put in their mouth.
-          expect(delivered.message.body).not.toContain('unanswered')
-          expect(delivered.message.body).toBe(body.body)
-          expect(delivered.message.body).not.toContain(first.id)
-          expect(delivered.message.body).not.toContain(test.ben)
+          // A shared Thread delivers them as Ben's message; a private one as plain words.
+          const said = RuntimeDelivery.match(delivered.message, {
+            Words: ({ body }) => body,
+            Signal: ({ envelope }) =>
+              SignalCue.guards.Message(envelope.cue) ? envelope.cue.body : '',
+          })
+          expect(said).not.toContain('unanswered')
+          expect(said).toBe(body.body)
+          expect(said).not.toContain(first.id)
+          expect(said).not.toContain(test.ben)
           // A later question must survive a replay, even after rebuilding the admission service.
           const later = yield* askFor(test, test.ben, test.threadId)
           const before = yield* test.inputs.inThread(test.threadId)
@@ -592,10 +628,12 @@ layer(
           expect(yield* Ref.get(test.admitted)).toMatchObject([
             {
               message: {
-                kind: 'signal',
-                type: 'answer',
-                body: 'Question: Which day works?\nAnswer: Monday',
-                attributes: { from: 'Ben' },
+                envelope: {
+                  from: 'Ben',
+                  cue: SignalCue.cases.Answer.make({
+                    body: 'Question: Which day works?\nAnswer: Monday',
+                  }),
+                },
               },
             },
           ])
@@ -628,7 +666,7 @@ layer(
           expect(yield* Ref.get(test.admitted)).toMatchObject([
             {
               message: {
-                kind: 'user',
+                body: 'Use this instead.',
                 attachments: [png],
               },
             },
@@ -683,12 +721,22 @@ layer(
           },
           {
             ...said(test.threadId, test.ben),
-            origin: StoredRunOrigin.cases.Watch.make({ watchName: 'Review' }),
+            origin: StoredRunOrigin.cases.Watch.make({
+              watchId: WatchId.make('watch-test'),
+              watchName: 'Review',
+              eventId: 'event-1',
+              event: 'message.received',
+              occurredAt: '2026-10-29T09:00:00Z',
+            }),
             speaker: DeliverySpeaker.cases.Vivid.make({}),
             message: DeliveryMessage.cases.Signal.make({
-              type: 'event',
-              body: 'Review now.',
-              attributes: { name: 'Review' },
+              cue: SignalCue.cases.Watch.make({
+                name: 'Review',
+                event: 'message.received',
+                occurredAt: '2026-10-29T09:00:00Z',
+                instruction: 'Review now.',
+                data: {},
+              }),
             }),
           },
           {
@@ -696,10 +744,7 @@ layer(
             origin: StoredRunOrigin.cases.Decision.make({}),
             speaker: DeliverySpeaker.cases.Vivid.make({}),
             message: DeliveryMessage.cases.Signal.make({
-              // Continuations have no dedicated wake type in the current signal vocabulary.
-              type: 'message',
-              body: 'Continue working.',
-              attributes: {},
+              cue: SignalCue.cases.Answer.make({ body: 'Continue working.' }),
             }),
           },
         ]
@@ -1012,11 +1057,21 @@ layer(
         const wake = said(test.threadId, test.ada)
         const second = yield* test.conversation.admit({
           ...wake,
-          origin: StoredRunOrigin.cases.Watch.make({ watchName: 'Review' }),
+          origin: StoredRunOrigin.cases.Watch.make({
+            watchId: WatchId.make('watch-test'),
+            watchName: 'Review',
+            eventId: 'event-1',
+            event: 'message.received',
+            occurredAt: '2026-10-29T09:00:00Z',
+          }),
           message: DeliveryMessage.cases.Signal.make({
-            type: 'event',
-            body: 'Review now.',
-            attributes: { name: 'Review' },
+            cue: SignalCue.cases.Watch.make({
+              name: 'Review',
+              event: 'message.received',
+              occurredAt: '2026-10-29T09:00:00Z',
+              instruction: 'Review now.',
+              data: {},
+            }),
           }),
         })
         expect((yield* Ref.get(test.admitted)).map((delivery) => delivery.scope.acting)).toEqual([
@@ -1057,9 +1112,7 @@ layer(
           speaker: DeliverySpeaker.cases.Decider.make({ personId: test.ben }),
           idempotencyKey: 'decision-speaker',
           message: DeliveryMessage.cases.Signal.make({
-            type: 'answer',
-            body: 'Monday',
-            attributes: {},
+            cue: SignalCue.cases.Answer.make({ body: 'Monday' }),
           }),
           origin: StoredRunOrigin.cases.Decision.make({}),
         }
@@ -1069,10 +1122,7 @@ layer(
           {
             scope: { acting: test.ada },
             message: {
-              kind: 'signal',
-              type: 'answer',
-              body: 'Monday',
-              attributes: { from: 'Ben' },
+              envelope: { from: 'Ben', cue: SignalCue.cases.Answer.make({ body: 'Monday' }) },
             },
           },
         ])
@@ -1108,7 +1158,7 @@ layer(
       'Watch, approval and answer signals keep their words, speaker and replay key across Busy',
       () =>
         Effect.gen(function* () {
-          for (const { type, origin } of signals) {
+          for (const { type, origin, cue } of signals) {
             yield* Effect.gen(function* () {
               const test = yield* harness()
               const ada = yield* test.conversation.admit(said(test.threadId, test.ada))
@@ -1117,11 +1167,7 @@ layer(
                 threadId: test.threadId,
                 personId: test.ben,
                 idempotencyKey: `${type}-receipt`,
-                message: DeliveryMessage.cases.Signal.make({
-                  type,
-                  body: `${type}: independent server words`,
-                  attributes: {},
-                }),
+                message: DeliveryMessage.cases.Signal.make({ cue }),
                 origin,
               }
               const pending = yield* Effect.result(test.conversation.deliver(delivery)).pipe(
@@ -1142,17 +1188,14 @@ layer(
                 test.ben,
               ])
               expect((yield* Ref.get(test.requests)).map((input) => input.message)).toEqual([
-                expect.objectContaining({
-                  body: 'Please help',
-                  attributes: { from: 'Ada', turn: '1' },
+                RuntimeDelivery.cases.Signal.make({
+                  envelope: {
+                    from: 'Ada',
+                    turn: 1,
+                    cue: SignalCue.cases.Message.make({ body: 'Please help' }),
+                  },
                 }),
-                {
-                  kind: 'signal',
-                  type,
-                  tagName: type,
-                  body: `${type}: independent server words`,
-                  attributes: { from: 'Ben', turn: '2' },
-                },
+                RuntimeDelivery.cases.Signal.make({ envelope: { from: 'Ben', turn: 2, cue } }),
               ])
               const replayed = yield* test.conversation.deliver(delivery)
               expect(replayed.id).toBe(admitted.id)
@@ -1260,7 +1303,7 @@ layer(
           )
           expect(response.status).toBe(202)
           expect(yield* Ref.get(sent)).toMatchObject([
-            { body: 'Look', attributes: {}, attachments: [png] },
+            { delivery: { body: 'Look', attachments: [png] } },
           ])
         }).pipe(Effect.scoped),
     )
@@ -1277,7 +1320,7 @@ layer(
         expect(response.status).toBe(202)
         expect((yield* Ref.get(test.admitted))[0]).toMatchObject({
           clientKey: 'picture-key',
-          message: { kind: 'user', body: '', attachments: [png] },
+          message: { body: '', attachments: [png] },
         })
       }).pipe(Effect.scoped),
     )
@@ -1297,7 +1340,7 @@ layer(
         const messages = yield* Ref.get(test.admitted)
         expect(messages[0]).toMatchObject({
           message: {
-            kind: 'user',
+            body: 'Look',
             attachments: [largest, png, gif, png],
           },
         })
@@ -1343,7 +1386,7 @@ layer(
           const deliveries = yield* Ref.get(test.admitted)
           expect(deliveries).toHaveLength(1)
           expect(deliveries[0]).toMatchObject({
-            message: { kind: 'user', body: body.body, attachments: [png] },
+            message: { body: body.body, attachments: [png] },
             scope: { acting: test.ben },
           })
           expect(yield* (yield* RunStore).list(test.threadId)).toHaveLength(1)

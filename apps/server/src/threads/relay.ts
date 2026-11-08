@@ -4,6 +4,7 @@ import {
   MessageAttachment,
   InvalidRequest,
   NotFound,
+  SignalCue,
   type SendToThreadRequest,
   type CarryOnRequest,
   type ThreadId,
@@ -92,9 +93,7 @@ export const carryOnThread = Effect.fn('Rpc.CarryOnThread')(function* (request: 
     personId: auth.person.id,
     speaker: DeliverySpeaker.cases.Acting.make({}),
     message: DeliveryMessage.cases.Signal.make({
-      type: 'carry-on',
-      body: request.body,
-      attributes: {},
+      cue: SignalCue.cases.CarryOn.make({ body: request.body }),
     }),
     origin: StoredRunOrigin.cases.Message.make({
       fingerprint: messageFingerprint(request.body, []),

@@ -18,7 +18,6 @@ import {
   DisplayProgramRefused,
   NotFound,
   FeedCardId,
-  FeedPost,
   type RunDisplayCodeRequest,
   type DisplayCodeOutcome,
   type PersonId,
@@ -58,6 +57,7 @@ import {
   history,
   textPart,
   recordRuns,
+  testRunId,
   Observation,
   trustTestLayer,
 } from '../approvals/testing.ts'
@@ -66,7 +66,8 @@ import { FeedStore, feedStoreLayer } from '../feed/store.ts'
 import { feedHandlers } from '../feed/handlers.ts'
 import { cardIdOf } from '../feed/read.ts'
 import { silentPushLayer } from '../push/testing.ts'
-import { RunOrigin } from '@vivid/contracts'
+import { PostRequest, WatchId } from '@vivid/contracts'
+import { StoredRunOrigin } from '../threads/conversation.ts'
 import { CodeComputer } from './computer.ts'
 import { RuleStore } from '../rules/store.ts'
 import { CodeAuthority, CodeAuthorityRevoked, codeAuthorityLayer } from './authority.ts'
@@ -733,16 +734,19 @@ describe.skipIf(!testDatabaseConfigured)(
                   id: 'posting',
                   personId: test.personal.person.id,
                   working: true,
-                  origin: RunOrigin.cases.Watch.make({
-                    person: test.summary,
+                  origin: StoredRunOrigin.cases.Watch.make({
+                    watchId: WatchId.make('watch-records'),
                     watchName: 'Records',
+                    eventId: 'event-1',
+                    event: 'record.changed',
+                    occurredAt: '2026-10-29T09:00:00Z',
                   }),
                 },
               ])
               const code = 'return "A stored Feed program";'
               const display = `root = Text(data)\ndata = Query("run_code", {code: ${JSON.stringify(code)}, summary: "Read"})`
               yield* feedHandlers
-                .Post(FeedPost.cases.Drawn.make({ title: 'Records', display }))
+                .Post(PostRequest.cases.Drawn.make({ title: 'Records', display, sources: [] }))
                 .pipe(
                   Effect.provideService(
                     AuthContext,
@@ -781,7 +785,13 @@ describe.skipIf(!testDatabaseConfigured)(
               yield* (yield* FeedStore).post({
                 person: test.personal.person.id,
                 thread: test.personalId,
-                request: FeedPost.cases.Said.make({ title: 'New', words: 'Changed', actions: [] }),
+                postedBy: testRunId(test.personalId, 'posting'),
+                request: PostRequest.cases.Said.make({
+                  title: 'New',
+                  words: 'Changed',
+                  actions: [],
+                  sources: [],
+                }),
               })
               expect(yield* storedDisplay(test.personal, request).pipe(Effect.flip)).toHaveProperty(
                 '_tag',

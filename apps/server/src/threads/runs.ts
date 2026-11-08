@@ -38,7 +38,7 @@ import {
   type DatabaseInfrastructureError,
 } from '../database/client.ts'
 import { requireThread } from './access.ts'
-import { Admitted, StoredRunOrigin } from './conversation.ts'
+import { Admitted, StoredRunOrigin, StoredRunOriginColumn } from './conversation.ts'
 import { runs, threads } from './tables.ts'
 import { summaryFor } from './wire.ts'
 
@@ -219,7 +219,7 @@ type DatabaseService = Database['Service']
 
 const decodeReceipt = decodeStored(Admitted, 'Run admission receipt')
 const encodeReceipt = encodeStored(Admitted, 'Run admission receipt')
-const decodeOrigin = decodeStored(StoredRunOrigin, 'Run origin')
+const decodeOrigin = decodeStored(StoredRunOriginColumn, 'Run origin')
 
 /** Watch work reaches the Person through the Feed; completing a quiet check stays quiet. */
 export const automaticallyNotifies = Effect.fn('RunStore.automaticallyNotifies')(function* (
@@ -237,6 +237,7 @@ export const automaticallyNotifies = Effect.fn('RunStore.automaticallyNotifies')
     Decision: () => true,
     // A background wake for the Feed: the Person hears about it only when Vivid posts there.
     Watch: () => false,
+    WatchUnrecorded: () => false,
   })
 })
 const decodeState = decodeStored(
@@ -252,7 +253,17 @@ const originOf = (origin: StoredRunOrigin, person: PersonSummary) =>
     Message: (): RunOrigin => RunOrigin.cases.Message.make({ person }),
     FirstConversation: (): RunOrigin => RunOrigin.cases.FirstConversation.make({ person }),
     Decision: (): RunOrigin => RunOrigin.cases.Decision.make({ person }),
-    Watch: ({ watchName }): RunOrigin => RunOrigin.cases.Watch.make({ person, watchName }),
+    Watch: (watch): RunOrigin =>
+      RunOrigin.cases.Watch.make({
+        person,
+        watchId: watch.watchId,
+        watchName: watch.watchName,
+        eventId: watch.eventId,
+        event: watch.event,
+        occurredAt: watch.occurredAt,
+      }),
+    WatchUnrecorded: ({ watchName }): RunOrigin =>
+      RunOrigin.cases.WatchUnrecorded.make({ person, watchName }),
   })
 
 const ENDED = {
