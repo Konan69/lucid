@@ -141,16 +141,16 @@ export const ArtifactListResponse = Schema.Struct({ artifacts: Schema.Array(Arti
  * a file is its output's name, type and size. A row draws the type from this, so it never needs
  * the detail to say "PDF" or "Word".
  */
-export const ArtifactShape = Schema.TaggedUnion({
+export const ArtifactHolds = Schema.TaggedUnion({
   Document: {},
   File: { output: ArtifactFile },
 })
-export type ArtifactShape = typeof ArtifactShape.Type
+export type ArtifactHolds = typeof ArtifactHolds.Type
 
-/** One Artifact on the Person's shelf: the Artifact, its newest shape and the Thread it is from. */
+/** One Artifact on the Person's shelf: the Artifact, its newest holds and the Thread it is from. */
 export const ShelvedArtifact = Schema.Struct({
   artifact: Artifact,
-  shape: ArtifactShape,
+  holds: ArtifactHolds,
   /** The Thread's title as its list shows it, so a row can say where it was made. */
   threadTitle: Schema.String,
 })

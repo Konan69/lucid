@@ -25,7 +25,12 @@ First versions have no note; later versions retain optional notes and author sna
 
 Actual mutations publish the Thread topic after commit. No existing audit event describes a
 local document revision, so this domain adds no audit record. Removing a Thread cascades through
-its documents and every version. Person-facing Artifact surfaces are still unbuilt.
+its documents and every version.
+
+People see an Artifact where Vivid delivered it in a Thread, as a card that opens it with its
+versions (`WatchArtifact`), and in the Library, which lists every Artifact the Person can reach in
+the workspace (`WatchArtifactShelf`). A write announces the `artifacts` part of its Thread's owner
+and Company so only those shelves read again.
 
 Private ordinary messages and shared attributed signals use the same server-side attribution.
 Runtime reads preserve up to 48,000 characters of body. Longer reads include an explicit cut-body

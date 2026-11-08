@@ -8,7 +8,7 @@ import {
   ArtifactContent,
   ArtifactSource,
   ArtifactPreview,
-  ArtifactShape,
+  ArtifactHolds,
   Company,
   SessionId,
   Workspace,
@@ -393,21 +393,24 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
           expect(shelved).toHaveLength(1)
           expect(shelved[0]).toMatchObject({
             artifact: { id: written.artifact.id, title: 'Shelved plan', version: 1 },
-            shape: ArtifactShape.cases.Document.make({}),
+            holds: ArtifactHolds.cases.Document.make({}),
             threadTitle: 'Documents',
           })
           // A private Thread's Artifacts are its creator's, whatever the Company.
           expect(yield* store.shelf(inCompany(member))).toEqual([])
           // The creator's personal space is another workspace: the Company Thread is not there.
           expect(
-            yield* store.shelf({ ...inCompany(person), workspace: Workspace.cases.Personal.make({}) }),
+            yield* store.shelf({
+              ...inCompany(person),
+              workspace: Workspace.cases.Personal.make({}),
+            }),
           ).toEqual([])
           yield* database.run(
             database.update(threads).set({ audience: 'company' }).where(eq(threads.id, threadId)),
           )
-          expect(
-            (yield* store.shelf(inCompany(member))).map((entry) => entry.artifact.id),
-          ).toEqual([written.artifact.id])
+          expect((yield* store.shelf(inCompany(member))).map((entry) => entry.artifact.id)).toEqual(
+            [written.artifact.id],
+          )
         }),
     )
 

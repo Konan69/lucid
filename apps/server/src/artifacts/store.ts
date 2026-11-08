@@ -13,7 +13,7 @@ import {
   ArtifactDetail,
   ArtifactId,
   ArtifactNote,
-  ArtifactShape,
+  ArtifactHolds,
   ArtifactTitle,
   ArtifactVersion,
   DatabaseFailure,
@@ -115,6 +115,24 @@ export interface ArtifactStoreService {
 export class ArtifactStore extends Context.Service<ArtifactStore, ArtifactStoreService>()(
   'vivid/ArtifactStore',
 ) {}
+
+/** One shelf row: the Artifact, what its newest version holds, and the title of its Thread. */
+const shelved = Effect.fn('Artifacts.shelved')(function* (row: {
+  readonly artifact: typeof artifacts.$inferSelect
+  readonly threadTitle: string
+  readonly file: (typeof artifactVersions.$inferSelect)['file']
+}) {
+  const artifact = yield* decodeArtifact(row.artifact)
+  const { file } = yield* decodeShelfFile({ file: row.file })
+  return ShelvedArtifact.make({
+    artifact,
+    threadTitle: row.threadTitle,
+    holds:
+      file === null
+        ? ArtifactHolds.cases.Document.make({})
+        : ArtifactHolds.cases.File.make({ output: file.output }),
+  })
+})
 
 /** Nullable SQL notes become genuinely absent wire keys; first versions never have a change note. */
 function versionOf(row: typeof VersionRow.Type): ArtifactVersion {
@@ -503,20 +521,7 @@ export const artifactStoreLayer = Layer.effect(
           .where(and(inWorkspace(threads, actor), readableBy(actor.person.id)))
           .orderBy(desc(artifacts.updatedAt), desc(artifacts.id)),
       )
-      return yield* Effect.forEach(rows, (row) =>
-        Effect.gen(function* () {
-          const artifact = yield* decodeArtifact(row.artifact)
-          const { file } = yield* decodeShelfFile({ file: row.file })
-          return ShelvedArtifact.make({
-            artifact,
-            threadTitle: row.threadTitle,
-            shape:
-              file === null
-                ? ArtifactShape.cases.Document.make({})
-                : ArtifactShape.cases.File.make({ output: file.output }),
-          })
-        }),
-      )
+      return yield* Effect.forEach(rows, shelved)
     })
     return ArtifactStore.of({
       list: (personId, threadId) => provide(list(personId, threadId)),
