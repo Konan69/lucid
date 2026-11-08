@@ -11,6 +11,7 @@ import {
   WatchListResponse,
   WatchResponse,
   type CreateWatchRequest,
+  type ReviseWatchRequest,
   type FindAppEventsRequest,
   type StopWatchRequest,
 } from '@vivid/contracts'
@@ -67,6 +68,7 @@ const resolved = <A, R>(
   actor: Actor,
   effect: Effect.Effect<
     A,
+    | NotFound
     | ExecutorEventsFailure
     | WatchAccountUnknown
     | WatchAccountNotReady
@@ -136,6 +138,25 @@ export const watchHandlers = {
   CreateWatch: Effect.fn('Rpc.CreateWatch')(function* (request: CreateWatchRequest) {
     const actor = yield* requireActor()
     const watch = yield* resolved(actor, (yield* Watches).create(actor, request))
+    return WatchResponse.make({ watch })
+  }),
+  /** The named Watch stays owned by the current Actor throughout revision. */
+  ReviseWatch: Effect.fn('Rpc.ReviseWatch')(function* (request: ReviseWatchRequest) {
+    const actor = yield* requireActor()
+    const watch = yield* resolved(
+      actor,
+      (yield* Watches)
+        .revise(actor, request)
+        .pipe(
+          Effect.catchTag('WatchMissing', () =>
+            Effect.fail(
+              new NotFound({
+                message: 'No Watch has that name, or it changed while revising. Read it again.',
+              }),
+            ),
+          ),
+        ),
+    )
     return WatchResponse.make({ watch })
   }),
   ListWatches: Effect.fn('Rpc.ListWatches')(function* () {
