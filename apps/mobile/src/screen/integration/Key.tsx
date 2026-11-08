@@ -1,12 +1,11 @@
-import type { NativeStackScreenProps } from '@react-navigation/native-stack'
+import type { ConnectionId } from '@vivid/contracts'
+import type { connecting } from '@vivid/state'
 import { Effect, Option, Redacted, Result } from 'effect'
 import { useMemo, useState } from 'react'
 import { View } from 'react-native'
 import { commit } from '../../data/haptics'
 import { useLiveData } from '../../data/live'
-import { FittedSheet } from '../../ui/Sheet'
-import { Button, Field, Labelled, Notice } from '../../ui/ui'
-import type { Routes } from '../../workspace'
+import { Button, Field, Label, Labelled, Notice } from '../../ui/ui'
 import { start } from '../../data/app'
 
 /**
@@ -29,52 +28,53 @@ const afterTyping = (held: Typed, name: string, text: string): Typed => {
 }
 
 /**
- * Collects the key a service asks for, in a bottom sheet over whatever asked: the Integrations
- * page, or the Thread whose card was pressed. The key goes straight to the Integration
+ * An account waiting for its key, as the machine's `Keying` state holds it: the attempt it
+ * belongs to, the account, the service's name and the fields it asks for.
+ */
+export interface Keying {
+  readonly attempt: { readonly id: connecting.AttemptId }
+  readonly id: ConnectionId
+  readonly serviceName: string
+  readonly fields: ReadonlyArray<{ readonly name: string; readonly label: string }>
+}
+
+/**
+ * Collects the key a service asks for, inside the Integration's own card: the card in a Thread,
+ * or the account's card on the Integrations page. The key goes straight to the Integration
  * (`CompleteConnection`) and nowhere else: it is not put in a message, it is not shown to Vivid,
- * it is not logged, and it is held only in this screen's own state, which is gone when the sheet
+ * it is not logged, and it is held only in this form's own state, which is gone when the form
  * is. The inputs keep their own text (they are given no `value`), so nothing here ever reads a
- * key back to draw it. The route carries what the form asks for, never what is typed into it.
+ * key back to draw it.
  *
  * The inputs are the platform's secure ones: masked, never offered to the keyboard's suggestions
  * or to autofill, and left out of what Android may fill on the Person's behalf.
  *
- * It is a route on the stack (`Key`, `FITTED_SHEET`). It was a React Native `Modal` mounted from
- * outside the navigator, and a server that asked for a key while the name sheet was still leaving
- * had its form refused by UIKit, which presents one thing at a time; the stack orders its own
- * sheets.
+ * It was a bottom sheet over whatever asked (the `Key` route) until the approved mockup 4 of
+ * 26 October 2026 (issue #126): the key is typed where the Integration is. The card draws this
+ * while the machine stands in `Keying` for it (`keyingFor`, `data/connecting.ts`), and tells the
+ * machine how it ends (`keySheet`): the server answered its call with the account, or the Person
+ * pressed Cancel. A form scrolled out of a list is not an ending: the attempt keeps waiting and
+ * the form is drawn again when its card is.
  *
- * The machine opens it, on its way into `Keying` (`KeyForm` in `data/connecting.ts`), and is told
- * how it ends (`keySheet`), by the attempt it was opened for: the server answered its call with
- * the account, which is what the row or card that asked hears; or the sheet was closed without
- * that, by a swipe, the way back, or the shell going. Closing is heard as the sheet's own view
- * leaving, so every way of closing is covered and no effect runs; after an answer that leaving
- * says nothing.
- *
- * An answer closes the sheet whether or not the service took the key. After one completion the
+ * An answer ends the form whether or not the service took the key. After one completion the
  * account no longer waits for a key and the server takes no second one (`makeComplete`,
- * `apps/server/src/connections/executor.ts`), so keeping the sheet up to "check it and try
- * again" offered a retry the server cannot take; the row or card says the service did not accept
- * it. Only the call itself failing keeps the sheet up.
+ * `apps/server/src/connections/executor.ts`), so the card says the service did not accept it.
+ * Only the call itself failing keeps the form up.
  *
- * What this screen keeps is the form's own: what is typed, and its own call to the Integration.
- * That call's `busy` and `refused` are still set after it answers; the sheet is modal, so
- * nothing else can be pressed meanwhile.
+ * What this keeps is the form's own: what is typed, and its own call to the Integration. That
+ * call's `busy` and `refused` are still set after it answers.
  *
- * Adapted from the web's dialog (`apps/web/src/screen/integration/Key.tsx`).
+ * Adapted from the web's form (`apps/web/src/screen/integration/Key.tsx`).
  */
-export function Key({ route, navigation }: NativeStackScreenProps<Routes, 'Key'>) {
-  const { attempt, id, name, fields } = route.params
+export function KeyForm({ keying }: { keying: Keying }) {
+  const { attempt, id, serviceName, fields } = keying
   const data = useLiveData()
   const [typed, setTyped] = useState<Typed>(new Map())
   const [busy, setBusy] = useState(false)
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
   const complete = fields.every((field) => typed.has(field.name))
-  // This opening of the sheet, and how its one ending is said to the machine: `answered` below,
-  // or `closed` as its view leaves. It is made once for the life of the sheet, and so is the ref:
-  // React runs a ref's cleanup whenever the ref changes, and this cleanup ends the attempt.
-  const sheet = useMemo(() => data.connecting.keySheet(attempt), [data, attempt])
-  const closing = useMemo(() => () => sheet.closed, [sheet])
+  // This showing of the form, and how its one ending is said to the machine.
+  const ending = useMemo(() => data.connecting.keySheet(attempt.id), [data, attempt.id])
 
   function submit() {
     return start(
@@ -88,26 +88,21 @@ export function Key({ route, navigation }: NativeStackScreenProps<Routes, 'Key'>
           client.CompleteConnection({ id, fields: Object.fromEntries(typed) }),
         )
         setBusy(false)
-        // The call itself did not get through: nothing was completed, so the sheet stays up with
+        // The call itself did not get through: nothing was completed, so the form stays up with
         // what was typed still in it, to be sent again.
         if (Result.isFailure(result)) {
           setRefused(Option.some(NOT_ACCEPTED))
           return
         }
-        // Every answer that holds an account is this sheet's ending, whether or not the service
-        // took the key: the machine decides, and the row or card that asked says which. A sheet
-        // that was closed while the call was out has already ended, and there is nothing left to go
-        // back from.
-        if (sheet.answered(result.success.connection)) navigation.goBack()
+        // Every answer that holds an account is this form's ending, whether or not the service
+        // took the key: the machine decides, and the card says which.
+        ending.answered(result.success.connection)
       }),
     )
   }
 
   return (
-    <FittedSheet
-      title={`Connect ${name}`}
-      detail="This goes straight to the integration and is never shown to Vivid or kept in a thread."
-    >
+    <View style={{ gap: 10 }}>
       {fields.map((field, place) => (
         <Labelled key={field.name} label={field.label}>
           <Field
@@ -128,16 +123,19 @@ export function Key({ route, navigation }: NativeStackScreenProps<Routes, 'Key'>
         </Labelled>
       ))}
       {Option.isSome(refused) && <Notice message={refused.value} />}
-      {/* The wrapper adds nothing to the layout: its leaving is how the sheet closing is heard
-          (`closing`). An empty view of its own would take a row of the sheet's spacing. */}
-      <View ref={closing}>
+      <Label size="caption" tone="ink-3">
+        It goes straight to {serviceName}. Vivid never sees it and it is never kept in a thread.
+      </Label>
+      <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+        <Button kind="ghost" label="Cancel" disabled={busy} onPress={ending.closed} />
         <Button
+          morph
           kind="primary"
           label={busy ? 'One moment…' : 'Connect'}
           disabled={busy || !complete}
           onPress={() => void submit()}
         />
       </View>
-    </FittedSheet>
+    </View>
   )
 }

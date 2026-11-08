@@ -328,3 +328,14 @@ export const MemoryClosed = Schema.Struct({
   remaining: Schema.Array(ForgetRemaining),
 })
 export type MemoryClosed = typeof MemoryClosed.Type
+
+/**
+ * Everything one Person's memory holds, whole: every page and line of every layer, as Settings
+ * reads each one, with when it was read. It is the Person's download of what Vivid remembers
+ * about them (`docs/22-one-product.md`: a Person can "download everything held about them"), so nothing is summarised or cut.
+ */
+export const MemoryExport = Schema.Struct({
+  exportedAt: Schema.Finite,
+  entries: Schema.Array(SavedMemory),
+})
+export type MemoryExport = typeof MemoryExport.Type

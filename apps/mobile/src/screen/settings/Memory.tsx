@@ -1,9 +1,18 @@
 import { useAtomSet, useAtomValue } from '@effect/atom-react'
-import type { MemoryForgetId, MemoryLine, SavedMemory } from '@vivid/contracts'
+import { VividRpcClient } from '@vivid/client-runtime'
+import {
+  MemoryExport,
+  type MemoryForgetId,
+  type MemoryLine,
+  type SavedMemory,
+} from '@vivid/contracts'
 import { LiveState, makeWhen, remembering, thisReader } from '@vivid/state'
-import { Option } from 'effect'
+import { Effect, Option, Result, Schema } from 'effect'
+import { File, Paths } from 'expo-file-system'
+import * as Sharing from 'expo-sharing'
 import { useState, type ReactNode } from 'react'
-import { ScrollView, View } from 'react-native'
+import { Alert, ScrollView, View } from 'react-native'
+import { start } from '../../data/app'
 import { openWebLink } from '../../data/links'
 import { warn } from '../../data/haptics'
 import { useLive, useLiveData } from '../../data/live'
@@ -31,12 +40,14 @@ const SENTENCE_LIMIT = 200
 
 /** Whether Vivid was told or worked it out, in the web app's words (`settings/Memory.tsx`). */
 const BASIS = { said: 'You said', guessed: 'Vivid’s guess' } as const
+/** What a Dreamer note says in place of who said it, as on the web (`settings/Memory.tsx`). */
+const FOUND = 'Vivid looked into it'
 
 type Send = (event: remembering.Sent) => void
 
 /** The line under a remembered sentence: who it came from and when it last changed. */
-const provenance = (line: Pick<MemoryLine, 'basis' | 'updatedAt'>, now: number) =>
-  `${BASIS[line.basis]} · ${when(line.updatedAt, now)}`
+const provenance = (line: Pick<MemoryLine, 'layer' | 'basis' | 'updatedAt'>, now: number) =>
+  `${line.layer === 'dreams' ? FOUND : BASIS[line.basis]} · ${when(line.updatedAt, now)}`
 
 /**
  * What Vivid remembers about the Person, the phone's half of the web app's section of the same
@@ -60,6 +71,7 @@ export function Memory() {
         contentContainerStyle={[styles.page, styles.column]}
       >
         <Page reading={reading} send={send} now={opened} />
+        <Download />
       </ScrollView>
       {remembering.Remembering.guards.Shown(reading) && (
         <Opened entry={reading.entry} send={send} now={opened} />
@@ -121,6 +133,9 @@ function Shown({ shown, send, now }: { shown: ShownReading; send: Send; now: num
   const lines = remembering.Entry.guards.Forgetting(shown.entry)
     ? shown.lines.filter((line) => !remembering.isAt(line, remembering.openAddress(shown.entry)))
     : shown.lines
+  // What the Dreamer found is listed on its own, above what Vivid remembers.
+  const dreams = remembering.found(lines)
+  const others = remembering.kept(lines)
   return (
     <>
       <Pages title="About you" pages={page('person')} />
@@ -133,11 +148,24 @@ function Shown({ shown, send, now }: { shown: ShownReading; send: Send; now: num
         <Notice message="Vivid no longer remembers that, so it has left the list." />
       )}
       {remembering.Entry.guards.Handed(shown.entry) && <Forgotten id={shown.entry.forget} />}
+      {dreams.length > 0 && (
+        <Section title="What Vivid found">
+          {dreams.map((line) => (
+            <Row
+              key={`${line.layer}/${line.file}`}
+              wrap
+              title={line.description}
+              detail={provenance(line, now)}
+              onPress={() => send(remembering.events.Open({ line }))}
+            />
+          ))}
+        </Section>
+      )}
       <Section title="What Vivid remembers">
-        {lines.length === 0 && (
+        {others.length === 0 && (
           <Row wrap title="When you tell Vivid something that matters later, it shows up here." />
         )}
-        {lines.map((line) => (
+        {others.map((line) => (
           <Row
             key={`${line.layer}/${line.file}`}
             wrap
@@ -209,7 +237,7 @@ function Whole({ text }: { text: string }) {
  */
 function Opened({ entry, send, now }: { entry: remembering.Entry; send: Send; now: number }) {
   const close = () => send(remembering.events.Close())
-  const sheet = (line: Pick<MemoryLine, 'basis' | 'updatedAt'>, body: ReactNode) => (
+  const sheet = (line: Pick<MemoryLine, 'layer' | 'basis' | 'updatedAt'>, body: ReactNode) => (
     <Sheet title="Remembered" detail={provenance(line, now)} onClose={close}>
       {body}
     </Sheet>
@@ -376,5 +404,70 @@ function Correcting({
         onPress={() => send(remembering.events.Cancel())}
       />
     </>
+  )
+}
+
+/** The download could not be made or handed to the share sheet. */
+class Unshared extends Schema.TaggedError<Unshared>()(
+  'Unshared',
+  {},
+  { title: 'The memory file could not be shared' },
+) {}
+
+/**
+ * Everything the Person's memory holds, read whole on the server (`ExportMemory`) and written as
+ * the contract encodes it, so the file is the same JSON the server keeps. The web saves the same
+ * file (`apps/web/src/screen/settings/Memory.tsx`).
+ */
+const encodeExport = Schema.encodeEffect(MemoryExport)
+const exported = Effect.fn('Memory.exported')(function* () {
+  const client = yield* VividRpcClient
+  return yield* encodeExport(yield* client.ExportMemory())
+})
+
+/**
+ * Writes the file to the app's cache and hands it to the share sheet, which is how a phone saves
+ * a file to Files or sends it on, as an opened PDF is (`data/documents.ts`).
+ */
+const share = Effect.fn('Memory.share')(function* (file: typeof MemoryExport.Encoded) {
+  const day = new Date(file.exportedAt).toISOString().slice(0, 10)
+  const written = yield* Effect.try({
+    try: () => {
+      const target = new File(Paths.cache, `vivid-memory-${day}.json`)
+      if (target.exists) target.delete()
+      target.create()
+      target.write(JSON.stringify(file, null, 2))
+      return target
+    },
+    catch: () => new Unshared({}),
+  })
+  return yield* Effect.tryPromise({
+    try: () => Sharing.shareAsync(written.uri, { mimeType: 'application/json' }),
+    catch: () => new Unshared({}),
+  })
+})
+
+/** The way to take a copy of everything Vivid remembers about the Person. */
+function Download() {
+  const data = useLiveData()
+  const download = () =>
+    start(
+      Effect.gen(function* () {
+        const file = yield* data.running(exported())
+        const shared = Result.isSuccess(file)
+          ? yield* Effect.result(share(file.success))
+          : Result.fail(new Unshared({}))
+        if (Result.isFailure(shared))
+          Alert.alert('Your memory could not be downloaded', 'Try again.')
+      }),
+    )
+  return (
+    <Section title="Your copy">
+      <Row
+        title="Download everything Vivid remembers"
+        detail="Every page and line, whole, as one file you can keep."
+        onPress={() => void download()}
+      />
+    </Section>
   )
 }

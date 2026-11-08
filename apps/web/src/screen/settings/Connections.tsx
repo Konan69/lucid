@@ -1,6 +1,7 @@
 import { useAtom, useAtomRefresh, useAtomValue } from '@effect/atom-react'
 import {
   ChannelStanding,
+  ConnectionGrant,
   ConnectionOwnership,
   ConnectionState,
   ServiceAuthorization,
@@ -9,10 +10,13 @@ import {
   type AccountName,
   type ChannelLink,
   type Connection,
+  type ConnectionDataClass,
+  type ConnectionId,
   type MeResponse,
   type Service,
 } from '@vivid/contracts'
 import {
+  access,
   asksName,
   byService,
   channelWords,
@@ -25,7 +29,7 @@ import {
   type ServiceAccounts,
 } from '@vivid/state'
 import { Option } from 'effect'
-import { Building2, Pencil, Plus, Search, Unplug } from 'lucide-react'
+import { Building2, Check, Pencil, Plus, Search, ShieldCheck, Unplug, X } from 'lucide-react'
 import { useState, type ReactElement, type ReactNode } from 'react'
 import { act } from '../../data/app'
 import {
@@ -51,7 +55,7 @@ import { orSay } from '../../data/said'
 import { Button, buttonVariants, IconButton } from '../../ui/button'
 import { cn } from '../../ui/cn'
 import { Segmented } from '../../ui/Segmented'
-import { EnterKey } from '../integration/Key'
+import { EnterKey, type Keying } from '../integration/Key'
 import { Mark } from '../integration/Mark'
 import { NameAccount } from '../integration/Name'
 import { byPurpose } from '@vivid/state'
@@ -94,13 +98,22 @@ const saidOf = (standing: connecting.Standing) =>
       }),
   })
 
-/** How a Connection stands, as the colour of its dot and the words beside it. */
-const STANDING = (connection: Connection) =>
-  ConnectionState.match(connection.state, {
-    Ready: () => ({ dot: 'bg-success', words: 'Connected' }),
-    NeedsAuthorization: () => ({ dot: 'bg-approve', words: 'Sign-in not finished' }),
-    Failed: ({ reason }) => ({ dot: 'bg-danger', words: `Not working: ${reason}` }),
-  })
+/** The colour of an account's dot for each tone its standing can have. */
+const DOT = {
+  good: 'bg-success',
+  waiting: 'bg-approve',
+  bad: 'bg-danger',
+} as const satisfies Record<access.AccessTone, string>
+
+/**
+ * How a Connection stands, as the colour of its dot and the words beside it. The words come from
+ * its grant as well as its state (`access.accessStanding`): a sign-in that lapsed says it expired,
+ * where it used to say "Sign-in not finished" like one that was never finished.
+ */
+const STANDING = (connection: Connection) => {
+  const standing = access.accessStanding(connection)
+  return { dot: DOT[standing.tone], words: standing.words }
+}
 
 /**
  * What one account's row says: which account it is, and how it stands when that is not simply
@@ -111,7 +124,8 @@ const rowWords = (connection: Connection, alone: boolean) => {
   const standing = STANDING(connection).words
   const which = whichAccount(connection, alone)
   if (Option.isNone(which)) return standing
-  return ConnectionState.guards.Ready(connection.state)
+  return ConnectionState.guards.Ready(connection.state) &&
+    !ConnectionGrant.guards.Partial(connection.grant)
     ? which.value
     : `${which.value} · ${standing}`
 }
@@ -123,6 +137,12 @@ interface Acts {
   readonly onRename: (connection: Connection, name: Option.Option<AccountName>) => void
   readonly onResume: (connection: Connection) => void
   readonly onDisconnect: (connection: Connection) => void
+  /** Lets Vivid read one kind of data on the account, or keeps it out. */
+  readonly onPermit: (
+    connection: Connection,
+    dataClass: ConnectionDataClass,
+    allowed: boolean,
+  ) => void
 }
 
 /** Why a Person is asked for a name before one more account is added to this service. */
@@ -203,6 +223,21 @@ export function Connections({ me }: { me: MeResponse }) {
       ),
     )
 
+  /** Lets Vivid read one kind of data on an account, or keeps it out (`access.dataClassesOf`). */
+  const permit = (connection: Connection, dataClass: ConnectionDataClass, allowed: boolean) =>
+    void act(
+      orSay(
+        changing((client) =>
+          client.SetConnectionPermission({
+            id: connection.id,
+            dataClass,
+            decision: allowed ? 'Allow' : 'Never',
+          }),
+        ),
+        'That was not saved. Try again.',
+      ),
+    )
+
   const acts: Acts = {
     // How a connected service is entered is not on its accounts, so a sign-in is allowed for:
     // a tab the answer does not need is closed again.
@@ -210,12 +245,20 @@ export function Connections({ me }: { me: MeResponse }) {
     onRename: rename,
     onResume: resume,
     onDisconnect: disconnect,
+    onPermit: permit,
   }
+  // The key is typed inside the card of the account it is for; only an account the live list
+  // has not shown yet gets a card of its own, at the top, until it arrives.
+  const keyedHere = Option.filter(keying, (wanted) =>
+    connections.every((connection) => connection.id !== wanted.id),
+  )
 
   return (
     <div className="flex flex-col gap-6 pt-1">
       <Find query={query} onQuery={setQuery} />
+      {Option.isSome(keyedHere) && <KeyCard keying={keyedHere.value} />}
       <Connected
+        keying={keying}
         connections={connections.filter((item) => named(item.serviceName, query))}
         searching={query.trim().length > 0}
         company={Option.map(company, (workspace) => workspace.company.name)}
@@ -250,10 +293,6 @@ export function Connections({ me }: { me: MeResponse }) {
           ) : null
         }
       />
-      {/* The dialog is open exactly while an attempt made on this screen is waiting for a key. */}
-      {Option.isSome(keying) && (
-        <EnterKey keying={keying.value} onClose={dismiss} onAnswered={finish} />
-      )}
     </div>
   )
 }
@@ -315,12 +354,15 @@ const BEGIN_WITH = ['Gmail', 'Google Calendar', 'Slack', 'Notion', 'Google Drive
  * called by the service's name, and nothing on the screen said a second account could be added.
  */
 function Connected({
+  keying,
   connections,
   searching,
   company,
   admin,
   acts,
 }: {
+  /** The key this screen's attempt is waiting for, drawn in the card of the account it is for. */
+  keying: Option.Option<Keying>
   connections: ReadonlyArray<Connection>
   searching: boolean
   /** The Company's name, in a Company's workspace. */
@@ -342,6 +384,9 @@ function Connected({
           <ServiceCard
             key={group.service}
             place={place}
+            keying={Option.filter(keying, (wanted) =>
+              group.accounts.some((account) => account.id === wanted.id),
+            )}
             group={group}
             company={company}
             admin={admin}
@@ -399,23 +444,28 @@ function NothingConnected() {
  */
 function ServiceCard({
   place,
+  keying,
   group,
   company,
   admin,
   acts,
 }: {
   place: number
+  /** The key wanted for one of this service's accounts, typed here in the card. */
+  keying: Option.Option<Keying>
   group: ServiceAccounts
   company: Option.Option<string>
   admin: boolean
   acts: Acts
 }) {
   const attempt = useAttempt()
+  // Which account's access is open under its row; one at a time, so the card stays short.
+  const [opened, setOpened] = useState<Option.Option<ConnectionId>>(Option.none())
   // One attempt is made at a time: nothing is begun or picked up while the server is asked.
   const waiting = waitingOn(attempt)
   const adding = saidOf(standingFor(attempt, group.service))
   /** What one account's row is told: whose it is, where a press on it stands, who may act. */
-  const told = (connection: Connection) => {
+  const told = (connection: Connection): Told => {
     const own = ConnectionOwnership.guards.Personal(connection.ownership)
     return {
       connection,
@@ -425,6 +475,11 @@ function ServiceCard({
       waiting,
       // A Company's account is named, finished or removed by an admin, never a member.
       acts: own || admin ? Option.some(acts) : Option.none<Acts>(),
+      open: Option.contains(opened, connection.id),
+      onAccess: () =>
+        setOpened((now) =>
+          Option.contains(now, connection.id) ? Option.none() : Option.some(connection.id),
+        ),
     }
   }
   const [only, ...others] = group.accounts
@@ -457,18 +512,53 @@ function ServiceCard({
           {add}
         </div>
       </div>
+      <Below accounts={group.accounts} told={told} keying={keying} />
+    </li>
+  )
+}
+
+/**
+ * What a service's card holds under its first line: for one account, what it can reach when that
+ * is open; for several, a row for each with the same; and the key the service asked for, typed
+ * in the card of the account it is for.
+ */
+function Below({
+  accounts,
+  told,
+  keying,
+}: {
+  accounts: ServiceAccounts['accounts']
+  told: (connection: Connection) => Told
+  keying: Option.Option<Keying>
+}) {
+  const [only, ...others] = accounts
+  return (
+    <>
+      {others.length === 0 && only !== undefined && told(only).open && (
+        <div className="pr-3 pb-3 pl-16">
+          <AccessPanel {...told(only)} />
+        </div>
+      )}
       {others.length > 0 && (
         // The rows start under the service's name: the card's 12, the logo's 40 and its 12.
         <ul className="flex flex-col pr-3 pb-2 pl-16">
-          {group.accounts.map((connection) => (
-            <li key={connection.id} className="flex min-h-9 items-center gap-2">
-              <AccountWords {...told(connection)} alone={false} />
-              <RowActions {...told(connection)} />
+          {accounts.map((connection) => (
+            <li key={connection.id} className="flex flex-col gap-2">
+              <div className="flex min-h-9 items-center gap-2">
+                <AccountWords {...told(connection)} alone={false} />
+                <RowActions {...told(connection)} />
+              </div>
+              {told(connection).open && <AccessPanel {...told(connection)} />}
             </li>
           ))}
         </ul>
       )}
-    </li>
+      {Option.isSome(keying) && (
+        <div className="pr-3 pb-3 pl-16">
+          <EnterKey keying={keying.value} onClose={dismiss} onAnswered={finish} />
+        </div>
+      )}
+    </>
   )
 }
 
@@ -540,6 +630,9 @@ interface Told {
   readonly waiting: boolean
   /** Present for whoever may name, finish or remove this account. */
   readonly acts: Option.Option<Acts>
+  /** Whether what the account was given and may read is open under its row. */
+  readonly open: boolean
+  readonly onAccess: () => void
 }
 
 /**
@@ -572,11 +665,134 @@ function AccountWords({
   )
 }
 
-/** The account's own actions, for whoever may take them; nothing for anyone else. */
-function RowActions({ connection, others, waiting, acts }: Told) {
+/**
+ * The account's own actions, for whoever may take them; for anyone else, only the way to see what
+ * it was given, which every Person who can use the account may read.
+ */
+function RowActions({ connection, others, waiting, acts, open, onAccess }: Told) {
+  const toggle = <AccessToggle connection={connection} open={open} onAccess={onAccess} />
   return Option.isSome(acts) ? (
-    <AccountActions connection={connection} others={others} waiting={waiting} acts={acts.value} />
-  ) : null
+    <AccountActions
+      connection={connection}
+      others={others}
+      waiting={waiting}
+      acts={acts.value}
+      access={toggle}
+    />
+  ) : (
+    toggle
+  )
+}
+
+/** Opens and closes what one account was given and may read, under its row. */
+function AccessToggle({
+  connection,
+  open,
+  onAccess,
+}: {
+  connection: Connection
+  open: boolean
+  onAccess: () => void
+}) {
+  return (
+    <IconButton
+      size="icon-sm"
+      label={`${open ? 'Hide' : 'Show'} what ${connection.account} can reach`}
+      aria-expanded={open}
+      onClick={onAccess}
+    >
+      <ShieldCheck />
+    </IconButton>
+  )
+}
+
+/**
+ * What one account was given and what Vivid may read through it, under its row: the access the
+ * service granted, in words (never what was asked for at sign-in), what it did not grant, and a
+ * switch for each kind of data the Person can keep from Vivid on it. The switches are the same
+ * decision a Thread's card asks for when a call was refused (`AccessCard`).
+ */
+function AccessPanel({ connection, acts }: Told) {
+  const granted = access.grantedOf(connection.grant)
+  const classes = access.dataClassesOf(connection)
+  return (
+    <div className="flex flex-col gap-3 rounded-control bg-surface-2 p-3 text-label">
+      <div>
+        <p className="font-title text-ink">What it was given</p>
+        <p className="text-pretty text-ink-3">{granted.summary}</p>
+        {(granted.given.length > 0 || granted.missing.length > 0) && (
+          <ul className="mt-1.5 flex flex-col gap-1">
+            {granted.given.map((words) => (
+              <li key={`given-${words}`} className="flex items-start gap-1.5 text-ink-2">
+                <Check aria-hidden className="mt-0.5 size-3.5 shrink-0 text-success" />
+                <span className="min-w-0 wrap-anywhere">{words}</span>
+              </li>
+            ))}
+            {granted.missing.map((words) => (
+              <li key={`missing-${words}`} className="flex items-start gap-1.5 text-ink-2">
+                <X aria-hidden className="mt-0.5 size-3.5 shrink-0 text-attention" />
+                <span className="min-w-0 wrap-anywhere">
+                  {words} <span className="text-ink-3">· not given</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {access.canReconnect(connection) && (
+          <p className="mt-1.5 text-pretty text-ink-3">Reconnect to give it access again.</p>
+        )}
+      </div>
+      {classes.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <p className="font-title text-ink">What Vivid may read</p>
+          {classes.map((entry) => (
+            <div key={entry.dataClass} className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <div className="min-w-40 flex-1">
+                <p className="text-ink">{entry.name}</p>
+                <p className="text-pretty text-ink-3">{entry.detail}</p>
+              </div>
+              {Option.isSome(acts) ? (
+                <Segmented
+                  label={`Whether Vivid may read ${entry.name.toLocaleLowerCase()} on ${connection.account}`}
+                  value={entry.allowed ? 'allowed' : 'off'}
+                  onChange={(value) =>
+                    acts.value.onPermit(connection, entry.dataClass, value === 'allowed')
+                  }
+                  options={[
+                    { value: 'allowed', label: 'Allowed', name: 'Allowed' },
+                    { value: 'off', label: 'Off', name: 'Off' },
+                  ]}
+                />
+              ) : (
+                <span className="text-ink-2">{entry.allowed ? 'Allowed' : 'Off'}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * A key wanted for an account the live list has not shown yet: its own card at the top, with the
+ * service's mark, until the account's card arrives and the form moves into it.
+ */
+function KeyCard({ keying }: { keying: Keying }) {
+  return (
+    <section
+      aria-label={`Connect ${keying.serviceName}`}
+      className="flex flex-col gap-3 rounded-card bg-surface-3 p-3 edge"
+    >
+      <div className="flex items-center gap-3">
+        <Mark service={{ name: keying.serviceName }} size={40} />
+        <h4 className="truncate text-title font-title text-ink">Connect {keying.serviceName}</h4>
+      </div>
+      <div className="pl-13">
+        <EnterKey keying={keying} onClose={dismiss} onAnswered={finish} />
+      </div>
+    </section>
+  )
 }
 
 /** What whoever manages an account can do to it, at the trailing edge of its row. */
@@ -585,11 +801,14 @@ function AccountActions({
   others,
   waiting,
   acts,
+  access: accessToggle,
 }: {
   connection: Connection
   others: ReadonlyArray<Connection>
   waiting: boolean
   acts: Acts
+  /** The way to open what the account was given, beside its other actions. */
+  access: ReactNode
 }) {
   const naming = connection.name === null ? 'Name this account' : 'Rename this account'
   return (
@@ -608,7 +827,10 @@ function AccountActions({
         optional
         onName={(name) => acts.onRename(connection, name)}
       />
-      {ConnectionState.guards.Ready(connection.state) ? (
+      {accessToggle}
+      {/* Only an account waiting on a sign-in can be picked up; a failed one is removed and
+          connected again, which the server says when asked to resume it. */}
+      {!access.canReconnect(connection) ? (
         <Button size="sm" variant="ghost" onClick={() => acts.onDisconnect(connection)}>
           Disconnect
         </Button>

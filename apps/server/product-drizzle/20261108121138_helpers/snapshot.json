@@ -1,7 +1,7 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "6a8d785e-20bc-482a-9c2b-e63984f1e4bd",
+  "id": "5602325f-56f7-4acd-9cb9-87ba3d62d2b3",
   "prevIds": [
     "ac0b15a2-8331-4ebf-b2c7-5389522b7c40"
   ],
@@ -80,6 +80,12 @@
     {
       "isRlsEnabled": false,
       "name": "vivid_channel_replies",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "vivid_child_runs",
       "entityType": "tables",
       "schema": "public"
     },
@@ -1412,6 +1418,162 @@
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_channel_replies"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_child_runs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "parent_run_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_child_runs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "thread_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_child_runs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "parent_tool_call_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_child_runs"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "number",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_child_runs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "kind",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_child_runs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "brief",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_child_runs"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "budget",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_child_runs"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "requested_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_child_runs"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "state",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_child_runs"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "receipt",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_child_runs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "wake",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_child_runs"
     },
     {
       "type": "text",
@@ -5144,6 +5306,83 @@
       "nameExplicit": true,
       "columns": [
         {
+          "value": "parent_run_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "parent_tool_call_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "vivid_child_runs_call",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "vivid_child_runs"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "thread_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "number",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "vivid_child_runs_number",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "vivid_child_runs"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "wake",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "vivid_child_runs_wake",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "vivid_child_runs"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
           "value": "person_id",
           "isExpression": false,
           "asc": true,
@@ -5968,41 +6207,6 @@
           "asc": true,
           "nullsFirst": false,
           "opclass": null
-        },
-        {
-          "value": "(\"origin\"->>'watchId')",
-          "isExpression": true,
-          "asc": true,
-          "nullsFirst": false,
-          "opclass": null
-        },
-        {
-          "value": "started_at",
-          "isExpression": false,
-          "asc": false,
-          "nullsFirst": false,
-          "opclass": null
-        }
-      ],
-      "isUnique": false,
-      "where": "\"origin\"->>'_tag' = 'Watch'",
-      "with": "",
-      "method": "btree",
-      "concurrently": false,
-      "name": "vivid_runs_watch",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "vivid_runs"
-    },
-    {
-      "nameExplicit": true,
-      "columns": [
-        {
-          "value": "person_id",
-          "isExpression": false,
-          "asc": true,
-          "nullsFirst": false,
-          "opclass": null
         }
       ],
       "isUnique": false,
@@ -6546,6 +6750,40 @@
       "entityType": "fks",
       "schema": "public",
       "table": "vivid_channel_replies"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "parent_run_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "vivid_runs",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "name": "vivid_child_runs_parent_run_id_vivid_runs_id_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "vivid_child_runs"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "thread_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "vivid_conversations",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "name": "vivid_child_runs_thread_id_vivid_conversations_id_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "vivid_child_runs"
     },
     {
       "nameExplicit": false,
@@ -7674,6 +7912,16 @@
       "name": "vivid_channel_replies_pkey",
       "schema": "public",
       "table": "vivid_channel_replies",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "vivid_child_runs_pkey",
+      "schema": "public",
+      "table": "vivid_child_runs",
       "entityType": "pks"
     },
     {

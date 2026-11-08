@@ -110,3 +110,11 @@ export interface WatchResponse extends Schema.Schema.Type<typeof WatchResponse> 
 /** A Person's live Watches: Pending and Active. Stopped Watches are history and are not listed. */
 export const WatchListResponse = Schema.Struct({ watches: Schema.Array(Watch) })
 export interface WatchListResponse extends Schema.Schema.Type<typeof WatchListResponse> {}
+
+/** Replace a live Watch's complete condition and instruction without replacing its identity. */
+export const ReviseWatchRequest = Schema.Struct({
+  name: WatchName,
+  arguments: WatchArguments,
+  instruction: WatchInstruction,
+})
+export interface ReviseWatchRequest extends Schema.Schema.Type<typeof ReviseWatchRequest> {}

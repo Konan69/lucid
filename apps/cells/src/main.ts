@@ -471,7 +471,9 @@ export default {
     const authorization = request.headers.get('authorization')
     if (!isAuthorized(authorization === null ? '' : authorization, token))
       return Response.json({ error: 'Unauthorized' }, { status: 401 })
-    const match = /^\/persons\/([^/]+)\/(?:threads\/|history$|memory(?:$|\/))/u.exec(url.pathname)
+    const match = /^\/persons\/([^/]+)\/(?:threads\/|history$|search$|memory(?:$|\/))/u.exec(
+      url.pathname,
+    )
     const person = personOption(match === null ? undefined : match[1])
     if (Option.isNone(person)) return Response.json({ error: 'InvalidRequest' }, { status: 400 })
     return environment.PERSONS.getByName(person.value).fetch(request)

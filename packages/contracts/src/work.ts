@@ -1,7 +1,8 @@
 import { Option, Schema } from 'effect'
 import { ConnectionState } from './connections.js'
 import { ConnectionId, RunId, ThreadId } from './identity.js'
-import { RunFailure, RunOrigin, RunState } from './threads.js'
+import { RunFailure } from './runs.js'
+import { RunOrigin, RunState } from './threads.js'
 import { Watch, WatchId, WatchState } from './watches.js'
 
 /**

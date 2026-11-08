@@ -14,8 +14,9 @@ import {
   type InputRequest,
   type PersonId,
 } from '@vivid/contracts'
-import { Data, Option, Predicate, Schema } from 'effect'
+import { Data, Effect, Option, Predicate, Result, Schema } from 'effect'
 import {
+  access,
   answered,
   answering,
   Awaited,
@@ -41,7 +42,9 @@ import {
   useAttempt,
   waitingOn,
 } from '../../data/connecting'
-import { live, useLiveValue } from '../../data/live'
+import { act } from '../../data/app'
+import { changing, live, useLiveValue } from '../../data/live'
+import { orSay } from '../../data/said'
 import { openSettings } from '../../router'
 import { themeShown, useTheme } from '../../data/theme'
 import { Button } from '../../ui/button'
@@ -363,8 +366,8 @@ const wayIn = (authorization: Option.Option<ConnectionAuthorizationValue>, await
  * name with one line under it that says where it stands for the Person, and at most one thing to
  * press. The line is never the reason Vivid was given (the owner, 26 October 2026: that text is
  * written for the model, "why is it telling the user to call find tools?"). The press starts the
- * same attempt Settings makes, right here: a sign-in opens in its own tab, a key is typed into a
- * dialog that sends it straight to the Integration (never into the Thread, never to Vivid).
+ * same attempt Settings makes, right here: a sign-in opens in its own tab, a key is typed into the
+ * card itself and goes straight to the Integration (never into the Thread, never to Vivid).
  * Whether it is connected is read live, so the card settles by itself, and Vivid carries on
  * without being told. The phone's card is the same row (`apps/mobile/src/screen/integration/Card.tsx`).
  *
@@ -513,9 +516,12 @@ export function ConnectionCard({
               {urgent.value.words}
             </p>
           )}
-          {/* Open exactly while this card's own attempt is waiting for a key. */}
+          {/* Open exactly while this card's own attempt is waiting for a key, in the column the
+              card's words are read in. */}
           {Option.isSome(keying) && (
-            <EnterKey keying={keying.value} onClose={dismiss} onAnswered={finish} />
+            <div className="ps-12 pt-2 pb-1">
+              <EnterKey keying={keying.value} onClose={dismiss} onAnswered={finish} />
+            </div>
           )}
         </Card>
       </BorderBeam>
@@ -734,6 +740,214 @@ function ConnectButton({
       optional={false}
       onName={onConnect}
     />
+  )
+}
+
+/**
+ * A call through one of the Person's accounts that the account could not make, drawn where Vivid
+ * stopped, with the one thing that lets it go on (`access.Escalation`):
+ *
+ * - The Person keeps a kind of data from Vivid on this account (`Declined`): "Allow" lifts it for
+ *   the classes the call needed, the same switch Settings has, and the Thread carries on. "Keep
+ *   it out" carries the Thread on with the Person's no, so Vivid answers without it.
+ * - The account was not given what the call needs (`MoreAccess`): an account waiting on a sign-in
+ *   is picked up where it stopped ("Reconnect"); a working one is signed in to again from the
+ *   start ("Sign in again"), since the service only grants more on a new sign-in. Either way the
+ *   Thread carries on with the account that came back.
+ *
+ * It is the same one-row card as `ConnectionCard`, so a Thread has one way of asking for access.
+ */
+export function AccessCard({
+  id,
+  escalation,
+  current,
+  onCarryOn,
+}: {
+  /** The tool call this card stands for, which names its one "carry on". */
+  id: string
+  escalation: access.Escalation
+  /** Whether this is the newest thing in the Thread and Vivid has stopped to wait for it. */
+  current: boolean
+  onCarryOn: (message: string) => void
+}) {
+  const connections = useLiveValue(live.connections)
+  const list = Option.match(connections, { onNone: () => [], onSome: (value) => value.connections })
+  const connection = Option.fromUndefinedOr(
+    list.find((each) => each.account === escalation.account),
+  )
+  const mark = Option.match(connection, {
+    onNone: () => ({ name: escalation.account }),
+    onSome: (each) => ({ name: each.serviceName, mark: each.mark }),
+  })
+  return (
+    <Edged>
+      <Card size="sm" className="px-3">
+        <div className="flex items-center gap-3">
+          <Mark service={mark} size={36} />
+          <div className="min-w-0 flex-1">
+            <h3 className="truncate text-title font-strong text-ink">{escalation.account}</h3>
+            {access.Escalation.$match(escalation, {
+              Declined: (declined) => (
+                <DeclinedAction
+                  id={id}
+                  declined={declined}
+                  connection={connection}
+                  current={current}
+                  onCarryOn={onCarryOn}
+                />
+              ),
+              MoreAccess: () => (
+                <MoreAccessAction
+                  id={id}
+                  connection={connection}
+                  current={current}
+                  onCarryOn={onCarryOn}
+                />
+              ),
+            })}
+          </div>
+        </div>
+      </Card>
+    </Edged>
+  )
+}
+
+/** The line and the answers of a card for kinds of data the Person keeps from Vivid. */
+function DeclinedAction({
+  id,
+  declined,
+  connection,
+  current,
+  onCarryOn,
+}: {
+  id: string
+  declined: Extract<access.Escalation, { readonly _tag: 'Declined' }>
+  connection: Option.Option<Connection>
+  current: boolean
+  onCarryOn: (message: string) => void
+}) {
+  const named = access.classesSaid(declined.classes)
+  // Allowed now when every class the call needed is allowed on the account as it stands live.
+  const allowed = Option.exists(connection, (each) =>
+    access
+      .dataClassesOf(each)
+      .every((entry) => !declined.classes.includes(entry.dataClass) || entry.allowed),
+  )
+  const allow = (each: Connection) =>
+    void act(
+      orSay(
+        Effect.gen(function* () {
+          for (const dataClass of declined.classes) {
+            const result = yield* changing((client) =>
+              client.SetConnectionPermission({ id: each.id, dataClass, decision: 'Allow' }),
+            )
+            if (Result.isFailure(result)) return result
+          }
+          // Said for Vivid only once the server has taken every class, and only while the Thread
+          // still waits on this card: a card further up is a record, not a question.
+          if (current) {
+            carriedOn(id)
+            onCarryOn(`I allowed ${named} on ${declined.account}. Try again.`)
+          }
+          return Result.succeed(undefined)
+        }),
+        `${named} could not be allowed. Try again.`,
+      ),
+    )
+  return (
+    <>
+      <p role="status" className={cn('text-label', allowed ? 'text-success' : 'text-ink-2')}>
+        {allowed ? `${named} allowed` : `You keep ${named} from Vivid here`}
+      </p>
+      {!allowed && Option.isSome(connection) && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Button size="pill" onClick={() => allow(connection.value)}>
+            Allow {named}
+          </Button>
+          {current && (
+            <Button
+              size="pill"
+              variant="outline"
+              onClick={() => {
+                carriedOn(id)
+                onCarryOn(`Keep ${named} on ${declined.account} out of it.`)
+              }}
+            >
+              Keep them out
+            </Button>
+          )}
+        </div>
+      )}
+    </>
+  )
+}
+
+/** The line and the one press of a card for an account that was not given enough. */
+function MoreAccessAction({
+  id,
+  connection,
+  current,
+  onCarryOn,
+}: {
+  id: string
+  connection: Option.Option<Connection>
+  current: boolean
+  onCarryOn: (message: string) => void
+}) {
+  const attempt = useAttempt()
+  const standing = standingForCard(attempt, id)
+  const keying = keyingFor(attempt, Option.some(id))
+  if (Option.isNone(connection)) {
+    return <p className="text-label text-ink-2">This account is no longer connected.</p>
+  }
+  const each = connection.value
+  const resume = access.canReconnect(each)
+  const said = saidAfter(standing, each.serviceName)
+  const card = Option.some({
+    id,
+    carryOn: (back: Connection) => {
+      if (current) onCarryOn(`${back.account} has the access now. Try again.`)
+    },
+  })
+  const signIn = () =>
+    press(
+      resume
+        ? {
+            pressed: each.id,
+            asked: connecting.Asked.cases.Resume.make({ id: each.id }),
+            signIn: false,
+            card,
+          }
+        : {
+            pressed: each.service,
+            asked: connecting.Asked.cases.Begin.make({
+              service: each.service,
+              shared: false,
+              name: Option.fromNullOr(each.name),
+            }),
+            signIn: true,
+            card,
+          },
+    )
+  return (
+    <>
+      <p role="status" className="text-label text-pretty text-ink-2">
+        {Option.match(said, {
+          onNone: () => 'Needs more access than it was given',
+          onSome: (line) => line.words,
+        })}
+      </p>
+      <div className="mt-2">
+        <Button size="pill" disabled={waitingOn(attempt)} onClick={signIn}>
+          {resume ? 'Reconnect' : 'Sign in again'}
+        </Button>
+      </div>
+      {Option.isSome(keying) && (
+        <div className="pt-2">
+          <EnterKey keying={keying.value} onClose={dismiss} onAnswered={finish} />
+        </div>
+      )}
+    </>
   )
 }
 

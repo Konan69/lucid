@@ -432,6 +432,15 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
           yield* posting
           yield* posting
           const feed = NotificationOpens.cases.Feed.make({})
+          // Posting owes delivery without sending inside its product transaction.
+          const owed = yield* owner.database.run(
+            owner.database
+              .select()
+              .from(notifications)
+              .where(eq(notifications.personId, owner.person.id)),
+          )
+          for (const row of owed)
+            yield* (yield* Push).deliver(owner.person.id, NotificationId.make(row.id))
           const sent = yield* Ref.get((yield* PushProbe).sent)
           expect(sent).toHaveLength(1)
           expect(sent[0]).toMatchObject({ title: post.title, body: post.words, opens: feed })
@@ -444,6 +453,7 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
             workspace: owner.auth.workspace,
             by: 'person',
             threadId: Option.none(),
+            helper: Option.none(),
           })
           expect(listed.notifications.map(({ kind, opens }) => ({ kind, opens }))).toEqual([
             { kind: 'posted', opens: feed },

@@ -1,1 +1,0 @@
-CREATE INDEX "vivid_runs_watch" ON "vivid_runs" ("person_id",("origin"->>'watchId'),"started_at" DESC NULLS LAST) WHERE "origin"->>'_tag' = 'Watch';

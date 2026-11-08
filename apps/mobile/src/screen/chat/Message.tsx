@@ -5,7 +5,7 @@ import {
   type ThreadDetail,
   type ThreadId,
 } from '@vivid/contracts'
-import { offeredReplies } from '@vivid/state'
+import { access, offeredReplies } from '@vivid/state'
 import { Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { View } from 'react-native'
@@ -217,6 +217,28 @@ function Stamp({ moment }: { moment: number }) {
 }
 
 /**
+ * How much the reply's reads took, when one of them was partial (`access.readingOf`, shared with
+ * the web): "Read 25 of 1,284 messages from Gmail (Work) · as of 10:40". Said quietly under the
+ * time, because it qualifies the answer without being part of it.
+ */
+function Reading({ message, making }: { message: ConversationMessage; making: boolean }) {
+  const now = useNow()
+  const reading = access.readingOf(
+    message.parts.flatMap((part) =>
+      part.type === 'dynamic-tool' && part.state === 'output-available' ? [part] : [],
+    ),
+    (moment) => when(moment, now),
+  )
+  // Said once the reply is whole: a read still arriving says nothing yet.
+  if (making || isStreaming(message) || Option.isNone(reading)) return null
+  return (
+    <Label size="micro" tone="foreground-tertiary" style={{ fontVariant: ['tabular-nums'] }}>
+      {reading.value}
+    </Label>
+  )
+}
+
+/**
  * Vivid's reply, as a run of messages: each stretch of words is a bubble of its own, and the work
  * between two stretches shows only where it left the Person something (a card). Its face stands
  * once, at the foot of the run, as Messages draws a run of bubbles from one sender. The steps it
@@ -295,6 +317,7 @@ function FromVivid({
             }),
           )}
           {Option.isSome(moment) && <Stamp moment={moment.value} />}
+          <Reading message={message} making={making} />
         </View>
       </View>
       {offered.length > 0 && <Replies replies={offered} onSay={onContinue} />}

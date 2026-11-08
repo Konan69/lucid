@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
 import {
   DatabaseFailure,
@@ -14,6 +14,7 @@ import { loadSummaries } from '../auth/access.ts'
 import { Database } from '../database/client.ts'
 import { inputRequests } from '../inputs/tables.ts'
 import type { StoredThread } from './access.ts'
+import { childRuns } from '../runs/tables.ts'
 import { runs, threadParticipants, threadReads } from './tables.ts'
 
 type DatabaseService = Database['Service']
@@ -104,6 +105,18 @@ const beside = Effect.fn('Threads.beside')(function* (
       .from(runs)
       .where(and(inArray(runs.threadId, ids), eq(runs.state, 'working'))),
   )
+  // A helper at work keeps its Thread working after the Run that started it has answered.
+  const helping = yield* database.run(
+    database
+      .selectDistinct({ threadId: childRuns.threadId })
+      .from(childRuns)
+      .where(
+        and(
+          inArray(childRuns.threadId, ids),
+          sql`${childRuns.state}->>'_tag' in ('Reserved', 'Working', 'Stopping')`,
+        ),
+      ),
+  )
   const summaries = yield* loadSummaries([
     ...rows.map((row) => row.personId),
     ...members.map((member) => member.personId),
@@ -112,7 +125,7 @@ const beside = Effect.fn('Threads.beside')(function* (
     summaries,
     members,
     readAt: new Map(reads.map((read) => [read.threadId, read.readAt] as const)),
-    working: new Set<string>(working.map((row) => row.threadId)),
+    working: new Set<string>([...working, ...helping].map((row) => row.threadId)),
     needsYou: yield* waitingOn(database, ids, personId),
   }
 })

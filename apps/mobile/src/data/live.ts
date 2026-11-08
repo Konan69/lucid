@@ -5,6 +5,7 @@ import {
   type LibraryFolderId,
   type LibraryShelf,
   type MeResponse,
+  type ProjectListResponse,
   type Settings,
   type ThreadId,
 } from '@vivid/contracts'
@@ -31,10 +32,12 @@ import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
 import { createContext, useContext } from 'react'
 import { followThemeAtom, themeAtom } from './appearance'
-import { makeDeviceDecisions } from './devices'
+import { makeDecisions } from './approvals'
 import { makeHandoffCalls } from './handing'
 import { makeNaming } from './name'
+import { makeGoal } from './goal'
 import { makeNotifying } from './notifying'
+import { makeHelpers } from './children'
 import { makeConnecting } from './connecting'
 import { makeSending } from './sending'
 import { door } from './door'
@@ -164,18 +167,17 @@ function keepOnDevice(
 }
 
 /**
- * Builds a session's reading of the catalog of services, for the Integrations page: what is
- * typed into its search, and the part of the catalog that answers to it.
+ * Builds a session's searches that are asked on the server: the catalog of services, for the
+ * Integrations page, and "find anything", for the drawer. Each is what is typed into its field
+ * and the answer to it.
  *
- * Ported from the web (`serviceSearch`, `catalogFor` and `services` in
+ * Ported from the web (`serviceSearch`, `catalogFor`, `services`, `findQuery` and `findings` in
  * `apps/web/src/data/live.ts`). There they are the page's own; here they are made per session,
- * on the session's engine, like every query the phone has.
+ * on the session's engine, like every query the phone has, so nothing typed by one Person is
+ * still there for the next.
  */
-function makeCatalog(engine: ReturnType<typeof makeLive>) {
-  /**
-   * What the Person has typed into the catalog search. Empty asks for the most-used services.
-   * Nothing typed by one Person is still there for the next: it goes with the session.
-   */
+function makeSearches(engine: ReturnType<typeof makeLive>) {
+  /** What the Person has typed into the catalog search. Empty asks for the most-used services. */
   const serviceSearch = Atom.make('')
 
   /**
@@ -189,7 +191,32 @@ function makeCatalog(engine: ReturnType<typeof makeLive>) {
     client.FindServices({ query: asked }),
   )
 
-  return { serviceSearch, services }
+  /** What the Person has typed into the drawer's search. */
+  const findQuery = Atom.make('')
+
+  /**
+   * What the drawer's search found: Threads, Library items and the words of the Person's
+   * conversations, asked on the server so the answer is exactly what this Person may see.
+   */
+  const findings = engine.ask(findQuery, (client, query) => client.Search({ query }))
+
+  return { serviceSearch, services, findQuery, findings }
+}
+
+/**
+ * Builds a session's reading of how Vivid's Computer is doing, for the Computer screen: every
+ * part checked each time the screen asks, and the newest step Vivid took to fix it. A check never
+ * wakes a sleeping Computer (`GetComputerHealth`). Ported from the web (`computerHealth` and
+ * `computerRecovery` in `apps/web/src/data/live.ts`), made per session like every phone query.
+ */
+function makeHealth(engine: ReturnType<typeof makeLive>) {
+  const depth = Atom.make<'Deep'>('Deep')
+  return {
+    computerHealth: engine.ask(depth, (client, asked) =>
+      client.GetComputerHealth({ depth: asked }),
+    ),
+    computerRecovery: engine.ask(depth, (client) => client.GetComputerRecovery()),
+  }
 }
 
 /**
@@ -326,7 +353,6 @@ function makeLiveData(session: SignedIn) {
     work: one((client) => client.WatchWork()),
   }
 
-  const catalog = makeCatalog(engine)
   // Where the Person was working when a query was last asked, for the subscription below.
   let whereabouts = Option.none<string>()
 
@@ -434,14 +460,14 @@ function makeLiveData(session: SignedIn) {
       ...expectations: ReadonlyArray<() => Settle>
     ) => start(engine.change(program, ...expectations)),
     link: link.atom,
-    ...catalog,
+    ...makeSearches(engine),
     /** Connecting an Integration: the session's one machine (`data/connecting.ts`). */
     connecting,
-    devices: makeDeviceDecisions(engine),
+    ...makeDecisions(engine), // A computer's access, and an Approval away from its Thread.
     /** A step's calls, like a device decision, outlive the banner that pressed them. */
     handing: makeHandoffCalls(engine),
-    /** The Person changing their own name in Settings (`data/name.ts`). */
-    naming: makeNaming(engine, live.me),
+    ...makeForms(engine, live),
+    helpers: makeHelpers(engine), // Stopping a helper and reading its result (`data/children.ts`).
     /**
      * What Vivid remembers about the Person, read from their cell. There is no watch on it: the
      * Memory screen begins a new reading each time it is opened (`screen/settings/Memory.tsx`).
@@ -461,6 +487,21 @@ function makeLiveData(session: SignedIn) {
 }
 
 export type LiveData = ReturnType<typeof makeLiveData>
+
+/**
+ * What a screen of the session saves or asks for itself. The forms are each one machine for the
+ * session so a refusal outlives the sheet that showed it: their own name in Settings
+ * (`data/name.ts`), and a Project's goal and done from its page (`data/goal.ts`). The Computer
+ * screen's health reading is asked when the screen asks (`makeHealth`).
+ */
+const makeForms = (
+  engine: ReturnType<typeof makeLive>,
+  live: { readonly me: LiveQuery<MeResponse>; readonly projects: LiveQuery<ProjectListResponse> },
+) => ({
+  naming: makeNaming(engine, live.me),
+  goal: makeGoal(engine, live.projects),
+  ...makeHealth(engine),
+})
 
 /**
  * What the app is showing at its root.

@@ -6,6 +6,7 @@ import { ThreadStore } from '../threads/store.ts'
 import { findThread } from '../threads/access.ts'
 import { ChannelLedger, type ChannelRoute } from './ledger.ts'
 import { ChannelProvider, ChannelSendTimedOut } from './provider.ts'
+import { channelCards } from './cards.ts'
 import { ChannelStore } from './store.ts'
 import { ChannelTextLimit, channelText, splitChannelText } from './text.ts'
 
@@ -122,7 +123,16 @@ const makeReplies = Effect.fn('Channels.makeReplies')(function* () {
     const address = link.value.address
     const notSent = () => ledger.record(event.runId, 'not-sent')
     yield* Settlement.match(event.settlement, {
-      Completed: ({ reply }) => sendReply(route, address, reply),
+      Completed: ({ reply }) =>
+        Effect.gen(function* () {
+          const cards =
+            route.channel === 'Discord'
+              ? yield* channelCards(route.threadId, route.personId).pipe(
+                  Effect.provideService(Database, database),
+                )
+              : ''
+          return yield* sendReply(route, address, `${reply}\n\n${cards}`)
+        }),
       Failed: notSent,
       Stopped: notSent,
       Unknown: notSent,

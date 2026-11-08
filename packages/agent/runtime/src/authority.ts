@@ -6,14 +6,17 @@ import {
   MemorySource,
   MemoryTaskId,
   MessageId,
+  type RunId,
 } from '@vivid/contracts'
 import { VividRpcClient } from '@vivid/client-runtime'
 import { Effect, Layer, Option } from 'effect'
 import { NobodyToActFor, type ProductService } from './client.ts'
 import { answering } from './deliveries.ts'
+import { helperOf } from './helper.ts'
 import { recoverAuthority, resolveAuthority, type DeliveryAuthority } from './delivery.ts'
 import { pi, threadOf } from './threads.ts'
 import { learnerAuthority } from './learning.ts'
+import { dreamerAuthority } from './dreaming.ts'
 import type { MemoryWriter } from './memory.ts'
 import type { ToolFailure } from './tools/result.ts'
 import { Scope, type ResolveScope } from './tools/scope.ts'
@@ -39,13 +42,24 @@ export const scopeResolver =
               timezone: authority.timezone,
             })
           }),
-        ).pipe(Layer.provide(product.as(authority.acting)))
+        ).pipe(
+          Layer.provide(
+            Option.match(authority.helper, {
+              onNone: () => product.as(authority.acting),
+              onSome: (helper) => product.asHelper(authority.acting, helper),
+            }),
+          ),
+        )
       }),
     )
 
-/** The delivery's authority plus the time zone frozen with the response being answered. */
+/**
+ * The delivery's authority plus the time zone frozen with the response being answered. `helper`
+ * names the helper Run when the call comes from a helper's conversation (`helper.ts`).
+ */
 interface CallAuthority extends DeliveryAuthority {
   readonly timezone: string
+  readonly helper: Option.Option<RunId>
 }
 
 /** Resolve delivery authority without acquiring the product client, so local memory survives a server outage. */
@@ -60,6 +74,24 @@ export const resolveCall: (
     call: Parameters<ResolveScope>[0],
   ) {
     const opened = yield* harness
+    // A Dreamer child acts in its dream's Thread, from its host-written authority (`dreaming.ts`).
+    const dreamer = yield* dreamerAuthority(opened, call.conversationId).pipe(
+      Effect.mapError(() => nobody('The Dreamer authority could not be read.')),
+    )
+    if (Option.isSome(dreamer))
+      return {
+        acting: dreamer.value.acting,
+        timezone: dreamer.value.timezone,
+        helper: Option.none(),
+      }
+    // A helper acts for the Person its parent Run acts for, as itself; it has no delivery.
+    const helper = yield* helperOf(opened, call.conversationId)
+    if (Option.isSome(helper))
+      return {
+        acting: helper.value.acting,
+        timezone: helper.value.timezone,
+        helper: Option.some(helper.value.runId),
+      }
     const thread = yield* threadOf(opened, call.conversationId)
     const delivery = yield* answering(opened, call.conversationId)
     if (Option.isNone(thread) || Option.isNone(delivery))
@@ -77,7 +109,11 @@ export const resolveCall: (
           }),
         ),
     )
-    return { acting: authority.acting, timezone: delivery.value.context.timezone }
+    return {
+      acting: authority.acting,
+      timezone: delivery.value.context.timezone,
+      helper: Option.none(),
+    }
   },
   (effect) =>
     effect.pipe(
@@ -99,6 +135,10 @@ export const resolveMemoryCall: (
       Effect.mapError(() => nobody('The learning authority could not be read.')),
     )
     if (Option.isSome(learning)) return learning.value
+    const dreamer = yield* dreamerAuthority(yield* harness, call.conversationId).pipe(
+      Effect.mapError(() => nobody('The Dreamer authority could not be read.')),
+    )
+    if (Option.isSome(dreamer)) return dreamer.value.writer
     const { acting } = yield* resolveCall(harness, product, call)
     const opened = yield* harness
     const live = yield* pi(() =>

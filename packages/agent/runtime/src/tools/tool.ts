@@ -3,6 +3,7 @@ import { awaitWithContext, withAbortSignal, type Context } from '@earendil-works
 import { Type, type ToolResultMessage } from '@earendil-works/pi-ai'
 import {
   defineTool as durableTool,
+  type ToolExecutionApi,
   type ToolExecutionResult,
   type ToolRegistration,
 } from '@earendil-works/pi-durable'
@@ -147,7 +148,9 @@ export function executeCall<A>(
 
 /** Valibot decodes once after Pi's coercion and validation. Plain JSON Schema is
  * accepted by pi-ai's Compile path; converter options match the installed reference exactly.
- * Replay is intentionally omitted, so an unfinished external action is interrupted, never rerun. */
+ * Replay is omitted unless a tool says `safe`, so an unfinished external action is interrupted,
+ * never rerun. Only a tool whose every write is keyed for idempotency may say so (`children.ts`).
+ * `api` is Pi's own call surface, for the few tools that commit to the conversation themselves. */
 export function defineTool<
   S extends v.GenericSchema,
   E extends { readonly message: string } = never,
@@ -156,10 +159,12 @@ export function defineTool<
   readonly description: string
   readonly input: S
   readonly timeoutMs?: number
+  readonly replay?: 'safe'
   readonly run: (call: {
     readonly data: v.InferOutput<S>
     readonly signal: AbortSignal
     readonly toolCallId: string
+    readonly api: ToolExecutionApi
   }) =>
     | ToolResult
     | ContentResult
@@ -172,6 +177,8 @@ export function defineTool<
     name: definition.name,
     description: definition.description,
     parameters,
+    // Pi's own default is `unsafe`; it is stated so the one exception reads beside it.
+    replay: definition.replay === 'safe' ? 'safe' : 'unsafe',
     // Vivid and the Computer tools already bound their output exactly as main did. Pi's generic
     // UTF-8/line cutoff would truncate run_code or change the reference character-count budget.
     outputLimits: { maxBytes: Number.MAX_SAFE_INTEGER, maxLines: Number.MAX_SAFE_INTEGER },
@@ -185,7 +192,12 @@ export function defineTool<
       return executionResult(
         executeCall(
           (signal) => {
-            const result = definition.run({ data: parsed.output, signal, toolCallId: api.callId })
+            const result = definition.run({
+              data: parsed.output,
+              signal,
+              toolCallId: api.callId,
+              api,
+            })
             if (!Effect.isEffect(result))
               return Promise.resolve(result).then((value) => toolResult(definition.name, value))
             // The Pi execute callback is the Promise entry point for the owned Computer programs.

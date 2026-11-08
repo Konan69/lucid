@@ -7,7 +7,8 @@ import { NobodyToActFor } from '../client.ts'
 import { ToolScopeMissing } from './failure.ts'
 import { capabilityRegistry } from './capabilities.ts'
 import { projectNamed } from './projects.ts'
-import type { ProjectOf } from './memory.ts'
+import { dreamerMemoryTools, type ProjectOf } from './memory.ts'
+import type { Transcripts } from './recall.ts'
 import {
   scopeLayer,
   scopedRunner,
@@ -17,14 +18,27 @@ import {
   type ResolveScope,
 } from './scope.ts'
 
+/** What the Person's cell holds locally that tools read: their Memory and their conversations. */
+export interface CellStores {
+  readonly memory: Memory['Service']
+  readonly transcripts: Transcripts
+}
+
 /** Preserve main's registration order. Resolve authority separately for every invocation, inside
  * execute, so queued submissions cannot retain another Person's RPC client or Library folder.
  * The core supplies its configured entry directory; constructing tools does no I/O. */
 export function tools(
   resolve: ResolveScope,
   resolvePerson: (call: Parameters<ResolveScope>[0]) => Effect.Effect<MemoryWriter, ToolFailure>,
-  memory: Memory['Service'],
-  skills: ReadonlyArray<ToolRegistration>,
+  { memory, transcripts }: CellStores,
+  /** Tools made outside the catalogue that it mounts as they are: built-in skills and helpers. */
+  {
+    skills,
+    children,
+  }: {
+    readonly skills: ReadonlyArray<ToolRegistration>
+    readonly children: ReadonlyArray<ToolRegistration>
+  },
 ) {
   const authority = new NodeAsyncHooks.AsyncLocalStorage<Layer.Layer<Scope, ToolFailure>>()
   /** Node's invocation-local storage keeps concurrent calls isolated while sharing warm tools. */
@@ -51,8 +65,17 @@ export function tools(
   const project: ProjectOf = (name) =>
     // @effect-diagnostics-next-line strictEffectProvide:off -- The per-call authority Layer, as in toolRunner.
     projectNamed(name).pipe(Effect.provide(current()))
-  const registry = capabilityRegistry({ runTool, run, runMemory, project, memory, skills })
-  const mounted = registry.tools.map((definition) =>
+  const registry = capabilityRegistry({
+    runTool,
+    run,
+    runMemory,
+    project,
+    memory,
+    skills,
+    transcripts,
+    children,
+  })
+  const mount = (definition: ToolRegistration) =>
     durableTool({
       ...definition,
       execute(args, api, context) {
@@ -60,7 +83,11 @@ export function tools(
           authority.run(scopeLayer(resolve, api), () => definition.execute(args, api, context)),
         )
       },
-    }),
-  )
-  return { tools: mounted, reading: registry.reading }
+    })
+  return {
+    tools: registry.tools.map(mount),
+    reading: registry.reading,
+    // Offered only to the Dreamer (`agents/dreamer.ts`), never to a reply.
+    dreaming: dreamerMemoryTools(runMemory, project).map(mount),
+  }
 }

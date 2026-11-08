@@ -49,9 +49,13 @@ export const signalAttributes = (envelope: SignalEnvelope): Record<string, strin
     Approval: ({ outcome }) => ({ ...attribution, outcome }),
     Answer: () => attribution,
     Watch: ({ name }) => ({ ...attribution, name }),
+    Shell: ({ handle }) => ({ ...attribution, handle }),
     CarryOn: () => attribution,
     Handoff: ({ handoff }) => ({ ...attribution, handoff }),
     Forget: () => attribution,
+    Dream: ({ pass }) => ({ ...attribution, pass }),
+    // A helper is named to the model by its number in the Thread, never by its id.
+    ChildResult: ({ helper }) => ({ ...attribution, helper: String(helper) }),
   })
 }
 
@@ -224,9 +228,12 @@ export function signalShown(placed: PlacedSignal) {
       attributes: { ...attributes, event, occurredAt },
       body: JSON.stringify(data, null, 2),
     }),
+    Shell: ({ body }) => ({ tagName, attributes, body }),
     CarryOn: ({ body }) => ({ tagName, attributes, body }),
     Handoff: ({ body }) => ({ tagName, attributes, body }),
     Forget: ({ body }) => ({ tagName, attributes, body }),
+    Dream: ({ body }) => ({ tagName, attributes, body }),
+    ChildResult: ({ body }) => ({ tagName, attributes, body }),
   })
 }
 
@@ -272,9 +279,13 @@ const cueText = (cue: SignalCue) =>
         `What to do: ${instruction}`,
         `The event, as JSON:\n${JSON.stringify(data)}`,
       ].join('\n\n'),
+    Shell: ({ body }) => body,
     CarryOn: ({ body }) => body,
     Handoff: ({ body }) => body,
     Forget: ({ body }) => body,
+    // A finding is woken like a Watch event: nobody is watching, and the Feed is how it reaches them.
+    Dream: ({ body }) => [BACKGROUND_INSTRUCTION, body].join('\n\n'),
+    ChildResult: ({ body }) => body,
   })
 
 /** Render a signal with its type first, then its ordered attributes and escaped body.

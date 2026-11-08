@@ -4,6 +4,7 @@ import { connecting } from '@vivid/state'
 import { Effect, Option, Result } from 'effect'
 import { createContext, useContext, useState } from 'react'
 import {
+  keyingFor,
   refusalOf,
   standingFor,
   standingForCard,
@@ -59,8 +60,8 @@ const renameWith =
  * - Disconnecting asks first, with the system's own alert.
  * - Which account's sheet is open, and which account is being named, is not held here: each is a
  *   route on the stack (`Account`, `NameAccount`), where the web uses a popover and a dialog.
- * - The form for a service that takes a key is a route too (`Key`), which the machine opens
- *   through the shell (`keyRoute`); this holds no form of its own.
+ * - The form for a service that takes a key is drawn inside the card or account that asked for
+ *   it (`KeyForm`, `Key.tsx`), from the machine's `Keying` state; this holds no form of its own.
  */
 export function useFlowHeld() {
   const data = useLiveData()
@@ -111,6 +112,12 @@ export function useFlowHeld() {
 
     /** Where the attempt made on a card stands, by the tool call the card stands for. */
     standingOfCard: (card: string) => standingForCard(now, card),
+
+    /**
+     * The key the attempt is waiting for, for the one that asked to draw inside itself: a card by
+     * the tool call it stands for, the Integrations page with none (`KeyForm`, `Key.tsx`).
+     */
+    keying: (card: Option.Option<string>) => keyingFor(now, card),
 
     /**
      * Begins one account on a service, for this Person or their Company, under the name the

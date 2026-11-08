@@ -1,11 +1,22 @@
+import { ReviseWatchRequest } from './watches.js'
+import {
+  ReadMadeIntegrationRequest,
+  MadeIntegrationSource,
+  ReviseMadeIntegrationRequest,
+} from './connections.js'
 import * as Schema from 'effect/Schema'
 import * as Rpc from 'effect/rpc/Rpc'
 import * as RpcGroup from 'effect/rpc/RpcGroup'
 import * as RpcMiddleware from 'effect/rpc/RpcMiddleware'
 import { CapabilityFacts } from './capabilities.js'
 import {
+  ShellSnapshot,
+  StartShellRequest,
+  ReadShellRequest,
+  WaitShellRequest,
   ComputerHealth,
   ComputerRecoveryOutcome,
+  ComputerRecoveryRecord,
   GetComputerHealthRequest,
   RecoverComputerRequest,
 } from './computers.js'
@@ -217,6 +228,7 @@ import {
   MemoryListing,
   MemoryPage,
   SavedMemory,
+  MemoryExport,
 } from './memory.js'
 import {
   NotificationListResponse,
@@ -289,6 +301,14 @@ import {
   DeliveryScopeRequest,
   AcknowledgeRunDeliveryRequest,
 } from './threads.js'
+import { DreamRequest, DreamResponse } from './dreams.js'
+import {
+  ChildRun,
+  ChildRunDetail,
+  ChildRunRequest,
+  SettleChildRunRequest,
+  SpawnChildRunRequest,
+} from './runs.js'
 
 /**
  * Every product call a Vivid client makes to the application server, declared once.
@@ -364,6 +384,14 @@ const Post = Rpc.make('Post', {
   payload: PostRequest,
   success: PostOutcome,
 })
+
+// ── The Dreamer ─────────────────────────────────────────────────────────────
+/**
+ * Runtime-only, called by the Person's cell as Vivid acting for them: open the Background Thread
+ * one Dreamer run reads in, or report its finding there (`DreamRequest`). The Person, workspace
+ * and Thread come from the call's authority, never from the payload.
+ */
+const Dream = Rpc.make('Dream', { ...call, payload: DreamRequest, success: DreamResponse })
 
 // ── The signed-in Person and where they are working ────────────────────────
 const Me = Rpc.make('Me', { ...call, success: MeResponse })
@@ -539,6 +567,38 @@ const GetDeliveryScope = Rpc.make('GetDeliveryScope', {
   ...call,
   payload: DeliveryScopeRequest,
   success: DeliveryScope,
+})
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+/**
+ * The runtime reserving one helper for the Run answering now. Only Vivid's own calls may: a
+ * Person's client never starts one, and a helper never starts another.
+ */
+const SpawnChildRun = Rpc.make('SpawnChildRun', {
+  ...call,
+  payload: SpawnChildRunRequest,
+  success: ChildRun,
+})
+/** The runtime reporting that a helper's work started or ended. Only Vivid or that helper may. */
+const SettleChildRun = Rpc.make('SettleChildRun', {
+  ...call,
+  payload: SettleChildRunRequest,
+  success: ChildRun,
+})
+/** One helper, with its result once it ended. Anyone who can see its Thread, or Vivid there. */
+const GetChildRun = Rpc.make('GetChildRun', {
+  ...call,
+  payload: ChildRunRequest,
+  success: ChildRunDetail,
+})
+/**
+ * Stops one helper and answers once its work ended. Anyone who may stop its Thread, or the Run
+ * that started it. Work it already did is not undone.
+ */
+const CancelChildRun = Rpc.make('CancelChildRun', {
+  ...call,
+  payload: ChildRunRequest,
+  success: ChildRun,
 })
 
 // ── Artifacts ──────────────────────────────────────────────────────────────
@@ -798,6 +858,23 @@ const StopWatch = Rpc.make('StopWatch', {
   success: WatchResponse,
 })
 
+/** In-place revisions retain the product identity and its history. */
+const ReviseWatch = Rpc.make('ReviseWatch', {
+  ...call,
+  payload: ReviseWatchRequest,
+  success: WatchResponse,
+})
+const ReadMadeIntegration = Rpc.make('ReadMadeIntegration', {
+  ...call,
+  payload: ReadMadeIntegrationRequest,
+  success: MadeIntegrationSource,
+})
+const ReviseMadeIntegration = Rpc.make('ReviseMadeIntegration', {
+  ...call,
+  payload: ReviseMadeIntegrationRequest,
+  success: MadeIntegrationSource,
+})
+
 // ── Projects ───────────────────────────────────────────────────────────────
 const ListProjects = Rpc.make('ListProjects', { ...call, success: ProjectListResponse })
 const WatchProjects = Rpc.make('WatchProjects', { ...live, success: ProjectListResponse })
@@ -806,7 +883,10 @@ const CreateProject = Rpc.make('CreateProject', {
   payload: CreateProjectRequest,
   success: Project,
 })
-/** Vivid recording a Project's objective, progress or completion, against the revision it read. */
+/**
+ * A Project's objective, progress or completion, against the revision the writer read: Vivid from
+ * a Run, or the Person setting the goal or marking it done on the Project's page.
+ */
 const UpdateProject = Rpc.make('UpdateProject', {
   payload: UpdateProjectRequest,
   success: Project,
@@ -1019,6 +1099,8 @@ const ForgetMemory = Rpc.make('ForgetMemory', {
   success: MemoryForgetReceipt,
   error: Schema.Union([RpcFailure, MemoryForgetStale]),
 })
+/** Everything the acting Person's memory holds, whole, for them to download from Settings. */
+const ExportMemory = Rpc.make('ExportMemory', { ...call, success: MemoryExport })
 /** One forget's receipt, live: Settings shows Pending until Vivid's background Run settles. */
 const WatchMemoryForget = Rpc.make('WatchMemoryForget', {
   ...live,
@@ -1068,6 +1150,11 @@ const RecoverComputer = Rpc.make('RecoverComputer', {
   payload: RecoverComputerRequest,
   success: ComputerRecoveryOutcome,
 })
+/** The newest recovery step on the acting Person's Computer, for its health panel. */
+const GetComputerRecovery = Rpc.make('GetComputerRecovery', {
+  ...call,
+  success: ComputerRecoveryRecord,
+})
 const GetComputer = Rpc.make('GetComputer', { ...call, success: ComputerResponse })
 const GetComputerApps = Rpc.make('GetComputerApps', { ...call, success: ComputerInventory })
 const WatchComputer = Rpc.make('WatchComputer', { ...live, success: ComputerResponse })
@@ -1090,6 +1177,26 @@ const ComputerShell = Rpc.make('ComputerShell', {
   ...call,
   payload: ComputerShellRequest,
   success: ComputerShellOutcome,
+})
+const StartShell = Rpc.make('StartShell', {
+  ...call,
+  payload: StartShellRequest,
+  success: ShellSnapshot,
+})
+const ReadShell = Rpc.make('ReadShell', {
+  ...call,
+  payload: ReadShellRequest,
+  success: ShellSnapshot,
+})
+const WaitShell = Rpc.make('WaitShell', {
+  ...call,
+  payload: WaitShellRequest,
+  success: ShellSnapshot,
+})
+const StopShell = Rpc.make('StopShell', {
+  ...call,
+  payload: ReadShellRequest,
+  success: ShellSnapshot,
 })
 const ComputerFileRead = Rpc.make('ComputerFileRead', {
   ...call,
@@ -1273,6 +1380,10 @@ export const VividRpc = RpcGroup.make(
   StopThread,
   BePresent,
   GetDeliveryScope,
+  SpawnChildRun,
+  SettleChildRun,
+  GetChildRun,
+  CancelChildRun,
   ListArtifacts,
   WatchArtifacts,
   GetArtifact,
@@ -1311,10 +1422,14 @@ export const VividRpc = RpcGroup.make(
   WatchFeed,
   MarkFeedCard,
   Post,
+  Dream,
   WatchNotifications,
   ReadNotifications,
   FindAppEvents,
   CreateWatch,
+  ReviseWatch,
+  ReadMadeIntegration,
+  ReviseMadeIntegration,
   ListWatches,
   StopWatch,
   ListProjects,
@@ -1368,6 +1483,7 @@ export const VividRpc = RpcGroup.make(
   PlanMemoryForget,
   ForgetMemory,
   WatchMemoryForget,
+  ExportMemory,
   ListSkills,
   WatchSkills,
   ListSkillSummaries,
@@ -1378,6 +1494,7 @@ export const VividRpc = RpcGroup.make(
   GetCapabilities,
   GetComputerHealth,
   RecoverComputer,
+  GetComputerRecovery,
   GetComputer,
   GetEgress,
   WatchEgress,
@@ -1387,6 +1504,10 @@ export const VividRpc = RpcGroup.make(
   StopComputer,
   HoldComputer,
   ComputerShell,
+  StartShell,
+  ReadShell,
+  WaitShell,
+  StopShell,
   ComputerFileRead,
   ComputerFileWrite,
   Browse,
