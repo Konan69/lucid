@@ -16,15 +16,16 @@ const work = Effect.fn('Work.load')(function* (actor: Actor) {
 })
 
 /**
- * Background work for the Person or for Vivid acting for them. The live query hears Run changes,
- * which are announced as each Thread's `activity` part; Watches and Integrations announce their
- * owner whole, which every query hears.
+ * Background work for the Person or for Vivid acting for them. The live query hears Run changes:
+ * a Run's start, end and Stop announce its Thread owner's `feed` part (`feed/changes.ts`), and a
+ * turn's delivery the audience's `activity` part. Watches and Integrations announce their owner
+ * whole, which every query hears.
  */
 export const workHandlers = {
   ListWork: Effect.fn('Rpc.ListWork')(function* () {
     return yield* work(yield* requireActor())
   }),
-  WatchWork: () => live('WatchWork', ['activity'], work),
+  WatchWork: () => live('WatchWork', ['activity', 'feed'], work),
   StopWork: Effect.fn('Rpc.StopWork')(function* ({ work: ref }: { readonly work: WorkRef }) {
     return StopWorkResponse.make({ result: yield* stopWork(yield* requireActor(), ref) })
   }),
