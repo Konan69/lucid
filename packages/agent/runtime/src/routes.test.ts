@@ -122,7 +122,7 @@ describe('the runtime over HTTP', () => {
         expect(model.prompt).toContain('- **deep-research** — ')
         expect(model.prompt).not.toContain(ada)
         // Main's order: the Computer's tools, the skill tools, then the product tools.
-        expect(model.tools.slice(0, 13)).toEqual([
+        expect(model.tools.slice(0, 17)).toEqual([
           'read',
           'write',
           'edit',
@@ -130,6 +130,10 @@ describe('the runtime over HTTP', () => {
           'grep',
           'glob',
           'use_desktop',
+          'start_shell',
+          'read_shell',
+          'wait_shell',
+          'stop_shell',
           'browse',
           'use_person_computer',
           'copy_signin',

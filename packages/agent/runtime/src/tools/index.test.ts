@@ -81,8 +81,8 @@ describe('core tool catalogue', () => {
           'grep',
           'glob',
           'use_desktop',
-          'browse',
-          'use_person_computer',
+          'start_shell',
+          'read_shell',
         ])
         const search = definitions.find((tool) => tool.name === 'search_library')
         if (search === undefined) expect.fail('Missing Library tool.')
