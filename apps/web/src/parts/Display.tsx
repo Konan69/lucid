@@ -19,7 +19,9 @@ import {
 } from '@vivid/state'
 import { useRef } from 'react'
 import { run } from '../data/app'
+import { Glimpse } from '../screen/computer/Glimpse'
 import { library } from './library'
+import { ScreenPicture } from '../../vendor/openui'
 
 /** The parser supplies call intent and detects ambiguous automatic/button programs. */
 const parser = createParser(library.toJSONSchema(), 'Col')
@@ -98,16 +100,19 @@ export function Display({
   }
   return (
     <section className="mt-3 min-w-0">
-      <Renderer
-        response={text}
-        library={library}
-        isStreaming={arriving}
-        onAction={answer}
-        onParseResult={read}
-        onStateUpdate={changed}
-        onError={onError}
-        toolProvider={integrations(displayTools(parser.parse(text)), source)}
-      />
+      {/* A Screen part draws the Computer's live screen; the library itself cannot import it. */}
+      <ScreenPicture value={Glimpse}>
+        <Renderer
+          response={text}
+          library={library}
+          isStreaming={arriving}
+          onAction={answer}
+          onParseResult={read}
+          onStateUpdate={changed}
+          onError={onError}
+          toolProvider={integrations(displayTools(parser.parse(text)), source)}
+        />
+      </ScreenPicture>
     </section>
   )
 }
