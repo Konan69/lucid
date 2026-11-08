@@ -21,6 +21,7 @@ import { InputStore } from '../inputs/store.ts'
 import { handoffsInThread } from '../inputs/handoff.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { live } from '../live/query.ts'
+import { Database } from '../database/client.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { audienceTopics, requireThread } from './access.ts'
 import { Presence } from './presence.ts'
@@ -49,8 +50,7 @@ const listThreads = Effect.fn('Threads.list')(function* (actor: Actor) {
 })
 
 /**
- * Notify newly named People after the share commits, using only its saved id, title and Company.
- * Notification delivery remains outside the metadata transaction and belongs to the Notifier.
+ * Owe notices for newly named People inside the share transaction; workers deliver after commit.
  */
 const announceShare = Effect.fn('Threads.announceShare')(function* (
   thread: Pick<Shared['thread'], 'id' | 'title'> & Pick<Shared, 'companyId'>,
@@ -128,7 +128,7 @@ export const threadHandlers = {
     const stored = yield* requireThread(thread, actor.person.id)
     return { title: yield* (yield* ThreadTitles).regenerate(stored, actor.person.id) }
   }),
-  /** Sharing and audit commit in the store; newly named People are notified from its saved result. */
+  /** Sharing, audit and notice obligations commit together from the saved share result. */
   ShareThread: Effect.fn('Rpc.ShareThread')(function* ({
     id,
     audience,
@@ -137,14 +137,18 @@ export const threadHandlers = {
     readonly audience: ShareThreadRequest
   }) {
     const auth = yield* requirePerson()
-    const shared = yield* (yield* ThreadStore).share(auth.person.id, id, audience)
-    // The committed Shared result owns every notification field; no late reread can fail the share.
-    yield* announceShare(
-      { id: shared.thread.id, title: shared.thread.title, companyId: shared.companyId },
-      summaryOf(auth.person).name,
-      shared.added,
+    return yield* (yield* Database).transaction(() =>
+      Effect.gen(function* () {
+        const shared = yield* (yield* ThreadStore).share(auth.person.id, id, audience)
+        // The committed Shared result owns every notification field; no late reread can fail the share.
+        yield* announceShare(
+          { id: shared.thread.id, title: shared.thread.title, companyId: shared.companyId },
+          summaryOf(auth.person).name,
+          shared.added,
+        )
+        return { thread: shared.thread }
+      }),
     )
-    return { thread: shared.thread }
   }),
   /** The store captures and announces the deleted audience while holding its Thread lock. */
   DeleteThread: Effect.fn('Rpc.DeleteThread')(function* ({ id }: { readonly id: ThreadId }) {

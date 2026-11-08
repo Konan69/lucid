@@ -55,6 +55,7 @@ import { changesLayer } from './live/changes.ts'
 import { tallyLayer } from './live/tally.ts'
 import { titleModelLayer } from './threads/model.ts'
 import { threadTitlesLayer } from './threads/generation.ts'
+import { notificationDeliveryLayer } from './notifications/delivery.ts'
 import { notifierLayer } from './notifications/notifier.ts'
 import { observabilityLayer } from './observability/export.ts'
 import { notificationStoreLayer } from './notifications/store.ts'
@@ -178,6 +179,7 @@ const serverProgram = Effect.gen(function* () {
     channelWorkerLayer,
     approvalSweeperLayer,
     pushReceiptsLayer,
+    notificationDeliveryLayer,
     libraryIngestionLayer(ingestionBackoff, extractPdf),
     PersistedQueue.layerCleanup(),
   )

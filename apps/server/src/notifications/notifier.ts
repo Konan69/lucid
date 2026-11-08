@@ -13,55 +13,82 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
-import { Changes, Topic } from '../live/changes.ts'
+import { announce, Topic } from '../live/changes.ts'
 import { settingsTable } from '../settings/tables.ts'
 import { notifications } from '../notifications/tables.ts'
 import { Push } from '../push/delivery.ts'
+import { PushTargets } from '../push/targets.ts'
+import * as PersistedQueue from 'effect/persistence/PersistedQueue'
+import { NotificationDelivery, notificationDelivery } from './delivery.ts'
 
-/**
- * The Notification is committed before delivery. Repeating its id rereads the existing record;
- * the push ledger, not a caller's process memory, decides whether each target was already sent.
- */
-export const recordNotice = Effect.fn('Notifier.record')(function* (input: {
+/** Store the notice and each channel obligation in the caller's product transaction. */
+export const oweNotice = Effect.fn('Notifier.owe')(function* (input: {
   readonly id: NotificationId
   readonly notice: Notice
 }) {
   const database = yield* Database
-  const changes = yield* Changes
-  const push = yield* Push
+  const queue = yield* notificationDelivery
+  const targets = yield* PushTargets
   const { notice } = input
-  const rows = yield* database.run(
-    database
-      .select({ notify: settingsTable.notify })
-      .from(settingsTable)
-      .where(eq(settingsTable.personId, notice.personId))
-      .limit(1),
-  )
-  const preference = rows[0]
-  if (preference !== undefined && !preference.notify)
-    return NotifyPersonOutcome.cases.Disabled.make({})
-  const now = yield* Clock.currentTimeMillis
-  yield* database.run(
-    database
-      .insert(notifications)
-      .values({
-        id: input.id,
-        personId: notice.personId,
-        companyId: notice.companyId,
-        kind: notice.kind,
-        title: notice.title,
-        body: notice.body,
-        conversationId: notice.threadId,
-        createdAt: now,
-        readAt: null,
-      })
-      .onConflictDoNothing({ target: notifications.id }),
-  )
-  yield* changes.publish([Topic.part('notifications')(Topic.person(notice.personId))])
-  // A missing row after insertion is a persistence fault. Provider failures are receipts, while
-  // an unsettled persistence write stays a failure and cannot authorize repeating an external send.
+  return yield* database
+    .transaction((tx) =>
+      Effect.gen(function* () {
+        const rows = yield* tx
+          .select({ notify: settingsTable.notify })
+          .from(settingsTable)
+          .where(eq(settingsTable.personId, notice.personId))
+          .limit(1)
+        if (rows[0] !== undefined && !rows[0].notify) return false
+        const now = yield* Clock.currentTimeMillis
+        const inserted = yield* tx
+          .insert(notifications)
+          .values({
+            id: input.id,
+            personId: notice.personId,
+            companyId: notice.companyId,
+            kind: notice.kind,
+            title: notice.title,
+            body: notice.body,
+            conversationId: notice.threadId,
+            createdAt: now,
+            readAt: null,
+          })
+          .onConflictDoNothing({ target: notifications.id })
+          .returning({ id: notifications.id })
+        if (inserted.length === 0) return true
+        yield* queue.offer(NotificationDelivery.cases.Publish.make({ personId: notice.personId }), {
+          id: `${input.id}:publish`,
+        })
+        for (const target of yield* targets.active(notice.personId)) {
+          yield* queue.offer(
+            NotificationDelivery.cases.Push.make({
+              notificationId: input.id,
+              personId: notice.personId,
+              targetId: target.id,
+            }),
+            { id: `${input.id}:push:${target.id}` },
+          )
+        }
+        yield* announce(tx, [Topic.part('notifications')(Topic.person(notice.personId))])
+        return true
+      }),
+    )
+    .pipe(
+      Effect.catchTag(['PersistedQueueError', 'SchemaError'], () =>
+        Effect.fail(new DatabaseFailure({ message: 'Notification delivery could not be owed.' })),
+      ),
+    )
+})
+
+/** The direct tool keeps its existing push result; durable jobs repay any interrupted attempt. */
+export const recordNotice = Effect.fn('Notifier.record')(function* (input: {
+  readonly id: NotificationId
+  readonly notice: Notice
+}) {
+  if (!(yield* oweNotice(input))) return NotifyPersonOutcome.cases.Disabled.make({})
+  const push = yield* Push
   const outcome = yield* push
-    .deliver(notice.personId, input.id)
+    .deliver(input.notice.personId, input.id)
     .pipe(
       Effect.catchTag('NotFound', () =>
         Effect.fail(new DatabaseFailure({ message: 'Written Notification is missing.' })),
@@ -96,11 +123,16 @@ export class Notifier extends Context.Service<Notifier, NotifierService>()('vivi
 export const notifierLayer = Layer.effect(
   Notifier,
   Effect.gen(function* () {
-    const services = yield* Effect.context<Database | Changes | Push>()
+    const database = yield* Database
+    const targets = yield* PushTargets
+    const factory = yield* PersistedQueue.PersistedQueueFactory
     /** A disabled preference suppresses storage and publication, so no unread record is left behind. */
     const notify = Effect.fn('Notifier.notify')(function* (notice: Notice) {
-      yield* recordNotice({ id: NotificationId.make(crypto.randomUUID()), notice }).pipe(
-        Effect.provideContext(services),
+      yield* oweNotice({ id: NotificationId.make(crypto.randomUUID()), notice }).pipe(
+        // Preserve the caller's SQL transaction service while restoring stable authorities.
+        Effect.provideService(Database, database),
+        Effect.provideService(PushTargets, targets),
+        Effect.provideService(PersistedQueue.PersistedQueueFactory, factory),
       )
     })
     return Notifier.of({ notify })

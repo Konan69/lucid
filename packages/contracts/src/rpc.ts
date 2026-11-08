@@ -1,3 +1,9 @@
+import { ReviseWatchRequest } from './watches.js'
+import {
+  ReadMadeIntegrationRequest,
+  MadeIntegrationSource,
+  ReviseMadeIntegrationRequest,
+} from './connections.js'
 import * as Schema from 'effect/Schema'
 import * as Rpc from 'effect/rpc/Rpc'
 import * as RpcGroup from 'effect/rpc/RpcGroup'
@@ -801,6 +807,23 @@ const StopWatch = Rpc.make('StopWatch', {
   success: WatchResponse,
 })
 
+/** In-place revisions retain the product identity and its history. */
+const ReviseWatch = Rpc.make('ReviseWatch', {
+  ...call,
+  payload: ReviseWatchRequest,
+  success: WatchResponse,
+})
+const ReadMadeIntegration = Rpc.make('ReadMadeIntegration', {
+  ...call,
+  payload: ReadMadeIntegrationRequest,
+  success: MadeIntegrationSource,
+})
+const ReviseMadeIntegration = Rpc.make('ReviseMadeIntegration', {
+  ...call,
+  payload: ReviseMadeIntegrationRequest,
+  success: MadeIntegrationSource,
+})
+
 // ── Projects ───────────────────────────────────────────────────────────────
 const ListProjects = Rpc.make('ListProjects', { ...call, success: ProjectListResponse })
 const WatchProjects = Rpc.make('WatchProjects', { ...live, success: ProjectListResponse })
@@ -1325,6 +1348,9 @@ export const VividRpc = RpcGroup.make(
   ReadNotifications,
   FindAppEvents,
   CreateWatch,
+  ReviseWatch,
+  ReadMadeIntegration,
+  ReviseMadeIntegration,
   ListWatches,
   StopWatch,
   ListProjects,
