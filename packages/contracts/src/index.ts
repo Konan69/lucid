@@ -51,3 +51,5 @@ export * from './windows.js'
 export * from './signins.js'
 export * from './words.js'
 export * from './tools.js'
+
+export * from './capabilities.js'

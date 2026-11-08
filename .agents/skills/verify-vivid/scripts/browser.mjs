@@ -52,6 +52,8 @@ function normaliseReply(text) {
 const missing = {
   integrations:
     'Grant and result evidence presentation awaits the Claude UI unit; see features/integrations.md',
+  capabilities: 'Backend-only unit. The Computer panel UI unit owns its browser recipe.',
+  computer: 'Backend-only unit. The Computer panel UI unit owns its browser recipe.',
   discord: 'No browser recipe for the Discord Key form and Allow card yet',
   github: 'No browser recipe for the GitHub Key form yet',
 }

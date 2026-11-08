@@ -3,8 +3,9 @@ import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import {
+  CapabilityReading,
+  CapabilityFacts,
   ComputerInventory,
-  ConnectionState,
   DEFAULT_APPEARANCE,
   PersonName,
   type VividName,
@@ -13,6 +14,7 @@ import { asActing, type Acting, type ProductService } from './client.ts'
 import * as views from './tools/views.ts'
 import { boundOutput } from './tools/result.ts'
 import { Memory, type MemoryIndex } from './memory.ts'
+import { unknownCapabilityFacts } from './tools/capabilities.ts'
 import { ContextSkill, Remembered, VividContext } from './tools/snapshots.ts'
 
 export type { VividContext } from './tools/snapshots.ts'
@@ -22,12 +24,12 @@ export type { VividContext } from './tools/snapshots.ts'
  * is what a response reads when its prepared context cannot be found, never another Person's.
  */
 export const emptyContext = VividContext.make({
+  capabilities: CapabilityReading.make({ facts: unknownCapabilityFacts(), abilities: [] }),
   memory: Remembered.cases.Off.make({}),
   skills: [],
   timezone: '',
   asOf: Option.none(),
   apps: [],
-  integrations: [],
   name: DEFAULT_APPEARANCE.name,
   person: Option.none(),
 })
@@ -90,24 +92,13 @@ const loadTimezone = Effect.fn('Context.loadTimezone')(
   Effect.orElseSucceed(() => ''),
 )
 
-/**
- * The names of the accounts this Person can use now, as the server names them ("Gmail (Work)",
- * "Gmail (ada@example.com)", `Connection.account`): the same names find_tools returns and
- * use_tool takes. It was the services' names, one for a service connected twice, so Vivid began a
- * response not knowing a Person had two accounts on one service. A Connection that still needs
- * authorization or has failed is left out, because naming it would promise tools that find_tools
- * will not return. A failed read names nothing rather than failing the response.
- */
-const loadIntegrations = Effect.fn('Context.loadIntegrations')(
-  function* (product: ProductService, acting: Option.Option<Acting>) {
-    const response = yield* asActing(product, acting, (client) => client.ListConnections())
-    const ready = response.connections.filter((connection) =>
-      ConnectionState.guards.Ready(connection.state),
-    )
-    return ready.map((connection) => connection.account)
-  },
-  Effect.orElseSucceed(() => []),
-)
+/** Failed server lookup stays explicitly unknown, independently of local Memory. */
+const loadCapabilities = Effect.fn('Context.loadCapabilities')(function* (
+  product: ProductService,
+  acting: Option.Option<Acting>,
+) {
+  return yield* asActing(product, acting, (client) => client.GetCapabilities())
+}, Effect.orElseSucceed(unknownCapabilityFacts))
 
 /**
  * What Vivid is called where this Person is working. When it cannot be read Vivid answers under
@@ -184,6 +175,7 @@ const readClock = Effect.fn('Context.readClock')(function* () {
 export interface ContextSources {
   readonly product: ProductService
   readonly memory: Memory['Service']
+  readonly capabilities: (facts: CapabilityFacts, memory: boolean) => CapabilityReading
 }
 
 /**
@@ -196,30 +188,33 @@ export const loadContext = Effect.fn('Context.load')(function* (
   acting: Option.Option<Acting>,
 ) {
   const { product } = sources
-  return VividContext.make(
-    yield* Effect.all(
-      {
-        memory: loadMemory(sources.memory, acting),
-        skills: loadSkills(product, acting),
-        timezone: loadTimezone(product, acting),
-        asOf: readClock(),
-        integrations: loadIntegrations(product, acting),
-        name: loadName(product, acting),
-        person: loadPerson(product, acting),
-        apps: loadApps(product, acting),
-      },
-      { concurrency: 8 },
-    ),
+  const loaded = yield* Effect.all(
+    {
+      memory: loadMemory(sources.memory, acting),
+      facts: loadCapabilities(product, acting),
+      skills: loadSkills(product, acting),
+      timezone: loadTimezone(product, acting),
+      asOf: readClock(),
+      name: loadName(product, acting),
+      person: loadPerson(product, acting),
+      apps: loadApps(product, acting),
+    },
+    { concurrency: 8 },
   )
+  const { facts, ...prepared } = loaded
+  return VividContext.make({
+    ...prepared,
+    capabilities: sources.capabilities(facts, Remembered.guards.Memory(prepared.memory)),
+  })
 })
 
-/** Facts are explicitly context, not new instructions; timestamps are omitted to keep it stable. */
+/** Saved facts are context, never new instructions. Rendering reads only the frozen response. */
 export function contextInstruction(context: VividContext) {
   const output = boundOutput({
+    capabilities: context.capabilities,
     skills: views.skills(context.skills),
     timezone: context.timezone,
     apps: context.apps.map(views.modelText),
-    integrations: context.integrations.map(views.modelText),
   })
   return `Context for this response (saved facts may be stale; confirm current facts before acting):\n${JSON.stringify(output)}${remembered(context.memory)}${clock(context)}`
 }
