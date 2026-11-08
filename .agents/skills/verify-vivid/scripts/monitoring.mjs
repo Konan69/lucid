@@ -1,9 +1,17 @@
 import * as NodeAssert from 'node:assert/strict'
 import * as NodeFSP from 'node:fs/promises'
 import { parseEnv } from 'node:util'
+import { Result, Schema } from 'effect'
 import { VividRpc } from '@vivid/contracts/rpc'
 import { command, json } from './process.mjs'
 import { rpc } from './wire.mjs'
+
+const Fault = Schema.Struct({
+  failed: Schema.Literal(true), status: Schema.Finite, body: Schema.String,
+  traceId: Schema.String.check(Schema.isPattern(/^[0-9a-f]{32}$/)),
+  spanId: Schema.String.check(Schema.isPattern(/^[0-9a-f]{16}$/)), begin: Schema.String,
+})
+const decodeFault = Schema.decodeUnknownResult(Schema.fromJsonString(Fault))
 
 /** Exercise a real product dependency failure, restoring only this launch's own disposable database. */
 export async function monitoring(state, _thread, directory) {
@@ -11,37 +19,42 @@ export async function monitoring(state, _thread, directory) {
   if (!supplied) throw new Error('VIVID_VERIFY_SENTRY_KEY_FILE must explicitly supply SENTRY_AUTH_TOKEN')
   const credentials = parseEnv(await NodeFSP.readFile(supplied, 'utf8'))
   if (!credentials.SENTRY_AUTH_TOKEN) throw new Error('Sentry read authority is missing')
-  const begin = new Date().toISOString()
-  const traceId = crypto.randomUUID().replaceAll('-', '')
-  const spanId = crypto.randomUUID().replaceAll('-', '').slice(0, 16)
-  const account = JSON.parse(await NodeFSP.readFile(state.scratch + '/account.json', 'utf8'))
   await json(directory + '/coverage.json', {
     operations: Array.from(VividRpc.requests.keys()).toSorted(),
     boundary: 'Both RPC transports install the same Effect reporter; this journey exercises HTTP RPC through the real entry point.',
     limits: ['Native mobile capture, symbolication and notification delivery require separate receipts.'],
   })
-  await rpc(state, 'Me', undefined, directory, 'before')
-  let failed = false
-  try {
-    await command(['docker', 'stop', '--time', '1', state.container])
-    const response = await fetch(state.web + '/api/rpc', {
-      method: 'POST',
-      headers: { cookie: account.cookie, origin: state.web, 'content-type': 'application/ndjson' },
-      body: JSON.stringify({ _tag: 'Request', id: '1', tag: 'Me', payload: null, headers: [], traceId, spanId, sampled: true }) + '\n',
-    })
-    const body = await response.text()
-    failed = /DatabaseUnavailable|DatabaseFailure|Invalid session/.test(body)
-    await json(directory + '/failure.json', { failed, status: response.status, body, traceId, spanId, begin })
-  } catch (error) {
-    failed = false
-    await json(directory + '/failure.json', { failed, diagnosis: error.message })
-  } finally {
-    await command(['docker', 'start', state.container])
+  const previous = await NodeFSP.readFile(directory + '/failure.json', 'utf8').catch((error) => {
+    if (error.code === 'ENOENT') return undefined
+    throw error
+  })
+  let fault
+  if (previous !== undefined) {
+    fault = Result.getOrThrow(decodeFault(previous))
+  } else {
+    const begin = new Date().toISOString()
+    const traceId = crypto.randomUUID().replaceAll('-', '')
+    const spanId = crypto.randomUUID().replaceAll('-', '').slice(0, 16)
+    const account = JSON.parse(await NodeFSP.readFile(state.scratch + '/account.json', 'utf8'))
+    await rpc(state, 'Me', undefined, directory, 'before')
+    try {
+      await command(['docker', 'stop', '--time', '1', state.container])
+      const response = await fetch(state.web + '/api/rpc', {
+        method: 'POST',
+        headers: { cookie: account.cookie, origin: state.web, 'content-type': 'application/ndjson', traceparent: `00-${traceId}-${spanId}-01` },
+        body: JSON.stringify({ _tag: 'Request', id: '1', tag: 'Me', payload: null, headers: [] }) + '\n',
+      })
+      const body = await response.text()
+      NodeAssert.match(body, /DatabaseUnavailable|DatabaseFailure|Invalid session/)
+      fault = { failed: true, status: response.status, body, traceId, spanId, begin }
+      await json(directory + '/failure.json', fault)
+    } finally {
+      await command(['docker', 'start', state.container])
+    }
   }
-  NodeAssert.ok(failed, 'A real database failure must reach the public RPC failure boundary')
   const query = new URLSearchParams({
-    dataset: 'errors', field: 'id', query: 'project:vivid-server environment:verification trace:' + traceId,
-    start: begin, end: new Date().toISOString(), per_page: '20',
+    dataset: 'errors', field: 'id', query: 'project:vivid-server environment:verification trace:' + fault.traceId,
+    start: fault.begin, end: new Date().toISOString(), per_page: '20',
   })
   const response = await fetch('https://us.sentry.io/api/0/organizations/vivid-7t/events/?' + query, {
     headers: { authorization: 'Bearer ' + credentials.SENTRY_AUTH_TOKEN },

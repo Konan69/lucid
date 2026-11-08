@@ -106,16 +106,16 @@ NodeFS.writeFileSync(
 // script's job, so the credentials and the idempotent behaviour live in one place. Without
 // `SENTRY_AUTH_TOKEN` it leaves the maps on disk and reports, and the publish still stands: the
 // update itself is complete without them, only Sentry's frames stay unreadable.
-NodeChildProcess.spawnSync(
+const uploaded = NodeChildProcess.spawnSync(
   'node',
   [NodePath.join(root, '../../scripts/sentry-upload.mjs'), 'vivid-mobile', directory],
   { stdio: 'inherit' },
 )
+if (uploaded.error) throw uploaded.error
+if (uploaded.status !== 0) process.exit(uploaded.status ?? 1)
 
-// Anything metadata.json does not name stays unread by the app, and the map files are the only
-// such files an export leaves (`--source-maps external` above): a map is for the server's Sentry
-// upload only, never for a phone. Keeping the export to what `metadata.json` names keeps the
-// server's release directory honest, and sources are not shipped where they are not used.
+// Only metadata-named assets are served to a phone. Unnamed maps can remain private in the image
+// until pre-deploy uploads them; a successful authenticated local publish can sweep them now.
 
 /**
  * The metadata shape `expo export` writes, mirroring what the server decodes
@@ -142,10 +142,12 @@ const named = new Set(
     .flatMap((platform) => [platform.bundle, ...platform.assets.map((asset) => asset.path)])
     .map((path) => NodePath.resolve(directory, path)),
 )
-for (const file of findMaps(directory)) {
-  if (!named.has(NodePath.resolve(directory, file)))
-    NodeFS.rmSync(NodePath.resolve(directory, file))
-}
+// A credential-free image build retains maps for its authenticated pre-deploy upload.
+if (NodeProcess.env.SENTRY_AUTH_TOKEN !== undefined)
+  for (const file of findMaps(directory)) {
+    if (!named.has(NodePath.resolve(directory, file)))
+      NodeFS.rmSync(NodePath.resolve(directory, file))
+  }
 
 /** Every `.map` below `directory`, through the relative paths this script and the server both use. */
 function findMaps(directory) {

@@ -1,8 +1,10 @@
 import { getTableName, isTable } from 'drizzle-orm'
 import { Commit, ModelFailureReason } from '@vivid/contracts'
 import * as Clock from 'effect/Clock'
+import * as Cause from 'effect/Cause'
 import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
+import * as ErrorReporter from 'effect/ErrorReporter'
 import * as Layer from 'effect/Layer'
 import * as Logger from 'effect/Logger'
 import * as Option from 'effect/Option'
@@ -42,6 +44,13 @@ const SERVICE = 'vivid-server'
 /** One of the two signals exported, as the last segment of its OTLP path. */
 const Signals = ['traces', 'logs'] as const
 type Signal = (typeof Signals)[number]
+
+/** A lost export window needs an independent issue even while its OTLP signal is unavailable. */
+class TelemetryExportPaused extends Schema.TaggedError<TelemetryExportPaused>()(
+  'TelemetryExportPaused',
+  { signal: Schema.Literals(Signals), batches: Schema.Int },
+  { title: 'Telemetry export paused' },
+) {}
 
 /**
  * The attributes of the drop report: how many batches of a signal were lost since its last
@@ -612,12 +621,16 @@ const drop = Effect.fnUntraced(function* ({ signal, drops }: Bounds) {
       ? [Option.some(pending + 1), { pending: 0, pausedUntil: now + PAUSE_MILLIS }]
       : [Option.none<number>(), { pending: pending + 1, pausedUntil }],
   )
-  if (Option.isSome(report))
+  if (Option.isSome(report)) {
     yield* Effect.annotateLogs(Effect.logWarning(Message.dropped), {
       [DROPPED_COUNT]: report.value,
       [PAUSED_SIGNAL]: signal,
       [PAUSED_SECONDS]: PAUSE_MILLIS / 1000,
     })
+    yield* ErrorReporter.report(
+      Cause.fail(new TelemetryExportPaused({ signal, batches: report.value })),
+    )
+  }
   return yield* Effect.interrupt
 })
 

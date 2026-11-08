@@ -80,6 +80,7 @@ COPY --from=build --chown=node:node /app/apps/web/dist apps/web/dist
 COPY --from=updates --chown=node:node /app/apps/mobile/updates apps/mobile/updates
 # Preserve the existing ordered migration entry for deployment pre-start jobs.
 COPY --chown=node:node scripts/migrate.mjs scripts/migrate.mjs
+COPY --chown=node:node scripts/sentry-upload.mjs scripts/sentry-upload.mjs
 COPY --chown=node:node infra/cli.mjs infra/cli.mjs
 # The server names the same commit as the page it serves (`apps/server/src/config.ts` `BUILD`),
 # under a name the host does not set at run time, so the image's own value is the one read.
@@ -91,4 +92,4 @@ USER node
 EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
-CMD ["pnpm", "--filter", "@vivid/server", "start"]
+CMD ["env", "-u", "SENTRY_AUTH_TOKEN", "pnpm", "--filter", "@vivid/server", "start"]

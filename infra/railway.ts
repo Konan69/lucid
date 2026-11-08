@@ -132,18 +132,14 @@ const pushAccess = ({ push }: InfrastructureEnvironment) => ({
 const observabilityAccess = (environment: InfrastructureEnvironment) =>
   Option.match(environment.observability, {
     onNone: () => ({}),
-    onSome: ({ url, headers, dsn }) => {
-      const access = {
-        VIVID_OTLP_URL: url,
-        VIVID_OTLP_HEADERS: headers,
-        VIVID_ENVIRONMENT: '${{RAILWAY_ENVIRONMENT_NAME}}',
-        VIVID_COMMIT: '${{RAILWAY_GIT_COMMIT_SHA}}',
-      }
-      return Option.match(dsn, {
-        onNone: () => access,
-        onSome: (address) => ({ ...access, SENTRY_DSN: address }),
-      })
-    },
+    onSome: ({ url, headers, dsn, uploadToken }) => ({
+      VIVID_OTLP_URL: url,
+      VIVID_OTLP_HEADERS: headers,
+      SENTRY_DSN: dsn,
+      SENTRY_AUTH_TOKEN: uploadToken,
+      VIVID_ENVIRONMENT: '${{RAILWAY_ENVIRONMENT_NAME}}',
+      VIVID_COMMIT: '${{RAILWAY_GIT_COMMIT_SHA}}',
+    }),
   })
 
 /** A setting the server has its own default for is sent only when the deploy sets it. */
@@ -308,14 +304,15 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     publicDomain: true,
     healthcheckPath: '/health',
     /** Pin the image entry: omitting this prop preserves an existing Railway override. */
-    startCommand: 'pnpm --filter @vivid/server start',
+    startCommand: 'env -u SENTRY_AUTH_TOKEN pnpm --filter @vivid/server start',
     /**
      * Auth tables, then product tables, in the order `scripts/migrate.mjs` owns. Railway runs this
      * in the freshly built image before the new server takes traffic; a failure keeps the previous
      * deployment serving. The matching Worker is published before the new server takes traffic.
      */
     preDeploy: {
-      command: 'node scripts/migrate.mjs server && node apps/cells/scripts/build.mjs deploy',
+      command:
+        'node scripts/migrate.mjs server && node scripts/sentry-upload.mjs vivid-mobile apps/mobile/updates && node apps/cells/scripts/build.mjs deploy',
     },
     env: {
       DATABASE_URL: databaseUrl,

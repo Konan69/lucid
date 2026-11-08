@@ -111,7 +111,8 @@ export interface PushAccess {
 export interface ObservabilityAccess {
   readonly url: string
   readonly headers: Redacted.Redacted
-  readonly dsn: Option.Option<string>
+  readonly dsn: string
+  readonly uploadToken: Redacted.Redacted
 }
 
 export interface ExecutorAccess {
@@ -178,11 +179,17 @@ export const loadInfrastructureEnvironment = Effect.gen(function* () {
     })
   }
   const observability = Option.zipWith(otlpUrl, otlpHeaders, (url, headers) => ({ url, headers }))
-  const dsn = yield* optionalString('SENTRY_DSN')
-  const monitoring = Option.map(observability, (access): ObservabilityAccess => ({
-    ...access,
-    dsn,
-  }))
+  const monitoring = yield* Option.match(observability, {
+    onNone: () => Effect.succeed(Option.none<ObservabilityAccess>()),
+    onSome: (access) =>
+      Effect.gen(function* () {
+        return Option.some({
+          ...access,
+          dsn: yield* requiredString('SENTRY_DSN'),
+          uploadToken: yield* requiredSecret('SENTRY_AUTH_TOKEN'),
+        })
+      }),
+  })
 
   const computer: ComputerAccess = {
     key: yield* requiredSecret('VIVID_BOAT_API_KEY'),
