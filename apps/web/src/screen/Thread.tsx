@@ -187,6 +187,7 @@ function contextFor({
     approvals: Option.match(detail, { onNone: () => [], onSome: (value) => value.approvals }),
     requests: Option.match(detail, { onNone: () => [], onSome: (value) => value.requests }),
     handoffs: Option.match(detail, { onNone: () => [], onSome: (value) => value.handoffs }),
+    children: Option.match(detail, { onNone: () => [], onSome: (value) => value.children }),
   }
 }
 

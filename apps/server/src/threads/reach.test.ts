@@ -82,6 +82,7 @@ const fixture = Effect.fn('ThreadReach.fixture')(function* () {
     }),
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   })
   /** Personal navigation stays separate from a Person's Memberships elsewhere. */
   const personal = (person: Person): Actor => ({
@@ -89,6 +90,7 @@ const fixture = Effect.fn('ThreadReach.fixture')(function* () {
     workspace: Workspace.cases.Personal.make({}),
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   })
   return { creator, ben, cy, dee, company, actor, personal }
 })

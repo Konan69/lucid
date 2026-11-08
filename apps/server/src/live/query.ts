@@ -113,6 +113,7 @@ export const live = <A, E, R>(
           workspace,
           by: 'person',
           threadId: Option.none(),
+          helper: Option.none(),
         })),
         // Read again on every reload for as long as the subscription is open; see `untraced`.
         untraced,

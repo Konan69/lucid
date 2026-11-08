@@ -15,6 +15,7 @@ import {
   WatchId,
   WatchState,
   WatchStopReason,
+  type ReviseWatchRequest,
 } from '@vivid/contracts'
 import { ownedHere, type Actor } from '../auth/access.ts'
 import { Database, decodeStored, returned } from '../database/client.ts'
@@ -188,7 +189,38 @@ const makeWrites = (database: Database['Service']) => {
     return yield* Effect.forEach(rows, record).pipe(Effect.map(first))
   })
 
-  return { insertPending, activate, discard, stop }
+  /** Compare the saved callback so a concurrent revision or stop cannot be overwritten. */
+  const revise = Effect.fn('WatchStore.revise')(function* (
+    previous: WatchRecord,
+    request: ReviseWatchRequest,
+    callbackUrl: string,
+    refreshBefore: number,
+  ) {
+    const now = yield* Clock.currentTimeMillis
+    const rows = yield* database.run(
+      database
+        .update(watches)
+        .set({
+          arguments: request.arguments,
+          instruction: request.instruction,
+          callbackUrl,
+          state: 'Active',
+          refreshBefore,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(watches.id, previous.watch.id),
+            eq(watches.callbackUrl, previous.callbackUrl),
+            live,
+          ),
+        )
+        .returning(),
+    )
+    return yield* Effect.forEach(rows, record).pipe(Effect.map(first))
+  })
+
+  return { insertPending, activate, discard, stop, revise }
 }
 
 /** Snapshot reads retain the Connection's name alongside every Watch that references it. */

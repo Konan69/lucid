@@ -172,6 +172,19 @@ const view = Effect.fn('Inputs.view')(function* (
   )
 })
 
+/** Read the Thread history without capturing the execution services used to settle it. */
+export const inThread = Effect.fn('InputStore.inThread')(function* (threadId: ThreadId) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .select()
+      .from(inputRequests)
+      .where(eq(inputRequests.threadId, threadId))
+      .orderBy(asc(inputRequests.createdAt), asc(inputRequests.id)),
+  )
+  return yield* view(rows)
+})
+
 export interface InputStoreService {
   readonly replay: Effect.Effect<void, DatabaseInfrastructureError>
   readonly inThread: (
@@ -349,16 +362,7 @@ export const inputStoreLayer = Layer.effect(
       Effect.provide(effect, context)
     return InputStore.of({
       /** ThreadStore already checked access before loading complete oldest-first request history. */
-      inThread: Effect.fn('InputStore.inThread')(function* (threadId) {
-        const rows = yield* database.run(
-          database
-            .select()
-            .from(inputRequests)
-            .where(eq(inputRequests.threadId, threadId))
-            .orderBy(asc(inputRequests.createdAt), asc(inputRequests.id)),
-        )
-        return yield* run(view(rows))
-      }),
+      inThread: (threadId) => run(inThread(threadId)),
       /**
        * Workspace scope comes from the joined Thread; roles never broaden the addressee.
        * Filter current reach before projection, including corrupt audiences; keep waiting rows.

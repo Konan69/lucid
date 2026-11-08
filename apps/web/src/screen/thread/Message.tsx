@@ -3,7 +3,9 @@ import {
   InputRequestId,
   InputRequestState,
   textOf,
+  Tool,
   type Approval,
+  type ChildRun,
   type ConversationMessage,
   type HandoffRequest,
   type InputRequest,
@@ -13,6 +15,7 @@ import {
 } from '@vivid/contracts'
 import {
   asking,
+  helpers,
   makeFullWhen,
   makeWhen,
   offeredReplies,
@@ -44,6 +47,7 @@ import {
   handoffById,
   requestById,
 } from './Cards'
+import { Children } from './Children'
 import { Handed } from './Handoff'
 import { Asked } from './Question'
 import { Replies } from './Replies'
@@ -58,6 +62,8 @@ export interface ThreadContext {
   readonly approvals: ReadonlyArray<Approval>
   readonly requests: ReadonlyArray<InputRequest>
   readonly handoffs: ReadonlyArray<HandoffRequest>
+  /** The helpers Vivid started in this Thread, drawn under the step that started them. */
+  readonly children: ReadonlyArray<ChildRun>
 }
 
 const reader = thisReader()
@@ -498,6 +504,13 @@ function ToolCards({
 }) {
   return tools.map((tool) => {
     if (tool.state !== 'output-available') return null
+    if (tool.toolName === Tool.spawn_run)
+      return (
+        <Children
+          key={tool.toolCallId}
+          runs={helpers.startedIn(context.children, tools, tool.toolCallId)}
+        />
+      )
     const card = cardFor(tool.output)
     if (Option.isNone(card)) return null
     const wanted = card.value
@@ -647,9 +660,16 @@ const segmentsOf = (message: ConversationMessage): ReadonlyArray<Segment> => {
   return segments
 }
 
-/** Whether a piece of work left the Person anything to see: a card among its tool results. */
+/**
+ * Whether a piece of work left the Person anything to see: a card among its tool results, or
+ * helpers it started (`Children.tsx`).
+ */
 const showsCard = (tools: ReadonlyArray<ToolPart>) =>
-  tools.some((tool) => tool.state === 'output-available' && Option.isSome(cardFor(tool.output)))
+  tools.some(
+    (tool) =>
+      tool.state === 'output-available' &&
+      (tool.toolName === Tool.spawn_run || Option.isSome(cardFor(tool.output))),
+  )
 
 /**
  * Whether a segment draws anything. Words always do; work does only where it left a card, since

@@ -17,6 +17,8 @@ import {
   RuntimeAdmissionBody,
   RuntimeAdmissionReceipt,
   RuntimeAttachmentPath,
+  RuntimeChildAnswer,
+  RuntimeChildPath,
   RuntimeRefusal,
   RuntimeSettlement,
   RuntimeStopped,
@@ -39,6 +41,7 @@ import { loadHistory } from './history.ts'
 import { closeMemory } from './forget.ts'
 import { Memory, type MemoryUnavailable } from './memory.ts'
 import { admit } from './admission.ts'
+import { abortHelper, answerOf } from './children.ts'
 import { runInputs } from './deliveries.ts'
 import { Models } from './models.ts'
 import { Person, type PersonConversations } from './person.ts'
@@ -284,6 +287,24 @@ const attachment = Effect.fn('Runtime.attachment')(function* () {
   })
 })
 
+/** How one helper of this Thread stands: still running, or how it ended, with its answer. */
+const child = Effect.fn('Runtime.child')(function* () {
+  yield* authorize()
+  const path = yield* HttpRouter.schemaPathParams(RuntimeChildPath)
+  const person = yield* bound(path)
+  const answer = yield* answerOf(person.harness, path.threadId, path.runId)
+  return yield* HttpServerResponse.schemaJson(RuntimeChildAnswer)(answer)
+})
+
+/** Aborts one helper's work and answers once it ended. The Thread's own work is untouched. */
+const stopChild = Effect.fn('Runtime.stopChild')(function* () {
+  yield* authorize()
+  const path = yield* HttpRouter.schemaPathParams(RuntimeChildPath)
+  const person = yield* bound(path)
+  const aborted = yield* abortHelper(person.harness, path.threadId, path.runId)
+  return yield* HttpServerResponse.schemaJson(RuntimeStopped)({ aborted })
+})
+
 /** Open to anyone, as it has been: a liveness answer that names the selected model and no secret. */
 const health = Effect.fn('Runtime.health')(function* () {
   const models = yield* Models
@@ -430,5 +451,7 @@ export const routes = Layer.mergeAll(
   HttpRouter.add('GET', `${THREAD}/submissions/:submissionId`, answered(settled())),
   HttpRouter.add('GET', `${THREAD}/state`, answered(state())),
   HttpRouter.add('GET', `${THREAD}/attachments/:attachmentId`, answered(attachment())),
+  HttpRouter.add('GET', `${THREAD}/children/:runId`, answered(child())),
+  HttpRouter.add('POST', `${THREAD}/children/:runId/abort`, answered(stopChild())),
   HttpRouter.add('*', '/*', answered(authorize().pipe(Effect.andThen(refuse('NotFound', 404))))),
 )

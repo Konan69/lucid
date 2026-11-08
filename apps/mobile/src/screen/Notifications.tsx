@@ -1,18 +1,21 @@
 import { useAtomValue } from '@effect/atom-react'
-import type { InvitationId, NotificationId } from '@vivid/contracts'
+import type { Approval, InvitationId, NotificationId, ThreadId } from '@vivid/contracts'
 import { everyNoticeRead, noticeRows, noticesRead, type NotificationList } from '@vivid/state'
 import { Option } from 'effect'
 import { useState } from 'react'
-import { FlatList, ScrollView } from 'react-native'
+import { FlatList, Pressable, ScrollView, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Bell, CheckCheck } from 'lucide-react-native'
+import { useWaitingApprovals } from '../data/approvals'
 import { useNow } from '../data/foreground'
 import { commit } from '../data/haptics'
 import { LiveState, useLive, useLiveData, useLiveValue, type LiveData } from '../data/live'
+import { useTheme } from '../theme'
 import { Bar } from '../ui/Bar'
 import { Screen } from '../ui/Screen'
-import { Empty, GUTTER, Label, Notice, styles } from '../ui/ui'
+import { EDGE, Empty, GUTTER, Label, Notice, styles } from '../ui/ui'
 import { useOpenThread } from '../workspace'
+import { Decide } from './feed/Decide'
 import { Destination } from './notifications/destination'
 import { Invitation } from './notifications/Invitation'
 import { Item, itemKey, itemsOf } from './notifications/list'
@@ -73,6 +76,9 @@ export function Notifications() {
  * start beneath it (`ui/Bar.tsx`).
  */
 function Body({ state }: { state: LiveState<NotificationList> }) {
+  // What waits on the Person's yes is decided at the head of the list (#129), so a list with no
+  // notices still has something to show while one waits.
+  const asks = useWaitingApprovals()
   if (LiveState.$is('Loading')(state)) {
     return (
       <ScrollView
@@ -93,7 +99,11 @@ function Body({ state }: { state: LiveState<NotificationList> }) {
       </ScrollView>
     )
   }
-  return state.value.notifications.length === 0 ? <Quiet /> : <Listed list={state.value} />
+  return state.value.notifications.length === 0 && asks.length === 0 ? (
+    <Quiet />
+  ) : (
+    <Listed list={state.value} asks={asks} />
+  )
 }
 
 /** Shows these notices as read at once, sends that, and takes it back if the server refuses. */
@@ -160,7 +170,14 @@ function Caption({ label }: { label: string }) {
  * (`notifications/Invitation.tsx`). An invitation used to be handed to the phone's browser; the
  * server answers it over the app's own connection, so it is read and accepted here.
  */
-function Listed({ list }: { list: NotificationList }) {
+function Listed({
+  list,
+  asks,
+}: {
+  list: NotificationList
+  /** The Approvals waiting on the Person, decided above the notices (`Waiting`). */
+  asks: ReadonlyArray<Approval>
+}) {
   const data = useLiveData()
   const openThread = useOpenThread()
   const insets = useSafeAreaInsets()
@@ -202,6 +219,24 @@ function Listed({ list }: { list: NotificationList }) {
         data={items}
         keyExtractor={itemKey}
         contentInsetAdjustmentBehavior="automatic"
+        ListHeaderComponent={
+          asks.length > 0 ? (
+            <Waiting
+              asks={asks}
+              titleOf={(id) =>
+                Option.match(threads, {
+                  onNone: () => Option.none<string>(),
+                  onSome: (answer) =>
+                    Option.fromUndefinedOr(answer.threads.find((thread) => thread.id === id)).pipe(
+                      Option.map((thread) => thread.title.trim()),
+                      Option.filter((title) => title !== ''),
+                    ),
+                })
+              }
+              onOpen={openThread}
+            />
+          ) : null
+        }
         renderItem={({ item }) =>
           Item.$match(item, {
             Heading: ({ label }) => <Caption label={label} />,
@@ -221,5 +256,56 @@ function Listed({ list }: { list: NotificationList }) {
         />
       )}
     </>
+  )
+}
+
+/**
+ * What waits on the Person's yes, at the head of the list: each Approval in a card of its own,
+ * under the title of the Thread it was asked in (which opens it), decided there (`Decide`), a
+ * send as its draft. The web's panel shows the same (`Asked`, `apps/web/src/screen/Notifications.tsx`).
+ */
+function Waiting({
+  asks,
+  titleOf,
+  onOpen,
+}: {
+  asks: ReadonlyArray<Approval>
+  /** The Thread's title, once the Thread list has answered and when it has one. */
+  titleOf: (id: ThreadId) => Option.Option<string>
+  onOpen: (id: ThreadId) => void
+}) {
+  const { colors: c } = useTheme()
+  return (
+    <View style={{ paddingHorizontal: GUTTER, paddingTop: 12, gap: 12 }}>
+      <Label accessibilityRole="header" size="label" tone="ink-2" style={{ fontWeight: '600' }}>
+        Waiting on you
+      </Label>
+      {asks.map((approval) => (
+        <View
+          key={approval.id}
+          style={{
+            borderRadius: 24,
+            borderCurve: 'continuous',
+            borderWidth: EDGE,
+            borderColor: c['line-2'],
+            backgroundColor: c.card,
+            padding: 16,
+          }}
+        >
+          <Pressable
+            accessibilityRole="link"
+            accessibilityHint="Opens the conversation"
+            onPress={() => onOpen(approval.threadId)}
+            hitSlop={8}
+            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+          >
+            <Label size="label" tone="ink-2" numberOfLines={1} style={{ fontWeight: '600' }}>
+              {Option.getOrElse(titleOf(approval.threadId), () => 'Open its Thread')}
+            </Label>
+          </Pressable>
+          <Decide approval={approval} />
+        </View>
+      ))}
+    </View>
   )
 }

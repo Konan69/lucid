@@ -31,7 +31,14 @@ export function tools(
   resolve: ResolveScope,
   resolvePerson: (call: Parameters<ResolveScope>[0]) => Effect.Effect<MemoryWriter, ToolFailure>,
   { memory, transcripts }: CellStores,
-  skills: ReadonlyArray<ToolRegistration>,
+  /** Tools made outside the catalogue that it mounts as they are: built-in skills and helpers. */
+  {
+    skills,
+    children,
+  }: {
+    readonly skills: ReadonlyArray<ToolRegistration>
+    readonly children: ReadonlyArray<ToolRegistration>
+  },
 ) {
   const authority = new NodeAsyncHooks.AsyncLocalStorage<Layer.Layer<Scope, ToolFailure>>()
   /** Node's invocation-local storage keeps concurrent calls isolated while sharing warm tools. */
@@ -66,6 +73,7 @@ export function tools(
     memory,
     skills,
     transcripts,
+    children,
   })
   const mounted = registry.tools.map((definition) =>
     durableTool({

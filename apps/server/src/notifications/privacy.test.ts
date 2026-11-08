@@ -91,6 +91,7 @@ const fixture = Effect.fn('NotificationPrivacy.fixture')(function* () {
     }),
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   })
   /** Invitations live in personal space even when this Person also belongs to a Company. */
   const personal = (person: Person): Actor => ({
@@ -98,6 +99,7 @@ const fixture = Effect.fn('NotificationPrivacy.fixture')(function* () {
     workspace: Workspace.cases.Personal.make({}),
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   })
   return { creator, ben, cy, dee, company, actor, personal }
 })
@@ -365,6 +367,7 @@ describe.skipIf(!testDatabaseConfigured)('Notification Thread privacy', () => {
           workspace: Workspace.cases.Company.make({ company, role: 'owner' }),
           by: 'person',
           threadId: Option.none(),
+          helper: Option.none(),
         }
         yield* shown(elsewhere, [], 0)
         expect(yield* (yield* NotificationStore).read(elsewhere, { ids: [notice.id] })).toEqual({

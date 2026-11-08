@@ -79,7 +79,12 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             )
             const store = yield* ApprovalStore
             const approval = yield* store.raise(
-              { ...test.owner, by: 'vivid', threadId: Option.some(test.companyId) },
+              {
+                ...test.owner,
+                by: 'vivid',
+                threadId: Option.some(test.companyId),
+                helper: Option.none(),
+              },
               test.connectionAction,
               test.bound,
             )
@@ -135,7 +140,12 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           )
           const store = yield* ApprovalStore
           const approval = yield* store.raise(
-            { ...test.owner, by: 'vivid', threadId: Option.some(test.companyId) },
+            {
+              ...test.owner,
+              by: 'vivid',
+              threadId: Option.some(test.companyId),
+              helper: Option.none(),
+            },
             test.connectionAction,
             test.bound,
           )
@@ -230,6 +240,78 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
         }),
         'fresh',
       ),
+    )
+
+    it.effect(
+      'an edited draft sends the Person’s words, and an edit beyond words runs nothing',
+      () =>
+        scopedCase(
+          trustTestServices,
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const store = yield* ApprovalStore
+            const asked = {
+              to: ['dami@example.com'],
+              subject: 'The NDA',
+              body: 'Signed.',
+              copies: 1,
+            }
+            const send = ProposedAction.make({
+              summary: 'Send the signed NDA to Dami',
+              rationale: 'Dami asked for it',
+              effect: 'write',
+              target: ActionTarget.cases.Connection.make({
+                connectionId: test.connectionId,
+                account: 'Work account',
+                tool: 'send_email',
+                input: asked,
+              }),
+            })
+            const approval = yield* store.raise(test.vivid, send, test.bound)
+            const edit = (input: Schema.JsonObject) => ({
+              id: approval.id,
+              digest: approval.digest,
+              decision: ApprovalDecision.cases.AllowEdited.make({ input }),
+            })
+            // A field Vivid did not write, and a number turned into words, are not a draft's words.
+            for (const input of [
+              { ...asked, bcc: 'someone@example.com' },
+              { ...asked, copies: 'many' },
+            ]) {
+              const refused = yield* store.decide(test.personal, edit(input)).pipe(Effect.flip)
+              expect(refused).toBeInstanceOf(InvalidRequest)
+            }
+            expect((yield* store.inbox(test.personal)).map((each) => each.id)).toEqual([
+              approval.id,
+            ])
+            const observed = yield* Observation
+            expect(yield* Ref.get(observed.actions)).toEqual([])
+
+            const edited = {
+              to: ['dami@example.com', 'legal@example.com'],
+              subject: 'The signed NDA',
+              body: 'Signed and attached.',
+              copies: 1,
+            }
+            const sent = yield* store.decide(test.personal, edit(edited))
+            expect(sent.state._tag).toBe('Succeeded')
+            const asSent = ProposedAction.make({
+              ...send,
+              target: ActionTarget.cases.Connection.make({
+                connectionId: test.connectionId,
+                account: 'Work account',
+                tool: 'send_email',
+                input: edited,
+              }),
+            })
+            expect(yield* Ref.get(observed.actions)).toEqual([asSent])
+            // The record says what was sent, and the item has left the Person's inbox.
+            expect(sent.action).toEqual(asSent)
+            expect(sent.digest).toBe(approval.digest)
+            expect(yield* store.inbox(test.personal)).toEqual([])
+          }),
+          'fresh',
+        ),
     )
 
     it.effect('a changed digest fails without executing', () =>
