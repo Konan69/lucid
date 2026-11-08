@@ -1,9 +1,9 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "3eb62061-569f-4149-92de-0435f9a6c651",
+  "id": "ea7e6c1b-10aa-4806-996a-1159fd24aa51",
   "prevIds": [
-    "08c17db1-5dcf-4d6f-94d2-d53672798a35"
+    "7af70872-67f5-492a-a982-191ffe047969"
   ],
   "ddl": [
     {
@@ -308,6 +308,32 @@
       "generated": null,
       "identity": null,
       "name": "digest",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_approvals"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "binding",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_approvals"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "invalidation",
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_approvals"
@@ -1205,6 +1231,19 @@
       "generated": null,
       "identity": null,
       "name": "reason",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_connections"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "0",
+      "generated": null,
+      "identity": null,
+      "name": "authorization_generation",
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_connections"
