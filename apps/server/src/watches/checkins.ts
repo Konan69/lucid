@@ -2,6 +2,7 @@ import * as NodeCrypto from 'node:crypto'
 import { Effect, Option, Schema } from 'effect'
 import {
   CheckinArming,
+  CheckinRead,
   CheckinFocus,
   AvailableCheckinFocus,
   CheckinTiming,
@@ -16,6 +17,7 @@ import {
   Watch,
   NotFound,
   type ConnectionId,
+  type RunId,
   type Owed,
   type UpdateCheckinRequest,
 } from '@vivid/contracts'
@@ -73,13 +75,6 @@ const sourceOf = (record: Owed, watches: ReadonlyArray<WatchRecord>) => {
   return OpenWork.cases.Owed.make({ ...source, checkins })
 }
 
-/** A source read either scopes this check or proves that it has ended. */
-export const CheckinRead = Schema.TaggedUnion({
-  Open: { context: Schema.NonEmptyString },
-  Closed: { evidence: Schema.NonEmptyString },
-})
-export type CheckinRead = typeof CheckinRead.Type
-
 /** Only names and product facts enter model context; source identifiers remain server metadata. */
 const sourceContext = (records: ReadonlyArray<Owed>) =>
   JSON.stringify(records.map(({ what, from, nextStep, due }) => ({ what, from, nextStep, due })))
@@ -93,11 +88,12 @@ const sweepRead = (records: ReadonlyArray<Owed>, timing: CheckinTiming) => {
 }
 
 /** Re-read the source at firing. An explicitly requested OpenWork sweep keeps its recurrence. */
-const sourceReading = Effect.fn('Checkins.closed')(function* (record: WatchRecord) {
+const sourceReading = Effect.fn('Checkins.read')(function* (
+  record: WatchRecord,
+  purpose: typeof WatchPurpose.cases.Checkin.Type,
+) {
   const owed = yield* OwedStore
   const database = yield* Database
-  if (!WatchPurpose.guards.Checkin(record.watch.purpose)) return Option.none<CheckinRead>()
-  const purpose = record.watch.purpose
   const person = yield* findPerson(record.personId).pipe(Effect.provideService(Database, database))
   if (Option.isNone(person)) return yield* new NotFound({ message: 'Person not found' })
   const workspace = yield* workspaceIn(record.personId, Option.fromNullOr(record.companyId)).pipe(
@@ -107,7 +103,7 @@ const sourceReading = Effect.fn('Checkins.closed')(function* (record: WatchRecor
     return yield* new NotFound({ message: 'Thread not found' })
   const actor: Actor = { person: person.value, workspace, by: 'vivid', threadId: Option.none() }
   const records = yield* owed.list(actor)
-  const read = AvailableCheckinFocus.match(purpose.focus, {
+  return AvailableCheckinFocus.match(purpose.focus, {
     Owed: ({ owedId }) => {
       const source = records.find((item) => item.id === owedId)
       if (source === undefined)
@@ -124,7 +120,6 @@ const sourceReading = Effect.fn('Checkins.closed')(function* (record: WatchRecor
         purpose.timing,
       ),
   })
-  return Option.some(read)
 })
 
 /** Observe the actual provider result, scoped to the timer Connection, owner and persisted key. */
@@ -244,7 +239,7 @@ export const watchCheckins = Effect.fn('Watches.checkins')(function* () {
   /** Local completion wins before best-effort provider cleanup, just as explicit Watch completion does. */
   const finish = Effect.fn('Checkins.finish')(function* (
     record: WatchRecord,
-    runId: import('@vivid/contracts').RunId,
+    runId: RunId,
     evidence: string,
   ) {
     if (!WatchPurpose.guards.Checkin(record.watch.purpose)) return
@@ -278,8 +273,8 @@ export const watchCheckins = Effect.fn('Watches.checkins')(function* () {
         Effect.provideService(WatchStore, store),
         Effect.provideService(Changes, changes),
       ),
-    readCheckin: (record: WatchRecord) =>
-      sourceReading(record).pipe(
+    readCheckin: (record: WatchRecord, purpose: typeof WatchPurpose.cases.Checkin.Type) =>
+      sourceReading(record, purpose).pipe(
         Effect.provideService(Database, database),
         Effect.provideService(OwedStore, owed),
       ),

@@ -46,11 +46,7 @@ export const watchProgress = Effect.fn('Watches.watchProgress')(function* (
       const run = (yield* requestRuns(actor.threadId.value, actor.person.id)).find(
         (run) => run.id === runId.value,
       )
-      if (
-        run === undefined ||
-        !StoredRunOrigin.isAnyOf(['Watch', 'Checkin'])(run.origin) ||
-        run.origin.watchId === undefined
-      )
+      if (run === undefined || !StoredRunOrigin.isAnyOf(['Watch', 'Checkin'])(run.origin))
         return Option.none()
       return Option.some({ runId: run.id, watchId: run.origin.watchId })
     },

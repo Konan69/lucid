@@ -40,6 +40,7 @@ import { projectTools } from './projects.ts'
 import { owedTools } from './owed.ts'
 import { todoTools } from './todos.ts'
 import { watchTools } from './watches.ts'
+import { checkinTools } from './checkins.ts'
 import { skillTools } from './skills.ts'
 
 type Requirement = keyof typeof requirements
@@ -190,6 +191,12 @@ const definitions: ReadonlyArray<{
       'Watch Integration events and stop or inspect Watches. Never promise future work without setting it up.',
     requirement: 'Product',
     mount: ({ runTool }) => watchTools(runTool),
+  },
+  {
+    description:
+      'Choose and keep check-ins on open work: list what is open, plan its next check through a timer Integration, and move it when the work is still open.',
+    requirement: 'Product',
+    mount: ({ runTool }) => checkinTools(runTool),
   },
   {
     description: 'Put relevant background findings on the Person’s Feed.',

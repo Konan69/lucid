@@ -7,7 +7,6 @@ import {
   OpenWork,
   WatchIntent,
   WatchPurpose,
-  type Watch,
 } from '@vivid/contracts'
 import * as v from 'valibot'
 import { defineTool } from './tool.ts'
@@ -15,6 +14,7 @@ import { named } from './names.ts'
 import { Scope, type RunTool } from './scope.ts'
 import { summary, text } from './inputs.ts'
 import { modelText } from './views.ts'
+import { view } from './watches.ts'
 
 const focus = v.variant('kind', [
   v.object({ kind: v.literal('OpenWork') }),
@@ -87,10 +87,7 @@ export const intent = Effect.fn('CheckinTools.intent')(function* (
 })
 
 /** Open-work selection and time changes use the same Watch metadata as creation. */
-export function checkinTools(
-  runTool: RunTool,
-  view: (watch: Watch) => Record<string, import('effect').Schema.Json>,
-) {
+export function checkinTools(runTool: RunTool) {
   return [
     defineTool({
       name: Tool.list_open_work,

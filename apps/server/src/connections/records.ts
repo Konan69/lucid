@@ -38,7 +38,6 @@ import { namedAccounts } from './names.ts'
 import { MADE } from './made.ts'
 import { connections, connectionPermissions } from './tables.ts'
 import { invalidatePending, usingConnection } from '../approvals/stale.ts'
-import { connections } from './tables.ts'
 import { Watches } from '../watches/lifecycle.ts'
 
 /** A stored Connection. The retired `label` column (`tables.ts`) is read by nothing, so it is

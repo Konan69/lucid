@@ -10,6 +10,7 @@ import {
   CheckinArming,
   ThreadId,
   WatchState,
+  ConnectionGrant,
   ConnectionState,
   RunState,
   SignalCue,
@@ -33,7 +34,7 @@ import { secretFor, sign } from './signature.ts'
 import { WatchStore } from './store.ts'
 import { RunStore, RunEnding } from '../threads/runs.ts'
 import { Delivered, Executor, person, testLayer } from './testing.ts'
-import { getRecord, saveState, recordChanged } from '../connections/records.ts'
+import { getRecord, readyGrant, saveState, recordChanged } from '../connections/records.ts'
 
 const request = CreateWatchRequest.make({
   name: 'New mail in Work Mail',
@@ -349,6 +350,7 @@ describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
             connection,
             ConnectionState.cases.NeedsAuthorization.make({}),
             connection.references,
+            ConnectionGrant.cases.ReauthorizationRequired.make({}),
           )
           yield* recordChanged(actor, paused)
           const [listed] = yield* watching.list(actor)
@@ -366,6 +368,7 @@ describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
             paused,
             ConnectionState.cases.Ready.make({}),
             paused.references,
+            readyGrant(paused.references),
           )
           yield* recordChanged(actor, ready)
           expect((yield* Queue.take(executor.subscribed)).url).toBe(url)
@@ -427,6 +430,7 @@ describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
             event: request.event,
             occurredAt: '2026-10-15T20:00:00.000Z',
             instruction: request.instruction,
+            condition: request.condition,
             data: { from: 'client@example.com', subject: 'Invoice' },
           }),
         )

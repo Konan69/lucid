@@ -1,5 +1,7 @@
 import { describe, expect, layer } from '@effect/vitest'
 import {
+  WatchCondition,
+  WatchIntent,
   CreateWatchRequest,
   ForgetChange,
   ForgetRemaining,
@@ -120,6 +122,8 @@ const visaWatch = Effect.fn('ForgetTest.visaWatch')(function* (actor: Actor) {
       event: 'message.received',
       arguments: { folder: 'inbox' },
       instruction: 'When Dana writes about her visa appointment, remind me the day before.',
+      condition: WatchCondition.cases.Continuous.make({}),
+      purpose: WatchIntent.cases.Event.make({}),
     }),
   )
   yield* Queue.take(executor.subscribed)
