@@ -147,6 +147,8 @@ const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
     }).pipe(Effect.withSpan('Executor.Test.catalog')),
     add: Effect.fn('Executor.Test.add')((input) => makeExecutor(probe).begin(input)),
     make: Effect.fn('Executor.Test.make')((input) => makeExecutor(probe).begin(input)),
+    readMade: () => Effect.die('Source revision requires the real HTTP adapter'),
+    reviseMade: () => Effect.die('Source revision requires the real HTTP adapter'),
     begin: Effect.fn('Executor.Test.begin')(function* (input) {
       yield* Ref.update(probe.begins, (count) => count + 1)
       const identity = {

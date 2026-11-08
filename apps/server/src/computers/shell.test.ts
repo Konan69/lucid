@@ -1,4 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
+import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import { describe, expect, layer } from '@effect/vitest'
@@ -18,7 +19,23 @@ import {
   Workspace,
 } from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
-import { Effect, Exit, Layer, Option, Predicate, Queue, Ref, Schema, Stream } from 'effect'
+import {
+  Deferred,
+  Fiber,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Predicate,
+  Queue,
+  Ref,
+  Schema,
+  Stream,
+} from 'effect'
+import { ShellSnapshot, SignalCue } from '@vivid/contracts'
+import { commandWorkerLayer, observeCommand, startShell } from './commands.ts'
+import { workLayer } from '../database/work.ts'
+import { Conversation, DeliveryMessage, type ServerDelivery } from '../threads/conversation.ts'
 import * as RpcClient from 'effect/rpc/RpcClient'
 import type * as RpcGroup from 'effect/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/rpc/RpcMessage'
@@ -41,7 +58,7 @@ import { linkFailure } from './boat/shell.ts'
 import { LinkPortClosed, openLink } from './ssh/link.ts'
 import { peer, peerAvailable } from './ssh/peer.ts'
 import {
-  type ComputerStore,
+  ComputerStore,
   computerFileRead,
   computerFileWrite,
   computerShell,
@@ -115,7 +132,20 @@ const standIn = Effect.fn('ShellTest.standIn')(function* () {
         Effect.catchTag('LinkRunLost', () => Effect.die('The stand-in lost a command')),
         Effect.mapError(linkFailure),
       ),
-    converse: unused('speak with a command'),
+    converse: (input) =>
+      link.converse(input).pipe(
+        Effect.mapError(linkFailure),
+        Effect.map((spoken) => ({
+          output: spoken.output.pipe(
+            Stream.mapError(() => new MachineNotRunning({ key: input.key })),
+          ),
+          say: (text: string) =>
+            spoken.say(text).pipe(Effect.mapError(() => new MachineNotRunning({ key: input.key }))),
+          ended: spoken.ended.pipe(
+            Effect.mapError(() => new MachineNotRunning({ key: input.key })),
+          ),
+        })),
+      ),
     read: ({ path }) => link.read(path).pipe(Effect.mapError(linkFailure)),
     put: ({ path, content }) => link.put(path, content).pipe(Effect.mapError(linkFailure)),
   })
@@ -160,6 +190,125 @@ const textOf = (result: { readonly content: ReadonlyArray<{ readonly type: strin
 
 describe.skipIf(!testDatabaseConfigured || !peerAvailable)("Vivid's own Computer tools", () => {
   layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
+    it.effect(
+      'keeps shell output and completion owed across a worker restart, and stops only its handle',
+      () =>
+        Effect.gen(function* () {
+          const { server, machine } = yield* standIn()
+          const actor = yield* acting()
+          const store = computerStoreLayer.pipe(
+            Layer.provide(Layer.succeed(Machine, machine)),
+            Layer.provide(changesLayer),
+          )
+          const provided = yield* Layer.build(Layer.mergeAll(store, workLayer))
+          const delivered = yield* Queue.unbounded<ServerDelivery>()
+          const entered = yield* Deferred.make<void>()
+          const conversation = Layer.succeed(
+            Conversation,
+            Conversation.of({
+              admit: () => Effect.die('This test only delivers completion signals'),
+              // Hold delivery so shutdown precedes the SQL acknowledgement; runtime admission is not proved here.
+              deliver: (delivery) =>
+                Queue.offer(delivered, delivery).pipe(
+                  Effect.andThen(Deferred.succeed(entered, undefined)),
+                  Effect.andThen(Effect.never),
+                ),
+            }),
+          )
+          yield* Effect.sync(() =>
+            NodeChildProcess.execFileSync('mkfifo', [
+              NodePath.join(server.home, 'release'),
+              NodePath.join(server.home, 'started'),
+            ]),
+          )
+          const started = yield* startShell(actor, {
+            command:
+              'printf ready; printf problem >&2; printf ready > started; read -r answer < release; printf "%s" "$answer"; exit 7',
+            directory: server.home,
+          }).pipe(Effect.provide(provided))
+          if (!ShellSnapshot.guards.Running(started))
+            return yield* Effect.die('Command did not start')
+          const handle = started.handle
+          // Register cleanup before assertions can strand a detached process.
+          yield* Effect.addFinalizer(() =>
+            observeCommand(actor.person.id, 'stop', { handle, seconds: 30 }).pipe(
+              Effect.provide(provided),
+              Effect.ignore,
+            ),
+          )
+          const read = (action: 'read' | 'wait' | 'stop', seconds: number) =>
+            observeCommand(actor.person.id, action, { handle, seconds }).pipe(
+              Effect.provide(provided),
+            )
+          yield* Effect.flatMap(ComputerStore, (computer) =>
+            computer.run(actor.person.id, {
+              command: 'read -r ready < started',
+              directory: server.home,
+              timeoutSeconds: 30,
+            }),
+          ).pipe(Effect.provide(provided))
+          const current = yield* read('read', 0)
+          expect(current._tag).toBe('Running')
+          expect(current).toMatchObject({
+            stdout: 'ready',
+            stderr: 'problem',
+          })
+          const worker = commandWorkerLayer.pipe(
+            Layer.provide(conversation),
+            Layer.provide(Layer.succeedContext(provided)),
+          )
+          // FIFO input is the release signal, never a sleep or output poll.
+          yield* Effect.flatMap(ComputerStore, (computer) =>
+            computer.run(actor.person.id, {
+              command: "printf 'finished\\n' > release",
+              directory: server.home,
+              timeoutSeconds: 30,
+            }),
+          ).pipe(Effect.provide(provided))
+          const ended = yield* read('wait', 30)
+          expect(ended._tag).toBe('Completed')
+          expect(ended).toMatchObject({
+            stdout: 'readyfinished',
+            stderr: 'problem',
+            exitCode: 7,
+          })
+          const first = yield* Layer.launch(worker).pipe(Effect.forkScoped)
+          yield* Deferred.await(entered)
+          const before = yield* Queue.take(delivered)
+          expect(before.idempotencyKey).toBe(`shell:${handle}`)
+          yield* Fiber.interrupt(first)
+          // Reacquire the production consumer and reclaim its unacknowledged SQL obligation.
+          const second = yield* Layer.launch(worker).pipe(Effect.forkScoped)
+          const after = yield* Queue.take(delivered)
+          expect(after).toEqual(before)
+          expect(after.message).toEqual(
+            DeliveryMessage.cases.Signal.make({
+              cue: SignalCue.cases.Shell.make({ handle, body: JSON.stringify(ended) }),
+            }),
+          )
+          yield* Fiber.interrupt(second)
+          expect(yield* read('read', 0)).toEqual(ended)
+          const pending = yield* startShell(actor, {
+            command: 'read -r answer < release',
+            directory: server.home,
+          }).pipe(Effect.provide(provided))
+          if (!ShellSnapshot.guards.Running(pending))
+            return yield* Effect.die('Second command did not start')
+          yield* Effect.addFinalizer(() =>
+            observeCommand(actor.person.id, 'stop', { handle: pending.handle, seconds: 30 }).pipe(
+              Effect.provide(provided),
+              Effect.ignore,
+            ),
+          )
+          const stopped = yield* observeCommand(actor.person.id, 'stop', {
+            handle: pending.handle,
+            seconds: 30,
+          }).pipe(Effect.provide(provided))
+          expect(stopped._tag).toBe('Stopped')
+          expect(yield* read('read', 0)).toEqual(ended)
+          return undefined
+        }).pipe(Effect.scoped),
+    )
     it.effect(
       'writes, edits and reads a file and runs a command with the runtime tools, and only then wakes the Computer',
       () =>

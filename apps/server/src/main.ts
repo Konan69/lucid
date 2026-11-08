@@ -1,3 +1,4 @@
+import { commandWorkerLayer } from './computers/commands.ts'
 import * as NodeHttp from 'node:http'
 import { migrationLayer } from './connections/migration.ts'
 import * as Effect from 'effect/Effect'
@@ -54,6 +55,7 @@ import { changesLayer } from './live/changes.ts'
 import { tallyLayer } from './live/tally.ts'
 import { titleModelLayer } from './threads/model.ts'
 import { threadTitlesLayer } from './threads/generation.ts'
+import { notificationDeliveryLayer } from './notifications/delivery.ts'
 import { notifierLayer } from './notifications/notifier.ts'
 import { observabilityLayer } from './observability/export.ts'
 import { notificationStoreLayer } from './notifications/store.ts'
@@ -174,10 +176,12 @@ const serverProgram = Effect.gen(function* () {
   )
   const background = Layer.mergeAll(
     migrationLayer,
+    commandWorkerLayer,
     watchRenewalLayer,
     channelWorkerLayer,
     approvalSweeperLayer,
     pushReceiptsLayer,
+    notificationDeliveryLayer,
     libraryIngestionLayer(ingestionBackoff, extractPdf),
     PersistedQueue.layerCleanup(),
   )

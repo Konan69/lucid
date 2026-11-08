@@ -151,6 +151,7 @@ const ports = Layer.effectContext(
       }),
     })
     const runner = ActionRunner.of({
+      inspect: () => Effect.succeed([]),
       /** Every execution is observable, so races are checked against the actual claim boundary. */
       run: Effect.fn('TrustTest.run')(function* ({ action }) {
         yield* Ref.update(state.actions, (actions) => actions.concat([action]))

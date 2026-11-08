@@ -17,6 +17,8 @@ import {
 import {
   AddIntegrationRequest,
   MakeIntegrationRequest,
+  MadeIntegrationSource,
+  type ReviseMadeIntegrationRequest,
   ServiceId,
   SignInSurface,
   AuditEvent,
@@ -52,6 +54,7 @@ import {
   ExecutorTool,
   ExecutorOwnerId,
   ExecutorReferences,
+  ExecutorAppOwnership,
   ExecutorResourceMissing,
   ExecutorNotReady,
   ExecutorPublicAddressRequired,
@@ -65,7 +68,7 @@ import {
   ExecutorAuthorizationUnavailable,
   ExecutorBuildFailed,
 } from './executor.ts'
-import { madeFiles, madeService } from './made.ts'
+import { madeFiles, madeService, MADE } from './made.ts'
 import { executorFailure } from './errors.ts'
 import {
   connectionOf,
@@ -715,6 +718,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     records: (actor: Actor) => provide(listRecords(actor)),
     tools: (actor: Actor, row: ConnectionRecord) => provide(loadTools(actor, row)),
     ...makeRegistration({ executor, provide, catalogServices }),
+    ...makeAuthoredManagement({ executor, provide }),
     ...management,
   }
 })
@@ -1096,3 +1100,55 @@ export class ConnectionStore extends Context.Service<
 export const connectionStoreLayer = Layer.effect(ConnectionStore, makeStore()).pipe(
   Layer.provideMerge(connectionAddressLayer),
 )
+
+/** Authored source belongs only to its Person and a dedicated, ready Executor app. */
+function makeAuthoredManagement(input: {
+  readonly executor: ExecutorService
+  readonly provide: ProvideAuthority
+}) {
+  const selected = Effect.fn('Connections.authored')(function* (actor: Actor, account: string) {
+    const found = namedAccounts(yield* input.provide(listRecords(actor))).find(
+      (entry) => entry.account.trim().toLowerCase() === account.trim().toLowerCase(),
+    )
+    if (found === undefined) return yield* new NotFound({ message: 'Integration not found.' })
+    const { row } = found
+    if (row.personId !== actor.person.id || row.companyId !== null || !row.service.startsWith(MADE))
+      return yield* new InvalidRequest({
+        message: 'Only an Integration Vivid made for you can be revised.',
+      })
+    const references = row.references
+    if (row.status !== 'ready' || !ExecutorReferences.isAnyOf(['Public', 'Authorized'])(references))
+      return yield* new InvalidRequest({
+        message: 'Reconnect this Integration before revising it.',
+      })
+    if (!ExecutorAppOwnership.guards.Dedicated(references.appOwnership))
+      return yield* new InvalidRequest({
+        message: 'This Integration does not own a dedicated app.',
+      })
+    return { account: found.account, app: references.app }
+  })
+  const readMade = Effect.fn('Connections.readMade')(function* (actor: Actor, account: string) {
+    const held = yield* selected(actor, account)
+    const files = yield* input.executor.readMade(held.app).pipe(Effect.mapError(executorFailure))
+    return MadeIntegrationSource.make({ account: held.account, files })
+  })
+  return {
+    readMade,
+    /** Build failures leave the old active version intact; readback reports only deployed source. */
+    reviseMade: Effect.fn('Connections.reviseMade')(function* (
+      actor: Actor,
+      request: ReviseMadeIntegrationRequest,
+    ) {
+      const held = yield* selected(actor, request.account)
+      yield* input.executor
+        .reviseMade(held.app, madeFiles({ name: held.account, files: request.files }))
+        .pipe(
+          Effect.mapError(madeBeginFailure),
+          Effect.catchTag('ExecutorBuildFailed', ({ message }) =>
+            Effect.fail(new InvalidRequest({ message })),
+          ),
+        )
+      return yield* readMade(actor, held.account)
+    }),
+  }
+}

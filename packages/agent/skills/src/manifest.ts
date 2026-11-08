@@ -294,6 +294,23 @@ const definitions = [
     needs: ['find_tools', 'use_tool', 'connect', 'read_page', 'ask_person'],
     connections: [['Search', 'Web Search', 'Brave Search', 'Tavily', 'Exa']],
   },
+  {
+    runtimeName: 'put-work-in-the-calendar',
+    displayName: 'Put my work in the calendar',
+    about:
+      'Sets aside time in your calendar for a project’s next step and your to-dos, and checks the slots with you first.',
+    starter: false,
+    needs: [
+      'read_project',
+      'list_todos',
+      'find_tools',
+      'use_tool',
+      'connect',
+      'search_memory',
+      'ask_person',
+    ],
+    connections: [['Google Calendar', 'Outlook', 'Microsoft Outlook']],
+  },
 ] as const satisfies ReadonlyArray<{
   readonly runtimeName: string
   readonly displayName: string

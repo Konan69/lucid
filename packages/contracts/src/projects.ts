@@ -17,7 +17,15 @@ export const ProjectAuthor = Schema.TaggedUnion({
 })
 export type ProjectAuthor = typeof ProjectAuthor.Type
 
-const ProjectText = Schema.NonEmptyString.check(Schema.isMaxLength(500), Schema.isPattern(/\S/u))
+/** The longest line of a Project's work: an objective, a next step, a progress line or a proof. */
+export const PROJECT_TEXT_MAX = 500
+
+/** One line of a Project's work, as a Person or Vivid writes it; forms check typed text with it. */
+export const ProjectText = Schema.NonEmptyString.check(
+  Schema.isMaxLength(PROJECT_TEXT_MAX),
+  Schema.isPattern(/\S/u),
+)
+export type ProjectText = typeof ProjectText.Type
 
 /** One dated line of where the work stands. The log only grows; a correction is a newer line. */
 export const ProjectProgress = Schema.Struct({
@@ -28,12 +36,14 @@ export const ProjectProgress = Schema.Struct({
 export type ProjectProgress = typeof ProjectProgress.Type
 
 /**
- * What shows a Project is done. A message of a Thread the writer could read when it was cited:
- * the Person saying so, or Vivid's reply holding what it observed. A Company Member who cannot
- * open that Thread sees the link and is refused there, as with any Thread link.
+ * What shows a Project is done. `ThreadMessage` is a message of a Thread the writer could read
+ * when it was cited: the Person saying so, or Vivid's reply holding what it observed. A Company
+ * Member who cannot open that Thread sees the link and is refused there, as with any Thread link.
+ * `Person` is a Person marking it done on the Project itself: their own word, with nothing to open.
  */
 export const ProjectEvidence = Schema.TaggedUnion({
   ThreadMessage: { threadId: ThreadId, messageId: MessageId },
+  Person: { personId: PersonId },
 })
 export type ProjectEvidence = typeof ProjectEvidence.Type
 
@@ -112,7 +122,8 @@ export type ProjectToolCallId = typeof ProjectToolCallId.Type
  * progress log is kept. `Progress` adds a dated line and the next step after it. `Complete` is
  * Vivid's, from inside a Run: the server reads that Run's messages and cites the Person's message
  * (`said: 'person'`) or Vivid's own reply (`said: 'vivid'`) as the proof, so the model never
- * names a message and completion never rests on a source nobody can open.
+ * names a message and completion never rests on a source nobody can open. `Confirm` is the
+ * Person's own, from a Project screen: they mark it done in their words, and the proof cites them.
  */
 export const ProjectChange = Schema.TaggedUnion({
   Define: { objective: ProjectText, nextStep: ProjectText },
@@ -122,6 +133,7 @@ export const ProjectChange = Schema.TaggedUnion({
     toolCallId: ProjectToolCallId,
     said: Schema.Literals(['person', 'vivid']),
   },
+  Confirm: { summary: ProjectText },
 })
 export type ProjectChange = typeof ProjectChange.Type
 

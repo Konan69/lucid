@@ -1,3 +1,4 @@
+import { startShell, observeCommand, shellRefusals } from './commands.ts'
 import { Effect, Exit, Scope, Stream } from 'effect'
 import {
   ComputerResponse,
@@ -15,6 +16,9 @@ import {
   type DeviceId,
   type EnrolDeviceRequest,
   type UseDesktopRequest,
+  type StartShellRequest,
+  type ReadShellRequest,
+  type WaitShellRequest,
   type ComputerShellRequest,
   type ComputerFileReadRequest,
   type ComputerFileWriteRequest,
@@ -221,6 +225,31 @@ export const computerHandlers = {
     const auth = yield* requirePerson()
     const store = yield* ComputerStore
     return ComputerResponse.make({ computer: yield* store.hold(auth.person.id, held) })
+  }),
+  StartShell: Effect.fn('Rpc.StartShell')(function* (request: StartShellRequest) {
+    yield* requireVivid()
+    return yield* startShell(yield* requireActor(), request)
+  }),
+  ReadShell: Effect.fn('Rpc.ReadShell')(function* (request: ReadShellRequest) {
+    yield* requireVivid()
+    const actor = yield* requireActor()
+    return yield* observeCommand(actor.person.id, 'read', { ...request, seconds: 0 }).pipe(
+      Effect.catchTags(shellRefusals),
+    )
+  }),
+  WaitShell: Effect.fn('Rpc.WaitShell')(function* (request: WaitShellRequest) {
+    yield* requireVivid()
+    const actor = yield* requireActor()
+    return yield* observeCommand(actor.person.id, 'wait', request).pipe(
+      Effect.catchTags(shellRefusals),
+    )
+  }),
+  StopShell: Effect.fn('Rpc.StopShell')(function* (request: ReadShellRequest) {
+    yield* requireVivid()
+    const actor = yield* requireActor()
+    return yield* observeCommand(actor.person.id, 'stop', { ...request, seconds: 30 }).pipe(
+      Effect.catchTags(shellRefusals),
+    )
   }),
   ComputerShell: Effect.fn('Rpc.ComputerShell')(function* (request: ComputerShellRequest) {
     yield* requireRun()

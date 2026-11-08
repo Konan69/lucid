@@ -1,3 +1,4 @@
+import { revisionTools } from './revision.ts'
 import type { ToolRegistration } from '@earendil-works/pi-durable'
 import {
   ComputerRecoveryId,
@@ -192,6 +193,11 @@ const definitions: ReadonlyArray<{
       'Watch Integration events and stop or inspect Watches. Never promise future work without setting it up.',
     requirement: 'Product',
     mount: ({ runTool }) => watchTools(runTool),
+  },
+  {
+    description: 'Read and revise existing Watches and personally authored Integrations in place.',
+    requirement: 'Product',
+    mount: ({ runTool }) => revisionTools(runTool),
   },
   {
     description: 'Put relevant background findings on the Person’s Feed.',

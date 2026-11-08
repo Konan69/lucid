@@ -86,7 +86,7 @@ layer(testDatabaseLayer)((it) => {
       }),
     )
 
-    it.effect('an Allow rule changes nothing, and a Never or Ask rule asks about everything', () =>
+    it.effect('an Allow rule changes nothing, an Ask rule asks, and a Never rule refuses', () =>
       Effect.gen(function* () {
         const context = yield* Layer.build(offLayer)
         return yield* Effect.gen(function* () {
@@ -113,7 +113,7 @@ layer(testDatabaseLayer)((it) => {
               ),
             ).toBe(true)
           yield* rules.remove(test.personal, asked.id)
-          // No rule can be judged while off, so one that could forbid leaves every action open.
+          // Without a judgment, the prohibition conservatively binds every non-read action.
           yield* rules.create(test.personal, {
             action: 'Never email people outside the company',
             decision: 'Never',
@@ -121,7 +121,7 @@ layer(testDatabaseLayer)((it) => {
           })
           for (const action of [test.connectionAction, desktopAction])
             expect(
-              GateDecision.guards.ApprovalRequired(
+              GateDecision.guards.Blocked(
                 yield* gate.check(test.vivid, action, 'Ordinary', unbound),
               ),
             ).toBe(true)
