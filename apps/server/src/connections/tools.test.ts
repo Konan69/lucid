@@ -185,14 +185,12 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
                     workspace: ownerActor.workspace,
                     target,
                   })
-                return (
-                  yield* useTool(ownerActor, {
-                    toolCallId: ToolCallId.make(crypto.randomUUID()),
-                    ...target,
-                    summary: 'Read',
-                    rationale: '',
-                  })
-                ).outcome
+                return (yield* useTool(ownerActor, {
+                  toolCallId: ToolCallId.make(crypto.randomUUID()),
+                  ...target,
+                  summary: 'Read',
+                  rationale: '',
+                })).outcome
               }).pipe(Effect.provide(context))
             }).pipe(
               Effect.scoped,

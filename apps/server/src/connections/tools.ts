@@ -827,7 +827,8 @@ const useToolAs = Effect.fn('Connections.useTool')(function* (
       ),
     Allowed: () =>
       Option.match(journaled, {
-        onNone: () => runConnection(actor, row, target, { effect: tool.effect, operation: Option.none() }),
+        onNone: () =>
+          runConnection(actor, row, target, { effect: tool.effect, operation: Option.none() }),
         onSome: (journal) => sendJournaled(actor, row, target, { effect: tool.effect, journal }),
       }),
   }).pipe(
