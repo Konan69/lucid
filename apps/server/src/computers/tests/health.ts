@@ -100,6 +100,7 @@ export const healthFixture = Effect.fn('ComputerHealthProof.fixture')(function* 
       workspace: Workspace.cases.Personal.make({}),
       by: 'person' as const,
       threadId: Option.none(),
+      helper: Option.none(),
     },
     read: store.health(personId, 'Deep'),
   }

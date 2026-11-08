@@ -33,19 +33,20 @@ import {
  * A row a press has closed folds away where it stood (`motion-fold`) until the list drops it.
  */
 export function Owed({
-  owing,
+  waiting,
+  zone,
   now,
   onOpen,
 }: {
-  /** The records and their words, on the Person's own calendar (`owed.owingOf`). */
-  owing: Option.Option<owed.Owing>
+  waiting: ReadonlyArray<owed.Waiting>
+  /** The Person's own zone: a deadline is a day on their calendar (`owed.owedWordsIn`). */
+  zone: Option.Option<string>
   now: number
   onOpen: (thread: ThreadId) => void
 }) {
   const standings = useStandings()
-  const shown = Option.filter(owing, ({ records }) => records.length > 0)
-  if (Option.isNone(shown)) return null
-  const { records: waiting, said: words } = shown.value
+  if (Option.isNone(zone) || waiting.length === 0) return null
+  const words = owed.owedWordsIn(zone.value)
   return (
     // The rows' fill runs past the page's text edge, so their words line up with the head's.
     <section aria-labelledby="owed-heading" className="-mx-4">

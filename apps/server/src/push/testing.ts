@@ -14,6 +14,7 @@ import {
 import { AuthState } from '@vivid/contracts/auth'
 import { personTable, sessionTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
+import { workLayer } from '../database/work.ts'
 import { testDatabaseLayer } from '../database/testdb.ts'
 import { silentChangesLayer } from '../live/changes.ts'
 import { presenceLayer } from '../threads/presence.ts'
@@ -77,7 +78,7 @@ const adapterLayer = Layer.effect(
 
 /** Database, silent changes and immutable push configuration may be shared across test cases. */
 export const pushTestFoundation = Layer.mergeAll(
-  testDatabaseLayer,
+  workLayer.pipe(Layer.provideMerge(testDatabaseLayer)),
   silentChangesLayer,
   Layer.succeed(PushConfig, testPushConfig),
 )

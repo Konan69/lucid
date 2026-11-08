@@ -3,8 +3,10 @@ import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import {
   Approval,
+  ApprovalPrecondition,
+  InvalidRequest,
   RunId,
-  type ApprovalBinding,
+  ApprovalBinding,
   ThreadId,
   NotFound,
   type Person,
@@ -46,9 +48,13 @@ export type GateExposure = typeof GateExposure.Type
 
 /** Derived from the authenticated Actor. RuntimeThread is a runtime RPC outside an admitted
  * working turn (legacy cloud and Connection callers); it never grants Person-device authority.
- * Run names the admitted turn acting for that Person. Human calls do not propose actions. */
+ * Run names the admitted turn acting for that Person. Helper names the helper Run making the
+ * call (`AuthState.Helper`), which `authenticateHelper` checked is working for that Person; it
+ * is never the oldest working Run, and like RuntimeThread it grants no Person-device authority.
+ * Human calls do not propose actions. */
 export const ActionOrigin = Schema.TaggedUnion({
   Run: { threadId: ThreadId, runId: RunId },
+  Helper: { threadId: ThreadId, runId: RunId },
   RuntimeThread: { threadId: ThreadId },
 })
 export type ActionOrigin = typeof ActionOrigin.Type
@@ -59,6 +65,8 @@ export const actionOrigin = Effect.fn('Gate.origin')(function* (actor: Actor) {
   if (Option.isNone(actor.threadId))
     return yield* new NotFound({ message: 'Action needs a Vivid Thread' })
   const threadId = actor.threadId.value
+  if (Option.isSome(actor.helper))
+    return ActionOrigin.cases.Helper.make({ threadId, runId: actor.helper.value })
   return yield* actingRun(threadId, actor.person.id).pipe(
     Effect.map((runId) => ActionOrigin.cases.Run.make({ threadId, runId })),
     Effect.catchTag('NoActingRun', ({ reason }) =>
@@ -87,7 +95,7 @@ export interface GateService {
    * Person's own, or is `destructive`, goes to the `Reviewer`, and `policy.ts#reviewOutcome` asks
    * only when the Person did not ask for it and it reaches other people or cannot be undone. With
    * no review (decisions switched off or unavailable) a `write` runs and a `destructive` action
-   * asks. If a rule that could forbid the action could not be weighed, the answer is to ask.
+   * asks. An unjudged Never rule conservatively refuses; an unjudged Ask rule asks.
    * Unwatched work asks before a non-read unless reviewed as contained. An unwatched destructive action always asks.
    *
    * `bound` is what the action was prepared against: the sign-in of the Integration it uses and
@@ -99,7 +107,7 @@ export interface GateService {
     action: ProposedAction,
     exposure: GateExposure,
     bound: ApprovalBinding,
-  ) => Effect.Effect<GateDecision, NotFound | DatabaseInfrastructureError>
+  ) => Effect.Effect<GateDecision, NotFound | InvalidRequest | DatabaseInfrastructureError>
 }
 
 /** The trust loop's single decision point. Implemented in `approvals/gate.ts` by `gateLayer`. */
@@ -114,6 +122,17 @@ export const ActionOutcome = Schema.TaggedUnion({
 export type ActionOutcome = typeof ActionOutcome.Type
 
 export interface ActionRunnerService {
+  /** Reads the external facts that must still hold when this exact action runs. */
+  readonly inspect: (input: {
+    readonly person: Person
+    readonly workspace: Workspace
+    readonly action: ProposedAction
+    readonly origin: ActionOrigin
+    readonly phase: 'Preparing' | 'Deciding'
+  }) => Effect.Effect<
+    ReadonlyArray<ApprovalPrecondition>,
+    NotFound | InvalidRequest | DatabaseInfrastructureError
+  >
   /**
    * Performs one stored action for the Person who approved it. It is called exactly once per
    * Approval, after the Approval has been claimed, with the action as it was stored when proposed
@@ -204,6 +223,7 @@ export const gateLayer = Layer.effect(
     const audit = yield* Audit
     const reviewer = yield* Reviewer
     const database = yield* Database
+    const runner = yield* ActionRunner
     /** Background Threads need containment even after expiry or without an admitted Run. */
     const checkUnwatched = Effect.fn('Gate.checkUnwatched')(function* (
       actor: Actor,
@@ -247,7 +267,18 @@ export const gateLayer = Layer.effect(
           )
           return GateDecision.cases.Blocked.make({ rule: never.action })
         }
-        // An applicable Ask rule, rules that could not be weighed, and something personal
+        const external = yield* runner.inspect({
+          person: actor.person,
+          workspace: actor.workspace,
+          action,
+          origin,
+          phase: 'Preparing',
+        })
+        const prepared = ApprovalBinding.make({
+          connectionGeneration: bound.connectionGeneration,
+          preconditions: [...bound.preconditions, ...external],
+        })
+        // An applicable or unjudged Ask rule, and something personal
         // entering a shared Thread always ask: none of these is a judgment about the request.
         //
         // A write on the Person's own signed-in browser is deliberately NOT in this group. It
@@ -263,9 +294,9 @@ export const gateLayer = Layer.effect(
           BindingJudgment.guards.Uncertain(judged) ||
           exposure === 'PersonalInShared'
         )
-          return yield* ask(approvals, actor, action, bound)
+          return yield* ask(approvals, actor, action, prepared)
         // A standing Allow and a high "asked" score never authorize outward background work.
-        const background = yield* checkUnwatched(actor, action, origin, bound)
+        const background = yield* checkUnwatched(actor, action, origin, prepared)
         if (Option.isSome(background)) return background.value
         // An Allow rule is the Person's standing request for an undoable action. It does not
         // settle a destructive one: applicability is a 0.5 match (`rules/judge.ts`), too loose
@@ -275,7 +306,7 @@ export const gateLayer = Layer.effect(
         if (!reviewable(action)) return yield* allow(audit, actor, action)
         const review = yield* reviewer.review(actor, action)
         if (reviewOutcome(action.effect, review) === 'Ask')
-          return yield* ask(approvals, actor, action, bound)
+          return yield* ask(approvals, actor, action, prepared)
         return yield* allow(audit, actor, action)
       }),
     })

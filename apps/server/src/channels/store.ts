@@ -32,6 +32,7 @@ export const channelActor = Effect.fn('Channels.actor')(function* (personId: Per
     workspace: Workspace.cases.Personal.make({}),
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   } satisfies Actor
 })
 

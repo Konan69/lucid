@@ -1,21 +1,24 @@
 import {
   DisplaySource,
   FeedPost,
+  type Approval,
   type FeedAction,
   type FeedCardId,
   type ThreadId,
 } from '@vivid/contracts'
-import { feed, makeWhen, owed, thisReader, todos, type DeviceWaiting } from '@vivid/state'
+import { allowing, feed, makeWhen, owed, thisReader, todos, type DeviceWaiting } from '@vivid/state'
 import { Check } from 'lucide-react-native'
 import { Data, Option } from 'effect'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { FlatList, Pressable, View, type ViewToken } from 'react-native'
 import Animated, { LinearTransition, ReduceMotion } from 'react-native-reanimated'
+import { useApprovalDecision, useInbox } from '../data/approvals'
 import { answer, close, markSeen, usePleased, usePresses } from '../data/feed'
 import { closeOwed, useStandings } from '../data/owed'
 import { closeTodo, useTodoStandings } from '../data/todos'
 import { LiveState, useLive, useLiveData, useLiveValue } from '../data/live'
 import { Computer } from './chat/Device'
+import { Decide } from './feed/Decide'
 import { Display } from '../parts/display'
 import { HoldMenu } from '../t3/Menu'
 import { useTheme } from '../theme'
@@ -26,7 +29,6 @@ import { useGo, useOpenThread } from '../workspace'
 import { useStart } from './Home'
 
 const when = makeWhen(thisReader())
-const todoWords = todos.makeTodoWords(thisReader())
 
 /** Today as the head of the page says it: "Tuesday 20 October". */
 const today = new Intl.DateTimeFormat(thisReader().locale, {
@@ -66,7 +68,7 @@ const ANSWER = { height: 40, radius: 12 } as const
 type Row = Data.TaggedEnum<{
   Caption: { readonly words: string }
   Owed: { readonly record: owed.Waiting; readonly said: owed.OwedWords }
-  Todo: { readonly todo: todos.Open }
+  Todo: { readonly todo: todos.Open; readonly due: todos.TodoWords }
   Computer: { readonly waiting: DeviceWaiting }
   Waiting: { readonly item: feed.Waiting }
   Working: { readonly item: feed.Working }
@@ -96,10 +98,12 @@ export function Feed() {
   const pleased = usePleased((now) => now.pleased)
   const presses = usePresses((held) => held.presses)
   const standings = useStandings()
-  const owing = owed.owingOf(
-    useLiveValue(data.live.owed),
-    Option.map(useLiveValue(data.live.settings), (settings) => settings.timezone),
-  )
+  const records = Option.match(useLiveValue(data.live.owed), {
+    onNone: () => [],
+    onSome: (list) => owed.waitingOf(list.owed),
+  })
+  // Deadlines and due dates are days in the Person's own zone, so their rows wait for it.
+  const zone = Option.map(useLiveValue(data.live.settings), (settings) => settings.timezone)
   const toDo = Option.match(useLiveValue(data.live.todos), {
     onNone: () => [],
     onSome: (list) => todos.openOf(list.todos),
@@ -108,6 +112,8 @@ export function Feed() {
   const [now] = useState(() => Date.now())
   const date = today.format(now)
 
+  const inbox = useInbox()
+
   // A card that a press has folded leaves the list until Vivid posts again.
   const shown = view.waiting.filter(
     (item) => !feed.folds(item, Option.fromUndefinedOr(presses.get(item.card))),
@@ -115,11 +121,8 @@ export function Feed() {
   // A card a press has folded no longer waits on the Person, so it leaves the count with it.
   const standing = feed.standingOf(Option.toArray(view.computer).length + shown.length)
   // A record a press has closed is no longer owed, so it leaves the head's sentence with it.
-  const open = Option.match(owing, {
-    onNone: () => [],
-    onSome: ({ records }) => records.filter((record) => standings.get(record.id) !== 'folded'),
-  })
-  const rows = rowsOf(view, owing, toDo)
+  const open = records.filter((record) => standings.get(record.id) !== 'folded')
+  const rows = rowsOf(view, records, toDo, zone)
 
   // One function for the list's life: FlatList refuses a viewability callback that changes. The
   // session's data does not change while this screen is up, so the first one serves.
@@ -139,7 +142,7 @@ export function Feed() {
   const head = (
     <Head
       date={date}
-      head={Option.flatMap(owing, ({ said }) => owed.headOf(open, said.timing, now))}
+      head={Option.flatMap(zone, (tz) => owed.headOf(open, owed.owedWordsIn(tz).timing, now))}
       mood={LOOK[feed.feedFace(view, pleased)]}
       standing={standing}
     />
@@ -182,8 +185,8 @@ export function Feed() {
                 onOpen={() => openThread(record.threadId)}
               />
             ),
-            Todo: ({ todo }) => (
-              <TodoRow todo={todo} now={now} onOpen={() => openThread(todo.threadId)} />
+            Todo: ({ todo, due }) => (
+              <TodoRow todo={todo} said={due} now={now} onOpen={() => openThread(todo.threadId)} />
             ),
             Computer: ({ waiting: asking }) => <Computer waiting={asking} now={now} />,
             Handled: ({ items: settled }) => (
@@ -195,6 +198,7 @@ export function Feed() {
                 at={item.since}
                 post={Option.fromNullOr(item.post)}
                 ask={{ title: item.from, words: 'Vivid is working on this now.' }}
+                asked={Option.none()}
                 reply={Option.none()}
                 now={now}
                 remember={Option.none()}
@@ -204,6 +208,7 @@ export function Feed() {
             Waiting: ({ item }) => (
               <Waiting
                 item={item}
+                asked={feed.approvalOf(item, inbox)}
                 press={Option.fromUndefinedOr(presses.get(item.card))}
                 now={now}
                 onAnswer={(words) => answer(data, item, words)}
@@ -230,21 +235,33 @@ export function Feed() {
  */
 const rowsOf = (
   view: feed.FeedView,
-  owing: Option.Option<owed.Owing>,
+  records: ReadonlyArray<owed.Waiting>,
   toDo: ReadonlyArray<todos.Open>,
+  /** The Person's own zone: deadlines and due dates are days on their calendar, so rows wait for it. */
+  zone: Option.Option<string>,
 ): ReadonlyArray<Row> => [
+  // A row says its deadline on the Person's calendar, so none is drawn before their settings are.
   ...Option.match(
-    Option.filter(owing, ({ records }) => records.length > 0),
+    Option.filter(Option.map(zone, owed.owedWordsIn), () => records.length > 0),
     {
       onNone: () => [],
-      onSome: ({ records, said }) => [
+      onSome: (words) => [
         Row.Caption({ words: 'Waiting on' }),
-        ...records.map((record) => Row.Owed({ record, said })),
+        ...records.map((record) => Row.Owed({ record, said: words })),
       ],
     },
   ),
-  ...(toDo.length > 0 ? [Row.Caption({ words: 'To do' })] : []),
-  ...toDo.map((todo) => Row.Todo({ todo })),
+  // A to-do's date is a day on the Person's calendar too, so its rows wait for the same zone.
+  ...Option.match(
+    Option.filter(Option.map(zone, todos.todoWordsIn), () => toDo.length > 0),
+    {
+      onNone: () => [],
+      onSome: (due) => [
+        Row.Caption({ words: 'To do' }),
+        ...toDo.map((todo) => Row.Todo({ todo, due })),
+      ],
+    },
+  ),
   ...(Option.isSome(view.computer) || view.waiting.length > 0
     ? [Row.Caption({ words: 'Needs you' })]
     : []),
@@ -452,7 +469,18 @@ function OwedRow({
  * asked, and a press that did not get through brings it back saying so. The row reads its own
  * close machine's standing, so the Feed's list function stays one list.
  */
-function TodoRow({ todo, now, onOpen }: { todo: todos.Open; now: number; onOpen: () => void }) {
+function TodoRow({
+  todo,
+  said,
+  now,
+  onOpen,
+}: {
+  todo: todos.Open
+  /** The row's words on the Person's own calendar (`todos.todoWordsIn`). */
+  said: todos.TodoWords
+  now: number
+  onOpen: () => void
+}) {
   const { colors: c } = useTheme()
   const data = useLiveData()
   const standing = Option.getOrElse(
@@ -461,7 +489,7 @@ function TodoRow({ todo, now, onOpen }: { todo: todos.Open; now: number; onOpen:
   )
   const onClose = (closing: todos.Closing) => closeTodo(data, todo.id, closing)
   const folded = standing === 'folded'
-  const due = Option.getOrUndefined(todoWords.due(todo, now))
+  const due = Option.getOrUndefined(said.due(todo, now))
   return (
     <Animated.View
       pointerEvents={folded ? 'none' : 'auto'}
@@ -636,6 +664,7 @@ function Track({ record, now }: { record: owed.Waiting; now: number }) {
  */
 function Waiting({
   item,
+  asked,
   press,
   now,
   onAnswer,
@@ -643,6 +672,8 @@ function Waiting({
   onOpen,
 }: {
   item: feed.Waiting
+  /** The Approval the work stopped on that this Person decides, if it did (`feed.approvalOf`). */
+  asked: Option.Option<Approval>
   press: Option.Option<feed.Press>
   now: number
   onAnswer: (words: string) => void
@@ -652,7 +683,11 @@ function Waiting({
   const post = Option.fromNullOr(item.post)
   // Folded by a press on this post: it takes no room and no touch, but stays mounted, so its
   // display keeps what the Person chose for when a failed send brings it back.
-  const folded = feed.folds(item, press)
+  const deciding = useApprovalDecision()
+  // Decided here, the Approval is never pending again: the card folds until the Feed moves on.
+  const folded =
+    feed.folds(item, press) ||
+    Option.exists(asked, (approval) => allowing.sentOn(deciding, approval.id))
   return (
     <Animated.View
       pointerEvents={folded ? 'none' : 'auto'}
@@ -671,6 +706,9 @@ function Waiting({
         at={item.at}
         post={post}
         ask={{ title: item.from, words: feed.askedWords(item) }}
+        asked={Option.map(asked, (approval) => (
+          <Decide approval={approval} />
+        ))}
         reply={Option.some({
           // Only a send for this very post holds its buttons: an older post's send still on its
           // way does not stop the Person answering the one now shown.
@@ -713,6 +751,7 @@ function Card({
   at,
   post,
   ask,
+  asked,
   reply,
   now,
   remember,
@@ -723,6 +762,11 @@ function Card({
   at: number
   post: Option.Option<FeedPost>
   ask: { readonly title: string; readonly words: string }
+  /**
+   * The Approval the work stopped on, to decide here (`Decide`), a send drawn as its draft: it
+   * stands in for `ask.words`, or follows the post when there is one.
+   */
+  asked: Option.Option<ReactNode>
   reply: Option.Option<Reply>
   now: number
   /** Where this card's choices are kept across being scrolled away (`remembered`), if anywhere. */
@@ -800,7 +844,7 @@ function Card({
         )}
       </View>
       {Option.match(post, {
-        onNone: () => said(ask.words, Option.none()),
+        onNone: () => Option.getOrElse(asked, () => said(ask.words, Option.none())),
         onSome: FeedPost.match({
           Drawn: ({ display }) => (
             <View style={{ marginTop: 12 }}>
@@ -818,6 +862,7 @@ function Card({
           Said: ({ words, actions }) => said(words, Option.some(actions)),
         }),
       })}
+      {Option.isSome(post) && Option.getOrNull(asked)}
     </View>
   )
 }

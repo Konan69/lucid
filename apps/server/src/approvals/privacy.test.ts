@@ -86,6 +86,7 @@ layer(testDatabaseLayer)((it) => {
               ...test.owner,
               by: 'vivid',
               threadId: Option.some(test.companyId),
+              helper: Option.none(),
             } satisfies Actor
             const approval = yield* (yield* ApprovalStore).raise(
               addressed,

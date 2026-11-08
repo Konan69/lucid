@@ -377,6 +377,7 @@ const browserRunnerLayer = Layer.effect(
   Effect.gen(function* () {
     const context = yield* Effect.context<ComputerStore | DeviceRegistry>()
     return ActionRunner.of({
+      inspect: () => Effect.succeed([]),
       run: ({ person, action, origin }) => {
         if (ActionTarget.guards.Connection(action.target))
           return Effect.succeed(

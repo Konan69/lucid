@@ -273,25 +273,6 @@ export function makeOwedWords(person: Reader, here: Reader) {
 }
 export type OwedWords = ReturnType<typeof makeOwedWords>
 
-/**
- * What the Feed lists and the words its rows say. A deadline is a day in the Person's own zone,
- * so there is nothing to list until both the records and the Person's settings are here.
- */
-export interface Owing {
-  readonly records: ReadonlyArray<Waiting>
-  readonly said: OwedWords
-}
-
-/** The Feed's waiting-on list from the live record list and the zone in the Person's settings. */
-export const owingOf = (
-  list: Option.Option<{ readonly owed: ReadonlyArray<Owed> }>,
-  timeZone: Option.Option<string>,
-): Option.Option<Owing> =>
-  Option.map(Option.all([list, timeZone]), ([listed, zone]) => ({
-    records: waitingOf(listed.owed),
-    said: owedWordsIn(zone),
-  }))
-
 /** One sayer per Person zone: building `Intl` formatters is the expensive part of a row. */
 const sayers = new Map<string, OwedWords>()
 
