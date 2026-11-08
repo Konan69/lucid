@@ -554,6 +554,22 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.what)],
   },
+  list_work: {
+    said: {
+      running: 'Checking what it has going',
+      done: 'Checked what it has going',
+      failed: 'Could not check what it has going',
+    },
+    detail: nothing,
+  },
+  stop_all_work: {
+    said: {
+      running: 'Stopping everything',
+      done: 'Stopped everything',
+      failed: 'Could not stop everything',
+    },
+    detail: nothing,
+  },
 } satisfies Record<ToolName, Step>
 
 /** Old histories and newer runtimes can name tools this client no longer describes. */
