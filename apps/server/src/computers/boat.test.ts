@@ -1263,6 +1263,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           workspace: Workspace.cases.Personal.make({}),
           by: 'person' as const,
           threadId: Option.none(),
+          helper: Option.none(),
         }
         const read = (person: Person) =>
           computerHandlers.GetComputerRecovery().pipe(asAccount(person))
