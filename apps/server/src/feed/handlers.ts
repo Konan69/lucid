@@ -5,6 +5,7 @@ import { live } from '../live/query.ts'
 import { notifyPosted } from '../notifications/attention.ts'
 import { requireThread } from '../threads/access.ts'
 import { actingRun } from '../threads/runs.ts'
+import { Database } from '../database/client.ts'
 import { FeedStore } from './store.ts'
 
 export const feedHandlers = {
@@ -40,14 +41,18 @@ export const feedHandlers = {
       return yield* new Forbidden({
         message: 'The Person is in this conversation: answer here instead of posting to the Feed.',
       })
-    const outcome = yield* (yield* FeedStore).post({
-      person: auth.person.id,
-      thread: auth.threadId,
-      postedBy,
-      request,
-    })
-    // Once the card is committed, the Person is told, wherever they are (`notifyPosted`).
-    yield* notifyPosted({ personId: auth.person.id, thread, run: postedBy, post: request })
-    return outcome
+    return yield* (yield* Database).transaction(() =>
+      Effect.gen(function* () {
+        const outcome = yield* (yield* FeedStore).post({
+          person: auth.person.id,
+          thread: auth.threadId,
+          postedBy,
+          request,
+        })
+        // The Feed card and its delivery obligations commit together.
+        yield* notifyPosted({ personId: auth.person.id, thread, run: postedBy, post: request })
+        return outcome
+      }),
+    )
   }),
 }
