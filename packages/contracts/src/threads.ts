@@ -9,6 +9,7 @@ import {
   RunId,
   ThreadId,
 } from './identity.js'
+import { DreamPass } from './dreams.js'
 import { HandoffRequest, InputRequest } from './inputs.js'
 import { WatchId, WatchInstruction, WatchName } from './watches.js'
 
@@ -220,6 +221,8 @@ export const RunOrigin = Schema.TaggedUnion({
   WatchUnrecorded: { person: PersonSummary, watchName: Schema.String },
   /** The Person pressed Forget in Settings; Vivid plans the forget and carries it out. */
   Forget: { person: PersonSummary },
+  /** The Dreamer found something useful and new, or a blocker, overnight or after a conversation. */
+  Dream: { person: PersonSummary, pass: DreamPass },
 })
 export type RunOrigin = typeof RunOrigin.Type
 
@@ -385,6 +388,8 @@ export const SignalType = Schema.Literals([
   'handoff',
   // A Settings Forget press, delivered into a background Thread for Vivid to plan and carry out.
   'forget',
+  // What the Dreamer found, delivered into its own background Thread (`dreams.ts`).
+  'dream',
 ] as const)
 export type SignalType = typeof SignalType.Type
 
@@ -414,6 +419,7 @@ export type ApprovalOutcome = typeof ApprovalOutcome.Type
  * - `CarryOn`: a card telling Vivid to go on (`CarryOnRequest`); no client draws it.
  * - `Handoff`: the Person finished a step Vivid handed them on its Computer, named by its handoff.
  * - `Forget`: a Settings Forget press, with the instruction to plan and carry it out in `body`.
+ * - `Dream`: what the Dreamer found, as it wrote it, in `body`; `pass` says when it ran.
  */
 export const SignalCue = Schema.TaggedUnion({
   Message: { body: Schema.String },
@@ -430,6 +436,7 @@ export const SignalCue = Schema.TaggedUnion({
   CarryOn: { body: Schema.String },
   Handoff: { body: Schema.String, handoff: HandoffId },
   Forget: { body: Schema.String },
+  Dream: { body: Schema.String, pass: DreamPass },
 })
 export type SignalCue = typeof SignalCue.Type
 
@@ -443,6 +450,7 @@ export const signalTypes = {
   CarryOn: 'carry-on',
   Handoff: 'handoff',
   Forget: 'forget',
+  Dream: 'dream',
 } as const satisfies Record<SignalCue['_tag'], SignalType>
 
 /**

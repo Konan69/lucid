@@ -288,6 +288,7 @@ import {
   DeliveryScopeRequest,
   AcknowledgeRunDeliveryRequest,
 } from './threads.js'
+import { OpenDreamRequest, OpenDreamResponse, ReportDreamRequest } from './dreams.js'
 
 /**
  * Every product call a Vivid client makes to the application server, declared once.
@@ -363,6 +364,19 @@ const Post = Rpc.make('Post', {
   payload: PostRequest,
   success: PostOutcome,
 })
+
+// ── The Dreamer ─────────────────────────────────────────────────────────────
+/**
+ * Runtime-only, called by the Person's cell as Vivid acting for them: open the Background Thread
+ * one Dreamer run reads in, and report its finding there. The Person, workspace and Thread come
+ * from the call's authority, never from the payload.
+ */
+const OpenDream = Rpc.make('OpenDream', {
+  ...call,
+  payload: OpenDreamRequest,
+  success: OpenDreamResponse,
+})
+const ReportDream = Rpc.make('ReportDream', { ...call, payload: ReportDreamRequest })
 
 // ── The signed-in Person and where they are working ────────────────────────
 const Me = Rpc.make('Me', { ...call, success: MeResponse })
@@ -1297,6 +1311,8 @@ export const VividRpc = RpcGroup.make(
   WatchFeed,
   MarkFeedCard,
   Post,
+  OpenDream,
+  ReportDream,
   WatchNotifications,
   ReadNotifications,
   FindAppEvents,

@@ -41,6 +41,7 @@ export const ToolName = Schema.Literals([
   'read_page',
   'read_project',
   'read_skill',
+  'report_finding',
   'request_handoff',
   'resolve_owed',
   'run_code',
