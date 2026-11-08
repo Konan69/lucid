@@ -31,7 +31,7 @@ import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
 import { createContext, useContext } from 'react'
 import { followThemeAtom, themeAtom } from './appearance'
-import { makeDeviceDecisions } from './devices'
+import { makeDecisions } from './approvals'
 import { makeHandoffCalls } from './handing'
 import { makeNaming } from './name'
 import { makeNotifying } from './notifying'
@@ -426,7 +426,7 @@ function makeLiveData(session: SignedIn) {
     ...catalog,
     /** Connecting an Integration: the session's one machine (`data/connecting.ts`). */
     connecting,
-    devices: makeDeviceDecisions(engine),
+    ...makeDecisions(engine), // A computer's access, and an Approval away from its Thread.
     /** A step's calls, like a device decision, outlive the banner that pressed them. */
     handing: makeHandoffCalls(engine),
     /** The Person changing their own name in Settings (`data/name.ts`). */
