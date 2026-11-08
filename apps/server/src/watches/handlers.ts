@@ -145,17 +145,15 @@ export const watchHandlers = {
     const actor = yield* requireActor()
     const watch = yield* resolved(
       actor,
-      (yield* Watches)
-        .revise(actor, request)
-        .pipe(
-          Effect.catchTag('WatchMissing', () =>
-            Effect.fail(
-              new NotFound({
-                message: 'No Watch has that name, or it changed while revising. Read it again.',
-              }),
-            ),
+      (yield* Watches).revise(actor, request).pipe(
+        Effect.catchTag('WatchMissing', () =>
+          Effect.fail(
+            new NotFound({
+              message: 'No Watch has that name, or it changed while revising. Read it again.',
+            }),
           ),
         ),
+      ),
     )
     return WatchResponse.make({ watch })
   }),

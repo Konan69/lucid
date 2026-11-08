@@ -172,12 +172,18 @@ describe.skipIf(!testDatabaseConfigured)('made Integrations through real adapter
         const deployed = (yield* Ref.get(made.hosted.requests))
           .filter((sent) => sent.path === `POST ${hostedPrefix}/apps/deploy`)
           .at(-1)
-        expect(deployed?.body).toMatchObject({ app: 'app', files: expect.arrayContaining(files) })
-        expect(deployed?.body).not.toHaveProperty('name')
+        if (deployed === undefined) return expect.fail('Expected an in-place deployment')
+        expect(deployed.body).toMatchObject({ app: 'app', files: expect.arrayContaining(files) })
+        expect(deployed.body).not.toHaveProperty('name')
         yield* Ref.update(made.hosted.replies, (replies) =>
           new Map(replies).set(`POST ${hostedPrefix}/apps/deploy`, {
             status: 422,
-            body: { _tag: 'VersionBuildFailed', message: 'invalid revised source' },
+            body: BuildFailure.make({
+              owner: 'owner',
+              name: request.name,
+              reason: 'invalid-source',
+              message: 'invalid revised source',
+            }),
           }),
         )
         expect(

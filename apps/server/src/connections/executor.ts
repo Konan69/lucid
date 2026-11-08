@@ -3132,6 +3132,19 @@ const makeToolCache = Effect.fn('Executor.toolCache')(function* (http: ExecutorH
   return { snapshots, discover }
 })
 
+/** Read the active build, not the editor workspace, before and after a deployment. */
+function makeReadMade(http: ExecutorHttp) {
+  return Effect.fn('Executor.readMade')(function* (app: typeof ExecutorAppId.Type) {
+    const source = yield* http.readSource(
+      Effect.succeed(HttpClientRequest.get(`/apps/${query(app)}/source`)),
+      null,
+    )
+    return yield* decodeMadeFiles(source.files.filter((file) => file.path !== 'package.json')).pipe(
+      Effect.mapError(() => ExecutorResponseInvalid.make({ service: 'connections', tool: null })),
+    )
+  })
+}
+
 function makeAppSlug(http: ExecutorHttp) {
   return Effect.fn('Executor.appSlug')(function* (app: typeof ExecutorAppId.Type) {
     const record = yield* http.readApp(
@@ -3226,18 +3239,7 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
       publicOnly ? registration.add(input) : Effect.fail(ExecutorPublicAddressRequired.make({})),
     ),
     make: registration.make,
-    /** Read the active build, not the editor workspace, before and after a deployment. */
-    readMade: Effect.fn('Executor.readMade')(function* (app) {
-      const source = yield* http.readSource(
-        Effect.succeed(HttpClientRequest.get(`/apps/${query(app)}/source`)),
-        null,
-      )
-      return yield* decodeMadeFiles(
-        source.files.filter((file) => file.path !== 'package.json'),
-      ).pipe(
-        Effect.mapError(() => ExecutorResponseInvalid.make({ service: 'connections', tool: null })),
-      )
-    }),
+    readMade: makeReadMade(http),
     /** Deploy by ID preserves app data, schedules, event names, and every existing Watch. */
     reviseMade: Effect.fn('Executor.reviseMade')(function* (app, files) {
       yield* http.readDeploy(post('/apps/deploy', { app, files }))
