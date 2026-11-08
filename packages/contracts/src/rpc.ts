@@ -17,7 +17,22 @@ import {
   DecideApprovalRequest,
 } from './approvals.js'
 import {
+  ActionReconciliationRequired,
+  ReconcileActionRequest,
+  ReconcileActionResponse,
+} from './actions.js'
+import {
   ArtifactChanged,
+  ArtifactNotEditable,
+  ArtifactFileRefused,
+  ArtifactFileTooLarge,
+  ArtifactComputerUnavailable,
+  ArtifactRenderUnsupported,
+  ArtifactRenderFailed,
+  ArtifactInspectionStale,
+  InspectArtifactFileRequest,
+  InspectArtifactFileOutcome,
+  PublishArtifactFileRequest,
   ArtifactDetail,
   ArtifactListResponse,
   ArtifactResponse,
@@ -157,6 +172,7 @@ import {
   ApprovalId,
   ConnectionId,
   InvitationId,
+  HandoffId,
   InputRequestId,
   LibraryFolderId,
   LibraryItemId,
@@ -166,7 +182,16 @@ import {
   SkillId,
   ThreadId,
 } from './identity.js'
-import { AnswerInputRequest, AskInputRequest, InputRequestResponse } from './inputs.js'
+import {
+  AnswerInputRequest,
+  AskInputRequest,
+  FillHandoffRequest,
+  HandoffIdRequest,
+  HandoffResponse,
+  InputRequestResponse,
+  PrepareHandoffOutcome,
+  PrepareHandoffRequest,
+} from './inputs.js'
 import {
   CreateLibraryFolderRequest,
   LibraryFolderListResponse,
@@ -182,6 +207,11 @@ import {
 import {
   CorrectMemoryRequest,
   ForgetMemoryRequest,
+  MemoryForgetId,
+  MemoryForgetPlan,
+  MemoryForgetReceipt,
+  MemoryForgetStale,
+  PlanMemoryForgetRequest,
   MemoryAddress,
   MemoryIndex,
   MemoryListing,
@@ -193,7 +223,15 @@ import {
   NotificationReadResponse,
   ReadNotificationsRequest,
 } from './notifications.js'
-import { CreateProjectRequest, Project, ProjectListResponse } from './projects.js'
+import {
+  CreateProjectRequest,
+  Project,
+  ProjectChanged,
+  ProjectEvidenceMissing,
+  ProjectListResponse,
+  ProjectNotActive,
+  UpdateProjectRequest,
+} from './projects.js'
 import {
   Owed,
   OwedListResponse,
@@ -248,6 +286,7 @@ import {
   ThreadTitleOutputInvalid,
   DeliveryScope,
   DeliveryScopeRequest,
+  AcknowledgeRunDeliveryRequest,
 } from './threads.js'
 
 /**
@@ -475,6 +514,14 @@ const ShareThread = Rpc.make('ShareThread', {
 const DeleteThread = Rpc.make('DeleteThread', { ...call, payload: { id: ThreadId } })
 /** Records that the Person has seen the Thread as it stands, which clears `Unread`. */
 const MarkThreadRead = Rpc.make('MarkThreadRead', { ...call, payload: { id: ThreadId } })
+/**
+ * The Person a Run acted for saying their app drew its final response. Idempotent: the first
+ * acknowledgement is the receipt and later ones change nothing. Read marks are not this.
+ */
+const AcknowledgeRunDelivery = Rpc.make('AcknowledgeRunDelivery', {
+  ...call,
+  payload: AcknowledgeRunDeliveryRequest,
+})
 /** Stops the Run in progress. Work already done is not undone. */
 const StopThread = Rpc.make('StopThread', { ...call, payload: { id: ThreadId } })
 /**
@@ -513,7 +560,7 @@ const ReviseArtifact = Rpc.make('ReviseArtifact', {
   ...call,
   payload: ReviseArtifactRequest,
   success: ArtifactResponse,
-  error: Schema.Union([RpcFailure, ArtifactChanged]),
+  error: Schema.Union([RpcFailure, ArtifactChanged, ArtifactNotEditable]),
 })
 const RemoveArtifact = Rpc.make('RemoveArtifact', { ...call, payload: { id: ArtifactId } })
 /** The server attributes a write to the authenticated Thread’s working Run; no model identifier is needed. */
@@ -521,11 +568,32 @@ const WriteDocument = Rpc.make('WriteDocument', {
   ...call,
   payload: WriteDocumentRequest,
   success: WriteDocumentOutcome,
+  error: Schema.Union([RpcFailure, ArtifactNotEditable]),
 })
 const ReadDocument = Rpc.make('ReadDocument', {
   ...call,
   payload: ReadDocumentRequest,
   success: ReadDocumentOutcome,
+  error: Schema.Union([RpcFailure, ArtifactNotEditable]),
+})
+const InspectArtifactFile = Rpc.make('InspectArtifactFile', {
+  ...call,
+  payload: InspectArtifactFileRequest,
+  success: InspectArtifactFileOutcome,
+  error: Schema.Union([
+    RpcFailure,
+    ArtifactFileRefused,
+    ArtifactFileTooLarge,
+    ArtifactComputerUnavailable,
+    ArtifactRenderUnsupported,
+    ArtifactRenderFailed,
+  ]),
+})
+const PublishArtifactFile = Rpc.make('PublishArtifactFile', {
+  ...call,
+  payload: PublishArtifactFileRequest,
+  success: WriteDocumentOutcome,
+  error: Schema.Union([RpcFailure, ArtifactInspectionStale]),
 })
 
 // ── What is waiting on the Person: questions and Approvals ─────────────────
@@ -538,6 +606,12 @@ const DecideApproval = Rpc.make('DecideApproval', {
 })
 /** Withdraws an Approval the Person no longer wants decided, leaving the action undone. */
 const WithdrawApproval = Rpc.make('WithdrawApproval', { ...call, payload: { id: ApprovalId } })
+/** A read-only check of whether an uncertain outward operation took effect. It never sends anything. */
+const ReconcileAction = Rpc.make('ReconcileAction', {
+  ...call,
+  payload: ReconcileActionRequest,
+  success: ReconcileActionResponse,
+})
 /** Vivid asking a question it cannot safely answer alone. The turn ends until it is answered. */
 const AskInput = Rpc.make('AskInput', {
   ...call,
@@ -615,6 +689,67 @@ const AnswerInput = Rpc.make('AnswerInput', {
   success: InputRequestResponse,
 })
 
+/**
+ * Handoffs: Vivid prepares the one step only the Person can do on its Computer; the Person asked
+ * fills it, finishes it on the live screen and sends Vivid on. Refusals carry the handoff's id and
+ * nothing a Person typed.
+ */
+const PrepareHandoff = Rpc.make('PrepareHandoff', {
+  ...call,
+  payload: PrepareHandoffRequest,
+  success: PrepareHandoffOutcome,
+})
+
+/** The handoff is over (finished or withdrawn), so nothing more can be done to it. */
+export class HandoffClosed extends Schema.TaggedError<HandoffClosed>()(
+  'HandoffClosed',
+  { id: HandoffId, message: Schema.Literal('This step is already over.') },
+  { title: 'Handoff closed' },
+) {}
+
+/** Only the Person asked may enter values or finish the step, on their own Computer. */
+export class HandoffNotAddressee extends Schema.TaggedError<HandoffNotAddressee>()(
+  'HandoffNotAddressee',
+  { id: HandoffId, message: Schema.Literal('Only the person asked can do this step.') },
+  { title: 'Not the Person asked' },
+) {}
+
+/** The Computer could not be reached to type or to clear the fields; nothing was typed. */
+export class HandoffComputerUnavailable extends Schema.TaggedError<HandoffComputerUnavailable>()(
+  'HandoffComputerUnavailable',
+  { id: HandoffId, reason: Schema.String },
+  { title: 'Computer unavailable' },
+) {}
+
+/**
+ * Finishing or withdrawing was refused because these fields could not be shown empty on the
+ * Computer, so it stays held for the step and Vivid cannot read what was typed. The labels are the
+ * form's own; the Person leaves the page on the screen, or tries again.
+ */
+export class HandoffNotCleared extends Schema.TaggedError<HandoffNotCleared>()(
+  'HandoffNotCleared',
+  { id: HandoffId, labels: Schema.NonEmptyArray(Schema.String) },
+  { title: 'Fields not cleared' },
+) {}
+
+/** The closed refusals of a Person's handoff calls. */
+export const HandoffFailure = Schema.Union([
+  HandoffClosed,
+  HandoffNotAddressee,
+  HandoffComputerUnavailable,
+  HandoffNotCleared,
+])
+export type HandoffFailure = typeof HandoffFailure.Type
+
+const handoffCall = { error: Schema.Union([RpcFailure, HandoffFailure]), success: HandoffResponse }
+/** Takes the live screen for a step done there. A form is begun by filling it. */
+const BeginHandoff = Rpc.make('BeginHandoff', { ...handoffCall, payload: HandoffIdRequest })
+/** Types the Person's values into the prepared fields; answers one receipt per field. */
+const FillHandoff = Rpc.make('FillHandoff', { ...handoffCall, payload: FillHandoffRequest })
+/** The Person has finished: fields are cleared, the screen handed back and Vivid told. */
+const CompleteHandoff = Rpc.make('CompleteHandoff', { ...handoffCall, payload: HandoffIdRequest })
+const WithdrawHandoff = Rpc.make('WithdrawHandoff', { ...handoffCall, payload: HandoffIdRequest })
+
 // ── Rules and the audit record ─────────────────────────────────────────────
 const ListRules = Rpc.make('ListRules', { ...call, success: RuleListResponse })
 const WatchRules = Rpc.make('WatchRules', { ...live, success: RuleListResponse })
@@ -669,6 +804,12 @@ const CreateProject = Rpc.make('CreateProject', {
   ...call,
   payload: CreateProjectRequest,
   success: Project,
+})
+/** Vivid recording a Project's objective, progress or completion, against the revision it read. */
+const UpdateProject = Rpc.make('UpdateProject', {
+  payload: UpdateProjectRequest,
+  success: Project,
+  error: Schema.Union([RpcFailure, ProjectChanged, ProjectNotActive, ProjectEvidenceMissing]),
 })
 
 // ── Waiting on ────────────────────────────────────────────────────────────
@@ -830,9 +971,12 @@ const ResolveTool = Rpc.make('ResolveTool', {
   },
   success: ConnectionTool,
 })
-/** Vivid asking to do one thing through a Connection. The server decides whether it happens. */
+/**
+ * Vivid asking to do one thing through a Connection. The server decides whether it happens, and
+ * refuses the exact action again while an earlier send of it in this Thread has an unknown result.
+ */
 const UseTool = Rpc.make('UseTool', {
-  ...call,
+  error: Schema.Union([RpcFailure, ActionReconciliationRequired]),
   payload: UseToolRequest,
   success: IntegrationResult,
 })
@@ -862,7 +1006,24 @@ const CorrectMemory = Rpc.make('CorrectMemory', {
   payload: CorrectMemoryRequest,
   success: SavedMemory,
 })
-const ForgetMemory = Rpc.make('ForgetMemory', { ...call, payload: ForgetMemoryRequest })
+/** Vivid's forget plan, checked against the acting Person's memory, Watches and owed records. */
+const PlanMemoryForget = Rpc.make('PlanMemoryForget', {
+  ...call,
+  payload: PlanMemoryForgetRequest,
+  success: MemoryForgetPlan,
+})
+/** Carry out a confirmed plan, or hand a Settings Forget press to Vivid; answers the receipt. */
+const ForgetMemory = Rpc.make('ForgetMemory', {
+  payload: ForgetMemoryRequest,
+  success: MemoryForgetReceipt,
+  error: Schema.Union([RpcFailure, MemoryForgetStale]),
+})
+/** One forget's receipt, live: Settings shows Pending until Vivid's background Run settles. */
+const WatchMemoryForget = Rpc.make('WatchMemoryForget', {
+  ...live,
+  payload: { id: MemoryForgetId },
+  success: MemoryForgetReceipt,
+})
 
 // ── Skills ─────────────────────────────────────────────────────────────────
 const ListSkills = Rpc.make('ListSkills', { ...call, success: SkillListResponse })
@@ -1094,6 +1255,7 @@ export const VividRpc = RpcGroup.make(
   ShareThread,
   DeleteThread,
   MarkThreadRead,
+  AcknowledgeRunDelivery,
   StopThread,
   BePresent,
   GetDeliveryScope,
@@ -1104,12 +1266,20 @@ export const VividRpc = RpcGroup.make(
   RemoveArtifact,
   WriteDocument,
   ReadDocument,
+  InspectArtifactFile,
+  PublishArtifactFile,
   GetInbox,
   WatchInbox,
   DecideApproval,
   WithdrawApproval,
+  ReconcileAction,
   AskInput,
   AnswerInput,
+  PrepareHandoff,
+  BeginHandoff,
+  FillHandoff,
+  CompleteHandoff,
+  WithdrawHandoff,
   ListRules,
   WatchRules,
   CreateRule,
@@ -1136,6 +1306,7 @@ export const VividRpc = RpcGroup.make(
   ListProjects,
   WatchProjects,
   CreateProject,
+  UpdateProject,
   ListOwed,
   WatchOwed,
   TrackOwed,
@@ -1180,7 +1351,9 @@ export const VividRpc = RpcGroup.make(
   ListMemory,
   ReadMemory,
   CorrectMemory,
+  PlanMemoryForget,
   ForgetMemory,
+  WatchMemoryForget,
   ListSkills,
   WatchSkills,
   ListSkillSummaries,

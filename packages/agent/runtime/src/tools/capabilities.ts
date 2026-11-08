@@ -25,12 +25,14 @@ import { Scope } from './scope.ts'
 import { defineTool } from './tool.ts'
 import * as v from 'valibot'
 import { askTools } from './ask.ts'
+import { artifactTools } from './artifacts.ts'
 import { codeTools } from './code.ts'
 import { computerTools } from './computer.ts'
 import { connectionTools } from './connections.ts'
 import { documentTools } from './documents.ts'
 import { libraryTools } from './library.ts'
-import { memoryTools } from './memory.ts'
+import { memoryTools, type ProjectOf } from './memory.ts'
+import { forgetTools } from './forget.ts'
 import { notifyTools } from './notify.ts'
 import { feedTools } from './feed.ts'
 import { followTools } from './follow.ts'
@@ -61,6 +63,8 @@ interface RegistryInput {
   readonly runTool: RunTool
   readonly run: RunScoped
   readonly runMemory: RunMemory
+  /** A Project-scoped memory names its Project; the name resolves through the call's own scope. */
+  readonly project: ProjectOf
   readonly memory: Memory['Service']
   readonly skills: ReadonlyArray<ToolRegistration>
 }
@@ -162,7 +166,13 @@ const definitions: ReadonlyArray<{
     description:
       'Remember, find, correct and forget facts, preferences and decisions in local Memory.',
     requirement: 'Memory',
-    mount: ({ runMemory }) => memoryTools(runMemory),
+    mount: ({ runMemory, project }) => memoryTools(runMemory, project),
+  },
+  {
+    description:
+      'Plan a forget across every memory entry, Watch and waiting-on record that uses it, then carry it out after one confirmation.',
+    requirement: 'Memory',
+    mount: ({ runTool }) => forgetTools(runTool),
   },
   {
     description:
@@ -187,7 +197,8 @@ const definitions: ReadonlyArray<{
     mount: ({ runTool }) => feedTools(runTool),
   },
   {
-    description: 'Create Projects for ongoing groups of work.',
+    description:
+      'Create Projects for ongoing groups of work, and keep what done means, where each stands and its next step (read_project, update_project).',
     requirement: 'Product',
     mount: ({ runTool }) => projectTools(runTool),
   },
@@ -217,6 +228,12 @@ const definitions: ReadonlyArray<{
       'Write, revise and read documents kept with the conversation, and show charts, tables, forms and pictures. Live Integration views run on the Computer and may wake it.',
     requirement: 'Product',
     mount: ({ runTool }) => documentTools(runTool),
+  },
+  {
+    description:
+      'Make Word, PDF and PNG files on the Computer, inspect a captured render, and deliver their exact bytes with the editable source kept.',
+    requirement: 'Computer',
+    mount: ({ runTool }) => artifactTools(runTool),
   },
   {
     description: 'Activate built-in skills and read their reference files.',

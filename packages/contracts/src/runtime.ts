@@ -240,11 +240,15 @@ export const RuntimeHistoryThread = Schema.Struct({
 export type RuntimeHistoryThread = typeof RuntimeHistoryThread.Type
 export const RuntimeHistoryBody = Schema.Struct({
   threads: Schema.Array(RuntimeHistoryThread),
-  // The entry's address check remains valid when only its source timestamp is added.
+  // The entry's address check remains valid when only its source timestamp is added. Carried-over
+  // entries predate scope, so the body has none and the cell files them as Personal.
   memory: Schema.Array(
-    MemoryEntry.mapFields((fields) => ({ ...fields, updatedAt: Schema.Finite }), {
-      unsafePreserveChecks: true,
-    }),
+    MemoryEntry.mapFields(
+      ({ scope: _scope, ...fields }) => ({ ...fields, updatedAt: Schema.Finite }),
+      {
+        unsafePreserveChecks: true,
+      },
+    ),
   ),
 })
 export type RuntimeHistoryBody = typeof RuntimeHistoryBody.Type

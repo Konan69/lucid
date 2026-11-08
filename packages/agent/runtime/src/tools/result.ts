@@ -1,11 +1,24 @@
 import {
+  type ActionReceipt,
+  type ActionReconciliationRequired,
   ComputerScreen,
+  type ArtifactNotEditable,
+  type ArtifactFileRefused,
+  type ArtifactFileTooLarge,
+  type ArtifactComputerUnavailable,
+  type ArtifactRenderUnsupported,
+  type ArtifactRenderFailed,
+  type ArtifactInspectionStale,
   ComputerSession,
   CoverageReason,
   ResultCoverage,
   type IntegrationResult,
   computerScreenAddress,
+  type MemoryForgetStale,
   type NoDeviceConnected,
+  type ProjectChanged,
+  type ProjectEvidenceMissing,
+  type ProjectNotActive,
 } from '@vivid/contracts'
 import type { RpcFailure } from '@vivid/contracts/rpc'
 import * as Config from 'effect/Config'
@@ -32,9 +45,23 @@ export interface ToolResult {
   /** Only Computer tools supply a source; Person receipts cannot advertise the cloud viewer. */
   readonly computer?: 'person' | 'vivid'
   readonly terminate?: boolean
+  /**
+   * The server's receipts for the outward writes this call sent. They are kept in the result's
+   * metadata beside the output and never in the model's words: operation ids are references the
+   * model has no use for. Only tools that send outward writes supply them.
+   */
+  readonly receipts?: ReadonlyArray<ActionReceipt>
 }
 
 export type ToolFailure =
+  | ActionReconciliationRequired
+  | ArtifactNotEditable
+  | ArtifactFileRefused
+  | ArtifactFileTooLarge
+  | ArtifactComputerUnavailable
+  | ArtifactRenderUnsupported
+  | ArtifactRenderFailed
+  | ArtifactInspectionStale
   | NoDeviceConnected
   | NameMissing
   | NameAmbiguous
@@ -44,6 +71,10 @@ export type ToolFailure =
   | MemoryMissing
   | MemoryUnavailable
   | MemorySearchInvalid
+  | ProjectChanged
+  | ProjectNotActive
+  | ProjectEvidenceMissing
+  | MemoryForgetStale
   | RpcClientError.RpcClientError
   | Config.ConfigError
 
@@ -157,6 +188,18 @@ function boundDocument(value: Schema.Json): Schema.Json {
   }
 }
 
+/**
+ * A saved procedure is followed step by step, so its instructions are read whole: one cut at the
+ * ordinary 4,000-character limit drops the steps and rules at its end, which a Person taught it
+ * last. Saving caps them at 20,000 characters (`SaveSkillRequest`), which bounds this read;
+ * every other field keeps the ordinary limits.
+ */
+function boundProcedure(value: Schema.Json): Schema.Json {
+  if (!isObject(value) || !Predicate.isString(value.instructions)) return boundOutput(value)
+  const { instructions, ...fields } = value
+  return { ...boundedRecord(fields).value, instructions }
+}
+
 /** Product failures are safe sentences; driver payloads and supplied credentials never escape. */
 function failure(message: string) {
   return Effect.succeed<ToolResult>({
@@ -210,6 +253,7 @@ function modelOutput(
 ): Schema.Json {
   if (tool === 'run_code') return output
   if (tool === 'read_document') return boundDocument(output)
+  if (tool === 'read_skill') return boundProcedure(output)
   return boundOutput(withComputer(output, tool, computer))
 }
 
@@ -228,6 +272,29 @@ export const settle = Effect.fn('Tools.settle')(function* (
       return warnFailure(tool, tag)
     }),
     Effect.catchTags({
+      // The exact act was sent earlier in this Thread and its result is not known. Sending it
+      // again could do it twice, so the server refused; the model is told not to retry.
+      ActionReconciliationRequired: () =>
+        failure(
+          'The same action was sent before in this Thread and its result is not known yet, so it was not sent again. Do not retry it; tell the Person its result is not known yet.',
+        ),
+      ArtifactNotEditable: () =>
+        failure(
+          'This is a file. Revise its editable source on the Computer, inspect it and publish a new version.',
+        ),
+      ArtifactFileRefused: ({ role, reason }) =>
+        failure(
+          `The ${role} file could not be captured (${reason}). Fix the path or file before inspecting again.`,
+        ),
+      ArtifactFileTooLarge: ({ role, limit }) =>
+        failure(`The ${role} file exceeds the ${limit}-byte limit.`),
+      ArtifactComputerUnavailable: ({ message }) => failure(message),
+      ArtifactRenderUnsupported: ({ message }) => failure(message),
+      ArtifactRenderFailed: ({ message }) => failure(message),
+      ArtifactInspectionStale: () =>
+        failure(
+          'That inspection is absent, belongs to another response or was already published. Inspect the file again.',
+        ),
       NoDeviceConnected: () => failure('The Person’s computer is not connected.'),
       NameMissing: ({ name }) => failure(`Nothing here is called “${name}”; list them again.`),
       NameAmbiguous: ({ name, matches }) =>
@@ -254,6 +321,22 @@ export const settle = Effect.fn('Tools.settle')(function* (
         failure(
           'The memory search expression is invalid. Use FTS5 words, quoted phrases or prefix* and correct any unmatched quotes.',
         ),
+      ProjectChanged: ({ actual }) =>
+        failure(
+          `The Project changed to revision ${actual}. Read it with read_project before updating it.`,
+        ),
+      ProjectNotActive: () =>
+        failure(
+          'The Project has no objective in progress. Define its objective and next step first.',
+        ),
+      ProjectEvidenceMissing: () =>
+        failure(
+          'Nothing in this conversation shows the Project is done. Mark it done only once the Person has said so or this reply has observed it.',
+        ),
+      MemoryForgetStale: () =>
+        failure(
+          'Memory changed since you planned this forget. Read the entries again and make a new plan; nothing was changed.',
+        ),
       NotFound: () => failure('It does not exist or the person cannot see it.'),
       Forbidden: () => failure('The person is not allowed to do that here.'),
       Unauthenticated: () => failure('The person needs to sign in before Vivid can do that.'),
@@ -273,11 +356,12 @@ export const settle = Effect.fn('Tools.settle')(function* (
       DatabaseFailure: () => failure('Vivid could not read or save that record right now.'),
     }),
   )
-  return {
-    output:
-      result.integration === undefined
-        ? modelOutput(result.output, tool, Option.fromUndefinedOr(result.computer))
-        : boundIntegrationOutput(result.output, result.integration),
-    terminate: result.terminate === true,
-  }
+  const output =
+    result.integration === undefined
+      ? modelOutput(result.output, tool, Option.fromUndefinedOr(result.computer))
+      : boundIntegrationOutput(result.output, result.integration)
+  const terminate = result.terminate === true
+  return result.receipts === undefined
+    ? { output, terminate }
+    : { output, terminate, receipts: result.receipts }
 })

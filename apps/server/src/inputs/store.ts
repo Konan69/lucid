@@ -18,6 +18,7 @@ import {
   NotFound,
   PersonId,
   RunId,
+  SignalCue,
   ThreadId,
   type AnswerInputRequest,
   type AskInputRequest,
@@ -41,6 +42,7 @@ import { Conversation, DeliveryMessage } from '../threads/conversation.ts'
 import { Signal, encodeSignal } from '../approvals/signal.ts'
 import { replaySignals, type SignalWriter } from '../approvals/replay.ts'
 import { answerKey } from './answers.ts'
+import { handoffSignals } from './handoff.ts'
 import { inputRequests } from './tables.ts'
 import { answerText } from './validation.ts'
 
@@ -273,11 +275,7 @@ const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: Answ
   const signal = Signal.cases.Owed.make({
     idempotencyKey: answerKey(request.id),
     deciderId: actor.person.id,
-    message: DeliveryMessage.cases.Signal.make({
-      type: 'answer',
-      body,
-      attributes: { request: request.id },
-    }),
+    message: DeliveryMessage.cases.Signal.make({ cue: SignalCue.cases.Answer.make({ body }) }),
   })
   const updated = yield* database.transaction((tx) =>
     Effect.gen(function* () {
@@ -385,7 +383,12 @@ export const inputStoreLayer = Layer.effect(
       }),
       ask: (actor, request) => run(ask(actor, request)),
       answer: (actor, request) => run(answer(actor, request)),
-      replay: run(replaySignals(signalWriter, Option.none())),
+      // A finished handoff owes its signal the way an answer does; both are retried together.
+      replay: run(
+        replaySignals(signalWriter, Option.none()).pipe(
+          Effect.andThen(replaySignals(handoffSignals, Option.none())),
+        ),
+      ),
     })
   }),
 )

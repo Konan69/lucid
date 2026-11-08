@@ -1,11 +1,13 @@
 import { useAtomSet, useAtomValue } from '@effect/atom-react'
-import type { MemoryLine, SavedMemory } from '@vivid/contracts'
-import { makeWhen, remembering, thisReader } from '@vivid/state'
+import type { MemoryForgetId, MemoryLine, SavedMemory } from '@vivid/contracts'
+import { LiveState, makeWhen, remembering, thisReader } from '@vivid/state'
+import { Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { ScrollView, View } from 'react-native'
 import { openWebLink } from '../../data/links'
 import { warn } from '../../data/haptics'
-import { useLiveData } from '../../data/live'
+import { useLive, useLiveData } from '../../data/live'
+import { useOpenThread } from '../../workspace'
 import { Row, Section } from '../../ui/List'
 import { Prose } from '../../ui/Prose'
 import { Screen } from '../../ui/Screen'
@@ -130,6 +132,7 @@ function Shown({ shown, send, now }: { shown: ShownReading; send: Send; now: num
       {remembering.Entry.guards.Vanished(shown.entry) && (
         <Notice message="Vivid no longer remembers that, so it has left the list." />
       )}
+      {remembering.Entry.guards.Handed(shown.entry) && <Forgotten id={shown.entry.forget} />}
       <Section title="What Vivid remembers">
         {lines.length === 0 && (
           <Row wrap title="When you tell Vivid something that matters later, it shows up here." />
@@ -146,6 +149,29 @@ function Shown({ shown, send, now }: { shown: ShownReading; send: Send; now: num
         {olderRow(shown.older, send)}
       </Section>
     </>
+  )
+}
+
+/**
+ * Where a forget the Person pressed stands, read live until Vivid has carried it out across what
+ * it remembers, its Watches and the work queued with it. The words are the web app's
+ * (`remembering.forgetWords`); Forgotten is said only once nothing can bring it back.
+ */
+function Forgotten({ id }: { id: MemoryForgetId }) {
+  const data = useLiveData()
+  const receipt = useLive(data.memory.forgets.get(id))
+  const words = LiveState.$match(receipt, {
+    Loading: () => remembering.forgetWords(remembering.pendingForget(id)),
+    Ready: ({ value }) => remembering.forgetWords(value),
+    Failed: () => ({ headline: 'Unable to tell how forgetting it went right now.', lines: [] }),
+  })
+  return (
+    <Section title="Forgetting">
+      <Row wrap title={words.headline} />
+      {words.lines.map((line) => (
+        <Row key={line} wrap title={line} />
+      ))}
+    </Section>
   )
 }
 
@@ -192,6 +218,7 @@ function Opened({ entry, send, now }: { entry: remembering.Entry; send: Send; no
     Closed: () => null,
     Vanished: () => null,
     Forgetting: () => null,
+    Handed: () => null,
     Unforgotten: () => null,
     Opening: ({ line }) => sheet(line, <Skeleton rows={2} />),
     Rereading: ({ entry: open }) => sheet(open, <Skeleton rows={2} />),
@@ -219,7 +246,8 @@ function Kept({ entry, moved, send }: { entry: SavedMemory; moved: boolean; send
   const askToForget = () =>
     confirmDestructive({
       title: 'Forget this?',
-      detail: 'Vivid stops remembering it. This cannot be undone.',
+      detail:
+        'Vivid stops remembering it, and stops what it set up around it. This cannot be undone.',
       action: 'Forget',
       onConfirm: () => {
         warn()
@@ -237,9 +265,38 @@ function Kept({ entry, moved, send }: { entry: SavedMemory; moved: boolean; send
         {entry.description}
       </Label>
       <Whole text={entry.body} />
+      <Sources entry={entry} send={send} />
       <Button label="Correct" onPress={() => send(remembering.events.Edit())} />
       <Button kind="danger" label="Forget this" onPress={askToForget} />
     </>
+  )
+}
+
+/**
+ * Where an entry came from: the Person's message or the conversation it was written in, each
+ * opening that Thread (the sheet is put away first), or what else wrote it.
+ */
+function Sources({ entry, send }: { entry: SavedMemory; send: Send }) {
+  const openThread = useOpenThread()
+  return (
+    <Section title="Where this came from">
+      {remembering.sourcesOf(entry).map((source, index) =>
+        Option.match(source.thread, {
+          onNone: () => <Row key={index} wrap title={source.words} />,
+          onSome: (id) => (
+            <Row
+              key={index}
+              wrap
+              title={source.words}
+              onPress={() => {
+                send(remembering.events.Close())
+                openThread(id)
+              }}
+            />
+          ),
+        }),
+      )}
+    </Section>
   )
 }
 
@@ -276,6 +333,7 @@ function Correcting({
           description: said,
           body,
           basis: 'said',
+          scope: entry.scope,
         },
       }),
     )

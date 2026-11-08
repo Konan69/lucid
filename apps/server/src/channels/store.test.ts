@@ -33,6 +33,7 @@ describe.skipIf(!testDatabaseConfigured)('personal channel linking', () => {
         ).toEqual([
           ['iMessage', 'NotConnected'],
           ['WhatsApp', 'Unavailable'],
+          ['Discord', 'Unavailable'],
         ])
         const result = yield* store
           .connect(test.actor, 'WhatsApp', test.address)
@@ -51,7 +52,7 @@ describe.skipIf(!testDatabaseConfigured)('personal channel linking', () => {
         const caseContext = yield* Layer.build(channelTestLayer)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
-          for (const address of ['2025550123', '+000123', 'ada@example.test']) {
+          for (const address of [undefined, '2025550123', '+000123', 'ada@example.test']) {
             const result = yield* channelHandlers
               .ConnectChannel({ channel: 'iMessage', address })
               .pipe(test.signedIn, Effect.result)
@@ -155,6 +156,37 @@ describe.skipIf(!testDatabaseConfigured)('personal channel linking', () => {
     }).pipe(Effect.scoped),
   )
 
+  it.effect('a refused unenrol keeps the link so disconnect can be retried', () =>
+    Effect.gen(function* () {
+      const caseContext = yield* Layer.build(channelTestLayer)
+      return yield* Effect.gen(function* () {
+        const test = yield* fixture()
+        const control = yield* ChannelControl
+        const store = yield* ChannelStore
+        yield* channelHandlers
+          .ConnectChannel({ channel: 'iMessage', address: test.address })
+          .pipe(test.signedIn)
+        const saved = yield* store.byPerson(test.actor.person.id, 'iMessage')
+        if (Option.isNone(saved))
+          return yield* Effect.sync(() => expect.fail('Missing enrolled link'))
+        yield* Ref.set(
+          control.failure,
+          Option.some(new ChannelProviderFailed({ channel: 'iMessage' })),
+        )
+        const refused = yield* channelHandlers
+          .DisconnectChannel({ channel: 'iMessage' })
+          .pipe(test.signedIn, Effect.result)
+        expect(Result.isFailure(refused)).toBe(true)
+        expect(Option.isSome(yield* store.byPerson(test.actor.person.id, 'iMessage'))).toBe(true)
+        yield* Ref.set(control.failure, Option.none())
+        yield* channelHandlers.DisconnectChannel({ channel: 'iMessage' }).pipe(test.signedIn)
+        expect(yield* Ref.get(control.unenrols)).toEqual([saved.value.enrolmentId])
+        expect(Option.isNone(yield* store.byPerson(test.actor.person.id, 'iMessage'))).toBe(true)
+        return yield* Effect.void
+      }).pipe(Effect.scoped, Effect.provide(caseContext))
+    }).pipe(Effect.scoped),
+  )
+
   it.effect('WatchChannels emits Connected after Connect and NotConnected after Disconnect', () =>
     Effect.gen(function* () {
       const caseContext = yield* Layer.build(channelTestLayer)
@@ -173,6 +205,7 @@ describe.skipIf(!testDatabaseConfigured)('personal channel linking', () => {
         const initial = yield* Queue.take(values)
         expect(initial.channels.map((link) => link.standing._tag)).toEqual([
           'NotConnected',
+          'Unavailable',
           'Unavailable',
         ])
         const receipt = yield* (yield* Changes).subscribe(

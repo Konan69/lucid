@@ -2,8 +2,16 @@ import { Machine } from '@typeonce/effect-machine'
 import { AtomMachine } from '@typeonce/effect-machine/reactivity'
 import { VividRpcClient } from '@vivid/client-runtime'
 import {
+  Conflict,
+  ForgetDone,
+  ForgetMemoryRequest,
+  ForgetRemaining,
+  MemoryCitation,
+  MemoryForgetReceipt,
+  MemorySource,
   isStandingLayer,
   MemoryAddress,
+  MemoryForgetId,
   MemoryCursor,
   MemoryEntry,
   MemoryIndex,
@@ -24,7 +32,9 @@ import type { LiveEngine, ProductFailure } from './live.js'
  * standing pages whole (`self`, `soul`, `person`, `attention`) and the newest entries one line
  * each (`GetMemoryIndex`, `packages/contracts/src/memory.ts`). There is no live watch on it, so
  * the screen reads it when it opens and changes it only through the Person's own correction or
- * forget, each answered with what the cell now holds.
+ * forget. A correction is answered with what the cell now holds; a forget is handed to Vivid,
+ * which forgets it everywhere, and the screen follows that forget's receipt
+ * (`WatchMemoryForget`).
  *
  * Owner: one machine per visit to the screen (`visit`), made when the screen is drawn and let go
  * with it, so every visit reads the memory as it is now. A correction or a forget that is still
@@ -74,8 +84,11 @@ export interface RememberedService {
   readonly older: (after: Cursor) => Effect.Effect<MemoryPage, Unanswered>
   readonly read: (address: MemoryAddress) => Effect.Effect<SavedMemory, Unanswered | Gone>
   readonly correct: (asked: Correction) => Effect.Effect<SavedMemory, Unanswered | Moved | Gone>
-  /** An entry already gone is forgotten: what the Person asked for is true. */
-  readonly forget: (entry: SavedMemory) => Effect.Effect<void, Unanswered | Moved>
+  /**
+   * Hand the Person's Forget press to Vivid, which forgets it across memory, Watches and queued
+   * work in the background; answers the forget whose receipt the screen then reads.
+   */
+  readonly forget: (entry: SavedMemory) => Effect.Effect<MemoryForgetId, Unanswered | Moved>
 }
 
 export class Remembered extends Context.Service<Remembered, RememberedService>()(
@@ -133,13 +146,23 @@ const remembered = (engine: LiveEngine) =>
       ),
     forget: (entry) =>
       asking(engine, (client) =>
-        client.ForgetMemory({
-          address: { layer: entry.layer, file: entry.file },
-          expected: entry.revision,
-        }),
+        client
+          .ForgetMemory(
+            ForgetMemoryRequest.cases.Entry.make({
+              address: { layer: entry.layer, file: entry.file },
+              expected: entry.revision,
+            }),
+          )
+          .pipe(
+            Effect.map((receipt) => receipt.id),
+            // A Settings press carries no plan, so a stale plan is the entry having moved.
+            Effect.catchTag('MemoryForgetStale', () =>
+              Effect.fail(new Conflict({ message: 'The memory changed' })),
+            ),
+          ),
       ).pipe(
         Effect.mapError(refusal(entry)),
-        Effect.catchTag('MemoryGone', () => Effect.void),
+        Effect.catchTag('MemoryGone', () => Effect.fail(new Unanswered())),
       ),
   })
 
@@ -183,6 +206,11 @@ const RememberingStates = Machine.state({
             /** Reading an entry again that changed under a correction or a forget. */
             Rereading: { fields: { entry: SavedMemory } },
             Forgetting: { fields: { entry: SavedMemory } },
+            /**
+             * The Person's press reached the server and Vivid is forgetting it across memory,
+             * Watches and queued work; the screen reads that forget's receipt live by its id.
+             */
+            Handed: { fields: { entry: SavedMemory, forget: MemoryForgetId } },
             Unforgotten: { fields: { entry: SavedMemory } },
             /** The entry was removed before the Person's change reached it. */
             Vanished: {},
@@ -217,6 +245,7 @@ const lineOf = (entry: SavedMemory): MemoryLine => ({
   kind: entry.kind,
   description: entry.description,
   basis: entry.basis,
+  scope: entry.scope,
   revision: entry.revision,
   updatedAt: entry.updatedAt,
 })
@@ -298,7 +327,7 @@ const editing = {
   },
 } as const
 
-export const RememberingMachine = Machine.make({
+const RememberingMachine = Machine.make({
   id: 'Remembering',
   root: RememberingStates,
   events: RememberingEvents,
@@ -501,10 +530,10 @@ export const RememberingMachine = Machine.make({
                 src: 'forget',
                 input: ({ state }) => state.entry,
                 onDone: {
-                  target: 'Shown.Entry.Closed',
+                  target: 'Shown.Entry.Handed',
                   update: 'Shown',
-                  data: ({ state, ancestors }) => ({
-                    target: undefined,
+                  data: ({ output, state, ancestors }) => ({
+                    target: { entry: state.entry, forget: output },
                     update: without(ancestors.Shown, state.entry),
                   }),
                 },
@@ -517,6 +546,7 @@ export const RememberingMachine = Machine.make({
                 },
               },
             },
+            Handed: { on: { Open: opening, Close: close } },
             Unforgotten: { on: { Open: opening } },
             Vanished: { on: { Open: opening, Close: close } },
           },
@@ -538,6 +568,7 @@ export const Entry = Schema.TaggedUnion({
   Unsaved: { entry: SavedMemory },
   Rereading: { entry: SavedMemory },
   Forgetting: { entry: SavedMemory },
+  Handed: { entry: SavedMemory, forget: MemoryForgetId },
   Unforgotten: { entry: SavedMemory },
   Vanished: {},
 })
@@ -600,6 +631,9 @@ const entryOf = (state: RememberingState): Entry =>
       Option.map(RememberingStates.get(state, 'Shown.Entry.Forgetting'), (value) =>
         Entry.cases.Forgetting.make(value),
       ),
+      Option.map(RememberingStates.get(state, 'Shown.Entry.Handed'), (value) =>
+        Entry.cases.Handed.make(value),
+      ),
       Option.map(RememberingStates.get(state, 'Shown.Entry.Unforgotten'), (value) =>
         Entry.cases.Unforgotten.make(value),
       ),
@@ -656,7 +690,12 @@ export const make = (engine: LiveEngine) => {
     latest = Option.some(made)
     return made
   }
-  return { begin, current: () => Option.getOrElse(latest, begin) }
+  /** One forget the Person pressed, live until Vivid has carried it out (`WatchMemoryForget`). */
+  const forgets = engine.family(
+    (id: MemoryForgetId) => id,
+    (client, id) => client.WatchMemoryForget({ id }),
+  )
+  return { begin, current: () => Option.getOrElse(latest, begin), forgets }
 }
 export type Visit = ReturnType<ReturnType<typeof make>['current']>
 
@@ -665,6 +704,8 @@ export const openAddress = (entry: Entry): Option.Option<MemoryAddress> =>
   Entry.match(entry, {
     Closed: () => Option.none(),
     Vanished: () => Option.none(),
+    // Handed to Vivid, the entry has left the list; the receipt stands in its place.
+    Handed: () => Option.none(),
     Opening: ({ line }) => Option.some(line),
     Unopened: ({ line }) => Option.some(line),
     Open: ({ entry: open }) => Option.some(open),
@@ -683,3 +724,70 @@ export const isAt = (line: MemoryAddress, address: Option.Option<MemoryAddress>)
 
 /** What a screen sends a visit: one of `events`. */
 export type Sent = Visit['send'] extends Atom.Writable<infer _Read, infer Write> ? Write : never
+
+/** How many of something, said plainly: "1 Watch", "2 Watches". */
+const counted = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
+
+/**
+ * What a forget did, in a Person's words, once: web and phone both say it. Counts only; a receipt
+ * never carries the forgotten thing, and these words never repeat it.
+ */
+const doneWords = (done: ForgetDone) => {
+  const removed = done.retracted + done.rewritten
+  return [
+    removed > 0 ? 'Removed from what Vivid remembers' : null,
+    done.watches > 0 ? `Stopped ${counted(done.watches, 'Watch', 'Watches')}` : null,
+    done.owed > 0 ? `Stopped waiting on ${counted(done.owed, 'thing', 'things')}` : null,
+    done.learning > 0 ? 'Stopped what Vivid was still learning from it' : null,
+  ].filter(Predicate.isNotNull)
+}
+
+/** One thing that can still bring a forgotten fact back, by kind and never by its words. */
+const remainingWords = (remaining: ForgetRemaining) =>
+  ForgetRemaining.match(remaining, {
+    Entry: () => 'Vivid still remembers it in one place',
+    Watch: () => 'A Watch could not be stopped',
+    Owed: () => 'Something you are waiting on could not be stopped',
+    SharedLearning: () => 'It came up in a conversation someone else started',
+    Reply: () => 'Another conversation was answering with it when you forgot it',
+    Unplanned: () => 'Vivid did not finish forgetting it',
+  })
+
+/**
+ * Where a forget stands, as a headline and the lines under it. Pending while Vivid is still at
+ * it; Forgotten only when nothing that can bring it back remains.
+ */
+export const forgetWords = (receipt: MemoryForgetReceipt) =>
+  MemoryForgetReceipt.match(receipt, {
+    Pending: () => ({ headline: 'Vivid is forgetting that everywhere it is kept…', lines: [] }),
+    Completed: ({ done }) => ({ headline: 'Forgotten.', lines: doneWords(done) }),
+    Blocked: ({ done, remaining }) => ({
+      headline: 'Not fully forgotten.',
+      lines: [...doneWords(done), ...remaining.map(remainingWords)],
+    }),
+  })
+
+/**
+ * Where an entry came from, one line per source, in a Person's words. A message names its
+ * Thread so the screen can open it; the rest only say what wrote the entry.
+ */
+export const sourcesOf = (entry: SavedMemory) =>
+  entry.citations.map((citation) =>
+    MemoryCitation.match(citation, {
+      ThreadMessage: ({ threadId }) => ({ words: 'Your message', thread: Option.some(threadId) }),
+      Run: ({ source }) =>
+        MemorySource.match(source, {
+          ThreadRun: ({ threadId }) => ({
+            words: 'Vivid, in a conversation',
+            thread: Option.some(threadId),
+          }),
+          CellRun: () => ({ words: 'Vivid, after a conversation', thread: Option.none() }),
+          HistoryLoad: () => ({ words: 'Carried over from before', thread: Option.none() }),
+          Settings: () => ({ words: 'You, in Settings', thread: Option.none() }),
+          Forget: () => ({ words: 'Rewritten when you forgot something', thread: Option.none() }),
+        }),
+    }),
+  )
+
+/** A forget the Person pressed, before its first receipt has arrived: Vivid is at it. */
+export const pendingForget = (id: MemoryForgetId) => MemoryForgetReceipt.cases.Pending.make({ id })

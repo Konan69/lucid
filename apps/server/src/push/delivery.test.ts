@@ -1,12 +1,12 @@
 import * as NodeCrypto from 'node:crypto'
-import { RuntimeSubmissionId } from '@vivid/contracts'
+import { RuntimeSubmissionId, WatchId } from '@vivid/contracts'
 import { describe, expect, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
 import { Effect, Option, Ref, Result, Schema, Layer } from 'effect'
 import { Clock } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import {
-  FeedPost,
+  PostRequest,
   NotificationId,
   NotificationOpens,
   NotifyPersonOutcome,
@@ -297,7 +297,13 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
               id,
               threadId: owner.threadId,
               personId: owner.person.id,
-              origin: StoredRunOrigin.cases.Watch.make({ watchName: 'Calendar clashes' }),
+              origin: StoredRunOrigin.cases.Watch.make({
+                watchId: WatchId.make('watch-test'),
+                watchName: 'Calendar clashes',
+                eventId: 'event-1',
+                event: 'message.received',
+                occurredAt: '2026-10-29T09:00:00Z',
+              }),
             })
             if (!TurnReservation.guards.Reserved(reserved))
               expect.fail('Expected a fresh Run reservation')
@@ -345,7 +351,13 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
             id,
             threadId: owner.threadId,
             personId: owner.person.id,
-            origin: StoredRunOrigin.cases.Watch.make({ watchName: 'New mail' }),
+            origin: StoredRunOrigin.cases.Watch.make({
+              watchId: WatchId.make('watch-test'),
+              watchName: 'New mail',
+              eventId: 'event-1',
+              event: 'message.received',
+              occurredAt: '2026-10-29T09:00:00Z',
+            }),
           })
           if (!TurnReservation.guards.Reserved(reserved))
             expect.fail('Expected a fresh Run reservation')
@@ -393,7 +405,13 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
             id,
             threadId: owner.threadId,
             personId: owner.person.id,
-            origin: StoredRunOrigin.cases.Watch.make({ watchName: 'New mail' }),
+            origin: StoredRunOrigin.cases.Watch.make({
+              watchId: WatchId.make('watch-mail'),
+              watchName: 'New mail',
+              eventId: 'event-1',
+              event: 'message.received',
+              occurredAt: '2026-10-29T09:00:00Z',
+            }),
           })
           if (!TurnReservation.guards.Reserved(reserved))
             expect.fail('Expected a fresh Run reservation')
@@ -403,10 +421,11 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
             workspace: owner.auth.workspace,
             threadId: owner.threadId,
           })
-          const post = FeedPost.cases.Said.make({
+          const post = PostRequest.cases.Said.make({
             title: 'Ada wrote about the contract',
             words: 'She asks whether Friday still holds.',
             actions: [],
+            sources: [],
           })
           const posting = feedHandlers.Post(post).pipe(Effect.provideService(AuthContext, auth))
           // The same post again, as a retried tool call sends it, is the notice already made.
@@ -418,7 +437,7 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
           expect(sent[0]).toMatchObject({ title: post.title, body: post.words, opens: feed })
           // A changed post is new news.
           yield* feedHandlers
-            .Post(FeedPost.cases.Said.make({ ...post, words: 'Friday moved to Monday.' }))
+            .Post(PostRequest.cases.Said.make({ ...post, words: 'Friday moved to Monday.' }))
             .pipe(Effect.provideService(AuthContext, auth))
           const listed = yield* (yield* NotificationStore).list({
             person: owner.person,

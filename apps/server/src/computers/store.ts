@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, getTableColumns, inArray, sql } from 'drizzle-orm'
 import {
   Clock,
   Context,
@@ -46,6 +46,8 @@ import {
   type CommandResult,
   BrowseResult,
   BrowserPicture,
+  type HandoffFieldResult,
+  type HandoffRefusalReason,
 } from '@vivid/contracts'
 import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
 import { egressChosen } from './egress/setting.ts'
@@ -67,7 +69,10 @@ import {
   type MachineRun,
   type MachineFileReason,
   MachineFileRefused,
+  type HandoffEntry,
+  type HandoffPageBinding,
 } from './machine.ts'
+import { handoffs, openHandoffStatuses } from '../inputs/tables.ts'
 import { BrowseAuthority, DeviceRegistry } from './device.ts'
 import { requireThread } from '../threads/access.ts'
 import { healthOperations } from './health.ts'
@@ -247,9 +252,22 @@ const persistence = Effect.fn('ComputerStore.persistence')(function* (
 ) {
   const database = yield* Database
   const changes = yield* Changes
+  /**
+   * Read with the hold as every caller must see it: the Person took over, or a step Vivid handed
+   * them is still open (`inputs/handoff.ts`). While a handoff is open, the fields may hold what the
+   * Person typed, so Vivid's own actions are refused, the idle stop waits, and a Hand back from
+   * the Computer panel cannot end it; only finishing or withdrawing the handoff does.
+   */
   const load = Effect.fn('ComputerStore.load')(function* (person: PersonId) {
     const rows = yield* database.run(
-      database.select().from(computers).where(eq(computers.personId, person)).limit(1),
+      database
+        .select({
+          ...getTableColumns(computers),
+          held: sql<boolean>`${computers.held} or exists (select 1 from ${handoffs} where ${handoffs.personId} = ${computers.personId} and ${inArray(handoffs.status, openHandoffStatuses)})`,
+        })
+        .from(computers)
+        .where(eq(computers.personId, person))
+        .limit(1),
     )
     const row = rows[0]
     return row === undefined ? Option.none<Stored>() : Option.some(yield* decode(row))
@@ -508,6 +526,36 @@ export interface ComputerStoreService {
     person: PersonId,
     action: BrowserAction,
   ) => Effect.Effect<BrowseResult, StoreError | MachineFailure | ReadinessFailure>
+  /** Vivid's preflight of a handoff, run as any of its browser steps is. */
+  readonly findFields: (
+    person: PersonId,
+    labels: ReadonlyArray<string>,
+  ) => Effect.Effect<
+    {
+      readonly page: HandoffPageBinding
+      readonly address: string
+      readonly fields: ReadonlyArray<Option.Option<HandoffRefusalReason>>
+    },
+    StoreError | MachineFailure | ReadinessFailure
+  >
+  /**
+   * The Person's own typing into a handoff's fields, and clearing them after. These run while the
+   * Computer is held for that handoff, which is what refuses Vivid; they take the action permit, so
+   * a step of Vivid's already under way ends first, and they never wake a Computer.
+   */
+  readonly fillFields: (
+    person: PersonId,
+    page: HandoffPageBinding,
+    entries: ReadonlyArray<HandoffEntry>,
+  ) => Effect.Effect<
+    ReadonlyArray<HandoffFieldResult>,
+    StoreError | MachineFailure | ComputerNotReady
+  >
+  readonly clearFields: (
+    person: PersonId,
+    page: HandoffPageBinding,
+    labels: ReadonlyArray<string>,
+  ) => Effect.Effect<ReadonlyArray<string>, StoreError | MachineFailure | ComputerNotReady>
   /**
    * The Computer's own shell and files, used as a person uses their machine: woken if asleep,
    * refused while the Person holds it, and counted as activity. No Approval is asked and no rule
@@ -1114,6 +1162,42 @@ function diagnostics(state: ComputerAuthority, database: Database['Service']) {
   return { inspect, health, recover }
 }
 
+/**
+ * A handoff's fields (`inputs/handoff.ts`). Vivid's preflight runs as any of its browser steps
+ * does (`execute`). The Person's typing and clearing run while the Computer is held for the
+ * handoff, which is what refuses Vivid: they take the same action permit, so a step of Vivid's
+ * under way ends first, need a running Computer, and never wake one.
+ */
+const handoffFields = (
+  state: Effect.Success<ReturnType<typeof lifecycle>>,
+  execute: <A>(
+    person: PersonId,
+    action: (key: MachineKey) => Effect.Effect<A, MachineFailure>,
+  ) => Effect.Effect<A, StoreError | MachineFailure | ReadinessFailure>,
+) => {
+  const personal = Effect.fn('ComputerStore.personal')(
+    function* <A>(person: PersonId, action: (key: MachineKey) => Effect.Effect<A, MachineFailure>) {
+      const row = yield* state.rows.load(person)
+      if (Option.isNone(row) || !Stored.guards.running(row.value))
+        return yield* new ComputerNotReady({ reason: 'The Computer is not running.' })
+      yield* state.rows.inactivity.activity(person)
+      return yield* action(row.value.machine)
+    },
+    (effect, person) => state.lock.withPermit(person, effect),
+  )
+  return {
+    findFields: (person: PersonId, labels: ReadonlyArray<string>) =>
+      execute(person, (key) => state.machine.findFields({ key, labels })),
+    fillFields: (
+      person: PersonId,
+      page: HandoffPageBinding,
+      entries: ReadonlyArray<HandoffEntry>,
+    ) => personal(person, (key) => state.machine.fillFields({ key, page, entries })),
+    clearFields: (person: PersonId, page: HandoffPageBinding, labels: ReadonlyArray<string>) =>
+      personal(person, (key) => state.machine.clearFields({ key, page, labels })),
+  }
+}
+
 /** Capture provider and database dependencies once; callers need only the Computer authority. */
 export const computerStoreLayer = Layer.effect(
   ComputerStore,
@@ -1254,6 +1338,7 @@ export const computerStoreLayer = Layer.effect(
       browse,
       desktop,
       attach,
+      ...handoffFields(state, execute),
       ...ownMachine(state.machine, execute),
     })
   }),

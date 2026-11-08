@@ -49,6 +49,19 @@ function jsonOutput(value: Schema.Json) {
   )
 }
 
+/**
+ * Display metadata Pi keeps beside the model's text. Action receipts ride here, out of the model's
+ * words, so the conversation history keeps what each outward write proved.
+ */
+function detailsOf(
+  name: string,
+  output: Schema.Json,
+  receipts: ToolResult['receipts'],
+): Schema.Json {
+  if (receipts === undefined || receipts.length === 0) return { customTool: name, output }
+  return { customTool: name, output, receipts: receipts.map((receipt) => ({ ...receipt })) }
+}
+
 /** Pi's three result channels preserve model content, display receipts and response control. */
 export function toolResult(name: string, result: ToolResult | ContentResult): ToolExecutionResult {
   const normalized = jsonOutput('content' in result ? result.details : result.output)
@@ -59,7 +72,9 @@ export function toolResult(name: string, result: ToolResult | ContentResult): To
       ? { output: result.content, details: value }
       : {
           output: [{ type: 'text' as const, text: JSON.stringify(value) }],
-          details: { customTool: name, output: value },
+          details: copyJson(detailsOf(name, value, result.receipts), {
+            omitUndefinedProperties: true,
+          }),
         }
   if (result.terminate === true) return { ...mapped, control: { terminate: true } }
   return mapped

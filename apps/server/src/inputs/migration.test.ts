@@ -3,7 +3,7 @@ import * as NodeFS from 'node:fs'
 import * as Pg from 'pg'
 import { describe, expect, layer } from '@effect/vitest'
 import { Config, Context, Effect, Layer, Redacted, Schema } from 'effect'
-import { InputAnswer, PersonId } from '@vivid/contracts'
+import { InputAnswer, PersonId, SignalCue } from '@vivid/contracts'
 import { Signal } from '../approvals/signal.ts'
 import { DeliveryMessage } from '../threads/conversation.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
@@ -54,9 +54,7 @@ const signal = Signal.cases.Owed.make({
   idempotencyKey: 'answer-chosen',
   deciderId: PersonId.make('migration-person'),
   message: DeliveryMessage.cases.Signal.make({
-    type: 'answer',
-    body: 'Monday',
-    attributes: { request: 'chosen' },
+    cue: SignalCue.cases.Answer.make({ body: 'Monday' }),
   }),
 })
 const legacy = [

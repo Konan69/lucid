@@ -1,6 +1,6 @@
 import { RpcConnection, isTransientSocketReason, VividRpcClient } from '@vivid/client-runtime'
 import type { ApprovalChanged, ApprovalExpired, SkillReadOnly } from '@vivid/contracts'
-import type { InputAnswerFailure, RpcFailure } from '@vivid/contracts/rpc'
+import type { HandoffFailure, InputAnswerFailure, RpcFailure } from '@vivid/contracts/rpc'
 import {
   Cause,
   Data,
@@ -26,6 +26,7 @@ export type ProductFailure =
   | ApprovalChanged
   | ApprovalExpired
   | InputAnswerFailure
+  | HandoffFailure
   | RpcClientError.RpcClientError
 
 type Client = VividRpcClient['Service']
@@ -178,6 +179,11 @@ const FINAL = {
   InputAnswerWrittenForbidden: true,
   ApprovalChanged: true,
   ApprovalExpired: true,
+  // A handoff refusal is the Person's to act on: they press again, nothing asks again by itself.
+  HandoffClosed: true,
+  HandoffNotAddressee: true,
+  HandoffComputerUnavailable: true,
+  HandoffNotCleared: true,
 } as const satisfies Partial<Record<ProductFailure['_tag'], true>>
 
 /**

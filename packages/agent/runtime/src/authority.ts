@@ -1,6 +1,12 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
-import { LiveDoc, type Harness } from '@earendil-works/pi-durable'
-import { MemoryAuthority, MemorySource, MemoryTaskId } from '@vivid/contracts'
+import { LiveDoc, type Harness, type SubmissionId } from '@earendil-works/pi-durable'
+import {
+  MemoryAuthority,
+  MemoryCitation,
+  MemorySource,
+  MemoryTaskId,
+  MessageId,
+} from '@vivid/contracts'
 import { VividRpcClient } from '@vivid/client-runtime'
 import { Effect, Layer, Option } from 'effect'
 import { NobodyToActFor, type ProductService } from './client.ts'
@@ -8,6 +14,7 @@ import { answering } from './deliveries.ts'
 import { recoverAuthority, resolveAuthority, type DeliveryAuthority } from './delivery.ts'
 import { pi, threadOf } from './threads.ts'
 import { learnerAuthority } from './learning.ts'
+import type { MemoryWriter } from './memory.ts'
 import type { ToolFailure } from './tools/result.ts'
 import { Scope, type ResolveScope } from './tools/scope.ts'
 
@@ -86,7 +93,7 @@ export const resolveMemoryCall: (
   harness: Effect.Effect<Harness>,
   product: ProductService,
   call: Parameters<ResolveScope>[0],
-) => Effect.Effect<MemoryAuthority, ToolFailure> = Effect.fn('Authority.resolveMemoryCall')(
+) => Effect.Effect<MemoryWriter, ToolFailure> = Effect.fn('Authority.resolveMemoryCall')(
   function* (harness, product, call) {
     const learning = yield* learnerAuthority(yield* harness, call.conversationId).pipe(
       Effect.mapError(() => nobody('The learning authority could not be read.')),
@@ -99,12 +106,49 @@ export const resolveMemoryCall: (
     ).pipe(Effect.mapError(() => nobody('The source Run could not be read.')))
     if (live === undefined || live.run === undefined)
       return yield* nobody('There is no active Run behind this memory call.')
-    return MemoryAuthority.make({
-      actor: acting.personId,
-      source: MemorySource.cases.ThreadRun.make({
-        threadId: acting.threadId,
-        taskId: MemoryTaskId.make(live.run.taskId),
-      }),
+    const source = MemorySource.cases.ThreadRun.make({
+      threadId: acting.threadId,
+      taskId: MemoryTaskId.make(live.run.taskId),
     })
+    const said = yield* inputMessages(opened, live.run.inputs).pipe(
+      Effect.mapError(() => nobody('The messages behind this Run could not be read.')),
+    )
+    return {
+      authority: MemoryAuthority.make({ actor: acting.personId, source }),
+      citations: [
+        MemoryCitation.cases.Run.make({ source }),
+        ...said.map((messageId) =>
+          MemoryCitation.cases.ThreadMessage.make({ threadId: acting.threadId, messageId }),
+        ),
+      ],
+    }
   },
 )
+
+/**
+ * The messages this Run answers: each input's transcript entry, named as the conversation names
+ * a Person's message (`entry-<n>`, `state/project.ts` `personMessage`). An input not yet placed in
+ * the transcript has no message and is left out; the Run citation stands for it.
+ */
+const inputMessages = Effect.fn('Authority.inputMessages')(function* (
+  harness: Harness,
+  inputs: ReadonlyArray<SubmissionId>,
+) {
+  const entries = yield* Effect.forEach(inputs, (id) => placedEntry(harness, id))
+  return entries.flatMap((entry) =>
+    Option.toArray(Option.map(entry, (id) => MessageId.make(`entry-${id}`))),
+  )
+})
+
+/** The transcript entry one input was placed at, once it is placed. */
+const placedEntry = Effect.fn('Authority.placedEntry')(function* (
+  harness: Harness,
+  id: SubmissionId,
+) {
+  const submission = yield* pi(() => harness.submission(id, BACKGROUND_CONTEXT))
+  if (submission === undefined) return Option.none<number>()
+  const record = yield* pi(() => submission.status(BACKGROUND_CONTEXT))
+  return record.type === 'input' && record.entry !== undefined
+    ? Option.some<number>(record.entry)
+    : Option.none<number>()
+})

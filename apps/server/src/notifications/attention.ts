@@ -1,7 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import { Effect } from 'effect'
 import {
-  FeedPost,
+  PostRequest,
   Forbidden,
   InvalidRequest,
   NotificationId,
@@ -68,7 +68,7 @@ export const notifyPosted = Effect.fn('Notifications.notifyPosted')(function* (i
   readonly personId: PersonId
   readonly thread: { readonly id: ThreadId; readonly companyId: CompanyId | null }
   readonly run: RunId
-  readonly post: FeedPost
+  readonly post: PostRequest
 }) {
   const id = NotificationId.make(
     NodeCrypto.createHash('sha256')
@@ -82,7 +82,7 @@ export const notifyPosted = Effect.fn('Notifications.notifyPosted')(function* (i
       companyId: input.thread.companyId,
       kind: 'posted',
       title: input.post.title,
-      body: FeedPost.match(input.post, { Drawn: () => '', Said: ({ words }) => words }),
+      body: PostRequest.match(input.post, { Drawn: () => '', Said: ({ words }) => words }),
       threadId: input.thread.id,
     },
   })

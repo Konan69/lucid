@@ -116,6 +116,22 @@ const STEPS = {
   search_memory: UNKNOWN,
   write_memory: UNKNOWN,
   delete_memory: UNKNOWN,
+  plan_forget: {
+    said: {
+      running: 'Working out what to forget',
+      done: 'Worked out what to forget',
+      failed: 'Could not work out what to forget',
+    },
+    detail: nothing,
+  },
+  forget_memory: {
+    said: {
+      running: 'Forgetting',
+      done: 'Checked what is forgotten',
+      failed: 'Could not forget it',
+    },
+    detail: nothing,
+  },
   make_integration: UNKNOWN,
   search_library: {
     said: {
@@ -320,6 +336,22 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.title)],
   },
+  inspect_file: {
+    said: {
+      running: 'Looking over the file',
+      done: 'Looked over the file',
+      failed: 'Could not open the file to check it',
+    },
+    detail: (asked) => [said(asked.path)],
+  },
+  publish_file: {
+    said: {
+      running: 'Handing over the file',
+      done: 'Handed over the file',
+      failed: 'Could not hand over the file',
+    },
+    detail: (asked) => [said(asked.title)],
+  },
   read_document: {
     said: {
       running: 'Reading a document',
@@ -368,6 +400,14 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.question)],
   },
+  request_handoff: {
+    said: {
+      running: 'Handing you a step',
+      done: 'Handed you a step',
+      failed: 'Could not hand you the step',
+    },
+    detail: (asked) => [said(asked.summary)],
+  },
   // The replies themselves are drawn as taps under the reply (`offeredReplies`); the step is only
   // the line at the foot of the Thread for the moment the call runs.
   suggest_replies: {
@@ -383,6 +423,22 @@ const STEPS = {
       running: 'Starting a project',
       done: 'Started a project',
       failed: 'Could not start the project',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
+  read_project: {
+    said: {
+      running: 'Looking at the project',
+      done: 'Looked at the project',
+      failed: 'Could not look at the project',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
+  update_project: {
+    said: {
+      running: 'Updating the project',
+      done: 'Updated the project',
+      failed: 'Could not update the project',
     },
     detail: (asked) => [said(asked.name)],
   },

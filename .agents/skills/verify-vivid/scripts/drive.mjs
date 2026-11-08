@@ -1,7 +1,12 @@
 import { approve, changed, deny } from './approval.mjs'
+import { outcome } from './outcome.mjs'
 import { question as realQuestion } from './question.mjs'
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeAssert from 'node:assert/strict'
+import * as NodeCrypto from 'node:crypto'
+import { ArtifactInspectionId } from '@vivid/contracts'
+import { Schema } from 'effect'
+import { Account, decodeText } from './receipts.mjs'
 import { admit, chat, conversation, history, rpc, settled, json } from './wire.mjs'
 import { command } from './process.mjs'
 import { createRequire } from 'node:module'
@@ -15,9 +20,11 @@ import { watch } from './watch.mjs'
 import { integrations } from './integrations.mjs'
 import { memory } from './memory.mjs'
 import { learningFact } from './phonememory.mjs'
+import { procedure } from './procedure.mjs'
 import { feed } from './feed.mjs'
 import { owed } from './owed.mjs'
 import { todos } from './todos.mjs'
+import { projects } from './projects.mjs'
 import { offer } from './offer.mjs'
 import { discordProof, discordBlocked } from './discord.mjs'
 import { githubProof, githubBlocked } from './github.mjs'
@@ -27,6 +34,7 @@ import { pushProof } from './push.mjs'
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { pictureAddress } = await import(web.resolve('@vivid/state'))
 
+import { textingDiscordProof, textingDiscordBlocked } from './textingdiscord.mjs'
 export const features = [
   'capabilities',
   'computer',
@@ -35,9 +43,11 @@ export const features = [
   'tool',
   'replies',
   'question',
+  'handoff',
   'approve',
   'deny',
   'changed',
+  'outcome',
   'stop',
   'picture',
   'code',
@@ -48,15 +58,18 @@ export const features = [
   'feed',
   'owed',
   'todos',
+  'projects',
   'devices',
   'reading',
   'settings',
   'name',
   'memory',
   'learning',
+  'procedure',
   'discord',
   'github',
   'push',
+  'texting-discord',
 ]
 export const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
@@ -321,11 +334,13 @@ async function document(state, id, directory) {
         part.type === 'dynamic-tool' &&
         part.toolName === 'write_document' &&
         part.state === 'output-available' &&
-        part.output.changed === true,
+        part.output.kind === 'artifact',
     )
   NodeAssert.ok(latest >= 2, 'The revision made no new version')
   NodeAssert.deepEqual(
-    writes.map((part) => part.output.version),
+    Array.from(new Set(writes.map((part) => part.output.artifact.version))).filter(
+      (version) => version > 1,
+    ),
     Array.from({ length: latest - 1 }, (_, index) => index + 2),
     'Each new version must be a write_document receipt of the revision Run',
   )
@@ -371,8 +386,98 @@ async function document(state, id, directory) {
   )
   NodeAssert.equal(v1.shown.number, 1)
   NodeAssert.equal(v2.shown.number, latest)
-  NodeAssert.notEqual(v1.body, v2.body)
-  NodeAssert.match(v2.body, /Ready for review/)
+  NodeAssert.equal(v1.content._tag, 'Document')
+  NodeAssert.equal(v2.content._tag, 'Document')
+  NodeAssert.notEqual(v1.content.body, v2.content.body)
+  NodeAssert.match(v2.content.body, /Ready for review/)
+  if (state.modelKind === 'real') await documentFile(state, id, directory)
+}
+const InspectionReceipt = Schema.Struct({ inspection: ArtifactInspectionId })
+
+/** The model receives the render image before delivering a PDF with its retained Word source. */
+async function documentFile(state, id, directory) {
+  await chat(
+    state,
+    id,
+    'Make a short one-page Word document titled File verification with the paragraph Exact bytes, retained source, reviewed render. Use python3 and the Computer document tools. Keep it as verification.docx, export verification.pdf, inspect_file on the PDF with its separate DOCX source, look at the returned image, then publish_file titled File verification with your visual review. Do not use write_document for this file.',
+    directory,
+    'file-write',
+  )
+  const { page, detail } = await completed(state, id, directory, 4)
+  const steps = page.messages
+    .filter(
+      (message) =>
+        message.role === 'assistant' && message.submissionId === detail.runs[3].submissionId,
+    )
+    .flatMap((message) => message.parts)
+    .filter((part) => part.type === 'dynamic-tool' && part.state === 'output-available')
+  const published = steps.find(
+    (part) => part.toolName === 'publish_file' && part.output.kind === 'artifact',
+  )
+  NodeAssert.ok(published, 'No file publication receipt; a proof-owned Computer is required')
+  const inspected = steps.find(
+    (part) =>
+      part.toolName === 'inspect_file' &&
+      Array.isArray(part.output) &&
+      part.output.some((block) => block.type === 'image' && block.mimeType === 'image/png'),
+  )
+  NodeAssert.ok(inspected, 'inspect_file did not return native image content to the model')
+  NodeAssert.ok(
+    steps.indexOf(inspected) < steps.indexOf(published),
+    'Publication preceded the inspection image',
+  )
+  const inspectionText = inspected.output.find((block) => block.type === 'text')
+  NodeAssert.ok(inspectionText, 'Inspection receipt text is missing')
+  const inspection = decodeText(InspectionReceipt, inspectionText.text)
+  NodeAssert.equal(published.input.inspection, inspection.inspection)
+  const reference = published.output.artifact
+  const artifact = await rpc(
+    state,
+    'GetArtifact',
+    { id: reference.id, version: reference.version },
+    directory,
+    'file-artifact',
+  )
+  NodeAssert.equal(artifact.content._tag, 'File')
+  NodeAssert.equal(artifact.content.output.mimeType, 'application/pdf')
+  NodeAssert.equal(artifact.content.source._tag, 'Separate')
+  NodeAssert.match(artifact.content.source.file.name, /\.docx$/u)
+  NodeAssert.equal(artifact.content.preview._tag, 'Separate')
+  NodeAssert.equal(artifact.content.review.toolCallId, inspected.toolCallId)
+  NodeAssert.equal(artifact.content.review.outputDigest, artifact.content.output.sha256)
+  const account = decodeText(
+    Account,
+    await NodeFSP.readFile(state.scratch + '/account.json', 'utf8'),
+  )
+  const downloads = []
+  for (const [role, file] of [
+    ['output', artifact.content.output],
+    ['source', artifact.content.source.file],
+    ['preview', artifact.content.preview.file],
+  ]) {
+    const response = await fetch(
+      `${state.web}/api/artifacts/${reference.id}/versions/${reference.version}/files/${role}`,
+      { headers: { cookie: account.cookie } },
+    )
+    NodeAssert.equal(response.status, 200)
+    const bytes = Buffer.from(await response.arrayBuffer())
+    const sha256 = NodeCrypto.createHash('sha256').update(bytes).digest('hex')
+    NodeAssert.equal(sha256, file.sha256)
+    NodeAssert.equal(bytes.length, file.byteLength)
+    await NodeFSP.writeFile(`${directory}/file-${role}`, bytes)
+    downloads.push({
+      role,
+      sha256,
+      byteLength: bytes.length,
+      mimeType: response.headers.get('content-type'),
+    })
+  }
+  await json(directory + '/file-proof.json', {
+    artifact: reference,
+    inspectionToolCall: inspected.toolCallId,
+    nativeImage: true,
+    downloads,
+  })
 }
 /** Send a picture through the public contract and compare exact reloaded private bytes. */
 async function picture(state, id, directory) {
@@ -477,14 +582,17 @@ const recipes = {
   approve,
   deny,
   changed,
+  outcome,
   picture,
   document,
   devices,
   feed,
   memory,
   learning,
+  procedure,
   owed,
   todos,
+  projects,
   watch,
   integrations,
   reading,
@@ -494,10 +602,13 @@ const recipes = {
   github: githubProof,
   library,
   push: pushProof,
+  'texting-discord': textingDiscordProof,
 }
 const blocked = {
+  handoff: 'No proof-owned Computer: a handoff is prepared and filled on a disposable Person Computer.',
   ...discordBlocked(),
   ...githubBlocked(),
+  ...textingDiscordBlocked(),
 }
 /** Every feature gets an independent Thread and retained verdict; failure never skips the rest. */
 export async function drive(state, feature) {
@@ -518,11 +629,14 @@ export async function drive(state, feature) {
           approve: 'Approval requires a real model.',
           deny: 'Denial requires a real model.',
           changed: 'A stale ask requires a real model.',
+          outcome: 'Action receipts require a real model to make the write.',
           stop: 'Stop requires a real model; rehearsal cannot prove interruption.',
           memory: 'Memory requires a real model; rehearsal cannot prove the memory tools.',
+          procedure: 'Teaching requires a real model; rehearsal cannot prove it.',
           owed: 'Tracking requires a real model; rehearsal cannot prove it.',
           todos: 'The list requires a real model; rehearsal cannot prove it.',
           library: 'Library requires a real model; rehearsal cannot prove retrieval and citation.',
+          projects: 'Project state requires a real model; rehearsal cannot prove it.',
         }
   let failed = false
   for (const name of chosen) {

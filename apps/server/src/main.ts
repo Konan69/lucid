@@ -11,7 +11,7 @@ import {
   NodePath,
   NodeRuntime,
 } from '@effect/platform-node'
-import { photonLayer } from './channels/photon.ts'
+import { channelProviderLayer } from './channels/combined.ts'
 import { channelStoreLayer } from './channels/store.ts'
 import { channelLedgerLayer } from './channels/ledger.ts'
 import { channelReceiverLayer } from './channels/inbound.ts'
@@ -60,6 +60,7 @@ import { notificationStoreLayer } from './notifications/store.ts'
 import { projectStoreLayer } from './projects/store.ts'
 import { owedStoreLayer } from './owed/store.ts'
 import { todoStoreLayer } from './todos/store.ts'
+import { forgetStoreLayer } from './forget/store.ts'
 import { pushConfigLayer } from './push/config.ts'
 import { pushAdapterLayer } from './push/adapter.ts'
 import { pushLayer, pushReceiptsLayer } from './push/delivery.ts'
@@ -106,7 +107,7 @@ const serverProgram = Effect.gen(function* () {
   const foundation = Layer.mergeAll(
     changesLayer,
     tallyLayer,
-    photonLayer,
+    channelProviderLayer,
     runtimeLayer,
     cellMemoryLayer,
     companyStoreLayer,
@@ -114,6 +115,7 @@ const serverProgram = Effect.gen(function* () {
     projectStoreLayer,
     owedStoreLayer,
     todoStoreLayer,
+    forgetStoreLayer,
     threadStoreLayer,
     runStoreLayer,
     notificationStoreLayer,

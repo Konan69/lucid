@@ -306,9 +306,13 @@ layer(stores)((it) => {
         const sent = yield* Ref.get(test.deliveries)
         expect(sent).toHaveLength(1)
         expect(sent[0]).toMatchObject({
-          type: 'first-conversation',
-          attributes: { from: 'Vivid', turn: '1' },
-          attachments: [],
+          delivery: {
+            envelope: {
+              from: 'Vivid',
+              turn: 1,
+              cue: { body: expect.stringContaining("This is the Person's first Thread.") },
+            },
+          },
           scope: { acting: test.actor.person.id },
         })
         const [delivery] = sent
@@ -318,12 +322,8 @@ layer(stores)((it) => {
         )
         expect(yield* (yield* RunStore).list(result.thread)).toHaveLength(1)
         expect(yield* Ref.get(test.deliveries)).toHaveLength(1)
-        expect(
-          JSON.stringify({ body: delivery.body, attributes: delivery.attributes }),
-        ).not.toContain(test.actor.person.id)
-        expect(
-          JSON.stringify({ body: delivery.body, attributes: delivery.attributes }),
-        ).not.toContain(result.thread)
+        expect(JSON.stringify(delivery.delivery)).not.toContain(test.actor.person.id)
+        expect(JSON.stringify(delivery.delivery)).not.toContain(result.thread)
       }).pipe(Effect.scoped),
     )
 

@@ -1,8 +1,23 @@
-import { pgTable, primaryKey, text, uniqueIndex } from 'drizzle-orm/pg-core'
+import { jsonb, pgTable, primaryKey, text, uniqueIndex } from 'drizzle-orm/pg-core'
 import type { Channel, ChannelAddress, RunId } from '@vivid/contracts'
 import { epoch, personColumn, threadColumn } from '../database/owner.ts'
 import { threads } from '../threads/tables.ts'
-import type { ChannelMessageId, ChannelEnrolmentId } from './provider.ts'
+import type { ChannelMessageId, ChannelEnrolmentId, ChannelPlace } from './provider.ts'
+
+/** A code grants the account that messages it to one Person for ten minutes. */
+export const channelCodes = pgTable(
+  'vivid_channel_codes',
+  {
+    personId: personColumn().notNull(),
+    channel: text('channel').$type<Channel>().notNull(),
+    code: text('code').notNull(),
+    expiresAt: epoch('expires_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.personId, table.channel] }),
+    uniqueIndex('vivid_channel_codes_code').on(table.channel, table.code),
+  ],
+)
 
 /** Personal ownership deliberately has no Company column: channel linking never grants shared reach. */
 export const channelLinks = pgTable(
@@ -45,6 +60,7 @@ export const channelReplies = pgTable('vivid_channel_replies', {
   personId: personColumn().notNull(),
   channel: text('channel').$type<Channel>().notNull(),
   since: epoch('since').notNull(),
+  place: jsonb('place').$type<ChannelPlace>(),
   responseId: text('response_id').$type<RunId>().unique(),
   threadId: threadColumn('thread_id')
     .notNull()

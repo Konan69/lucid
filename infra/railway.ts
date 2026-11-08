@@ -144,6 +144,15 @@ const observabilityAccess = (environment: InfrastructureEnvironment) =>
 const whenSet = (name: string, value: Option.Option<string>) =>
   Option.match(value, { onNone: () => ({}), onSome: (set) => ({ [name]: set }) })
 
+/** Discord early access and the channel bot, each sent only when the deploy sets it. */
+const discordSettings = (environment: InfrastructureEnvironment) => ({
+  ...whenSet('VIVID_DISCORD_PEOPLE', environment.discordPeople),
+  ...Option.match(environment.discordBotToken, {
+    onNone: () => ({}),
+    onSome: (token) => ({ VIVID_DISCORD_BOT_TOKEN: token }),
+  }),
+})
+
 /**
  * Vivid's Computer on Boat. The key and the template are always sent: `infra/env.ts` refuses a
  * deploy without them, and the server refuses to start without them, so the hosted server never
@@ -281,10 +290,6 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     onNone: () => ({}),
     onSome: (value) => ({ VIVID_DECISIONS: value }),
   })
-  const discordAccess = Option.match(environment.discordPeople, {
-    onNone: () => ({}),
-    onSome: (value) => ({ VIVID_DISCORD_PEOPLE: value }),
-  })
 
   /**
    * Keep the existing logical id and mount path so the first cell deploy preserves every notes
@@ -338,7 +343,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       ...textingAccess(environment),
       ...pushAccess(environment),
       ...decisionAccess,
-      ...discordAccess,
+      ...discordSettings(environment),
       ...observabilityAccess(environment),
       ...googleAccess(environment),
       /** Where `apps/server/Dockerfile` leaves the built web app; the server serves it itself. */

@@ -4,9 +4,15 @@ import { bigint, integer, pgTable } from 'drizzle-orm/pg-core'
  * The product owner's schema: every table `product-drizzle.config.ts` generates `./product-drizzle`
  * from. It migrates after the identity owner in `schema.ts`.
  */
-export { artifacts, artifactVersions } from '../artifacts/tables.ts'
+export { actions } from '../actions/tables.ts'
+export {
+  artifacts,
+  artifactVersions,
+  artifactFiles,
+  artifactPreparations,
+} from '../artifacts/tables.ts'
 export { approvals } from '../approvals/tables.ts'
-export { channelLinks, channelMessages, channelReplies } from '../channels/tables.ts'
+export { channelCodes, channelLinks, channelMessages, channelReplies } from '../channels/tables.ts'
 export { auditEntries } from '../audit/tables.ts'
 export {
   computerRecoveries,
@@ -18,7 +24,8 @@ export {
 export { connections, connectionPermissions, credentials } from '../connections/tables.ts'
 export { draftGenerations, drafts } from '../drafts/tables.ts'
 export { feedCards } from '../feed/tables.ts'
-export { inputRequests } from '../inputs/tables.ts'
+export { memoryForgets } from '../forget/tables.ts'
+export { handoffs, inputRequests } from '../inputs/tables.ts'
 export { libraryChunks, libraryDocuments, libraryFolders } from '../library/tables.ts'
 export { rules } from '../rules/tables.ts'
 export { skills } from '../skills/tables.ts'

@@ -4,11 +4,22 @@ import {
   ChannelUnavailable,
   ChannelProviderFailed,
 } from '@vivid/contracts'
-import { Context, type Effect, Schema, type Stream } from 'effect'
+import { Context, type Effect, type Option, Schema, type Stream } from 'effect'
 
 /** Provider ids are opaque; replay identity must not depend on the message's words. */
 export const ChannelMessageId = Schema.NonEmptyString.pipe(Schema.brand('ChannelMessageId'))
 export type ChannelMessageId = typeof ChannelMessageId.Type
+
+/**
+ * Where a message was written when a channel has more than one place for it: on Discord, a direct
+ * message or a server channel, and the message itself. A reply goes back to that place and
+ * answers that message. A channel with one conversation per Person (iMessage) has none.
+ */
+export const ChannelPlace = Schema.Struct({
+  conversation: Schema.NonEmptyString,
+  message: ChannelMessageId,
+})
+export type ChannelPlace = typeof ChannelPlace.Type
 
 /** The adapter decodes once; no SDK values or credentials cross the provider seam. */
 export const ChannelInbound = Schema.Struct({
@@ -17,6 +28,7 @@ export const ChannelInbound = Schema.Struct({
   sender: ChannelAddress,
   text: Schema.NonEmptyString,
   receivedAt: Schema.Number.check(Schema.isFinite()),
+  place: Schema.optionalKey(ChannelPlace),
 })
 export type ChannelInbound = typeof ChannelInbound.Type
 
@@ -61,6 +73,11 @@ export interface ChannelProviderService {
    * channel named there and absent here (WhatsApp today) is refused with `ChannelUnavailable`.
    */
   readonly channels: ReadonlyArray<Channel>
+  /**
+   * The address a Person messages on a channel that learns their account from a code (Discord:
+   * Vivid's own bot account). None for a channel that enrols a number the Person gives.
+   */
+  readonly codeAddress: (channel: Channel) => Option.Option<ChannelAddress>
   /** Photon deletes by user id, so its opaque enrolment receipt must survive server restarts. */
   readonly enrol: (
     channel: Channel,
@@ -75,6 +92,8 @@ export interface ChannelProviderService {
     readonly channel: Channel
     readonly address: ChannelAddress
     readonly text: string
+    /** Answer in this place instead of the Person's own conversation (`ChannelPlace`). */
+    readonly place?: ChannelPlace
   }) => Effect.Effect<void, ChannelUnavailable | ChannelRecipientMissing | ChannelSendUnknown>
 }
 

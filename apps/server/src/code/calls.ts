@@ -20,7 +20,7 @@ import type { Actor } from '../auth/access.ts'
 import { Gate } from '../approvals/gate.ts'
 import { Executor } from '../connections/executor.ts'
 import { ConnectionStore } from '../connections/store.ts'
-import { findTools, resolveTool, useQueryTool, useTool } from '../connections/tools.ts'
+import { findTools, resolveTool, useUnkeyedTool, useQueryTool } from '../connections/tools.ts'
 import { DeviceRegistry } from '../computers/device.ts'
 import { ComputerStore, computerBrowse } from '../computers/store.ts'
 import { Database } from '../database/client.ts'
@@ -61,12 +61,16 @@ function toolView(response: Awaited<Effect.Success<ReturnType<typeof findTools>>
   }
 }
 
+/** What a program reads when the exact same act's earlier send has an unknown result. */
+const RECONCILE_FIRST =
+  'The same action was sent before in this Thread and its result is not known yet, so it was not sent again. Do not retry it; tell the Person.'
+
 /** Recoverable provider refusals stay typed JSON data; approval/blocked/unknown never reach the guest. */
 const returned = (
   value: Schema.Json,
   summary: string,
   end: 'completed' | 'refused' = 'completed',
-) => CallOutcome.cases.Returned.make({ value, summary, end })
+) => CallOutcome.cases.Returned.make({ value, summary, end, receipt: null })
 
 /** Typed recovery here decides a new refusal; carried Tool, Page and Device replies bypass it. */
 // Untraced, as `recordRefusal` is: the event belongs on the producer's span, not a child of it.
@@ -95,21 +99,46 @@ const connection = Effect.fn('Code.useConnection')(function* (
   const matched = yield* ConnectionState.guards.Ready(connection.state)
     ? resolveTool(actor, request).pipe(Effect.catchTag('NotFound', () => Effect.succeed(saved)))
     : Effect.succeed(saved)
-  const use = DisplayCallPolicy.match(policy, { Draw: () => useQueryTool, Press: () => useTool })
-  const result = yield* use(actor, {
+  const use = DisplayCallPolicy.match(policy, {
+    Draw: () => useQueryTool,
+    Press: () => useUnkeyedTool,
+  })
+  const sent = yield* use(actor, {
     connectionId: matched.connectionId,
     tool: matched.name,
     input: request.input,
     summary: request.summary,
     rationale: request.rationale,
-  })
+  }).pipe(
+    Effect.asSome,
+    Effect.catchTag('ActionReconciliationRequired', () => Effect.succeedNone),
+  )
+  // The same act sent earlier in this Thread has an unknown result: the program is told, and it
+  // is not sent again. The program goes on with its other work.
+  if (Option.isNone(sent))
+    return yield* refused('use_tool', { ok: false, reason: RECONCILE_FIRST }, request.summary)
+  const result = sent.value
   const evidence = { coverage: result.coverage, asOf: result.asOf, observedAt: result.observedAt }
   return ToolOutcome.match<CallOutcome>(result.outcome, {
-    Completed: ({ output }) => returned({ ok: true, output, ...evidence }, request.summary),
+    Completed: ({ output, receipt }) =>
+      CallOutcome.cases.Returned.make({
+        value: { ok: true, output, ...evidence },
+        summary: request.summary,
+        end: 'completed',
+        receipt,
+      }),
+    Repeated: ({ receipt }) =>
+      CallOutcome.cases.Returned.make({
+        value: { ok: true, output: null, repeated: true, ...evidence },
+        summary: request.summary,
+        end: 'completed',
+        receipt,
+      }),
     ApprovalRequired: ({ approvalId, summary }) =>
       CallOutcome.cases.ApprovalRequired.make({ approvalId, summary }),
     Blocked: ({ rule }) => CallOutcome.cases.Blocked.make({ rule, summary: request.summary }),
-    OutcomeUnknown: () => CallOutcome.cases.Unknown.make({ summary: request.summary }),
+    OutcomeUnknown: ({ receipt }) =>
+      CallOutcome.cases.Unknown.make({ summary: request.summary, receipt }),
     ScopeRequired: ({ required, granted }) =>
       returned(
         { ok: false, reason: 'Additional access required.', required, granted, ...evidence },
@@ -241,7 +270,7 @@ const browse = Effect.fn('Code.browse')(function* (actor: Actor, input: Schema.J
       Effect.succeed(CallOutcome.cases.Blocked.make({ rule, summary: request.summary })),
     Unavailable: ({ reason }) => refused('browse', { ok: false, reason }, request.summary),
     OutcomeUnknown: () =>
-      Effect.succeed(CallOutcome.cases.Unknown.make({ summary: request.summary })),
+      Effect.succeed(CallOutcome.cases.Unknown.make({ summary: request.summary, receipt: null })),
   })
 })
 

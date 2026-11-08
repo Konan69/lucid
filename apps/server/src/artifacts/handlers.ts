@@ -1,5 +1,7 @@
 import {
   ArtifactListResponse,
+  type InspectArtifactFileRequest,
+  type PublishArtifactFileRequest,
   ArtifactResponse,
   type ArtifactId,
   type GetArtifactRequest,
@@ -13,6 +15,7 @@ import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/a
 import { Topic } from '../live/changes.ts'
 import { live } from '../live/query.ts'
 import { ArtifactStore } from './store.ts'
+import { inspectArtifactFile, publishArtifactFile } from './files.ts'
 
 /** Listing and watching share the same Thread access check, repeated after each invalidation. */
 const load = Effect.fn('Artifacts.load')(function* (actor: Actor, threadId: ThreadId) {
@@ -23,6 +26,18 @@ const load = Effect.fn('Artifacts.load')(function* (actor: Actor, threadId: Thre
 
 /** Transport identity is injected here; storage owns access, versioning and publication. */
 export const artifactHandlers = {
+  InspectArtifactFile: Effect.fn('Rpc.InspectArtifactFile')(function* (
+    request: InspectArtifactFileRequest,
+  ) {
+    const auth = yield* requireVivid()
+    return yield* inspectArtifactFile(auth.person.id, auth.threadId, request)
+  }),
+  PublishArtifactFile: Effect.fn('Rpc.PublishArtifactFile')(function* (
+    request: PublishArtifactFileRequest,
+  ) {
+    const auth = yield* requireVivid()
+    return yield* publishArtifactFile(auth.person.id, auth.threadId, request)
+  }),
   ListArtifacts: Effect.fn('Rpc.ListArtifacts')(function* ({
     threadId,
   }: {

@@ -110,6 +110,18 @@ async function launch() {
     await NodeFSP.writeFile(scratch + '/provider.json', JSON.stringify(handoff), {
       mode: 0o600,
     })
+    const env = {
+      PATH: process.env.PATH,
+      HOME: scratch,
+      COREPACK_HOME:
+        process.env.COREPACK_HOME ?? NodePath.join(NodeOS.homedir(), '.cache/node/corepack'),
+      COREPACK_ENABLE_NETWORK: '0',
+    }
+    // Only the path crosses; the supervisor reads the bot token into the server env.
+    if (process.env.VIVID_VERIFY_DISCORD_TOKEN_FILE)
+      env.VIVID_VERIFY_DISCORD_TOKEN_FILE = NodePath.resolve(
+        process.env.VIVID_VERIFY_DISCORD_TOKEN_FILE,
+      )
     child = NodeChildProcess.spawn(
       process.execPath,
       ['--import', loader, skill + '/scripts/supervisor.mjs', evidence + '/state.json'],
@@ -117,14 +129,7 @@ async function launch() {
         cwd: root,
         detached: true,
         stdio: ['ignore', log.fd, log.fd, 'ipc'],
-        env: {
-          PATH: process.env.PATH,
-          HOME: scratch,
-          COREPACK_HOME:
-            process.env.COREPACK_HOME ?? NodePath.join(NodeOS.homedir(), '.cache/node/corepack'),
-          COREPACK_ENABLE_NETWORK: '0',
-          VIVID_VERIFY_WORLD: process.env.VIVID_VERIFY_WORLD,
-        },
+        env: { ...env, VIVID_VERIFY_WORLD: process.env.VIVID_VERIFY_WORLD },
       },
     )
     state.processes.supervisor = await identity(child.pid)
@@ -174,7 +179,7 @@ try {
     )
   } else if (action === 'help')
     console.log(
-      'verify launch | apk | doctor | behaviour <run> [--trials N] [--scenarios file] | cell state|list|start|stop|restart|move|owner-loss|evict [runtime|runtime-peer] | feature all|first|reload|tool|question|approve|deny|changed|stop|picture|code|document|watch|library|feed|devices|discord|github|learning|name | browser <feature> | desktop | phone all|thread|name|send|tool|replies|question|approve|deny|stop|picture|document|memory|settings-memory|learning|feed|owed|move | android provision|stop|status <devbox> | android attach|status pc | cleanup | sign-in | create-thread | chat | history | stop\nOptional pi-… run ID selects retained run manifest. Evidence: .cache/verify/pi-…/',
+      'verify launch | apk | doctor | behaviour <run> [--trials N] [--scenarios file] | cell state|list|start|stop|restart|move|owner-loss|evict [runtime|runtime-peer] | feature all|first|reload|tool|question|approve|deny|changed|outcome|stop|picture|code|document|watch|library|feed|projects|devices|discord|texting-discord|github|learning|name | browser <feature> | desktop | phone all|thread|name|send|tool|replies|question|approve|deny|stop|picture|document|memory|settings-memory|learning|feed|owed|move | android provision|stop|status <devbox> | android attach|status pc | cleanup | sign-in | create-thread | chat | history | stop\nOptional pi-… run ID selects retained run manifest. Evidence: .cache/verify/pi-…/',
     )
   else {
     const state = await selected()

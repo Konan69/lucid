@@ -34,6 +34,18 @@ export type TodoId = typeof TodoId.Type
 export const ThreadId = Schema.String.pipe(Schema.brand('ThreadId'))
 /** Decoded Thread identifier. */
 export type ThreadId = typeof ThreadId.Type
+/**
+ * One message of a Thread's conversation, as the runtime names it in `ConversationMessage.id`:
+ * `entry-<n>` for a Person's words (the Pi transcript entry that holds them) and `run-<n>` for
+ * Vivid's reply (the entry its run started at). Pi transcript entries are append-only and never
+ * renumbered, compaction included (pi-durable 1.4.0 `entries.d.ts`, `CompactionEntry` adds a
+ * summary entry), so either name points at the same message for as long as the Thread lives
+ * (`packages/agent/runtime/src/state/project.ts` `personMessage`, `replyMessage`).
+ */
+export const MessageId = Schema.String.check(Schema.isPattern(/^(entry|run)-[1-9][0-9]*$/u)).pipe(
+  Schema.brand('MessageId'),
+)
+export type MessageId = typeof MessageId.Type
 /** Product Run identifier. The admission receipt links it to a runtime submission. */
 export const RunId = Schema.String.pipe(Schema.brand('RunId'))
 export type RunId = typeof RunId.Type
@@ -52,9 +64,22 @@ export type LibraryFolderId = typeof LibraryFolderId.Type
 /** Input request identifier: one question a Run could not answer alone. */
 export const InputRequestId = Schema.String.pipe(Schema.brand('InputRequestId'))
 export type InputRequestId = typeof InputRequestId.Type
+/** Handoff identifier: one step on the Computer that only the Person asked can do. */
+export const HandoffId = Schema.String.pipe(Schema.brand('HandoffId'))
+export type HandoffId = typeof HandoffId.Type
+/** One prepared field of a handoff, named by the server so a value never travels with a label. */
+export const HandoffFieldId = Schema.String.pipe(Schema.brand('HandoffFieldId'))
+export type HandoffFieldId = typeof HandoffFieldId.Type
 /** Approval identifier: authorization for one consequential action. */
 export const ApprovalId = Schema.String.pipe(Schema.brand('ApprovalId'))
 export type ApprovalId = typeof ApprovalId.Type
+/**
+ * One outward operation Vivid sent, or is about to send, to a service or a Computer. The server
+ * makes it from the runtime's own call identity or the Approval it carries out, never from model
+ * text, so a retried call names the same operation.
+ */
+export const ActionOperationId = Schema.String.pipe(Schema.brand('ActionOperationId'))
+export type ActionOperationId = typeof ActionOperationId.Type
 /** Rule identifier: one standing instruction about what Vivid may do without asking. */
 export const RuleId = Schema.String.pipe(Schema.brand('RuleId'))
 export type RuleId = typeof RuleId.Type

@@ -25,6 +25,7 @@ import {
 } from '@vivid/contracts'
 import memoryMigration from './memory/migrations/20261028123228_memory/migration.sql'
 import searchMigration from './memory/migrations/20261028123228_memory-search/migration.sql'
+import provenanceMigration from './memory/migrations/20261029131056_memory-provenance/migration.sql'
 import { Config, ConfigProvider, Deferred, Effect, Exit, Option, Schema } from 'effect'
 import { skills } from './skills.ts'
 
@@ -152,6 +153,7 @@ export class Person extends DurableObject<CellState, Environment> {
       openMemory(new DurableObjectSqliteDatabase(this.#state.storage), [
         memoryMigration,
         searchMigration,
+        provenanceMigration,
       ]),
     )
     const bound = Memory.of({

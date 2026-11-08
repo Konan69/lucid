@@ -17,6 +17,7 @@ import {
   inThread,
   isLive,
   isTooLong,
+  handing,
   lasting,
   QUIET_MS,
   readingOf,
@@ -52,6 +53,8 @@ import { Face } from '../ui/Face'
 import { arriving } from '../ui/settle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { Asks, useAsks } from './thread/Allow'
+import { Handing } from './thread/Handoff'
+import { pages } from '../data/pages'
 import type { Asking } from './thread/asking'
 import type { Picture } from './thread/Attach'
 import { Composer } from './thread/Composer'
@@ -182,6 +185,7 @@ function contextFor({
     runs,
     approvals: Option.match(detail, { onNone: () => [], onSome: (value) => value.approvals }),
     requests: Option.match(detail, { onNone: () => [], onSome: (value) => value.requests }),
+    handoffs: Option.match(detail, { onNone: () => [], onSome: (value) => value.handoffs }),
   }
 }
 
@@ -522,10 +526,9 @@ function Conversation({
 
   const lastSaid = lastWords(visible, me)
   const ended = working ? Option.none() : newestRun(runs)
-  const { unsent } = drawn
   const cut = useCut(reading, {
     // Words drawn in the conversation that did not arrive; a shared Thread draws none ahead.
-    unsent: !shared && unsent.length > 0,
+    unsent: !shared && drawn.unsent.length > 0,
     // Until a new Thread's first words have landed the server may not have the Thread at all,
     // and says so; that is the Thread arriving, not a conversation out of reach.
     arriving: !FirstWords.$is('Settled')(first),
@@ -541,7 +544,7 @@ function Conversation({
       usingTool={working && Option.isSome(Option.flatMap(replyIn(visible), stepIn))}
       // What Vivid's face answers for: words that did not arrive, a server that cannot be
       // reached, a Run that ended without an answer.
-      failed={cut || unsent.length > 0 || Option.exists(ended, ranBadly)}
+      failed={cut || drawn.unsent.length > 0 || Option.exists(ended, ranBadly)}
       panelOpen={panelOpen}
       onTogglePanel={onTogglePanel}
     >
@@ -554,6 +557,9 @@ function Conversation({
           me={me.person.id}
           approvals={context.approvals}
           requests={context.requests}
+          handoffs={context.handoffs}
+          panelOpen={panelOpen}
+          onTogglePanel={onTogglePanel}
           working={working}
           // A picture goes with a message straight to Vivid; a shared Thread's messages take
           // another path that cannot carry one yet.
@@ -579,7 +585,7 @@ function Conversation({
               }),
             )}
             onContinue={say}
-            unsent={unsent}
+            unsent={drawn.unsent}
             lastSaid={lastSaid}
             onUnsentAgain={() => sayAgain(id)}
             ended={ended}
@@ -614,6 +620,9 @@ function Column({
   me,
   approvals,
   requests,
+  handoffs,
+  panelOpen,
+  onTogglePanel,
   working,
   pictures,
   onSay,
@@ -628,6 +637,11 @@ function Column({
   approvals: ThreadContext['approvals']
   /** Every request Vivid has made in this Thread, oldest first. */
   requests: ThreadContext['requests']
+  /** Every step Vivid has handed over in this Thread, oldest first. */
+  handoffs: ThreadContext['handoffs']
+  /** The Computer panel is showing; a step is finished on its screen. */
+  panelOpen: boolean
+  onTogglePanel: () => void
   working: boolean
   /** Whether a picture can be sent from the composer. */
   pictures: boolean
@@ -650,7 +664,23 @@ function Column({
   return (
     <>
       {children}
-      <Asks allowing={allowing} asked={asked} />
+      {/* A step on the Computer holds it, so it comes before a question or an Approval; those
+          keep waiting, and rise once the step is over. */}
+      {Option.match(handing.handoffUp(handoffs, me), {
+        onNone: () => <Asks allowing={allowing} asked={asked} />,
+        onSome: (handoff) => (
+          <Handing
+            key={handoff.id}
+            handoff={handoff}
+            panelOpen={panelOpen}
+            onOpenScreen={() => {
+              // The step is finished on Vivid's computer, not on a page left in front.
+              pages.toComputer()
+              if (!panelOpen) onTogglePanel()
+            }}
+          />
+        ),
+      })}
       <Composer
         place={place}
         // While a request from Vivid waits, what is sent from here is the reply to it.

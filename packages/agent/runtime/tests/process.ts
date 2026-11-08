@@ -199,7 +199,11 @@ const bytesOf = Effect.fn('RuntimeFixture.bytesOf')(function* (
 const memoryMigration = Effect.tryPromise({
   try: () =>
     Promise.all(
-      ['20261028123228_memory', '20261028123228_memory-search'].map((name) =>
+      [
+        '20261028123228_memory',
+        '20261028123228_memory-search',
+        '20261029131056_memory-provenance',
+      ].map((name) =>
         NodeFSP.readFile(
           new URL(
             `../../../../apps/cells/src/memory/migrations/${name}/migration.sql`,

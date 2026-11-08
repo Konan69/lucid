@@ -1,7 +1,16 @@
 import { Schema } from 'effect'
 import { Approval } from './approvals.js'
-import { PersonId, PersonSummary, ProjectId, RunId, ThreadId } from './identity.js'
-import { InputRequest } from './inputs.js'
+import {
+  ActionOperationId,
+  HandoffId,
+  PersonId,
+  PersonSummary,
+  ProjectId,
+  RunId,
+  ThreadId,
+} from './identity.js'
+import { HandoffRequest, InputRequest } from './inputs.js'
+import { WatchId, WatchInstruction, WatchName } from './watches.js'
 
 /** The image formats accepted by the conversation gateway and served inline to every client. */
 export const PictureMediaType = Schema.Literals([
@@ -195,8 +204,22 @@ export const RunOrigin = Schema.TaggedUnion({
   FirstConversation: { person: PersonSummary },
   /** A decision on an Approval or an answer to an Input request returning to the Thread. */
   Decision: { person: PersonSummary },
-  /** An Integration event a Watch subscribed to, named by the Watch. */
-  Watch: { person: PersonSummary, watchName: Schema.String },
+  /**
+   * An Integration event a Watch subscribed to: which Watch, and which of its events. The Watch's
+   * id and name are kept here because the Watch itself may be removed later.
+   */
+  Watch: {
+    person: PersonSummary,
+    watchId: WatchId,
+    watchName: Schema.String,
+    eventId: Schema.NonEmptyString,
+    event: Schema.String,
+    occurredAt: Schema.String,
+  },
+  /** A Watch Run started before 29 October 2026, which recorded only the Watch's name. */
+  WatchUnrecorded: { person: PersonSummary, watchName: Schema.String },
+  /** The Person pressed Forget in Settings; Vivid plans the forget and carries it out. */
+  Forget: { person: PersonSummary },
 })
 export type RunOrigin = typeof RunOrigin.Type
 
@@ -237,6 +260,46 @@ export const RunState = Schema.TaggedUnion({
 })
 export type RunState = typeof RunState.Type
 
+/**
+ * Proof that the Person a Run acted for saw its final response. `Thread`: their own app drew that
+ * exact response in the Thread and said so. A channel provider's delivery confirmation would be
+ * another case; none returns one today, so there is none.
+ */
+export const RunDeliveryReceipt = Schema.TaggedUnion({
+  Thread: { person: PersonSummary, acknowledgedAt: Schema.Finite, responseId: RunId },
+})
+export type RunDeliveryReceipt = typeof RunDeliveryReceipt.Type
+
+/**
+ * What a Run's `Unknown` outcome is unsure of. `Execution`: the runtime stopped reporting.
+ * `Action`: the Run sent an outward operation whose result is not known. `Delivery`: the response
+ * may not have reached the Person.
+ */
+export const RunUncertainty = Schema.TaggedUnion({
+  Execution: {},
+  Action: { operationId: ActionOperationId },
+  Delivery: { responseId: RunId },
+})
+export type RunUncertainty = typeof RunUncertainty.Type
+
+/**
+ * The furthest a Run is proven to have got, beside `RunState`, which says how its execution ended.
+ *
+ * - `Accepted`: the runtime holds it durably. A Run that failed or was stopped stays here.
+ * - `Completed`: it answered. `responseId` names the response, shared by Runs that joined it.
+ * - `Delivered`: the Person it acted for saw that response.
+ * - `Unknown`: something it did cannot be told; `uncertainty` says what.
+ *
+ * Execution ending is not delivery: a completed reply that nobody has drawn is `Completed`.
+ */
+export const RunOutcome = Schema.TaggedUnion({
+  Accepted: { acceptedAt: Schema.Finite, submissionId: Schema.String },
+  Completed: { completedAt: Schema.Finite, responseId: RunId },
+  Delivered: { completedAt: Schema.Finite, responseId: RunId, receipt: RunDeliveryReceipt },
+  Unknown: { observedAt: Schema.Finite, uncertainty: RunUncertainty },
+})
+export type RunOutcome = typeof RunOutcome.Type
+
 /** One bounded attempt by Vivid to advance a Thread. */
 export const Run = Schema.Struct({
   id: RunId,
@@ -255,9 +318,20 @@ export const Run = Schema.Struct({
   turn: Schema.Finite,
   origin: RunOrigin,
   state: RunState,
+  /** Null while the Run is only reserved: the runtime has not accepted it yet. */
+  outcome: Schema.NullOr(RunOutcome),
   startedAt: Schema.Finite,
 }).annotate({ identifier: 'Run', title: 'Run' })
 export interface Run extends Schema.Schema.Type<typeof Run> {}
+
+/**
+ * The intended Person's app saying it drew a Run's final response. The server checks the Run, the
+ * response and the Person's access, and records the time and Person itself.
+ */
+export const AcknowledgeRunDeliveryRequest = Schema.Struct({ runId: RunId, responseId: RunId })
+export interface AcknowledgeRunDeliveryRequest extends Schema.Schema.Type<
+  typeof AcknowledgeRunDeliveryRequest
+> {}
 
 /** A send answers once admitted, with the product Run it started or joined. */
 export const SendToThreadResponse = Schema.Struct({ run: Run })
@@ -282,6 +356,8 @@ export const ThreadDetail = Schema.Struct({
   approvals: Schema.Array(Approval),
   /** Every Input request raised in this Thread. */
   requests: Schema.Array(InputRequest),
+  /** Every handoff raised in this Thread, open or settled, so its card keeps its outcome. */
+  handoffs: Schema.Array(HandoffRequest),
 }).annotate({ identifier: 'ThreadDetail', title: 'Thread detail' })
 export interface ThreadDetail extends Schema.Schema.Type<typeof ThreadDetail> {}
 
@@ -305,8 +381,91 @@ export const SignalType = Schema.Literals([
   'event',
   // A card telling Vivid to go on (`CarryOnRequest`); no client draws it.
   'carry-on',
+  // The Person finished a step Vivid handed them on its Computer (`inputs/handoff.ts`).
+  'handoff',
+  // A Settings Forget press, delivered into a background Thread for Vivid to plan and carry out.
+  'forget',
 ] as const)
 export type SignalType = typeof SignalType.Type
+
+/** An Approval's outcome as the conversation names it (`approvals/signal.ts`, `owed`). */
+export const ApprovalOutcome = Schema.Literals([
+  'expired',
+  'Denied',
+  'Succeeded',
+  'Failed',
+  'OutcomeUnknown',
+  'Invalidated',
+] as const)
+export type ApprovalOutcome = typeof ApprovalOutcome.Type
+
+/**
+ * What a server delivery says, one case per thing that puts Vivid to work, each with exactly the
+ * fields that thing has. The runtime renders each case to its fixed tag and full text
+ * (`packages/agent/runtime/src/delivery.ts`, `signalText`), so a case cannot arrive without the
+ * name or outcome its tag needs.
+ *
+ * - `Message`: a Person's words in a shared Thread.
+ * - `FirstConversation`: the opening instruction of a Person's first Thread.
+ * - `Approval`: an Approval's outcome, with the summary and result in `body`.
+ * - `Answer`: a Person's answer to an Input request, with its questions in `body`.
+ * - `Watch`: one event a Watch received. `data` is the event as the Integration sent it, whole;
+ *   `occurredAt` is the Integration's own timestamp text, kept as sent.
+ * - `CarryOn`: a card telling Vivid to go on (`CarryOnRequest`); no client draws it.
+ * - `Handoff`: the Person finished a step Vivid handed them on its Computer, named by its handoff.
+ * - `Forget`: a Settings Forget press, with the instruction to plan and carry it out in `body`.
+ */
+export const SignalCue = Schema.TaggedUnion({
+  Message: { body: Schema.String },
+  FirstConversation: { body: Schema.String },
+  Approval: { body: Schema.String, outcome: ApprovalOutcome },
+  Answer: { body: Schema.String },
+  Watch: {
+    name: WatchName,
+    event: Schema.String,
+    occurredAt: Schema.String,
+    instruction: WatchInstruction,
+    data: Schema.Json,
+  },
+  CarryOn: { body: Schema.String },
+  Handoff: { body: Schema.String, handoff: HandoffId },
+  Forget: { body: Schema.String },
+})
+export type SignalCue = typeof SignalCue.Type
+
+/** The tag each cue is rendered and drawn under, from the one signal vocabulary. */
+export const signalTypes = {
+  Message: 'message',
+  FirstConversation: 'first-conversation',
+  Approval: 'approval',
+  Answer: 'answer',
+  Watch: 'event',
+  CarryOn: 'carry-on',
+  Handoff: 'handoff',
+  Forget: 'forget',
+} as const satisfies Record<SignalCue['_tag'], SignalType>
+
+/**
+ * One attributed server delivery: who it is from and its turn, as the conversation names them
+ * ("turn 7, from Ada"), and what it says. The turn is the Run's place in its Thread, the same as
+ * the admission's `turn`.
+ */
+export const SignalEnvelope = Schema.Struct({
+  from: Schema.String,
+  turn: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0)),
+  cue: SignalCue,
+}).annotate({ identifier: 'SignalEnvelope', title: 'Signal envelope' })
+export type SignalEnvelope = typeof SignalEnvelope.Type
+
+/**
+ * What one admission puts in front of Vivid: a Person's own words in a private Thread, a plain user
+ * turn with any pictures, or an attributed server delivery.
+ */
+export const RuntimeDelivery = Schema.TaggedUnion({
+  Words: { body: Schema.String, attachments: Schema.Array(MessageAttachment) },
+  Signal: { envelope: SignalEnvelope },
+})
+export type RuntimeDelivery = typeof RuntimeDelivery.Type
 
 /** The Person Vivid acts for. Scope travels from server to runtime beside model-visible
  * text and reaches tools through a Layer. The model cannot read or alter this authority. */
@@ -322,15 +481,12 @@ export const DeliveryScopeRequest = Schema.Struct({
 })
 export interface DeliveryScopeRequest extends Schema.Schema.Type<typeof DeliveryScopeRequest> {}
 
-/** A server-owned runtime admission request. Body and attributes contain model-visible
- * words; scope carries the authority the model never sees. Product state stays on the server. */
+/** A server-owned runtime admission request. The delivery holds model-visible words; scope
+ * carries the authority the model never sees. Product state stays on the server. */
 export const RuntimeRunRequest = Schema.Struct({
   threadId: ThreadId,
   idempotencyKey: Schema.String,
-  type: SignalType,
-  body: Schema.String,
-  attachments: Schema.optionalKey(Schema.Array(MessageAttachment)),
-  attributes: Schema.Record(Schema.String, Schema.String),
+  delivery: RuntimeDelivery,
   turn: Schema.Finite,
   scope: DeliveryScope,
   /**
@@ -373,6 +529,8 @@ export interface RuntimeAdmissionBody extends Schema.Schema.Type<typeof RuntimeA
 export const Inbox = Schema.Struct({
   approvals: Schema.Array(Approval),
   requests: Schema.Array(InputRequest),
+  /** Handoffs still waiting on this Person. */
+  handoffs: Schema.Array(HandoffRequest),
 }).annotate({ identifier: 'Inbox', title: 'Inbox' })
 export interface Inbox extends Schema.Schema.Type<typeof Inbox> {}
 

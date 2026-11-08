@@ -1,4 +1,5 @@
 import { approve, changed, deny } from './approval.mjs'
+import { outcome } from './outcome.mjs'
 import { question } from './question.mjs'
 import * as fs from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -9,6 +10,7 @@ import { control } from './socket.mjs'
 import { rpc, settled, history, chat, conversation } from './wire.mjs'
 import { features, stop, png, program, ranProgram } from './drive.mjs'
 import { watchBrowser } from './watchbrowser.mjs'
+import { procedureBrowser } from './procedurebrowser.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
 import { readBrowser } from './readbrowser.mjs'
 import { settingsBrowser } from './settingsbrowser.mjs'
@@ -17,6 +19,7 @@ import { nameBrowser } from './namebrowser.mjs'
 import { feedBrowser } from './feedbrowser.mjs'
 import { owedBrowser } from './owedbrowser.mjs'
 import { todosBrowser } from './todosbrowser.mjs'
+import { projectsBrowser } from './projectsbrowser.mjs'
 import { offerBrowser } from './offer.mjs'
 import { libraryBrowser } from './librarybrowser.mjs'
 import { pushBrowser } from './push.mjs'
@@ -54,13 +57,16 @@ const missing = {
     'Grant and result evidence presentation awaits the Claude UI unit; see features/integrations.md',
   capabilities: 'Backend-only unit. The Computer panel UI unit owns its browser recipe.',
   computer: 'Backend-only unit. The Computer panel UI unit owns its browser recipe.',
+  handoff: 'No proof-owned Computer',
   discord: 'No browser recipe for the Discord Key form and Allow card yet',
   github: 'No browser recipe for the GitHub Key form yet',
+  'texting-discord': 'No browser recipe for Text Vivid Discord connect yet',
 }
 const recipes = {
   code: { check: 'code' },
   approve: { check: 'approve' },
   deny: { check: 'deny' },
+  outcome: { check: 'outcome' },
   changed: { check: 'changed' },
   question: { check: 'question' },
   stop: { check: 'stop' },
@@ -70,11 +76,13 @@ const recipes = {
   memory: { check: 'memory' },
   learning: { check: 'learning' },
   push: { check: 'push' },
+  procedure: { check: 'procedure' },
   devices: { check: 'devices' },
   watch: { check: 'watch' },
   feed: { check: 'feed' },
   owed: { check: 'owed' },
   todos: { check: 'todos' },
+  projects: { check: 'projects' },
   replies: { check: 'replies' },
   library: { check: 'library' },
   first: {
@@ -124,6 +132,11 @@ const specialRecipes = {
     drive: deny,
     scope: 'Real Verify Pulse approval card, denial, no provider event and reload',
   },
+  outcome: {
+    drive: outcome,
+    scope:
+      'Real Verify Pulse write allowed by rule, journaled Completed receipt, read-only reconciliation, and Delivered after the open Thread screen drew the reply',
+  },
   changed: {
     drive: changed,
     scope:
@@ -138,10 +151,15 @@ const specialRecipes = {
     scope:
       'Actual Stop control during a real streamed reply, Stopped Run and interrupted reply after reload',
   },
+  procedure: {
+    drive: procedureBrowser,
+    scope:
+      'A walkthrough with a correction taught through the composer, learned once without being done, and applied in a second Thread after reload; see scope.json.',
+  },
   watch: {
     drive: watchBrowser,
     scope:
-      'browser Connect, model Watch, real Executor delivery, the posted notice shown by the worker and routed to the Feed (the press itself is not driven), Feed reload and Disconnect',
+      'browser Connect, model Watch, real Executor delivery of an event past 4,000 characters, the posted notice shown by the worker and routed to the Feed (the press itself is not driven), Feed reload, the event shown whole in its Thread after reload, and Disconnect',
   },
   replies: {
     drive: offerBrowser,
@@ -162,6 +180,11 @@ const specialRecipes = {
     drive: owedBrowser,
     scope:
       'Waiting-on row tracked from the composer, shown on the web Feed, resolved by its check and absent after reload; see scope.json.',
+  },
+  projects: {
+    drive: projectsBrowser,
+    scope:
+      'Project objective and dated progress recorded from the composer, shown on the web Project page under Where it stands and unchanged after reload; see scope.json.',
   },
   feed: {
     drive: feedBrowser,
@@ -424,7 +447,7 @@ async function journey(state, feature) {
     evidence: directory,
   }
   const reason =
-    ['memory', 'question', 'approve', 'deny', 'changed', 'owed', 'todos', 'name', 'code'].includes(
+    ['memory', 'procedure', 'question', 'approve', 'deny', 'changed', 'outcome', 'owed', 'todos', 'name', 'code', 'projects'].includes(
       feature,
     ) && state.modelKind !== 'real'
       ? feature + ' requires a real model.'

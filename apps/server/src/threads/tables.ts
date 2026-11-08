@@ -89,7 +89,7 @@ export const threadReads = pgTable(
  *
  * `origin` is the encoded `RunOrigin` without its Person, who is `person_id`; `state` is one of
  * `working`, `completed`, `failed`, `stopped`, `unknown`, and `finished_at` is set for every state
- * but `working`.
+ * but `working`. `response_id` and `delivered_at` are the delivery evidence behind `RunOutcome`.
  */
 export const runs = pgTable(
   'vivid_runs',
@@ -110,6 +110,13 @@ export const runs = pgTable(
     finishedAt: epoch('finished_at'),
     /** Only failed Runs have a reason; pre-classification failures remain null in storage. */
     failureReason: text('failure_reason').$type<RunFailure>(),
+    /**
+     * The response that answered a completed Run (`Settlement.Completed.responseId`): its own, or
+     * the one it joined. Null for every other state and for Runs completed before it was kept.
+     */
+    responseId: text('response_id').$type<RunId>(),
+    /** When the Person the Run acted for acknowledged drawing that response; null until then. */
+    deliveredAt: epoch('delivered_at'),
   },
   (table) => [
     index('vivid_runs_thread').on(table.threadId, table.startedAt),

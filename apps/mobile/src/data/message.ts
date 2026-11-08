@@ -2,6 +2,7 @@ import {
   ApprovalId,
   ConnectionAuthorizationMessage,
   ConnectionRequestMessage,
+  HandoffId,
   InputRequestId,
   textOf,
   type ConversationMessage,
@@ -73,6 +74,7 @@ export interface Hosted {
  * - `Vivid`: Vivid's reply. `answering` names the Person it acted for, in a shared Thread where
  *   that is not obvious.
  * - `Wake`: a follow-up falling due: a quiet line saying why Vivid spoke.
+ * - `Saw`: the event a Watch woke Vivid with, drawn whole under a quiet line.
  * - `Notice`: the runtime's word that a reply was not finished. It is the only thing the runtime
  *   says that is drawn, so `failed` is always true.
  * - `Silent`: not drawn. An Approval's outcome and an answer are told by their cards, and the
@@ -83,6 +85,7 @@ export type Speaker = Data.TaggedEnum<{
   Member: { readonly name: Option.Option<string> }
   Vivid: { readonly answering: Option.Option<string> }
   Wake: { readonly reason: 'follow-up'; readonly name: Option.Option<string> }
+  Saw: { readonly name: Option.Option<string> }
   Notice: { readonly failed: boolean }
   Silent: {}
 }>
@@ -112,6 +115,7 @@ export function speakerOf(message: ConversationMessage, around: Around): Speaker
         ? Speaker.Me()
         : Speaker.Member({ name: from }),
     Wake: ({ reason, name }) => Speaker.Wake({ reason, name }),
+    Saw: ({ name }) => Speaker.Saw({ name }),
     Failed: () => Speaker.Notice({ failed: true }),
     Plumbing: () => Speaker.Silent(),
   })
@@ -327,6 +331,8 @@ export const doingOf = (
 export type Card = Data.TaggedEnum<{
   Approval: { readonly id: ApprovalId }
   Input: { readonly id: InputRequestId }
+  /** A step on the Computer Vivid handed the Person (`inputs/handoff.ts` on the server). */
+  Handoff: { readonly id: HandoffId }
   Connection: {
     readonly request: ConnectionRequestMessage
     readonly authorization: Option.Option<Authorization>
@@ -342,6 +348,9 @@ const decodeApproval = Schema.decodeUnknownOption(
 const decodeInput = Schema.decodeUnknownOption(
   Schema.Struct({ kind: Schema.Literal('input-request'), requestId: InputRequestId }),
 )
+const decodeHandoff = Schema.decodeUnknownOption(
+  Schema.Struct({ kind: Schema.Literal('handoff'), handoffId: HandoffId }),
+)
 const decodeConnection = Schema.decodeUnknownOption(ConnectionRequestMessage)
 // The same message with one more field: what comes next for an Integration already begun.
 const decodeAuthorization = Schema.decodeUnknownOption(ConnectionAuthorizationMessage)
@@ -354,6 +363,9 @@ export function cardOf(tool: ToolPart): Option.Option<Card> {
   ).pipe(
     Option.orElse(() =>
       Option.map(decodeInput(tool.output), (out) => Card.Input({ id: out.requestId })),
+    ),
+    Option.orElse(() =>
+      Option.map(decodeHandoff(tool.output), (out) => Card.Handoff({ id: out.handoffId })),
     ),
     Option.orElse(() =>
       Option.map(decodeConnection(tool.output), (request) =>

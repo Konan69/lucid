@@ -9,6 +9,7 @@ import {
   FeedCardId,
   FeedItem,
   FeedPost,
+  FeedProvenance,
   FeedResponse,
   type FeedAsk,
   type PersonId,
@@ -16,7 +17,7 @@ import {
 } from '@vivid/contracts'
 import { approvals } from '../approvals/tables.ts'
 import { decodeStored, type Database } from '../database/client.ts'
-import { inputRequests } from '../inputs/tables.ts'
+import { handoffs, inputRequests, openHandoffStatuses } from '../inputs/tables.ts'
 import { readableBy } from '../threads/access.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { feedCards } from './tables.ts'
@@ -44,6 +45,8 @@ const decodeSaid = decodeStored(
   }),
   'said Feed post',
 )
+
+const decodeProvenance = decodeStored(FeedProvenance, 'Feed provenance')
 
 /** How far back settled work stays on the Feed: the last day, so morning still shows the night. */
 const SETTLED_WINDOW = 24 * 60 * 60 * 1000
@@ -113,6 +116,9 @@ const stillOpen = (now: number) =>
     ),
     exists(
       sql`(select 1 from ${inputRequests} where ${inputRequests.threadId} = ${threads.id} and ${inputRequests.status} = 'waiting')`,
+    ),
+    exists(
+      sql`(select 1 from ${handoffs} where ${handoffs.threadId} = ${threads.id} and ${inArray(handoffs.status, openHandoffStatuses)})`,
     ),
   )
 
@@ -203,6 +209,15 @@ const readAsks = Effect.fn('Feed.readAsks')(function* (
       .from(inputRequests)
       .where(and(inArray(inputRequests.threadId, [...ids]), eq(inputRequests.status, 'waiting'))),
   )
+  // A handoff is an Input request in product words; the Feed says it as one.
+  const handing = yield* db.run(
+    db
+      .select({ thread: handoffs.threadId, at: handoffs.createdAt })
+      .from(handoffs)
+      .where(
+        and(inArray(handoffs.threadId, [...ids]), inArray(handoffs.status, openHandoffStatuses)),
+      ),
+  )
   const add = (kind: FeedAsk) => (row: { readonly thread: string; readonly at: number }) => {
     const thread = ThreadId.make(row.thread)
     const before = asks.get(thread) ?? NO_ASKS
@@ -213,6 +228,7 @@ const readAsks = Effect.fn('Feed.readAsks')(function* (
   }
   pending.forEach(add('approval'))
   waiting.forEach(add('question'))
+  handing.forEach(add('question'))
   return asks
 })
 
@@ -254,17 +270,18 @@ const atOf = (item: FeedItem) =>
  * The card as the contract carries it, or none when Vivid has not posted. A card with a drawing is
  * `Drawn`; one without is `Said` and must have words, or the row is broken and decoding says so.
  */
-const postOf = (card: Row['card']): Effect.Effect<FeedPost | null, DatabaseFailure> => {
-  if (card === null) return Effect.succeed(null)
-  if (card.display === null)
-    return Effect.map(
-      decodeSaid({ title: card.title, words: card.words, actions: card.actions }),
-      (said) => Said.make(said),
-    )
-  return Effect.map(decodeDrawn({ title: card.title, display: card.display }), (drawn) =>
-    Drawn.make(drawn),
-  )
-}
+const postOf = Effect.fn('Feed.postOf')(function* (
+  card: Row['card'],
+): Effect.fn.Return<FeedPost | null, DatabaseFailure> {
+  if (card === null) return null
+  const provenance = yield* decodeProvenance(card.provenance)
+  if (card.display === null) {
+    const said = yield* decodeSaid({ title: card.title, words: card.words, actions: card.actions })
+    return Said.make({ ...said, provenance })
+  }
+  const drawn = yield* decodeDrawn({ title: card.title, display: card.display })
+  return Drawn.make({ ...drawn, provenance })
+})
 
 /** The whole Feed, shared by List and Watch: every item in its stage, newest first. */
 export const readFeed = Effect.fn('Feed.read')(function* (db: Db, person: PersonId) {

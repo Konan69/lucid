@@ -1,5 +1,5 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { CreateWatchRequest, RunState, WatchId } from '@vivid/contracts'
+import { CreateWatchRequest, RunState, SignalCue, WatchId } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
 import { Clock, Effect, Layer, Option, Queue, Ref, type Redacted } from 'effect'
 import * as HttpRouter from 'effect/http/HttpRouter'
@@ -11,7 +11,7 @@ import { DeliveryMessage, StoredRunOrigin, type Conversation } from '../threads/
 import { ThreadStore } from '../threads/store.ts'
 import { threads } from '../threads/tables.ts'
 import { Watches } from './lifecycle.ts'
-import { BACKGROUND_INSTRUCTION, threadOf, watchRoutes } from './receiver.ts'
+import { threadOf, watchRoutes } from './receiver.ts'
 import { secretFor, sign } from './signature.ts'
 import type { WatchStore } from './store.ts'
 import { RunStore, RunEnding } from '../threads/runs.ts'
@@ -133,15 +133,25 @@ describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
           idempotencyKey: `watch:${watch.id}:evt_1`,
         })
         expect(delivery.origin).toEqual(
-          StoredRunOrigin.cases.Watch.make({ watchName: request.name }),
+          StoredRunOrigin.cases.Watch.make({
+            watchId: watch.id,
+            watchName: request.name,
+            eventId: 'evt_1',
+            event: request.event,
+            occurredAt: '2026-10-15T20:00:00.000Z',
+          }),
         )
         if (!DeliveryMessage.guards.Signal(delivery.message)) expect.fail('Expected a Signal')
-        expect(delivery.message.type).toBe('event')
-        expect(delivery.message.attributes).toEqual({ name: request.name })
-        expect(delivery.message.body.startsWith(BACKGROUND_INSTRUCTION)).toBe(true)
-        expect(delivery.message.body).toContain(request.instruction)
-        expect(delivery.message.body).toContain('"subject":"Invoice"')
-        expect(delivery.message.body).not.toContain(watch.id)
+        // The event reaches the runtime whole and typed; the runtime words it for the model.
+        expect(delivery.message.cue).toEqual(
+          SignalCue.cases.Watch.make({
+            name: request.name,
+            event: request.event,
+            occurredAt: '2026-10-15T20:00:00.000Z',
+            instruction: request.instruction,
+            data: { from: 'client@example.com', subject: 'Invoice' },
+          }),
+        )
         const database = yield* Database
         const [row] = yield* database.run(
           database.select().from(threads).where(eq(threads.id, thread)),
@@ -153,7 +163,7 @@ describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
         expect(working).toHaveLength(1)
         const run = working[0]
         if (run === undefined) return expect.fail('Expected one Run')
-        yield* runs.end(run.id, RunEnding.cases.Completed.make({}))
+        yield* runs.end(run.id, RunEnding.cases.Completed.make({ responseId: run.id }))
         expect((yield* post(url, event('evt_1'), secret, Option.none())).status).toBe(200)
         const finished = yield* runs.list(thread)
         expect(finished).toHaveLength(1)

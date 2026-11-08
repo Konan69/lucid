@@ -20,6 +20,7 @@ import {
   ArtifactId,
   ConnectionState,
   ProposedAction,
+  SignalCue,
   type Approval,
   type ApprovalId,
   type ThreadId,
@@ -195,7 +196,9 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
             const signal = yield* signalOf(approval.id)
             expect(Signal.guards.Owed(signal)).toBe(true)
-            expect(Signal.guards.Owed(signal) && signal.message.body).toContain('went stale')
+            if (!Signal.guards.Owed(signal) || !SignalCue.guards.Approval(signal.message.cue))
+              expect.fail('Expected an owed Approval signal')
+            expect(signal.message.cue.body).toContain('went stale')
             // The fresh ask, prepared again from the revised document, is a new Approval.
             const fresh = yield* askToSend(test, 'Letter to Dami')
             expect(fresh.id).not.toEqual(approval.id)

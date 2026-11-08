@@ -1,0 +1,154 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "id": "f8494658-605c-4e00-a539-e8a6f2e020cf",
+  "prevIds": [
+    "daf6cd11-5c63-428c-8e8f-4a7c8dad3059"
+  ],
+  "ddl": [
+    {
+      "name": "memory_entries",
+      "entityType": "tables"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": true,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "memory_entries"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "layer",
+      "entityType": "columns",
+      "table": "memory_entries"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "file",
+      "entityType": "columns",
+      "table": "memory_entries"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "kind",
+      "entityType": "columns",
+      "table": "memory_entries"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "description",
+      "entityType": "columns",
+      "table": "memory_entries"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "body",
+      "entityType": "columns",
+      "table": "memory_entries"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "basis",
+      "entityType": "columns",
+      "table": "memory_entries"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "revision",
+      "entityType": "columns",
+      "table": "memory_entries"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "memory_entries"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "authority",
+      "entityType": "columns",
+      "table": "memory_entries"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'{\"_tag\":\"Personal\"}'",
+      "generated": null,
+      "name": "scope",
+      "entityType": "columns",
+      "table": "memory_entries"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'[]'",
+      "generated": null,
+      "name": "citations",
+      "entityType": "columns",
+      "table": "memory_entries"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "memory_entries_pk",
+      "table": "memory_entries",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "layer",
+        "file"
+      ],
+      "nameExplicit": true,
+      "name": "memory_entries_address",
+      "entityType": "uniques",
+      "table": "memory_entries"
+    }
+  ],
+  "renames": []
+}
