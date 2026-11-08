@@ -272,6 +272,19 @@ const view = Effect.fn('Approvals.view')(function* (
   return yield* viewDecoded(yield* Effect.forEach(values, decodeRow))
 })
 
+/** Read the Thread history without capturing the execution services used to settle it. */
+export const inThread = Effect.fn('ApprovalStore.inThread')(function* (threadId: ThreadId) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .select()
+      .from(approvals)
+      .where(eq(approvals.threadId, threadId))
+      .orderBy(asc(approvals.createdAt), asc(approvals.id)),
+  )
+  return yield* view(rows)
+})
+
 export interface ApprovalStoreService {
   readonly inThread: (
     threadId: ThreadId,
@@ -855,16 +868,7 @@ export const approvalStoreLayer = Layer.effect(
     ) => Effect.provide(effect, context)
     return ApprovalStore.of({
       /** ThreadStore has already checked Thread access before requesting this complete history. */
-      inThread: Effect.fn('ApprovalStore.inThread')(function* (threadId) {
-        const rows = yield* database.run(
-          database
-            .select()
-            .from(approvals)
-            .where(eq(approvals.threadId, threadId))
-            .orderBy(asc(approvals.createdAt), asc(approvals.id)),
-        )
-        return yield* run(view(rows))
-      }),
+      inThread: (threadId) => run(inThread(threadId)),
       /**
        * Pending cards need a surviving Thread. Filter current reach before projection;
        * unreadable or corrupt Threads disclose nothing. Keep records for re-sharing.
