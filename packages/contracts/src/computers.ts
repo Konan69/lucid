@@ -193,6 +193,21 @@ export const ComputerRecoveryOutcome = Schema.TaggedUnion({
   OutcomeUnknown: { receipt: ComputerRecoveryId },
 })
 export type ComputerRecoveryOutcome = typeof ComputerRecoveryOutcome.Type
+/**
+ * The newest recovery step taken on a Person's Computer, as its receipt row holds it.
+ *
+ * - `None`: no step was ever taken.
+ * - `Unsettled`: the step was claimed and has no outcome. It may still be running, or the server
+ *   stopped while it ran; the row cannot tell which and is never replayed (`recovery.ts`), so a
+ *   screen says when it began, not that it is still going.
+ * - `Settled`: the step ended, with its outcome.
+ */
+export const ComputerRecoveryRecord = Schema.TaggedUnion({
+  None: {},
+  Unsettled: { step: ComputerRecoveryStep, since: Schema.Finite },
+  Settled: { step: ComputerRecoveryStep, since: Schema.Finite, outcome: ComputerRecoveryOutcome },
+})
+export type ComputerRecoveryRecord = typeof ComputerRecoveryRecord.Type
 export const GetComputerHealthRequest = Schema.Struct({ depth: ComputerHealthDepth })
 export type GetComputerHealthRequest = typeof GetComputerHealthRequest.Type
 export const RecoverComputerRequest = Schema.Struct({
