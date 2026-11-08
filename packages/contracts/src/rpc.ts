@@ -46,6 +46,7 @@ import {
   PublishArtifactFileRequest,
   ArtifactDetail,
   ArtifactListResponse,
+  ArtifactShelfResponse,
   ArtifactResponse,
   GetArtifactRequest,
   ReadDocumentOutcome,
@@ -75,6 +76,10 @@ import {
 import type { AuthContext } from './auth.js'
 import {
   CreateWatchRequest,
+  CheckinNotFound,
+  CheckinNotScheduled,
+  WatchRunRequired,
+  WatchEndConditionRequired,
   FindAppEventsRequest,
   FindAppEventsResponse,
   StopWatchRequest,
@@ -251,6 +256,7 @@ import {
   UpdateOwedRequest,
   NudgedOwedRequest,
   ResolveOwedRequest,
+  OwedResultUndelivered,
   DropOwedRequest,
 } from './owed.js'
 import {
@@ -623,6 +629,17 @@ const ReviseArtifact = Rpc.make('ReviseArtifact', {
   success: ArtifactResponse,
   error: Schema.Union([RpcFailure, ArtifactChanged, ArtifactNotEditable]),
 })
+/** One Artifact and its history, kept current: a new version or a removal reaches every reader. */
+const WatchArtifact = Rpc.make('WatchArtifact', {
+  ...live,
+  payload: GetArtifactRequest,
+  success: ArtifactDetail,
+})
+/** Every Artifact the Person can reach in this workspace, for the Library. */
+const WatchArtifactShelf = Rpc.make('WatchArtifactShelf', {
+  ...live,
+  success: ArtifactShelfResponse,
+})
 const RemoveArtifact = Rpc.make('RemoveArtifact', { ...call, payload: { id: ArtifactId } })
 /** The server attributes a write to the authenticated Thread’s working Run; no model identifier is needed. */
 const WriteDocument = Rpc.make('WriteDocument', {
@@ -854,6 +871,7 @@ const CreateWatch = Rpc.make('CreateWatch', {
 const ListWatches = Rpc.make('ListWatches', { ...call, success: WatchListResponse })
 const StopWatch = Rpc.make('StopWatch', {
   ...call,
+  error: Schema.Union([RpcFailure, WatchRunRequired, WatchEndConditionRequired]),
   payload: StopWatchRequest,
   success: WatchResponse,
 })
@@ -863,6 +881,7 @@ const ReviseWatch = Rpc.make('ReviseWatch', {
   ...call,
   payload: ReviseWatchRequest,
   success: WatchResponse,
+  error: Schema.Union([RpcFailure, CheckinNotFound]),
 })
 const ReadMadeIntegration = Rpc.make('ReadMadeIntegration', {
   ...call,
@@ -899,7 +918,12 @@ const WatchOwed = Rpc.make('WatchOwed', { ...live, success: OwedListResponse })
 const TrackOwed = Rpc.make('TrackOwed', { ...call, payload: TrackOwedRequest, success: Owed })
 const UpdateOwed = Rpc.make('UpdateOwed', { ...call, payload: UpdateOwedRequest, success: Owed })
 const NudgedOwed = Rpc.make('NudgedOwed', { ...call, payload: NudgedOwedRequest, success: Owed })
-const ResolveOwed = Rpc.make('ResolveOwed', { ...call, payload: ResolveOwedRequest, success: Owed })
+const ResolveOwed = Rpc.make('ResolveOwed', {
+  ...call,
+  payload: ResolveOwedRequest,
+  success: Owed,
+  error: Schema.Union([RpcFailure, OwedResultUndelivered]),
+})
 const DropOwed = Rpc.make('DropOwed', { ...call, payload: DropOwedRequest, success: Owed })
 
 // ── The Person's to-do list ───────────────────────────────────────────────
@@ -1057,7 +1081,7 @@ const ResolveTool = Rpc.make('ResolveTool', {
  * refuses the exact action again while an earlier send of it in this Thread has an unknown result.
  */
 const UseTool = Rpc.make('UseTool', {
-  error: Schema.Union([RpcFailure, ActionReconciliationRequired]),
+  error: Schema.Union([RpcFailure, ActionReconciliationRequired, CheckinNotScheduled]),
   payload: UseToolRequest,
   success: IntegrationResult,
 })
@@ -1389,6 +1413,8 @@ export const VividRpc = RpcGroup.make(
   GetArtifact,
   ReviseArtifact,
   RemoveArtifact,
+  WatchArtifact,
+  WatchArtifactShelf,
   WriteDocument,
   ReadDocument,
   InspectArtifactFile,

@@ -65,12 +65,16 @@ const firstPost = PostRequest.cases.Said.make({
   words: 'An invoice for ₦84,000 arrived. Pay it?',
   actions: ['Pay it'],
   sources: [],
+  from: 'your mail',
+  urgency: 'ordinary',
 })
 const followUp = PostRequest.cases.Said.make({
   title: 'Invoice from Arik Air',
   words: 'Paid. The receipt is in your mail.',
   actions: [],
   sources: [],
+  from: 'your mail',
+  urgency: 'ordinary',
 })
 
 /** The Watch the fixture's background work comes from. Its row never exists here, as after removal. */
@@ -88,9 +92,9 @@ const watchOrigin = StoredRunOrigin.cases.Watch.make({
 const shown = (request: PostRequest, provenance: FeedProvenance): FeedPost =>
   PostRequest.match(request, {
     Drawn: ({ title, display }): FeedPost =>
-      FeedPost.cases.Drawn.make({ title, display, provenance }),
+      FeedPost.cases.Drawn.make({ title, display, provenance, from: request.from }),
     Said: ({ title, words, actions }): FeedPost =>
-      FeedPost.cases.Said.make({ title, words, actions, provenance }),
+      FeedPost.cases.Said.make({ title, words, actions, provenance, from: request.from }),
   })
 
 /** What a post records when `postedBy` posts in a Thread the Watch Run `cause` started. */
@@ -362,8 +366,9 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
             updatedAt: now,
           }),
         )
+        // It also says nothing of where it came from: that was not kept then.
         expect(yield* posts(test.ada)).toEqual([
-          shown(firstPost, FeedProvenance.cases.Legacy.make({})),
+          { ...shown(firstPost, FeedProvenance.cases.Legacy.make({})), from: null },
         ])
       }).pipe(Effect.scoped),
     )
@@ -380,6 +385,8 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
           display:
             'root = Col([Card([Caption("To Dana"), Text("Friday works. I will bring the deck.", "sm")], "soft"), Button("Send it", @ToAssistant("Send the reply to Dana"))])',
           sources: [],
+          from: 'your mail',
+          urgency: 'ordinary',
         })
 
         yield* store.post({ person: test.ada, thread, postedBy: run, request: drawn })
@@ -408,6 +415,8 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
           title: 'Reply to Dana',
           display: 'Card([Caption("To Dana"), Text("Friday works.", "sm")], "soft")',
           sources: [],
+          from: 'your mail',
+          urgency: 'ordinary',
         })
 
         const refused = yield* Effect.flip(

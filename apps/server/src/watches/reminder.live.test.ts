@@ -1,6 +1,6 @@
 import * as NodeFS from 'node:fs'
 import { describe, expect, layer } from '@effect/vitest'
-import { FeedItem } from '@vivid/contracts'
+import { FeedItem, TimerReceipt, StopWatchRequest } from '@vivid/contracts'
 import { Duration, Effect, Option, Schema, Stream } from 'effect'
 import { chainFixture, chainLayer, completeRun, replyText, toolParts } from '../runtime/chains.ts'
 
@@ -31,7 +31,7 @@ const decodeAfter = (input: typeof UseTool.Type.input) =>
   Option.orElse(afterFromText(input), () => afterFromObject(input))
 const Receipt = Schema.Struct({
   ok: Schema.Literal(true),
-  output: Schema.Struct({ at: Schema.String }),
+  output: TimerReceipt,
 })
 const decodeUseTool = Schema.decodeUnknownOption(UseTool)
 const decodeReceipt = Schema.decodeUnknownOption(Receipt)
@@ -89,7 +89,7 @@ describe.skipIf(process.env['VIVID_LIVE_REMINDER'] !== '1')('Reminder live chain
           const receipt = decodeReceipt(set.output)
           if (Option.isNone(receipt))
             return yield* Effect.sync(() => expect.fail('The reminder must be accepted'))
-          const due = Date.parse(receipt.value.output.at)
+          const due = receipt.value.output.nextAt
           // Asked as a delay, it must be the two minutes the Person said.
           const requested = Option.flatMap(decodeUseTool(set.input), (call) =>
             call.tool === 'remindIn' ? decodeAfter(call.input) : Option.none(),
@@ -102,7 +102,9 @@ describe.skipIf(process.env['VIVID_LIVE_REMINDER'] !== '1')('Reminder live chain
           const watches = (yield* fixture.rpc.ListWatches()).watches
           expect(watches.length).toBeGreaterThan(0)
           yield* Effect.addFinalizer(() =>
-            Effect.forEach(watches, (watch) => fixture.rpc.StopWatch({ name: watch.name })).pipe(
+            Effect.forEach(watches, (watch) =>
+              fixture.rpc.StopWatch(StopWatchRequest.cases.Removed.make({ name: watch.name })),
+            ).pipe(
               Effect.catch(() => Effect.sync(() => expect.fail('Reminder watch stop failed'))),
             ),
           )

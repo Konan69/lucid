@@ -516,6 +516,30 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.name)],
   },
+  finish_watching: {
+    said: {
+      running: 'Finishing a watch',
+      done: 'Finished a watch',
+      failed: 'Could not finish the watch',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
+  list_open_work: {
+    said: {
+      running: 'Looking at what is still open',
+      done: 'Looked at what is still open',
+      failed: 'Could not see what is still open',
+    },
+    detail: nothing,
+  },
+  update_checkin: {
+    said: {
+      running: 'Changing when it checks back',
+      done: 'Changed when it checks back',
+      failed: 'Could not change when it checks back',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
   post: {
     said: {
       running: 'Putting it on your Feed',

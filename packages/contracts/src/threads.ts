@@ -1,5 +1,5 @@
 import { ShellHandle } from './identity.js'
-import { Schema } from 'effect'
+import { Effect, Schema } from 'effect'
 import { Approval } from './approvals.js'
 import {
   ActionOperationId,
@@ -12,8 +12,16 @@ import {
 } from './identity.js'
 import { DreamPass } from './dreams.js'
 import { HandoffRequest, InputRequest } from './inputs.js'
+import {
+  CheckinRead,
+  CheckinTiming,
+  TimerOperationKey,
+  WatchCondition,
+  WatchId,
+  WatchInstruction,
+  WatchName,
+} from './watches.js'
 import { ChildRun, RunFailure } from './runs.js'
-import { WatchId, WatchInstruction, WatchName } from './watches.js'
 
 /** The image formats accepted by the conversation gateway and served inline to every client. */
 export const PictureMediaType = Schema.Literals([
@@ -223,6 +231,16 @@ export const RunOrigin = Schema.TaggedUnion({
   WatchUnrecorded: { person: PersonSummary, watchName: Schema.String },
   /** The Person pressed Forget in Settings; Vivid plans the forget and carries it out. */
   Forget: { person: PersonSummary },
+  /**
+   * A check-in's timer fired: Vivid returns to open work at a time it chose or the Person asked for.
+   * Its Watch's id and name are kept for the same reason as `Watch`.
+   */
+  Checkin: {
+    person: PersonSummary,
+    watchId: WatchId,
+    watchName: Schema.String,
+    eventId: Schema.NonEmptyString,
+  },
   /** The Dreamer found something useful and new, or a blocker, overnight or after a conversation. */
   Dream: { person: PersonSummary, pass: DreamPass },
   /** A helper this Thread's Vivid started finished, and its result came back (`runs.ts`). */
@@ -370,6 +388,8 @@ export const SignalType = Schema.Literals([
   'handoff',
   // A Settings Forget press, delivered into a background Thread for Vivid to plan and carry out.
   'forget',
+  // A check-in's timer fired (`watches.ts` `WatchPurpose.Checkin`): Vivid returns to open work.
+  'check-in',
   // What the Dreamer found, delivered into its own background Thread (`dreams.ts`).
   'dream',
   // A helper's result returning to the Thread that started it (`runs.ts`).
@@ -400,6 +420,8 @@ export type ApprovalOutcome = typeof ApprovalOutcome.Type
  * - `Answer`: a Person's answer to an Input request, with its questions in `body`.
  * - `Watch`: one event a Watch received. `data` is the event as the Integration sent it, whole;
  *   `occurredAt` is the Integration's own timestamp text, kept as sent.
+ * - `Checkin`: a check-in's timer fired. `reading` is the server's fresh read of the open work it
+ *   follows, or the evidence that the work has ended; `timing` says who chose the time.
  * - `Shell`: a background Computer command finished; the handle identifies its receipt.
  * - `CarryOn`: a card telling Vivid to go on (`CarryOnRequest`); no client draws it.
  * - `Handoff`: the Person finished a step Vivid handed them on its Computer, named by its handoff.
@@ -418,7 +440,21 @@ export const SignalCue = Schema.TaggedUnion({
     event: Schema.String,
     occurredAt: Schema.String,
     instruction: WatchInstruction,
+    // Every Watch delivered before Watches could end was continuous, so a cue kept without one
+    // reads as Continuous (`WatchCondition`).
+    condition: WatchCondition.pipe(
+      Schema.withDecodingDefaultKey(Effect.succeed({ _tag: 'Continuous' as const })),
+    ),
     data: Schema.Json,
+  },
+  Checkin: {
+    name: WatchName,
+    occurredAt: Schema.String,
+    instruction: WatchInstruction,
+    timing: CheckinTiming,
+    operationKey: TimerOperationKey,
+    reading: CheckinRead,
+    condition: WatchCondition,
   },
   Shell: { body: Schema.String, handle: ShellHandle },
   CarryOn: { body: Schema.String },
@@ -439,6 +475,7 @@ export const signalTypes = {
   Approval: 'approval',
   Answer: 'answer',
   Watch: 'event',
+  Checkin: 'check-in',
   // Completion wakes are internal continuations; clients already hide this signal type.
   Shell: 'carry-on',
   CarryOn: 'carry-on',

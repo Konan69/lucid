@@ -1,13 +1,13 @@
 import * as NodeCrypto from 'node:crypto'
 import { Effect } from 'effect'
 import {
-  PostRequest,
   Forbidden,
   InvalidRequest,
   NotificationId,
   type CompanyId,
   type NotifyPersonRequest,
   type PersonId,
+  type PostUrgency,
   type RunId,
   type ThreadId,
 } from '@vivid/contracts'
@@ -63,12 +63,16 @@ export const notifyPerson = Effect.fn('Notifications.notifyPerson')(function* (i
  * again by a retried tool call reads the notice it already made, while a changed post is new news
  * and a new notice. The title is the post's; a `Said` post's words are the body, and a `Drawn`
  * one has none, because its drawing is the card and no summary of it exists to quote.
+ *
+ * An urgent post is a finding that needs the Person, told as `needs-you`, which sounds. An
+ * ordinary post reaches here only from the pacing pass (`feed/pace.ts`) and is told as `posted`,
+ * which arrives without a sound (`push/delivery.ts`).
  */
 export const notifyPosted = Effect.fn('Notifications.notifyPosted')(function* (input: {
   readonly personId: PersonId
   readonly thread: { readonly id: ThreadId; readonly companyId: CompanyId | null }
   readonly run: RunId
-  readonly post: PostRequest
+  readonly post: { readonly title: string; readonly body: string; readonly urgency: PostUrgency }
 }) {
   const id = NotificationId.make(
     NodeCrypto.createHash('sha256')
@@ -80,9 +84,9 @@ export const notifyPosted = Effect.fn('Notifications.notifyPosted')(function* (i
     notice: {
       personId: input.personId,
       companyId: input.thread.companyId,
-      kind: 'posted',
+      kind: input.post.urgency === 'urgent' ? 'needs-you' : 'posted',
       title: input.post.title,
-      body: PostRequest.match(input.post, { Drawn: () => '', Said: ({ words }) => words }),
+      body: input.post.body,
       threadId: input.thread.id,
     },
   })

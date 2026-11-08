@@ -750,7 +750,15 @@ describe.skipIf(!testDatabaseConfigured)(
               const code = 'return "A stored Feed program";'
               const display = `root = Text(data)\ndata = Query("run_code", {code: ${JSON.stringify(code)}, summary: "Read"})`
               yield* feedHandlers
-                .Post(PostRequest.cases.Drawn.make({ title: 'Records', display, sources: [] }))
+                .Post(
+                  PostRequest.cases.Drawn.make({
+                    title: 'Records',
+                    display,
+                    sources: [],
+                    from: 'your records',
+                    urgency: 'ordinary',
+                  }),
+                )
                 .pipe(
                   Effect.provideService(
                     AuthContext,
@@ -795,6 +803,8 @@ describe.skipIf(!testDatabaseConfigured)(
                   words: 'Changed',
                   actions: [],
                   sources: [],
+                  from: 'your records',
+                  urgency: 'ordinary',
                 }),
               })
               expect(yield* storedDisplay(test.personal, request).pipe(Effect.flip)).toHaveProperty(

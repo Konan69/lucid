@@ -34,16 +34,14 @@ const safeName = (name: string) => name.replace(/[^a-zA-Z0-9._-]/gu, '_')
  */
 const openOnDevice = Effect.fn('Documents.openOnDevice')(function* (
   session: SignedIn,
-  path: string,
+  address: string,
   name: string,
 ) {
   const file = yield* Effect.tryPromise({
     try: () =>
-      File.downloadFileAsync(
-        libraryAddress(session.server, path),
-        new File(Paths.cache, `${randomUUID()}-${safeName(name)}`),
-        { headers: bearer(session.token) },
-      ),
+      File.downloadFileAsync(address, new File(Paths.cache, `${randomUUID()}-${safeName(name)}`), {
+        headers: bearer(session.token),
+      }),
     catch: () => new DocumentUnavailable({ message: UNAVAILABLE }),
   })
   const shareable = yield* Effect.tryPromise({
@@ -74,12 +72,12 @@ if (Platform.OS === 'web') {
 /** In the browser preview the file is fetched and saved through a link, as a browser downloads. */
 const openInBrowser = Effect.fn('Documents.openInBrowser')(function* (
   session: SignedIn,
-  path: string,
+  from: string,
   name: string,
 ) {
   const response = yield* Effect.tryPromise({
     try: () =>
-      request(libraryAddress(session.server, path), {
+      request(from, {
         method: 'GET',
         headers: bearer(session.token),
       }),
@@ -239,9 +237,56 @@ export const addDocument = Effect.fn('Documents.add')(function* (
   return Option.some(yield* uploadDocument(session, chosen.value, destination))
 })
 
+/** Fetches a file from the Person's own server and hands it to the share sheet, or the browser. */
+const openAddress = (session: SignedIn, address: string, name: string) =>
+  Platform.OS === 'web'
+    ? openInBrowser(session, address, name)
+    : openOnDevice(session, address, name)
+
 /** Opens the original of a Library item: `path` is its address under the Library's byte routes. */
 export const openDocument = (session: SignedIn, path: string, name: string) =>
-  Platform.OS === 'web' ? openInBrowser(session, path, name) : openOnDevice(session, path, name)
+  openAddress(session, libraryAddress(session.server, path), name)
+
+/**
+ * Opens a file Vivid made: one version's output (`@vivid/state` `artifacts.artifactAddress`),
+ * shared as the file's own name, so "Open in", Save to Files, AirDrop and Mail all take it as it is.
+ */
+export const openArtifactFile = (session: SignedIn, path: string, name: string) =>
+  openAddress(session, `${session.server}${path}`, name)
+
+/**
+ * Shares one of Vivid's documents as a Markdown file. Its text is already on the phone, so it is
+ * written to the cache and handed to the share sheet; nothing is asked of the server.
+ */
+export const shareMarkdown = Effect.fn('Documents.shareMarkdown')(function* (
+  name: string,
+  body: string,
+) {
+  if (Platform.OS === 'web') {
+    return yield* Effect.sync(() => {
+      const address = URL.createObjectURL(new Blob([body], { type: 'text/markdown' }))
+      downloads.add(address)
+      const anchor = document.createElement('a')
+      anchor.href = address
+      anchor.download = name
+      anchor.click()
+    })
+  }
+  const file = new File(Paths.cache, `${randomUUID()}-${safeName(name)}`)
+  yield* Effect.try({
+    try: () => file.write(body),
+    catch: () => new DocumentUnavailable({ message: UNAVAILABLE }),
+  })
+  const shareable = yield* Effect.tryPromise({
+    try: () => Sharing.isAvailableAsync(),
+    catch: () => new DocumentUnavailable({ message: NOWHERE }),
+  })
+  if (!shareable) return yield* new DocumentUnavailable({ message: NOWHERE })
+  return yield* Effect.tryPromise({
+    try: () => Sharing.shareAsync(file.uri, { mimeType: 'text/markdown' }),
+    catch: () => new DocumentUnavailable({ message: UNAVAILABLE }),
+  })
+})
 
 /** The address a citation in Vivid's reply points at, which the Thread opens through the Library. */
 export const CITATION_ADDRESS = 'https://vivid-library.invalid/source'

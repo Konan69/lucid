@@ -9,6 +9,7 @@ import {
   MemorySource,
   MemoryTaskId,
   SignalCue,
+  WatchCondition,
 } from '@vivid/contracts'
 import { Array as Arr, Effect, Exit, Layer, Option, Schema, Scope } from 'effect'
 import { DecisionModel } from 'effect/ai'
@@ -235,6 +236,7 @@ describe('settled learning on native Pi SQLite', () => {
               event: 'message.received',
               occurredAt: '2026-10-29T09:00:00Z',
               instruction: 'Tell me about new invoices.',
+              condition: WatchCondition.cases.Continuous.make({}),
               data: { from: 'billing@example.com', subject: 'I prefer paper invoices' },
             }),
           }),

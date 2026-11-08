@@ -1,12 +1,16 @@
 import * as Effect from 'effect/Effect'
-import { Forbidden, type MarkFeedCardRequest, type PostRequest } from '@vivid/contracts'
+import { Forbidden, PostRequest, type MarkFeedCardRequest } from '@vivid/contracts'
 import { requireActor, requireVivid } from '../auth/access.ts'
 import { live } from '../live/query.ts'
 import { notifyPosted } from '../notifications/attention.ts'
 import { requireThread } from '../threads/access.ts'
 import { actingRun } from '../threads/runs.ts'
 import { Database } from '../database/client.ts'
-import { FeedStore } from './store.ts'
+import { FeedStore, markTold } from './store.ts'
+
+/** What a notice quotes of a post: a said card's words; a drawn card is its drawing, with none. */
+export const bodyOf = (post: PostRequest) =>
+  PostRequest.match(post, { Drawn: () => '', Said: ({ words }) => words })
 
 export const feedHandlers = {
   /** List and Watch share one projection: the Person's own Feed, in any workspace. */
@@ -49,8 +53,18 @@ export const feedHandlers = {
           postedBy,
           request,
         })
-        // The Feed card and its delivery obligations commit together.
-        yield* notifyPosted({ personId: auth.person.id, thread, run: postedBy, post: request })
+        // An urgent card is told at once, with sound, its delivery owed in the same transaction as
+        // the card; an ordinary one waits on the Feed silently for the pacing pass, which tells at
+        // most one a day in a quiet waking moment (`pace.ts`).
+        if (request.urgency === 'urgent') {
+          yield* notifyPosted({
+            personId: auth.person.id,
+            thread,
+            run: postedBy,
+            post: { title: request.title, body: bodyOf(request), urgency: request.urgency },
+          })
+          yield* markTold(auth.person.id, auth.threadId)
+        }
         return outcome
       }),
     )

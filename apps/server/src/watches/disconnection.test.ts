@@ -1,5 +1,11 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { ConnectionId, CreateWatchRequest, ServiceId } from '@vivid/contracts'
+import {
+  ConnectionId,
+  CreateWatchRequest,
+  WatchCondition,
+  WatchIntent,
+  ServiceId,
+} from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
 import { Clock, Effect, Fiber, Layer, Option, Queue, Ref } from 'effect'
 import * as HttpRouter from 'effect/http/HttpRouter'
@@ -24,6 +30,7 @@ import type { ThreadStore } from '../threads/store.ts'
 import { RunStore } from '../threads/runs.ts'
 import { ExecutorEvents, ExecutorEventsUnreachable } from './events.ts'
 import { Watches } from './lifecycle.ts'
+import { WatchedApps } from './apps.ts'
 import { threadOf, watchRoutes } from './receiver.ts'
 import { secretFor, sign } from './signature.ts'
 import { WatchStore } from './store.ts'
@@ -84,6 +91,8 @@ describe.skipIf(!testDatabaseConfigured)('Watch disconnection', () => {
               event: 'message.received',
               arguments: {},
               instruction: 'Tell me when a client writes.',
+              condition: WatchCondition.cases.Continuous.make({}),
+              purpose: WatchIntent.cases.Event.make({}),
             }),
           )
           yield* Queue.take(executor.subscribed)
@@ -111,7 +120,7 @@ describe.skipIf(!testDatabaseConfigured)('Watch disconnection', () => {
           expect(yield* listRecords(actor)).toEqual([])
           const config = yield* ServerConfig
           const context = yield* Effect.context<
-            WatchStore | ServerConfig | Changes | Conversation | ThreadStore
+            WatchStore | ServerConfig | Changes | Conversation | ThreadStore | Watches | WatchedApps
           >()
           const web = yield* Effect.acquireRelease(
             Effect.sync(() =>
@@ -197,6 +206,8 @@ describe.skipIf(!testDatabaseConfigured)('Watch disconnection', () => {
               event: 'message.received',
               arguments: {},
               instruction: 'Tell me when a client writes.',
+              condition: WatchCondition.cases.Continuous.make({}),
+              purpose: WatchIntent.cases.Event.make({}),
             }),
           )
           yield* Queue.take(executor.subscribed)
@@ -242,6 +253,8 @@ describe.skipIf(!testDatabaseConfigured)('Watch disconnection', () => {
                 event: 'message.received',
                 arguments: {},
                 instruction: 'Tell me when a client writes.',
+                condition: WatchCondition.cases.Continuous.make({}),
+                purpose: WatchIntent.cases.Event.make({}),
               }),
             ),
           )

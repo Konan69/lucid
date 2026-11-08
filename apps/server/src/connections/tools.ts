@@ -38,6 +38,7 @@ import { workspaceIn } from '../auth/session.ts'
 import { ActionOutcome, Gate, GateDecision, type GateExposure } from '../approvals/gate.ts'
 import { requireThread } from '../threads/access.ts'
 import { actingRun } from '../threads/runs.ts'
+import { Watches } from '../watches/lifecycle.ts'
 import {
   Claim,
   answerBefore,
@@ -849,6 +850,29 @@ export const useTool = (actor: Actor, request: UseToolRequest) =>
 export const useUnkeyedTool = (actor: Actor, request: ToolRequest) =>
   useToolAs(actor, request, DisplayCallPolicy.cases.Press.make({}), operationOf.program)
 
+/** Only an actual Vivid dispatch or approved replay may confirm a check-in's timer receipt. */
+const recordTimerOutcome = Effect.fn('Connections.recordTimer')(function* (
+  actor: Actor,
+  request: Pick<UseToolRequest, 'connectionId' | 'input'>,
+  { outcome }: IntegrationResult,
+) {
+  // A call that reached the timer reports its receipt; anything stopped before it left Vivid
+  // (an Approval, a rule, a sign-in) leaves the check-in Awaiting without failing the call.
+  if (!ToolOutcome.isAnyOf(['Completed', 'Rejected', 'OutcomeUnknown'])(outcome)) return
+  const output = ToolOutcome.guards.Completed(outcome) ? outcome.output : null
+  yield* (yield* Watches).confirmTimer(actor, request.connectionId, request.input, output)
+})
+
+/** Timer receipt confirmation belongs to the model tool boundary, not display calls or read probes. */
+export const useVividTool = Effect.fn('Connections.useVividTool')(function* (
+  actor: Actor,
+  request: UseToolRequest,
+) {
+  const outcome = yield* useTool(actor, request)
+  yield* recordTimerOutcome(actor, request, outcome)
+  return outcome
+})
+
 /** Automatic display programs require a read effect at final admission, even after rediscovery. */
 export const useQueryTool = (actor: Actor, request: ToolRequest) =>
   useToolAs(actor, request, DisplayCallPolicy.cases.Draw.make({}), operationOf.program)
@@ -983,12 +1007,12 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
     if (Result.isFailure(prepared)) return approvedAdmissionOutcome(prepared.failure)
     const { row, tool } = prepared.success
     // The Approval's decision journals this operation around the runner (`approvals/store.ts`).
-    return actionOutcome(
-      yield* runConnection(actor, row, input.target, {
-        effect: tool.effect,
-        operation: Option.none(),
-      }),
-    )
+    const outcome = yield* runConnection(actor, row, input.target, {
+      effect: tool.effect,
+      operation: Option.none(),
+    })
+    yield* recordTimerOutcome(actor, input.target, outcome)
+    return actionOutcome(outcome)
   },
   (effect) =>
     effect.pipe(
@@ -1003,6 +1027,8 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
         DatabaseFailure: () => Effect.succeed(ActionOutcome.cases.Unknown.make({})),
         Conflict: () => Effect.succeed(ActionOutcome.cases.Unknown.make({})),
         InvalidRequest: ({ message }) =>
+          Effect.succeed(ActionOutcome.cases.Failed.make({ reason: message })),
+        CheckinNotScheduled: ({ message }) =>
           Effect.succeed(ActionOutcome.cases.Failed.make({ reason: message })),
         ExecutorApprovalUnsupported: () =>
           Effect.succeed(

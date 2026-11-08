@@ -1,5 +1,12 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { CreateWatchRequest, WatchId, WatchState } from '@vivid/contracts'
+import {
+  CreateWatchRequest,
+  WatchCondition,
+  WatchIntent,
+  WatchId,
+  WatchState,
+  ReviseWatchRequest,
+} from '@vivid/contracts'
 import { Clock, Effect, Fiber, Option, Queue, Ref } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { testDatabaseConfigured } from '../database/testdb.ts'
@@ -26,6 +33,8 @@ const request = CreateWatchRequest.make({
   event: 'message.received',
   arguments: { folder: 'inbox' },
   instruction: 'Tell me when a client writes.',
+  condition: WatchCondition.cases.Continuous.make({}),
+  purpose: WatchIntent.cases.Event.make({}),
 })
 
 /** The Watch id is the last segment of the callback Executor was asked to deliver to. */
@@ -110,11 +119,14 @@ describe.skipIf(!testDatabaseConfigured)('Watches', () => {
         const { actor, watch } = yield* granted(TTL_MS, 'Revise me')
         const executor = yield* Executor
         yield* Queue.offer(executor.answers, { id: 'revised', refreshBefore: new Date(TTL_MS) })
-        const revised = yield* (yield* Watches).revise(actor, {
-          name: watch.name,
-          arguments: { folder: 'important' },
-          instruction: 'Summarize client mail; keep the original privacy instructions.',
-        })
+        const revised = yield* (yield* Watches).revise(
+          actor,
+          ReviseWatchRequest.cases.Filters.make({
+            name: watch.name,
+            arguments: { folder: 'important' },
+            instruction: 'Summarize client mail; keep the original privacy instructions.',
+          }),
+        )
         const subscribed = yield* Queue.take(executor.subscribed)
         expect(subscribed.arguments).toEqual({ folder: 'important' })
         expect(subscribed.url).toContain(`/api/watches/${watch.id}?revision=`)
@@ -129,11 +141,14 @@ describe.skipIf(!testDatabaseConfigured)('Watches', () => {
         yield* Queue.offer(executor.answers, new ExecutorEventRefused({}))
         expect(
           (yield* Effect.flip(
-            (yield* Watches).revise(actor, {
-              name: watch.name,
-              arguments: {},
-              instruction: 'Rejected revision',
-            }),
+            (yield* Watches).revise(
+              actor,
+              ReviseWatchRequest.cases.Filters.make({
+                name: watch.name,
+                arguments: {},
+                instruction: 'Rejected revision',
+              }),
+            ),
           ))._tag,
         ).toBe('ExecutorEventRefused')
         const saved = yield* (yield* WatchStore).find(watch.id)

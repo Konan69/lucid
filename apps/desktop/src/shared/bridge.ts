@@ -118,6 +118,8 @@ export const DesktopNotification = Schema.Struct({
   title: Schema.String,
   body: Schema.String,
   opens: DesktopNotificationOpens,
+  /** Shown without a sound: a Feed post Vivid made on its own (`PushSound` in the contracts). */
+  silent: Schema.Boolean,
 })
 export interface DesktopNotification extends Schema.Schema.Type<typeof DesktopNotification> {}
 

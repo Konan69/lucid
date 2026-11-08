@@ -36,6 +36,7 @@ import {
   ThreadId,
   RuntimeDelivery,
   SignalCue,
+  WatchCondition,
   WatchId,
 } from '@vivid/contracts'
 import { eq, inArray } from 'drizzle-orm'
@@ -580,6 +581,7 @@ const signals = [
       event: 'message.received',
       occurredAt: '2026-10-29T09:00:00Z',
       instruction: 'Review it.',
+      condition: WatchCondition.cases.Continuous.make({}),
       data: { said: 'event: independent server words' },
     }),
   },
@@ -837,6 +839,7 @@ layer(
                 event: 'message.received',
                 occurredAt: '2026-10-29T09:00:00Z',
                 instruction: 'Review now.',
+                condition: WatchCondition.cases.Continuous.make({}),
                 data: {},
               }),
             }),
@@ -1172,6 +1175,7 @@ layer(
               event: 'message.received',
               occurredAt: '2026-10-29T09:00:00Z',
               instruction: 'Review now.',
+              condition: WatchCondition.cases.Continuous.make({}),
               data: {},
             }),
           }),

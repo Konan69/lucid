@@ -54,7 +54,10 @@ const ExpoMessage = Schema.Struct({
   to: PushDestination.cases.Phone.fields.token,
   title: Schema.String,
   body: Schema.String,
-  sound: Schema.Literal('default'),
+  // Expo plays the system sound for 'default' and none for null; on Android the channel decides,
+  // so a quiet notice also names the phone's quiet channel (`apps/mobile/src/data/notifying.ts`).
+  sound: Schema.NullOr(Schema.Literal('default')),
+  channelId: Schema.Literals(['default', 'quiet'] as const),
   data: PushPayload,
 })
 const ReceiptRequest = Schema.Struct({ ids: Schema.Array(Schema.String) })
@@ -120,7 +123,8 @@ const sendPhone = Effect.fn('PushAdapter.phone')(function* (
       to: destination.token,
       title: payload.title,
       body: payload.body,
-      sound: 'default',
+      sound: payload.sound === 'Audible' ? 'default' : null,
+      channelId: payload.sound === 'Audible' ? 'default' : 'quiet',
       data: payload,
     },
   ).pipe(Effect.mapError(() => new PushRejected({})))

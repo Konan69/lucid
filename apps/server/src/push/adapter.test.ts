@@ -26,6 +26,7 @@ const payload = PushPayload.make({
   title: 'Meeting clash',
   body: 'Choose which meeting to move.',
   opens: NotificationOpens.cases.Thread.make({ threadId: ThreadId.make('thread') }),
+  sound: 'Audible',
 })
 const phone = PushDestination.cases.Phone.make({ token: 'ExpoPushToken[test-device]' })
 

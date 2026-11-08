@@ -242,6 +242,8 @@ export const automaticallyNotifies = Effect.fn('RunStore.automaticallyNotifies')
     WatchUnrecorded: () => false,
     // The Settings screen shows the forget's receipt; nothing else is said.
     Forget: () => false,
+    // A check-in is work nobody is watching too: the Person hears about it only through the Feed.
+    Checkin: () => false,
     // Work nobody is watching: the Person hears about it only when Vivid posts to the Feed.
     Dream: () => false,
     // A helper's result continues the Person's own request: its answer is news like a reply.
@@ -273,6 +275,8 @@ const originOf = (origin: StoredRunOrigin, person: PersonSummary) =>
     WatchUnrecorded: ({ watchName }): RunOrigin =>
       RunOrigin.cases.WatchUnrecorded.make({ person, watchName }),
     Forget: (): RunOrigin => RunOrigin.cases.Forget.make({ person }),
+    Checkin: ({ watchId, watchName, eventId }): RunOrigin =>
+      RunOrigin.cases.Checkin.make({ person, watchId, watchName, eventId }),
     Dream: ({ pass }): RunOrigin => RunOrigin.cases.Dream.make({ person, pass }),
     ChildResult: (): RunOrigin => RunOrigin.cases.ChildResult.make({ person }),
   })

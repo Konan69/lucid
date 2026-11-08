@@ -6,10 +6,12 @@ import {
   CompanyId,
   NotFound,
   NotificationId,
+  NotificationKind,
   NotificationOpens,
   PersonId,
   PushOutcome,
   PushPayload,
+  type PushSound,
   ThreadId,
   type PushTarget,
 } from '@vivid/contracts'
@@ -27,6 +29,7 @@ import { untraced } from '../observability/quiet.ts'
 
 const NoticeRow = createSelectSchema(notifications, {
   id: NotificationId,
+  kind: NotificationKind,
   personId: PersonId,
   companyId: Schema.NullOr(CompanyId),
   conversationId: Schema.NullOr(ThreadId),
@@ -36,6 +39,21 @@ const decodeReceipt = decodeStored(PushReceipt, 'push receipt')
 const encodeReceipt = encodeStored(PushReceipt, 'push receipt')
 /** The body as it is sent: the claim row stores its hash and length, so one that will not encode cannot be claimed. */
 const encodePayload = encodeStored(Schema.fromJsonString(PushPayload), 'push payload')
+
+/**
+ * Which notices sound. Only what the Person is waiting on and what is urgent: Vivid finishing
+ * work they asked for, a question or Approval it is stopped on, and an urgent Feed finding (told
+ * as `needs-you`, `notifications/attention.ts`); a Thread shared with them and an invitation are
+ * people waiting on them too. A Feed post Vivid made on its own is quiet (Konan, 27 October 2026:
+ * "Feed posts appear silently"). A new kind fails to compile here until it is decided.
+ */
+const SOUND = {
+  finished: 'Audible',
+  'needs-you': 'Audible',
+  shared: 'Audible',
+  invited: 'Audible',
+  posted: 'Quiet',
+} as const satisfies Record<typeof NotificationKind.Type, PushSound>
 
 /** Expo recommends waiting 15 minutes before reading asynchronous delivery receipts.
  * Source: https://docs.expo.dev/push-notifications/sending-notifications/ . */
@@ -200,6 +218,7 @@ const makePush = Effect.fn('Push.make')(function* () {
       title: notice.title.slice(0, 180),
       body: notice.body.replace(/\s+/gu, ' ').trim().slice(0, 280),
       opens: opens.value,
+      sound: SOUND[notice.kind],
     })
     return summarize(yield* Effect.forEach(active, (target) => send(notice, payload, target)))
   })
@@ -237,6 +256,8 @@ export const deliverTarget = Effect.fn('Push.deliverTarget')(function* (input: {
     title: notice.title.slice(0, 180),
     body: notice.body.replace(/\s+/gu, ' ').trim().slice(0, 280),
     opens: opens.value,
+    // The owed job sounds exactly as a direct delivery would: by the notice's kind.
+    sound: SOUND[notice.kind],
   })
   yield* makeSend({ database, adapter, targets, presence })(notice, payload, target)
 })

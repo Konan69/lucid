@@ -11,9 +11,9 @@ import {
   WatchListResponse,
   WatchResponse,
   type CreateWatchRequest,
-  type ReviseWatchRequest,
+  ReviseWatchRequest,
   type FindAppEventsRequest,
-  type StopWatchRequest,
+  StopWatchRequest,
 } from '@vivid/contracts'
 import { requireActor, type Actor } from '../auth/access.ts'
 import type { DatabaseInfrastructureError } from '../database/client.ts'
@@ -127,6 +127,11 @@ const resolved = <A, R>(
     ),
   )
 
+/** List and live subscriptions share the owner-scoped projection. */
+const listed = Effect.fn('Rpc.Watches.listed')(function* (actor: Actor) {
+  return WatchListResponse.make({ watches: yield* (yield* Watches).list(actor) })
+})
+
 export const watchHandlers = {
   /** Events are resolved under the same acting Person and account names as creation. */
   FindAppEvents: Effect.fn('Rpc.FindAppEvents')(function* (request: FindAppEventsRequest) {
@@ -140,9 +145,14 @@ export const watchHandlers = {
     const watch = yield* resolved(actor, (yield* Watches).create(actor, request))
     return WatchResponse.make({ watch })
   }),
-  /** The named Watch stays owned by the current Actor throughout revision. */
+  /**
+   * The named Watch stays owned by the current Actor throughout revision: new filters and
+   * instruction, or a check-in's next time (`ReviseWatchRequest`).
+   */
   ReviseWatch: Effect.fn('Rpc.ReviseWatch')(function* (request: ReviseWatchRequest) {
     const actor = yield* requireActor()
+    if (ReviseWatchRequest.guards.Timing(request))
+      return WatchResponse.make({ watch: yield* (yield* Watches).updateCheckin(actor, request) })
     const watch = yield* resolved(
       actor,
       (yield* Watches).revise(actor, request).pipe(
@@ -158,17 +168,24 @@ export const watchHandlers = {
     return WatchResponse.make({ watch })
   }),
   ListWatches: Effect.fn('Rpc.ListWatches')(function* () {
-    return WatchListResponse.make({ watches: yield* (yield* Watches).list(yield* requireActor()) })
+    return yield* listed(yield* requireActor())
   }),
-  /** Stopping by name: the model knows Watches only by the names they were given. */
+  /**
+   * Ending by name: the model knows Watches only by the names they were given. A Watch is removed,
+   * or finished by its own Run on evidence that its end condition is met.
+   */
   StopWatch: Effect.fn('Rpc.StopWatch')(function* (request: StopWatchRequest) {
-    const watch = yield* (yield* Watches)
-      .stop(yield* requireActor(), request.name)
-      .pipe(
-        Effect.catchTag('WatchMissing', () =>
-          Effect.fail(new NotFound({ message: 'No Watch has that name.' })),
-        ),
-      )
+    const actor = yield* requireActor()
+    const watches = yield* Watches
+    const ended = StopWatchRequest.match(request, {
+      Removed: ({ name }) => watches.stop(actor, name),
+      Finished: ({ name, evidence }) => watches.complete(actor, name, evidence),
+    })
+    const watch = yield* ended.pipe(
+      Effect.catchTag('WatchMissing', () =>
+        Effect.fail(new NotFound({ message: 'No Watch has that name.' })),
+      ),
+    )
     return WatchResponse.make({ watch })
   }),
 }

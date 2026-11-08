@@ -84,6 +84,8 @@ const show = Effect.fn('Worker.show')(function* (scope: WorkerScope, payload: Pu
       body: payload.body,
       // One notification per notice: the same one pushed twice replaces itself.
       tag: payload.notificationId,
+      // A Feed post Vivid made on its own arrives without a sound (`PushSound`).
+      silent: payload.sound === 'Quiet',
       data,
     }),
   )

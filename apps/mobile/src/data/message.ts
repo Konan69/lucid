@@ -1,5 +1,6 @@
 import {
   ApprovalId,
+  type ArtifactReference,
   ConnectionAuthorizationMessage,
   ConnectionRequestMessage,
   HandoffId,
@@ -11,6 +12,7 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import {
+  artifacts,
   awaitedOf,
   describeToolCall,
   inThread,
@@ -333,6 +335,8 @@ export type Card = Data.TaggedEnum<{
   Input: { readonly id: InputRequestId }
   /** A step on the Computer Vivid handed the Person (`inputs/handoff.ts` on the server). */
   Handoff: { readonly id: HandoffId }
+  /** A file or document Vivid delivered (`write_document`, `publish_file`). */
+  Artifact: { readonly artifact: typeof ArtifactReference.Type }
   Connection: {
     readonly request: ConnectionRequestMessage
     readonly authorization: Option.Option<Authorization>
@@ -366,6 +370,11 @@ export function cardOf(tool: ToolPart): Option.Option<Card> {
     ),
     Option.orElse(() =>
       Option.map(decodeHandoff(tool.output), (out) => Card.Handoff({ id: out.handoffId })),
+    ),
+    Option.orElse(() =>
+      Option.map(artifacts.deliveredArtifact(tool.output), (artifact) =>
+        Card.Artifact({ artifact }),
+      ),
     ),
     Option.orElse(() =>
       Option.map(decodeConnection(tool.output), (request) =>
