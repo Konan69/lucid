@@ -1560,13 +1560,14 @@ const personBrowse = Effect.fn('Computer.personBrowse')(function* (input: {
     )
 })
 
-// Match actual ISO currency codes or Unicode currency symbols on either side of an amount.
+// Match actual ISO currency codes (upper case only, so words such as "all 3" or "top 10" are not
+// read as money) or Unicode currency symbols on either side of an amount.
 // Keep decimal/grouping punctuation: interpreting a comma without the page's locale can merge
 // different prices. Whitespace, currency-code case and prefix/suffix placement are normalized.
-const currency = `(?:\\p{Sc}|(?<![a-z])(?:${Intl.supportedValuesOf('currency').join('|')})(?![a-z]))`
+const currency = `(?:\\p{Sc}|(?<![A-Za-z])(?:${Intl.supportedValuesOf('currency').join('|')})(?![A-Za-z]))`
 const moneyAmounts = new RegExp(
   `${currency}\\s*[+-]?\\d+(?:[.,]\\d+)*|[+-]?\\d+(?:[.,]\\d+)*\\s*${currency}`,
-  'giu',
+  'gu',
 )
 
 /** Read without acting, binding only address, observed money and the gesture's own target label.
