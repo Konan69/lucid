@@ -1,6 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import { and, eq, getTableColumns, inArray, sql } from 'drizzle-orm'
 import {
+  Array as Arr,
   Clock,
   Context,
   Duration,
@@ -10,6 +11,7 @@ import {
   Layer,
   Match,
   Option,
+  Order,
   Result,
   Schedule,
   Schema,
@@ -22,6 +24,10 @@ import {
   type ComputerHealthDepth,
   type RecoverComputerRequest,
   ActionTarget,
+  ApprovalContentDigest,
+  ApprovalPageAddress,
+  ApprovalPrecondition,
+  InvalidRequest,
   BrowserAction,
   DesktopAction,
   DeviceAccess,
@@ -53,7 +59,7 @@ import { Database, decodeStored, type DatabaseInfrastructureError } from '../dat
 import { egressChosen } from './egress/setting.ts'
 import { type Actor } from '../auth/access.ts'
 import { Gate, GateDecision, ActionOutcome, ActionOrigin, actionOrigin } from '../approvals/gate.ts'
-import { unbound } from '../approvals/action.ts'
+import { canonical, contentDigest, unbound } from '../approvals/action.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import {
   isOutage,
@@ -1092,6 +1098,7 @@ const attached = Effect.fn('ComputerStore.attach')(function* (
 })
 
 const decodeBrowserPicture = Schema.decodeUnknownEffect(BrowserPicture)
+const decodeApprovalPageAddress = Schema.decodeEffect(ApprovalPageAddress)
 
 /** The provider’s browser operation returns an outline only. Cloud Screenshot therefore captures
  * Vivid’s whole desktop through the public Look API; it is not a browser-page crop. Both reads
@@ -1553,6 +1560,74 @@ const personBrowse = Effect.fn('Computer.personBrowse')(function* (input: {
     )
 })
 
+// Match actual ISO currency codes (upper case only, so words such as "all 3" or "top 10" are not
+// read as money) or Unicode currency symbols on either side of an amount.
+// Keep decimal/grouping punctuation: interpreting a comma without the page's locale can merge
+// different prices. Whitespace, currency-code case and prefix/suffix placement are normalized.
+const currency = `(?:\\p{Sc}|(?<![A-Za-z])(?:${Intl.supportedValuesOf('currency').join('|')})(?![A-Za-z]))`
+const moneyAmounts = new RegExp(
+  `${currency}\\s*[+-]?\\d+(?:[.,]\\d+)*|[+-]?\\d+(?:[.,]\\d+)*\\s*${currency}`,
+  'gu',
+)
+
+/** Read without acting, binding only address, observed money and the gesture's own target label.
+ * Unrelated page text may change freely. Truncated outlines bind the amounts they do expose;
+ * the same rule applies at capture and claim without inventing terms beyond the snapshot. */
+export const inspectBrowser = Effect.fn('Computer.inspectApproval')(function* (input: {
+  readonly person: Person
+  readonly origin: ActionOrigin
+  readonly target: typeof ActionTarget.cases.Browser.Type
+  readonly authority: BrowseAuthority
+}) {
+  const read = BrowserAction.cases.Read.make({})
+  const result = BrowseTarget.guards.Vivid(input.target.target)
+    ? yield* (yield* ComputerStore)
+        .browse(input.person.id, read)
+        .pipe(
+          Effect.mapError(
+            () => new InvalidRequest({ message: 'The browser page could not be verified.' }),
+          ),
+        )
+    : yield* personBrowse({
+        person: input.person,
+        origin: input.origin,
+        action: read,
+        authority: input.authority,
+      }).pipe(
+        Effect.flatMap((outcome) =>
+          BrowseOutcome.guards.Completed(outcome)
+            ? Effect.succeed(outcome.result)
+            : Effect.fail(
+                new InvalidRequest({ message: 'The browser page could not be verified.' }),
+              ),
+        ),
+      )
+  const address = yield* decodeApprovalPageAddress(result.address).pipe(
+    Effect.mapError(() => new InvalidRequest({ message: 'The browser page has no address.' })),
+  )
+  const amounts = Arr.sort(
+    Arr.dedupe(
+      (result.outline.match(moneyAmounts) ?? []).map((amount) =>
+        amount
+          .replace(/\s+/gu, '')
+          .toUpperCase()
+          .replace(/^([+-]?\d[\d.,]*)(.+)$/u, '$2$1'),
+      ),
+    ),
+    Order.String,
+  )
+  const action = input.target.action
+  const target = BrowserAction.isAnyOf(['Click', 'Type'])(action) ? action.target : null
+  return [
+    ApprovalPrecondition.cases.BrowserPage.make({
+      address,
+      outlineDigest: ApprovalContentDigest.make(
+        contentDigest(canonical({ address, amounts, target })),
+      ),
+    }),
+  ]
+})
+
 /** Personal page contents enter durable history; only the Thread’s real private audience avoids
  * a disclosure Approval. Cloud results retain the existing ordinary exposure policy. */
 const browserExposure = Effect.fn('Computer.browserExposure')(function* (
@@ -1584,7 +1659,7 @@ export const computerBrowse = Effect.fn('Computer.browse')(function* (
   const origin = yield* actionOrigin(actor)
   if (BrowseTarget.guards.Person(request.target) && !ActionOrigin.guards.Run(origin))
     return BrowseOutcome.cases.RunRequired.make({})
-  // A browser step is not bound to the page it acts on: no page here has a revision to compare.
+  // Gate captures the page address and outline before raising an Approval, then refreshes them on claim.
   const decision = yield* gate.check(
     actor,
     action,

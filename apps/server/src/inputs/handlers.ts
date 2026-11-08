@@ -25,6 +25,7 @@ const personActor = Effect.fn('Inputs.person')(function* () {
     workspace: auth.workspace,
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   } satisfies Actor
 })
 
@@ -37,6 +38,7 @@ export const inputHandlers = {
       workspace: auth.workspace,
       by: 'vivid',
       threadId: Option.some(auth.threadId),
+      helper: Option.none(),
     }
     return { request: yield* (yield* InputStore).ask(actor, request) }
   }),
@@ -48,6 +50,7 @@ export const inputHandlers = {
       workspace: auth.workspace,
       by: 'person',
       threadId: Option.none(),
+      helper: Option.none(),
     }
     return { request: yield* (yield* InputStore).answer(actor, request) }
   }),

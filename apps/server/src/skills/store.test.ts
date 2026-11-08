@@ -87,6 +87,7 @@ const fixture = Effect.fn('SkillsTest.fixture')(function* () {
     workspace,
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   })
   const personal = actor(first, Workspace.cases.Personal.make({}))
   const other = actor(second, Workspace.cases.Personal.make({}))

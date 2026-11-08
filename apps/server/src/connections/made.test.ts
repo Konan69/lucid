@@ -128,6 +128,73 @@ const madeFixture = Effect.fn('MadeTest.fixture')(function* () {
 
 describe.skipIf(!testDatabaseConfigured)('made Integrations through real adapters', () => {
   layer(connectionTestLayer)((test) => {
+    test.effect('reads and revises authored source using the same app and Connection', () =>
+      Effect.gen(function* () {
+        const made = yield* madeFixture()
+        yield* made.make(request)
+        const before = yield* made.store.records(made.ownerActor)
+        const files = [
+          {
+            path: 'index.ts',
+            content: 'export default { schedule: "0 7 * * *", instruction: "Keep the briefing" }',
+          },
+        ]
+        yield* Ref.update(made.hosted.replies, (replies) =>
+          new Map(replies).set(`GET ${hostedPrefix}/apps/app/source`, {
+            status: 200,
+            body: { files: request.files },
+          }),
+        )
+        expect(yield* made.store.readMade(made.ownerActor, request.name)).toEqual({
+          account: request.name,
+          files: request.files,
+        })
+        yield* Ref.update(made.hosted.replies, (replies) =>
+          new Map(replies)
+            .set(`POST ${hostedPrefix}/apps/deploy`, {
+              status: 200,
+              body: {
+                id: 'app',
+                slug: 'morning-check',
+                name: request.name,
+                requirements: { accounts: {} },
+              },
+            })
+            .set(`GET ${hostedPrefix}/apps/app/source`, {
+              status: 200,
+              body: { files: [...files, { path: 'package.json', content: '{}' }] },
+            }),
+        )
+        expect(
+          yield* made.store.reviseMade(made.ownerActor, { account: request.name, files }),
+        ).toEqual({ account: request.name, files })
+        expect(yield* made.store.records(made.ownerActor)).toEqual(before)
+        const deployed = (yield* Ref.get(made.hosted.requests))
+          .filter((sent) => sent.path === `POST ${hostedPrefix}/apps/deploy`)
+          .at(-1)
+        if (deployed === undefined) return expect.fail('Expected an in-place deployment')
+        expect(deployed.body).toMatchObject({ app: 'app', files: expect.arrayContaining(files) })
+        expect(deployed.body).not.toHaveProperty('name')
+        yield* Ref.update(made.hosted.replies, (replies) =>
+          new Map(replies).set(`POST ${hostedPrefix}/apps/deploy`, {
+            status: 422,
+            body: BuildFailure.make({
+              owner: 'owner',
+              name: request.name,
+              reason: 'invalid-source',
+              message: 'invalid revised source',
+            }),
+          }),
+        )
+        expect(
+          (yield* Effect.flip(
+            made.store.reviseMade(made.ownerActor, { account: request.name, files }),
+          ))._tag,
+        ).toBe('InvalidRequest')
+        expect(yield* made.store.records(made.ownerActor)).toEqual(before)
+      }).pipe(Effect.scoped),
+    )
+
     test.effect(
       'deploys a dedicated ready account, pins apps, enables only app schedules and removes it',
       () =>

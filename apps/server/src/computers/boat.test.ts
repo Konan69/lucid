@@ -1120,6 +1120,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
             workspace: Workspace.cases.Personal.make({}),
             by: 'person' as const,
             threadId: Option.none(),
+            helper: Option.none(),
           })
           const absent = yield* computerHandlers.GetCapabilities().pipe(asAccount(first))
           expect(absent.computer).toEqual(

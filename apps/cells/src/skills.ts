@@ -25,6 +25,7 @@ import skill19 from '@vivid/skills/forget-something/SKILL.md'
 import skill20 from '@vivid/skills/first-conversation/SKILL.md'
 import skill21 from '@vivid/skills/what-vivid-can-do/SKILL.md'
 import skill22 from '@vivid/skills/find-pictures/SKILL.md'
+import skill23 from '@vivid/skills/put-work-in-the-calendar/SKILL.md'
 import displays from '@vivid/skills/make-an-integration/references/displays.md'
 import reminders from '@vivid/skills/make-an-integration/references/reminders.md'
 import schedules from '@vivid/skills/make-an-integration/references/schedules.md'
@@ -54,6 +55,7 @@ const markdown = {
   'first-conversation': skill20,
   'what-vivid-can-do': skill21,
   'find-pictures': skill22,
+  'put-work-in-the-calendar': skill23,
 } satisfies Record<BuiltinRuntimeName, string>
 
 /** The reference files each skill ships, by the path its instructions name them. A skill absent

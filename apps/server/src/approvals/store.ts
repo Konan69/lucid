@@ -18,6 +18,7 @@ import {
   ApprovalExpired,
   ApprovalId,
   ApprovalInvalidation,
+  ApprovalPrecondition,
   ApprovalState,
   AuditEvent,
   CompanyId,
@@ -60,7 +61,7 @@ import {
   ActionOutcome,
   ActionRunner,
 } from './gate.ts'
-import { actionDigest, auditAction } from './action.ts'
+import { actionDigest, auditAction, canonical, editedAction } from './action.ts'
 import {
   Claim,
   claim as claimOperation,
@@ -272,6 +273,19 @@ const view = Effect.fn('Approvals.view')(function* (
   return yield* viewDecoded(yield* Effect.forEach(values, decodeRow))
 })
 
+/** Read the Thread history without capturing the execution services used to settle it. */
+export const inThread = Effect.fn('ApprovalStore.inThread')(function* (threadId: ThreadId) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .select()
+      .from(approvals)
+      .where(eq(approvals.threadId, threadId))
+      .orderBy(asc(approvals.createdAt), asc(approvals.id)),
+  )
+  return yield* view(rows)
+})
+
 export interface ApprovalStoreService {
   readonly inThread: (
     threadId: ThreadId,
@@ -343,6 +357,25 @@ const requireDecisionAuthority = Effect.fn('Approvals.requireDecisionAuthority')
     return yield* new InvalidRequest({ message: 'This kind of action is always asked about' })
 })
 
+/**
+ * The action a decision would run, encoded for the Approval's record: the one asked, or the draft
+ * as the Person edited it (`AllowEdited`). An edit that is more than a draft's words is refused
+ * before anything is claimed (`editedAction`).
+ */
+const actionToRun = Effect.fn('Approvals.actionToRun')(function* (
+  row: typeof Row.Type,
+  decision: ApprovalDecision,
+) {
+  const action = ApprovalDecision.guards.AllowEdited(decision)
+    ? editedAction(row.action, decision.input)
+    : Option.some(row.action)
+  if (Option.isNone(action))
+    return yield* new InvalidRequest({ message: 'Only the words of this draft can be changed' })
+  return yield* encodeAction(action.value).pipe(
+    Effect.mapError(() => new DatabaseFailure({ message: 'Approval action could not be encoded' })),
+  )
+})
+
 type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
 type PendingRow = typeof Row.cases.pending.Type
 
@@ -369,6 +402,7 @@ const drift = Effect.fn('Approvals.drift')(function* (tx: Transaction, row: Pend
       )
   }
   for (const precondition of row.binding.preconditions) {
+    if (!ApprovalPrecondition.guards.ArtifactVersion(precondition)) continue
     const [current] = yield* tx
       .select({ version: artifacts.version })
       .from(artifacts)
@@ -384,6 +418,45 @@ const drift = Effect.fn('Approvals.drift')(function* (tx: Transaction, row: Pend
       )
   }
   return Option.none<ApprovalInvalidation>()
+})
+
+/** Provider reads stay outside SQL locks. Only their comparison is consumed by the existing
+ * claim transaction, which invalidates and owes the same fresh-ask signal as document drift.
+ * A disappeared or unreadable draft/page cannot keep its old permission. Database failures
+ * leave the ask pending and send nothing. Denials never contact the outside service. */
+const externalDrift = Effect.fn('Approvals.externalDrift')(function* (
+  actor: Actor,
+  row: PendingRow,
+) {
+  const external = row.binding.preconditions.filter(
+    ApprovalPrecondition.isAnyOf(['BrowserPage', 'MailEnvelope']),
+  )
+  // Inspect even an older ask with no external baseline. Newly observed terms cannot inherit
+  // permission from an approval that never captured them; ordinary targets still observe [].
+  const invalidation = ApprovalInvalidation.cases.ExternalStateChanged.make({
+    source: ActionTarget.guards.Browser(row.action.target) ? 'BrowserPage' : 'MailEnvelope',
+  })
+  const current = yield* (yield* ActionRunner)
+    .inspect({
+      person: actor.person,
+      workspace: actor.workspace,
+      action: row.action,
+      phase: 'Deciding',
+      origin:
+        row.runId === null
+          ? ActionOrigin.cases.RuntimeThread.make({ threadId: row.threadId })
+          : ActionOrigin.cases.Run.make({ threadId: row.threadId, runId: row.runId }),
+    })
+    .pipe(
+      Effect.asSome,
+      Effect.catchTags({
+        InvalidRequest: () => Effect.succeedNone,
+        NotFound: () => Effect.succeedNone,
+      }),
+    )
+  return Option.isSome(current) && canonical(current.value) === canonical(external)
+    ? Option.none<ApprovalInvalidation>()
+    : Option.some(invalidation)
 })
 
 /**
@@ -406,14 +479,17 @@ const move = Effect.fn('Approvals.move')(function* (
     readonly actor: Actor
     readonly request: DecideApprovalRequest
     readonly now: number
+    /** What runs once claimed (`actionToRun`): the record says what was sent, not only asked. */
+    readonly action: typeof ProposedAction.Encoded
   },
 ) {
-  const { actor, request, now } = decision
+  const { actor, request, now, action } = decision
   const scope = eq(approvals.id, row.id)
   const written = yield* tx
     .update(approvals)
     .set({
       status: ApprovalDecision.guards.Deny(request.decision) ? 'denied' : 'executing',
+      action,
       decidedBy: actor.person.id,
       decidedAt: now,
       signal: yield* encodeSignal(decisionSignal(row, request.decision, actor.person.id)),
@@ -466,10 +542,16 @@ const claim = Effect.fn('Approvals.claim')(function* (
   if (Row.guards.expired(row) || (Row.guards.pending(row) && row.expiresAt <= now))
     return yield* new ApprovalExpired({ id: row.id })
   yield* requireDecisionAuthority(actor, row, request, thread.audience)
+  const action = yield* actionToRun(row, request.decision)
+  const external =
+    Row.guards.pending(row) && !ApprovalDecision.guards.Deny(request.decision)
+      ? yield* externalDrift(actor, row)
+      : Option.none<ApprovalInvalidation>()
   const end = yield* database.transaction((tx) =>
     Effect.gen(function* () {
-      const changedBy = Row.guards.pending(row) ? yield* drift(tx, row) : Option.none()
-      if (Option.isNone(changedBy)) return yield* move(tx, row, { actor, request, now })
+      const local = Row.guards.pending(row) ? yield* drift(tx, row) : Option.none()
+      const changedBy = Option.isNone(local) ? external : local
+      if (Option.isNone(changedBy)) return yield* move(tx, row, { actor, request, now, action })
       yield* invalidatePending(tx, scope, changedBy.value)
       return ClaimEnd.Changed()
     }),
@@ -855,16 +937,7 @@ export const approvalStoreLayer = Layer.effect(
     ) => Effect.provide(effect, context)
     return ApprovalStore.of({
       /** ThreadStore has already checked Thread access before requesting this complete history. */
-      inThread: Effect.fn('ApprovalStore.inThread')(function* (threadId) {
-        const rows = yield* database.run(
-          database
-            .select()
-            .from(approvals)
-            .where(eq(approvals.threadId, threadId))
-            .orderBy(asc(approvals.createdAt), asc(approvals.id)),
-        )
-        return yield* run(view(rows))
-      }),
+      inThread: (threadId) => run(inThread(threadId)),
       /**
        * Pending cards need a surviving Thread. Filter current reach before projection;
        * unreadable or corrupt Threads disclose nothing. Keep records for re-sharing.

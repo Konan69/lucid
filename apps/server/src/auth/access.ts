@@ -11,6 +11,7 @@ import {
   type CompanyId,
   type PersonId,
   type Role,
+  type RunId,
   type ThreadId,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
@@ -32,6 +33,11 @@ export interface Actor {
   readonly by: 'person' | 'vivid'
   /** The Thread Vivid is acting in. A Person's own call is not tied to one. */
   readonly threadId: Option.Option<ThreadId>
+  /**
+   * The helper Run making this call (`AuthState.Helper`). Vivid's own calls and a Person's have
+   * none. The Gate attributes a helper's actions to it (`approvals/gate.ts` `actionOrigin`).
+   */
+  readonly helper: Option.Option<RunId>
 }
 
 /** The Person or Vivid behind this call. The runtime itself, with no Person behind it, is refused. */
@@ -39,9 +45,29 @@ export const requireActor = Effect.fn('Access.requireActor')(function* () {
   const auth = yield* AuthContext
   return yield* AuthState.$match(auth, {
     Person: ({ person, workspace }) =>
-      Effect.succeed<Actor>({ person, workspace, by: 'person', threadId: Option.none() }),
+      Effect.succeed<Actor>({
+        person,
+        workspace,
+        by: 'person',
+        threadId: Option.none(),
+        helper: Option.none(),
+      }),
     Vivid: ({ person, workspace, threadId }) =>
-      Effect.succeed<Actor>({ person, workspace, by: 'vivid', threadId: Option.some(threadId) }),
+      Effect.succeed<Actor>({
+        person,
+        workspace,
+        by: 'vivid',
+        threadId: Option.some(threadId),
+        helper: Option.none(),
+      }),
+    Helper: ({ person, workspace, threadId, runId }) =>
+      Effect.succeed<Actor>({
+        person,
+        workspace,
+        by: 'vivid',
+        threadId: Option.some(threadId),
+        helper: Option.some(runId),
+      }),
     Runtime: () => Effect.fail(new Forbidden({ message: 'This call needs a Person to act for' })),
   })
 })
@@ -56,6 +82,17 @@ export const requirePerson = Effect.fn('Access.requirePerson')(function* () {
     return yield* new Forbidden({ message: 'Only a signed-in Person can do this' })
   }
   return auth
+})
+
+/**
+ * Vivid in a Run, or a helper it started there. Used by the calls a helper's tools make too: the
+ * Computer, pages, documents and Integration tools. Asking, notifying and posting stay on
+ * `requireVivid`, which a helper never passes.
+ */
+export const requireRun = Effect.fn('Access.requireRun')(function* () {
+  const auth = yield* AuthContext
+  if (AuthState.$is('Vivid')(auth) || AuthState.$is('Helper')(auth)) return auth
+  return yield* new Forbidden({ message: 'Only Vivid in a Run can do this' })
 })
 
 /** Vivid in a Run, and nothing else. Used by the calls only its tools make. */

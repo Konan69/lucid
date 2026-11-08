@@ -24,6 +24,7 @@ import { offerBrowser } from './offer.mjs'
 import { libraryBrowser } from './librarybrowser.mjs'
 import { pushBrowser } from './push.mjs'
 import { computerBrowser, integrationsBrowser } from './accessbrowser.mjs'
+import { helpersBrowser, helperstopBrowser } from './helpers.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { createElement } = web('react')
@@ -85,6 +86,8 @@ const recipes = {
   integrations: { check: 'integrations' },
   capabilities: { check: 'capabilities' },
   computer: { check: 'computer' },
+  helpers: { check: 'helpers' },
+  helperstop: { check: 'helperstop' },
   first: {
     phrase:
       'Write a detailed 1000-word guide to planning a community garden. Write directly in this reply as plain paragraphs. Do not create a document or ask questions.',
@@ -220,6 +223,16 @@ const specialRecipes = {
     drive: computerBrowser,
     scope:
       'What Vivid can do on its Computer is drawn in the same panel from its health; for this run’s absent Computer that is the panel’s title and ladder only. See scope.json.',
+  },
+  helpers: {
+    drive: helpersBrowser,
+    scope:
+      'Two Researcher helpers started from the composer, their rows Done under the step, one opened to its answer, unchanged after reload; see helpers/scope.json for blocked kinds.',
+  },
+  helperstop: {
+    drive: helperstopBrowser,
+    scope:
+      "A working helper stopped with its own row's Stop, Stopped by a Person after reload, and the Thread heard it once.",
   },
   settings: {
     drive: settingsBrowser,
@@ -475,6 +488,8 @@ async function journey(state, feature) {
       'name',
       'code',
       'projects',
+      'helpers',
+      'helperstop',
     ].includes(feature) && state.modelKind !== 'real'
       ? feature + ' requires a real model.'
       : feature === 'code' && state.computer !== 'disposable'
