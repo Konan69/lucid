@@ -110,7 +110,7 @@ export const openPerson = Effect.fn('Person.open')(function* (
   const registered = tools(
     scopeResolver(opened, product),
     (call) => resolveMemoryCall(opened, product, call),
-    memory,
+    { memory, transcripts: { person: personId, harness: opened } },
     skills.tools === undefined ? [] : skills.tools,
   )
   const all = registered.tools

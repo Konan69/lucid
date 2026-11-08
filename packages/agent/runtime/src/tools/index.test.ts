@@ -1,4 +1,4 @@
-import { unusedMemory } from './tests/harness.ts'
+import { unusedMemory, unusedTranscripts } from './tests/harness.ts'
 import { describe, expect, it } from '@effect/vitest'
 import { PersonId, ThreadId } from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
@@ -69,7 +69,7 @@ describe('core tool catalogue', () => {
             return calls.length === 1 ? ada.layer : dami.layer
           },
           () => Effect.die('Unexpected memory authority'),
-          unusedMemory,
+          { memory: unusedMemory, transcripts: unusedTranscripts },
           [],
         ).tools
         expect(calls).toHaveLength(0)

@@ -25,6 +25,8 @@ import {
   RuntimeHistoryBody,
   RuntimeHistoryAnswer,
   RuntimePersonId,
+  RuntimeSearchAnswer,
+  RuntimeSearchBody,
   type ThreadId,
 } from '@vivid/contracts'
 import { Effect, Layer, Option, Redacted, Schema, Stream } from 'effect'
@@ -40,6 +42,7 @@ import { admit } from './admission.ts'
 import { runInputs } from './deliveries.ts'
 import { Models } from './models.ts'
 import { Person, type PersonConversations } from './person.ts'
+import { searchSaid } from './recall.ts'
 import { isSubmissionId, settlement, submissionOf } from './response.ts'
 import { RuntimeSettings } from './settings.ts'
 import { frames, whole } from './state/link.ts'
@@ -396,6 +399,17 @@ const memoryForget = Effect.fn('Runtime.memoryForget')(function* () {
   )
 })
 
+/**
+ * The words of the Person's own conversations, for the server's Search. The server names the
+ * Threads to look in (the ones it lets the Person see); only this cell's Person is addressed.
+ */
+const search = Effect.fn('Runtime.search')(function* () {
+  const person = yield* owner()
+  const body = yield* HttpServerRequest.schemaBodyJson(RuntimeSearchBody)
+  const answer = yield* searchSaid(person.harness, body)
+  return yield* HttpServerResponse.schemaJson(RuntimeSearchAnswer)(answer)
+})
+
 const MEMORY = '/persons/:personId/memory'
 
 const THREAD = '/persons/:personId/threads/:threadId'
@@ -410,6 +424,7 @@ export const routes = Layer.mergeAll(
   HttpRouter.add('POST', `${MEMORY}/write`, answered(memoryWrite())),
   HttpRouter.add('POST', `${MEMORY}/delete`, answered(memoryDelete())),
   HttpRouter.add('POST', `${MEMORY}/forget`, answered(memoryForget())),
+  HttpRouter.add('POST', '/persons/:personId/search', answered(search())),
   HttpRouter.add('POST', THREAD, answered(admission())),
   HttpRouter.add('POST', `${THREAD}/abort`, answered(stop())),
   HttpRouter.add('GET', `${THREAD}/submissions/:submissionId`, answered(settled())),
