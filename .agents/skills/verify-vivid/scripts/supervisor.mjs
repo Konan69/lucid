@@ -21,6 +21,7 @@ import { remoteCleanup } from './remote.mjs'
 import { phoneCleanup } from './phonecleanup.mjs'
 import { executor } from './executor.mjs'
 import { authSecret } from './settings.mjs'
+import { template } from './computers.mjs'
 import { decodeText, RuntimeHealth } from './receipts.mjs'
 import { startCells, cellControl, cellSnapshot } from './cells.mjs'
 import { rpc, history } from './wire.mjs'
@@ -221,6 +222,23 @@ async function serverReady(child) {
   throw new Error('Product server health deadline')
 }
 
+/** The server's real Boat adapter, with no VIVID_BOAT_MACHINE: the synthetic Person's first
+ * Computer start creates a fresh machine through the product's own path. Its one-hour lifetime
+ * archives a machine a crashed run could not delete. Without a key the adapter stays unconfigured
+ * and the `code` recipe is blocked. */
+function computerEnv(key) {
+  if (state.computer !== 'disposable')
+    return {
+      VIVID_BOAT_API_KEY: 'unconfigured-disposable-verification',
+      VIVID_BOAT_TEMPLATE: 'vivid-computer-verify-unconfigured',
+    }
+  return {
+    VIVID_BOAT_API_KEY: key,
+    VIVID_BOAT_TEMPLATE: template,
+    VIVID_BOAT_LIFETIME_SECONDS: '3600',
+  }
+}
+
 async function launch() {
   await ownReceipt()
   await database()
@@ -231,7 +249,8 @@ async function launch() {
   await NodeFSP.writeFile(state.scratch + '/runtime-token', token, { mode: 0o600 })
   const providerText = await NodeFSP.readFile(state.scratch + '/provider.json', 'utf8')
   await NodeFSP.unlink(state.scratch + '/provider.json')
-  const provider = JSON.parse(providerText)
+  // The Boat key reaches the server alone; the cells never act on a Computer themselves.
+  const { VIVID_BOAT_API_KEY: boatKey, ...provider } = JSON.parse(providerText)
   const curve = NodeCrypto.createECDH('prime256v1')
   curve.generateKeys()
   const env = {
@@ -246,8 +265,7 @@ async function launch() {
     VIVID_RUNTIME_TOKEN: token,
     VIVID_MODEL: state.model,
     VIVID_BUILD_COMMIT: state.head,
-    VIVID_BOAT_API_KEY: 'unconfigured-disposable-verification',
-    VIVID_BOAT_TEMPLATE: 'vivid-computer-verify-unconfigured',
+    ...computerEnv(boatKey),
     ...executorEnv,
     VIVID_PHOTON_PROJECT_ID: 'verify-unconfigured',
     VIVID_PHOTON_PROJECT_SECRET: 'unconfigured-disposable-verification',

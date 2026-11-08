@@ -20,6 +20,7 @@ import { offer } from './offer.mjs'
 import { discordProof, discordBlocked } from './discord.mjs'
 import { githubProof, githubBlocked } from './github.mjs'
 import { library } from './library.mjs'
+import { capture, computerFile } from './computers.mjs'
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { pictureAddress } = await import(web.resolve('@vivid/state'))
 
@@ -423,8 +424,42 @@ async function learning(state, id, directory) {
   )
 }
 
+/** The words that ask Vivid for one program that writes a file this run owns. */
+export function program(state) {
+  const name = `vivid-verify-${state.run.slice(-8)}-${crypto.randomUUID().slice(0, 8)}.txt`
+  const marker = crypto.randomUUID()
+  return {
+    name,
+    marker,
+    phrase: `Do this with one run_code program and nothing else. In the program, use node:fs/promises to write a file named ${name} in the current directory holding exactly the text ${marker}, then return that text. Afterwards tell me what the program wrote.`,
+  }
+}
+
+/** One finished run_code receipt in the Thread, then the file read back through Boat, not Vivid.
+ * Shared by the HTTP and browser recipes once the Person's message has settled. */
+export async function ranProgram(state, page, asked, directory) {
+  const programs = page.messages
+    .flatMap((message) => message.parts)
+    .filter((part) => part.type === 'dynamic-tool' && part.toolName === 'run_code')
+  NodeAssert.equal(programs.length, 1, 'Expected exactly one run_code program')
+  NodeAssert.equal(programs[0].state, 'output-available', 'The program did not finish')
+  NodeAssert.equal(programs[0].output.ok, true, 'The program did not run to its end')
+  await capture(state)
+  const written = await computerFile(state, asked.name)
+  await json(directory + '/computer-file.json', { ...asked, ...written })
+  NodeAssert.equal(written.text.trim(), asked.marker, 'The Computer holds other text')
+}
+
+/** Vivid runs a program on the synthetic Person's own new Computer. */
+async function code(state, id, directory) {
+  const asked = program(state)
+  await chat(state, id, asked.phrase, directory)
+  const { page } = await completed(state, id, directory)
+  await ranProgram(state, page, asked, directory)
+}
 const recipes = {
   first,
+  code,
   reload,
   stop,
   tool,
@@ -450,7 +485,6 @@ const recipes = {
   library,
 }
 const blocked = {
-  code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
   ...discordBlocked(),
   ...githubBlocked(),
 }
@@ -458,12 +492,18 @@ const blocked = {
 export async function drive(state, feature) {
   const chosen = feature === 'all' ? features : [feature]
   if (chosen.some((name) => !features.includes(name))) throw new Error('Unknown feature ' + feature)
+  const computer =
+    state.computer === 'disposable'
+      ? {}
+      : { code: 'Needs a disposable Person Computer. Launch had no VIVID_BOAT_API_KEY.' }
   const unavailable =
     state.modelKind === 'real'
-      ? blocked
+      ? { ...blocked, ...computer }
       : {
           ...blocked,
           name: 'Name requires a real model; rehearsal cannot answer what the Person is called.',
+          ...computer,
+          code: 'A program requires a real model; rehearsal cannot write it.',
           approve: 'Approval requires a real model.',
           deny: 'Denial requires a real model.',
           changed: 'A stale ask requires a real model.',
@@ -498,6 +538,8 @@ export async function drive(state, feature) {
           json(directory + '/sql-failure.json', { error: error.message }),
         )
     }
+    // Any feature may have woken the Computer; its id is recorded before the next one starts.
+    await capture(state)
     verdict = {
       ...verdict,
       head: state.head,

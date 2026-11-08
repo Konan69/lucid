@@ -90,3 +90,13 @@ export async function provider() {
     )
   return { model, source: sources.join(', ') || 'process environment', env }
 }
+
+/** The Boat key that lets the disposable server create this run's own Computer, and lets the
+ * recipe and cleanup read and delete exactly that machine. It is read from the same explicit
+ * sources as the model keys and is optional: without it Launch leaves the Computer unconfigured. */
+export async function boatKey() {
+  if (process.env.VIVID_BOAT_API_KEY) return process.env.VIVID_BOAT_API_KEY
+  if (!process.env.VIVID_VERIFY_KEY_FILE) return null
+  const parsed = parseEnv(await fs.readFile(process.env.VIVID_VERIFY_KEY_FILE, 'utf8'))
+  return parsed.VIVID_BOAT_API_KEY || null
+}
