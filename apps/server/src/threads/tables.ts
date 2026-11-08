@@ -123,9 +123,9 @@ export const runs = pgTable(
     index('vivid_runs_thread').on(table.threadId, table.startedAt),
     index('vivid_runs_state').on(table.state),
     uniqueIndex('vivid_runs_thread_turn').on(table.threadId, table.turn),
-    // A Watch's last firing, for the list of background work (`lastWatchFirings`).
+    // A Watch's or check-in's last firing, for the list of background work (`lastWatchFirings`).
     index('vivid_runs_watch')
       .on(table.personId, sql`(${table.origin}->>'watchId')`, table.startedAt.desc())
-      .where(sql`${table.origin}->>'_tag' = 'Watch'`),
+      .where(sql`${table.origin}->>'_tag' in ('Watch', 'Checkin')`),
   ],
 )

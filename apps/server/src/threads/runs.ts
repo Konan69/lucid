@@ -681,7 +681,8 @@ export const workingRuns = Effect.fn('RunStore.workingRuns')(function* (actor: A
 })
 
 /**
- * The last Run each of these Watches started for this Person, keyed by Watch id. The
+ * The last Run each of these Watches started for this Person, keyed by Watch id: an event's Run
+ * for an event Watch, a timer's Run for a check-in (both keep the Watch's id in their origin). The
  * `vivid_runs_watch` index serves it: one row per Watch, however often it has fired.
  */
 export const lastWatchFirings = Effect.fn('RunStore.lastWatchFirings')(function* (
@@ -698,7 +699,7 @@ export const lastWatchFirings = Effect.fn('RunStore.lastWatchFirings')(function*
       .where(
         and(
           eq(runs.personId, personId),
-          sql`${runs.origin}->>'_tag' = 'Watch'`,
+          sql`${runs.origin}->>'_tag' in ('Watch', 'Checkin')`,
           inArray(watchOf, watchIds),
         ),
       )
