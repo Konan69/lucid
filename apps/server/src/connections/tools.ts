@@ -786,7 +786,7 @@ const useToolAs = Effect.fn('Connections.useTool')(function* (
   // here, before the Gate and the digest, so an Approval shows exactly what would be sent and is
   // bound to the version it was copied from.
   const bound = yield* bindInput(actor, request.input)
-  if (Result.isFailure(bound)) return bound.failure
+  if (Result.isFailure(bound)) return yield* notRead(bound.failure)
   const target = ActionTarget.cases.Connection.make({
     connectionId: row.id,
     account: named.account,
