@@ -1,6 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
 import {
+  SignalCue,
   ChildEnding,
   ChildFailure,
   ChildReport,
@@ -29,7 +30,12 @@ import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { silentChangesLayer } from '../live/changes.ts'
 import { Runtime } from '../runtime/client.ts'
-import { Conversation, StoredRunOrigin, type ServerDelivery } from '../threads/conversation.ts'
+import {
+  Conversation,
+  DeliveryMessage,
+  StoredRunOrigin,
+  type ServerDelivery,
+} from '../threads/conversation.ts'
 import { deliveryRunId } from '../threads/key.ts'
 import { RunStore, runStoreLayer } from '../threads/runs.ts'
 import { threadStoreLayer } from '../threads/store.ts'
@@ -203,7 +209,12 @@ layer(testLayer)((it) => {
         expect(wake.idempotencyKey).toBe(`child-result:${run.id}`)
         expect(wake.personId).toBe(test.personId)
         expect(wake.origin).toEqual(StoredRunOrigin.cases.ChildResult.make({ childRunId: run.id }))
-        expect(wake.message).toMatchObject({ cue: { _tag: 'ChildResult', helper: 1 } })
+        if (
+          !DeliveryMessage.guards.Signal(wake.message) ||
+          !SignalCue.guards.ChildResult(wake.message.cue)
+        )
+          return expect.fail('Expected a helper result delivery')
+        expect(wake.message.cue.helper).toBe(1)
         // A repeated report and a late failure change nothing about how it ended.
         const late = ChildReport.cases.Ended.make({
           ending: ChildEnding.cases.Failed.make({
