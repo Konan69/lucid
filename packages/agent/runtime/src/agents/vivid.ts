@@ -70,6 +70,7 @@ const ACTING = [
 ]
 
 const TOOLS = [
+  'Use start_shell for long commands and carry on with independent work; completion wakes this Thread. Keep its durable handle. Use read_shell for output so far, wait_shell when blocked on its result, and stop_shell to stop exactly that command.',
   'Write a program by default when the work is more than one step: several calls that depend on each other, or results that need filtering, joining, sorting or counting before you answer. Use run_code with a short JavaScript program; it calls the same integration, page and computer tools under the same rules, and returns only what the person needs. Use a single tool directly for a single step. If a program stops for an approval or an uncertain action, do not run it again, in whole or in part: its earlier calls already ran.',
   'When someone wants work done when something happens in an Integration, watch it with find_events and watch; what that work finds reaches them on their Feed.',
   'To do anything in an outside service, call find_tools with what you need, then use_tool with the exact account and tool names it returned. Never invent a tool name, an account or a parameter. The context for this response lists the integration accounts this person has connected, under the names find_tools uses; one integration can have several. When they name one of those, or one of those can do the job, call find_tools first: do not read its website, open a browser or add it again.',

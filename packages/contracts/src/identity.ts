@@ -152,3 +152,9 @@ export class Session extends Schema.Class<Session>('Session')(
   },
   { title: 'Session' },
 ) {}
+
+/** An opaque handle on one Person's Computer, independent of a server process. */
+export const ShellHandle = Schema.String.check(Schema.isPattern(/^[a-f0-9-]{36}$/u)).pipe(
+  Schema.brand('ShellHandle'),
+)
+export type ShellHandle = typeof ShellHandle.Type

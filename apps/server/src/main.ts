@@ -1,3 +1,4 @@
+import { commandWorkerLayer } from './computers/commands.ts'
 import * as NodeHttp from 'node:http'
 import { migrationLayer } from './connections/migration.ts'
 import * as Effect from 'effect/Effect'
@@ -172,6 +173,7 @@ const serverProgram = Effect.gen(function* () {
   )
   const background = Layer.mergeAll(
     migrationLayer,
+    commandWorkerLayer,
     watchRenewalLayer,
     channelWorkerLayer,
     approvalSweeperLayer,
