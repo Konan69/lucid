@@ -10,7 +10,7 @@ import { summary, text } from './inputs.ts'
  * whole contract the model gets, so it says when to post and when to stay quiet.
  */
 export const instructions =
-  'Put something on the Person’s Feed when work you did on your own found something that needs them or that they would want to know. Most cards are drawn: the drawing is the whole card, the letter you wrote, the numbers as a chart, the options as tiles, the page you made, as one openui-lang display with its own Buttons that answer you (@ToAssistant), the way a reply’s display does; nothing is written above or under it. Your drawing sits on a card the Feed already gives it, so never wrap the drawing in a Card and never start it with the title. Only when there is nothing to draw, say it in a sentence or two with up to two buttons. One card per piece of work: posting again replaces the card. When what you found came from a page or record with a link, give it in sources so the Person can open it. If nothing needs them, do not post.'
+  'Put something on the Person’s Feed when work you did on your own found something that needs them or that they would want to know. Most cards are drawn: the drawing is the whole card, the letter you wrote, the numbers as a chart, the options as tiles, the page you made, as one openui-lang display with its own Buttons that answer you (@ToAssistant), the way a reply’s display does; nothing is written above or under it. Your drawing sits on a card the Feed already gives it, so never wrap the drawing in a Card and never start it with the title. Only when there is nothing to draw, say it in a sentence or two with up to two buttons. One card per piece of work: posting again replaces the card. When what you found came from a page or record with a link, give it in sources so the Person can open it. Say in from where it came from, in their words (a note you keep, a goal, a letter, a recent conversation, a check-in on what someone owes them). Cards appear silently. An ordinary card waits for a quiet moment in their waking hours, and at most one a day is announced; mark a card urgent only when it cannot wait for that (a deadline today, money or access at risk, someone waiting on them now), and it is announced at once with sound. Follow what their attention page says they want to hear about, never want brought up, and when. If nothing needs them, do not post.'
 
 const title = text(
   'A short name for the card where it is listed once handled: what needs them, as a question or a fact.',
@@ -61,14 +61,27 @@ const sources = v.pipe(
 
 const checkSource = Schema.decodeUnknownOption(FeedSource)
 
-/** The model's card and its sources as the contract's case. */
-const postOf = (input: v.InferOutput<typeof card>, cited: v.InferOutput<typeof sources>) =>
+const from = text(
+  'Where this came from, in a few plain words the Person would use: "a note you asked me to keep", "your trip next week", "what Dana owes you", "yesterday’s conversation".',
+  120,
+)
+const urgency = v.pipe(
+  v.picklist(['ordinary', 'urgent']),
+  v.description(
+    'ordinary unless it cannot wait for a quiet moment in their waking hours: urgent is announced at once, with sound.',
+  ),
+)
+
+/** The model's card, its sources, where it came from and how soon, as the contract's case. */
+const postOf = (
+  input: v.InferOutput<typeof card>,
+  shown: Pick<PostRequest, 'sources' | 'from' | 'urgency'>,
+) =>
   Match.value(input).pipe(
     Match.discriminatorsExhaustive('kind')({
-      Drawn: ({ title, display }) =>
-        PostRequest.cases.Drawn.make({ title, display, sources: cited }),
+      Drawn: ({ title, display }) => PostRequest.cases.Drawn.make({ title, display, ...shown }),
       Said: ({ title, words, actions }) =>
-        PostRequest.cases.Said.make({ title, words, actions, sources: cited }),
+        PostRequest.cases.Said.make({ title, words, actions, ...shown }),
     }),
   )
 
@@ -85,7 +98,7 @@ export function feedTools(runTool: RunTool) {
       name: Tool.post,
       description: `Post a card to the Person’s Feed. ${instructions}`,
       // Most posts cite nothing beyond the event, so leaving sources out means none.
-      input: v.object({ summary, card, sources: v.optional(sources, []) }),
+      input: v.object({ summary, card, from, urgency, sources: v.optional(sources, []) }),
       /** Runtime authority supplies the Person and the Thread; the server keeps one card per Thread. */
       run({ data, signal }) {
         return runTool(
@@ -100,7 +113,15 @@ export function feedTools(runTool: RunTool) {
                 },
               }
             const { client } = yield* Scope
-            return resultOf(yield* client.Post(postOf(data.card, data.sources)))
+            return resultOf(
+              yield* client.Post(
+                postOf(data.card, {
+                  sources: data.sources,
+                  from: data.from,
+                  urgency: data.urgency,
+                }),
+              ),
+            )
           }).pipe(
             // The server refused a display that draws nothing; the model draws it again.
             Effect.catchTag('FeedDisplayInvalid', () =>

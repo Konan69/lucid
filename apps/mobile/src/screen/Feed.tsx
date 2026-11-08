@@ -55,6 +55,10 @@ const LOOK = {
  * the Person picked. One entry per card: a new post replaces the old one, so the map holds no
  * more than the cards the Person has opened this session, each with its latest post's choices.
  */
+/** Where a posted card came from, when the post says (`FeedFrom`); nothing for no post. */
+const fromOf = (post: Option.Option<FeedPost>) =>
+  Option.flatMap(post, (made) => Option.fromNullOr(made.from))
+
 const remembered = new Map<string, { readonly post: string; readonly chosen: feed.Chosen }>()
 
 /** A card's way out and answer: 40 points tall, 12 corners, concentric with the card's 24. */
@@ -785,6 +789,16 @@ function Card({
           </Pressable>
         )}
       </View>
+      {/* Where the card came from, in Vivid's words, under the title: Muse's rule that every
+          unasked item says where it came from. A card from before it was kept says nothing. */}
+      {Option.match(fromOf(post), {
+        onNone: () => null,
+        onSome: (from) => (
+          <Label size="label" tone="ink-3" numberOfLines={1} style={{ marginTop: 2 }}>
+            From {from}
+          </Label>
+        ),
+      })}
       {Option.match(post, {
         onNone: () => said(ask.words, Option.none()),
         onSome: FeedPost.match({

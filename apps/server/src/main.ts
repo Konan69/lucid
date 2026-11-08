@@ -80,6 +80,7 @@ import { updateRoutes } from './updates/routes.ts'
 import { watchedAppsLayer } from './watches/apps.ts'
 import { executorEventsLayer } from './watches/events.ts'
 import { watchesLayer, watchRenewalLayer } from './watches/lifecycle.ts'
+import { feedPacingLayer } from './feed/pace.ts'
 import { watchStoreLayer } from './watches/store.ts'
 
 /** The process entry point only selects implementations and owns their scoped lifetime. */
@@ -173,6 +174,7 @@ const serverProgram = Effect.gen(function* () {
   const background = Layer.mergeAll(
     migrationLayer,
     watchRenewalLayer,
+    feedPacingLayer,
     channelWorkerLayer,
     approvalSweeperLayer,
     pushReceiptsLayer,

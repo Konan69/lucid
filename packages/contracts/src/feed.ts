@@ -42,6 +42,24 @@ const drawn = { title: Title, display: Display }
 const said = { title: Title, words: Words, actions: Actions }
 
 /**
+ * Where a card came from, in the Person's words: a note Vivid keeps, a goal, a letter, a recent
+ * conversation, a check-in on what someone owes them. Muse's rule: "Every item says in plain words
+ * where it came from" (`muse/docs/calls-texts-notifications.md:125`). Vivid writes it; the server
+ * keeps what started the work separately, in `FeedProvenance`.
+ */
+export const FeedFrom = Schema.NonEmptyString.check(Schema.isMaxLength(120))
+export type FeedFrom = typeof FeedFrom.Type
+
+/**
+ * How soon a card may interrupt the Person. `ordinary`: it goes on the Feed silently, and at most
+ * one such card a day is announced, quietly, in the Person's waking hours and a quiet stretch
+ * (`apps/server/src/feed/pace.ts`). `urgent`: it is announced at once, with sound. Konan's
+ * decision, 27 October 2026, from Muse's proactive pacing.
+ */
+export const PostUrgency = Schema.Literals(['ordinary', 'urgent'] as const)
+export type PostUrgency = typeof PostUrgency.Type
+
+/**
  * An absolute http or https address with a host; anything else is not a page a Person can open.
  * Contracts run on every surface and have no `URL` global, so the shape is checked by pattern.
  */
@@ -63,6 +81,8 @@ export interface FeedSource extends Schema.Schema.Type<typeof FeedSource> {}
  */
 export const FeedCause = Schema.TaggedUnion({
   Watch: { run: RunId, watch: WatchId, watchName: Schema.String, eventId: Schema.NonEmptyString },
+  /** The Run a check-in's timer started, with the check-in Watch's id and name as they were. */
+  Checkin: { run: RunId, watch: WatchId, watchName: Schema.String },
   ThreadRun: { run: RunId },
 })
 export type FeedCause = typeof FeedCause.Type
@@ -89,9 +109,11 @@ export const FeedProvenance = Schema.TaggedUnion({
 })
 export type FeedProvenance = typeof FeedProvenance.Type
 
+/** `from` is null on a card posted before cards said where they came from (8 November 2026). */
+const shown = { provenance: FeedProvenance, from: Schema.NullOr(FeedFrom) }
 export const FeedPost = Schema.TaggedUnion({
-  Drawn: { ...drawn, provenance: FeedProvenance },
-  Said: { ...said, provenance: FeedProvenance },
+  Drawn: { ...drawn, ...shown },
+  Said: { ...said, ...shown },
 })
 export type FeedPost = typeof FeedPost.Type
 
@@ -139,9 +161,10 @@ export const FeedResponse = Schema.Struct({ items: Schema.Array(FeedItem) })
  * posting Run and the cause come from the Run's own authority, never from the model.
  */
 const sources = Schema.Array(FeedSource).check(Schema.isMaxLength(10))
+const posted = { sources, from: FeedFrom, urgency: PostUrgency }
 export const PostRequest = Schema.TaggedUnion({
-  Drawn: { ...drawn, sources },
-  Said: { ...said, sources },
+  Drawn: { ...drawn, ...posted },
+  Said: { ...said, ...posted },
 })
 export type PostRequest = typeof PostRequest.Type
 export const PostOutcome = Schema.TaggedUnion({
