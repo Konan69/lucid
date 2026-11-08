@@ -5,6 +5,7 @@ import {
   type LibraryFolderId,
   type LibraryShelf,
   type MeResponse,
+  type ProjectListResponse,
   type Settings,
   type ThreadId,
 } from '@vivid/contracts'
@@ -34,6 +35,7 @@ import { followThemeAtom, themeAtom } from './appearance'
 import { makeDeviceDecisions } from './devices'
 import { makeHandoffCalls } from './handing'
 import { makeNaming } from './name'
+import { makeGoal } from './goal'
 import { makeNotifying } from './notifying'
 import { makeConnecting } from './connecting'
 import { makeSending } from './sending'
@@ -429,8 +431,7 @@ function makeLiveData(session: SignedIn) {
     devices: makeDeviceDecisions(engine),
     /** A step's calls, like a device decision, outlive the banner that pressed them. */
     handing: makeHandoffCalls(engine),
-    /** The Person changing their own name in Settings (`data/name.ts`). */
-    naming: makeNaming(engine, live.me),
+    ...makeForms(engine, live),
     /**
      * What Vivid remembers about the Person, read from their cell. There is no watch on it: the
      * Memory screen begins a new reading each time it is opened (`screen/settings/Memory.tsx`).
@@ -450,6 +451,16 @@ function makeLiveData(session: SignedIn) {
 }
 
 export type LiveData = ReturnType<typeof makeLiveData>
+
+/**
+ * The forms a Person saves from a screen, each one machine for the session so a refusal outlives
+ * the sheet that showed it: their own name in Settings (`data/name.ts`), and a Project's goal and
+ * done from its page (`data/goal.ts`).
+ */
+const makeForms = (
+  engine: ReturnType<typeof makeLive>,
+  live: { readonly me: LiveQuery<MeResponse>; readonly projects: LiveQuery<ProjectListResponse> },
+) => ({ naming: makeNaming(engine, live.me), goal: makeGoal(engine, live.projects) })
 
 /**
  * What the app is showing at its root.
