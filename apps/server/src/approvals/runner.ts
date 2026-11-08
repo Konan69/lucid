@@ -11,6 +11,7 @@ import { ConnectionStore } from '../connections/store.ts'
 import { connectionRunner } from '../connections/tools.ts'
 import { inspectMail } from '../connections/mail.ts'
 import { ActionRunner } from './gate.ts'
+import { Watches } from '../watches/lifecycle.ts'
 
 /**
  * Performs an approved action by handing it to the domain that owns its target.
@@ -24,7 +25,7 @@ export const actionRunnerLayer = Layer.effect(
   ActionRunner,
   Effect.gen(function* () {
     const services = yield* Effect.context<
-      Database | ConnectionStore | Executor | ComputerStore | ToolEffects | DeviceRegistry
+      Database | ConnectionStore | Executor | ComputerStore | ToolEffects | DeviceRegistry | Watches
     >()
     const connections = yield* ConnectionStore
     return ActionRunner.of({

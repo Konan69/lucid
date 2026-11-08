@@ -30,6 +30,12 @@ const CHOICE = 'vivid.notifications'
 
 /** The channel Android shows them on. Android 13 asks for permission only once one exists. */
 const CHANNEL = 'default'
+/**
+ * The channel a quiet notice arrives on: a Feed post Vivid made on its own is shown without a
+ * sound (Konan, 27 October 2026: "Feed posts appear silently"). On Android the channel, not the
+ * message, decides the sound, so the server names this channel for those (`push/adapter.ts`).
+ */
+const QUIET_CHANNEL = 'quiet'
 
 const unavailable = () => new notifying.DeviceRefused({ reason: 'Unavailable' })
 
@@ -69,6 +75,28 @@ const tokenFor = (projectId: string) =>
     ),
   )
 
+/**
+ * Both of Vivid's Android channels, made again on every read: making a channel that exists only
+ * updates it, and a phone that allowed notifications before the quiet channel existed gets it
+ * here. A message naming a channel the phone lacks would arrive on Android's fallback, with sound.
+ */
+const channels = Effect.tryPromise({
+  try: () =>
+    Promise.all([
+      Notifications.setNotificationChannelAsync(CHANNEL, {
+        name: 'Vivid',
+        importance: Notifications.AndroidImportance.HIGH,
+      }),
+      Notifications.setNotificationChannelAsync(QUIET_CHANNEL, {
+        name: 'Vivid, quietly',
+        importance: Notifications.AndroidImportance.DEFAULT,
+        sound: null,
+        enableVibrate: false,
+      }),
+    ]),
+  catch: unavailable,
+}).pipe(Effect.when(Effect.succeed(Platform.OS === 'android')))
+
 const permissions = Effect.tryPromise({
   try: () => Notifications.getPermissionsAsync(),
   catch: unavailable,
@@ -94,6 +122,7 @@ const phone = notifying.Device.of({
       case PermissionStatus.UNDETERMINED:
         return notifying.Holding.cases.Unasked.make({})
       case PermissionStatus.GRANTED:
+        yield* channels
         if (yield* turnedOff) return notifying.Holding.cases.Off.make({})
         return notifying.Holding.cases.Held.make({ destination: yield* tokenFor(projectId) })
     }
@@ -101,16 +130,7 @@ const phone = notifying.Device.of({
   open: Effect.gen(function* () {
     if (Option.isNone(PROJECT)) return yield* unavailable()
     const projectId = PROJECT.value
-    if (Platform.OS === 'android') {
-      yield* Effect.tryPromise({
-        try: () =>
-          Notifications.setNotificationChannelAsync(CHANNEL, {
-            name: 'Vivid',
-            importance: Notifications.AndroidImportance.HIGH,
-          }),
-        catch: unavailable,
-      })
-    }
+    yield* channels
     const { status } = yield* Effect.tryPromise({
       try: () => Notifications.requestPermissionsAsync(),
       catch: unavailable,

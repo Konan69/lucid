@@ -1,4 +1,9 @@
-import { InvalidRequest, ReviseMadeIntegrationRequest, Tool } from '@vivid/contracts'
+import {
+  InvalidRequest,
+  ReviseMadeIntegrationRequest,
+  ReviseWatchRequest,
+  Tool,
+} from '@vivid/contracts'
 import { Effect, Schema } from 'effect'
 import * as v from 'valibot'
 import { defineTool } from './tool.ts'
@@ -63,11 +68,13 @@ export function revisionTools(runTool: RunTool) {
           Effect.gen(function* () {
             const { client } = yield* Scope
             if (data.kind === 'Watch') {
-              const response = yield* client.ReviseWatch({
-                name: name.trim(),
-                arguments: data.filters,
-                instruction: data.instruction.trim(),
-              })
+              const response = yield* client.ReviseWatch(
+                ReviseWatchRequest.cases.Filters.make({
+                  name: name.trim(),
+                  arguments: data.filters,
+                  instruction: data.instruction.trim(),
+                }),
+              )
               return { output: watchView(response.watch) }
             }
             const request = yield* decodeRevision({

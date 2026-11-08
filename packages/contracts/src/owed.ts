@@ -97,6 +97,22 @@ export class ResolveOwedRequest extends Schema.Class<ResolveOwedRequest>('Resolv
   { title: 'Resolve owed request' },
 ) {}
 
+/**
+ * Work nobody is watching resolved something the Person was waiting on before telling them. Muse:
+ * "A task you took on stays open until its result reaches the user in a message"
+ * (`muse/workspace/system/system_prompt.md:183`); in the background that message is a Feed post.
+ */
+export class OwedResultUndelivered extends Schema.TaggedError<OwedResultUndelivered>()(
+  'OwedResultUndelivered',
+  {
+    id: OwedId,
+    message: Schema.Literal(
+      'Post the result to the Feed first; it stays open until the Person has been told.',
+    ),
+  },
+  { title: 'Owed result not delivered' },
+) {}
+
 export class DropOwedRequest extends Schema.Class<DropOwedRequest>('DropOwedRequest')(
   { id: OwedId, why: Schema.NonEmptyString.check(Schema.isMaxLength(240)) },
   { title: 'Drop owed request' },

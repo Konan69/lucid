@@ -22,6 +22,7 @@ Read the touched feature before launching. A verdict belongs to the recorded com
 - [Watches](watch.md).
 - [Mail and Calendar behaviour](behaviour.md).
 - [Integration grants and coverage](integrations.md).
+- [Check-ins](checkin.md).
 - [Library](library.md).
 - [Feed](feed.md).
 - [Waiting on](owed.md).

@@ -32,6 +32,8 @@ Require the Watch row to be gone through cascade deletion, its exact provider su
 
 The HTTP evidence is under `watch/`, browser evidence under `browser/watch/`. Each has its own verdict. `proof.json` records the first provider receipt, the end code, Watch id, background Run id, Feed card id, item and the posted notice's id; `posted-notifications.json` holds the notice list that carried it. The browser's `notifications.json` holds what the worker showed. `redelivery.json` records the redelivery's status, Run count and card; `after-remove-card.json` the card after removal. `provider-state.json` records the exact subscription, second event and deliveries. `post-removal.json` records every removal assertion. Browser snapshots and `feed.png` and `feed-reloaded.png` show the delivered card; `thread-event.png` and `thread-event-reloaded.png` show its Thread's event row.
 
+The HTTP journey also creates an Until Watch whose end condition is that a fresh provider read still declares `pulse.received` after its next event. Its background Run must call `find_events` before `finish_watching`. `completion/` retains the completed row, admitted Run, tool history and a subsequent signed callback answering 410. The browser journey retains its existing delivery and removal scope.
+
 ## Boundaries
 
 Executor uses host networking and an explicit loopback HTTP policy. Vivid's `PUBLIC_URL` is the disposable web origin, which proxies the real callback. No public tunnel or production authority is needed. Launch verifies the selected alias against Boat's persistent `BOAT_ID`, rather than a replaceable VM hostname.

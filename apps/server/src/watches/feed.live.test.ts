@@ -1,6 +1,6 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
-import { FeedItem, ServiceId, WatchState } from '@vivid/contracts'
+import { FeedItem, ServiceId, WatchState, StopWatchRequest } from '@vivid/contracts'
 import { and, eq, sql } from 'drizzle-orm'
 import { Config, Duration, Effect, Option, Redacted, Schema, Stream } from 'effect'
 import {
@@ -132,7 +132,7 @@ describe.skipIf(process.env['VIVID_LIVE_WATCH_FEED'] !== '1')('Watch to Feed liv
           expect(WatchState.guards.Active(watch.state)).toBe(true)
           yield* Effect.addFinalizer(() =>
             fixture.rpc
-              .StopWatch({ name: watch.name })
+              .StopWatch(StopWatchRequest.cases.Removed.make({ name: watch.name }))
               .pipe(Effect.catch(() => Effect.sync(() => expect.fail('Watch proof stop failed')))),
           )
 

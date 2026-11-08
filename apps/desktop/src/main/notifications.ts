@@ -21,7 +21,11 @@ export function createNotifications(window: () => Option.Option<BrowserWindow>) 
     if (!Notification.isSupported()) return
     Option.map(window(), (open) => {
       if (open.isFocused()) return
-      const shown = new Notification({ title: notification.title, body: notification.body })
+      const shown = new Notification({
+        title: notification.title,
+        body: notification.body,
+        silent: notification.silent,
+      })
       showing.add(shown)
       shown.on('close', () => showing.delete(shown))
       shown.on('click', () => {

@@ -83,6 +83,7 @@ import { updateRoutes } from './updates/routes.ts'
 import { watchedAppsLayer } from './watches/apps.ts'
 import { executorEventsLayer } from './watches/events.ts'
 import { watchesLayer, watchRenewalLayer } from './watches/lifecycle.ts'
+import { feedPacingLayer } from './feed/pace.ts'
 import { watchStoreLayer } from './watches/store.ts'
 
 /** The process entry point only selects implementations and owns their scoped lifetime. */
@@ -126,6 +127,7 @@ const serverProgram = Effect.gen(function* () {
     skillStoreLayer,
     libraryStoreLayer,
     executorLayer,
+    executorEventsLayer,
     boatMachineLayer,
     publicPageLayer,
     codeAuthorityLayer,
@@ -165,7 +167,6 @@ const serverProgram = Effect.gen(function* () {
   // A program runs on the Person's Computer, so its supervisor sits above the Computer store.
   const work = Layer.mergeAll(
     watchStoreLayer,
-    executorEventsLayer,
     watchedAppsLayer,
     codeCallsLayer,
     codeSourceLayer,
@@ -178,6 +179,7 @@ const serverProgram = Effect.gen(function* () {
     migrationLayer,
     commandWorkerLayer,
     watchRenewalLayer,
+    feedPacingLayer,
     channelWorkerLayer,
     approvalSweeperLayer,
     pushReceiptsLayer,

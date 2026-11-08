@@ -93,6 +93,15 @@ export function Card({
           </Button>
         )}
       </div>
+      {/* Where the card came from, in Vivid's words, under the title: Muse's rule that every
+          unasked item says where it came from. A card from before it was kept says nothing. */}
+      {Option.match(
+        Option.flatMap(post, (made) => Option.fromNullOr(made.from)),
+        {
+          onNone: () => null,
+          onSome: (from) => <p className="mt-0.5 truncate text-label text-ink-3">From {from}</p>,
+        },
+      )}
       {Option.match(post, {
         onNone: () => Option.getOrElse(asked, () => said(ask.words, Option.none())),
         onSome: FeedPost.match({

@@ -76,6 +76,10 @@ import {
 import type { AuthContext } from './auth.js'
 import {
   CreateWatchRequest,
+  CheckinNotFound,
+  CheckinNotScheduled,
+  WatchRunRequired,
+  WatchEndConditionRequired,
   FindAppEventsRequest,
   FindAppEventsResponse,
   StopWatchRequest,
@@ -252,6 +256,7 @@ import {
   UpdateOwedRequest,
   NudgedOwedRequest,
   ResolveOwedRequest,
+  OwedResultUndelivered,
   DropOwedRequest,
 } from './owed.js'
 import {
@@ -865,6 +870,7 @@ const CreateWatch = Rpc.make('CreateWatch', {
 const ListWatches = Rpc.make('ListWatches', { ...call, success: WatchListResponse })
 const StopWatch = Rpc.make('StopWatch', {
   ...call,
+  error: Schema.Union([RpcFailure, WatchRunRequired, WatchEndConditionRequired]),
   payload: StopWatchRequest,
   success: WatchResponse,
 })
@@ -874,6 +880,7 @@ const ReviseWatch = Rpc.make('ReviseWatch', {
   ...call,
   payload: ReviseWatchRequest,
   success: WatchResponse,
+  error: Schema.Union([RpcFailure, CheckinNotFound]),
 })
 const ReadMadeIntegration = Rpc.make('ReadMadeIntegration', {
   ...call,
@@ -910,7 +917,12 @@ const WatchOwed = Rpc.make('WatchOwed', { ...live, success: OwedListResponse })
 const TrackOwed = Rpc.make('TrackOwed', { ...call, payload: TrackOwedRequest, success: Owed })
 const UpdateOwed = Rpc.make('UpdateOwed', { ...call, payload: UpdateOwedRequest, success: Owed })
 const NudgedOwed = Rpc.make('NudgedOwed', { ...call, payload: NudgedOwedRequest, success: Owed })
-const ResolveOwed = Rpc.make('ResolveOwed', { ...call, payload: ResolveOwedRequest, success: Owed })
+const ResolveOwed = Rpc.make('ResolveOwed', {
+  ...call,
+  payload: ResolveOwedRequest,
+  success: Owed,
+  error: Schema.Union([RpcFailure, OwedResultUndelivered]),
+})
 const DropOwed = Rpc.make('DropOwed', { ...call, payload: DropOwedRequest, success: Owed })
 
 // ── The Person's to-do list ───────────────────────────────────────────────
@@ -1068,7 +1080,7 @@ const ResolveTool = Rpc.make('ResolveTool', {
  * refuses the exact action again while an earlier send of it in this Thread has an unknown result.
  */
 const UseTool = Rpc.make('UseTool', {
-  error: Schema.Union([RpcFailure, ActionReconciliationRequired]),
+  error: Schema.Union([RpcFailure, ActionReconciliationRequired, CheckinNotScheduled]),
   payload: UseToolRequest,
   success: IntegrationResult,
 })

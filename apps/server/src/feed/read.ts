@@ -47,6 +47,7 @@ const decodeSaid = decodeStored(
 )
 
 const decodeProvenance = decodeStored(FeedProvenance, 'Feed provenance')
+const decodeFrom = decodeStored(Said.fields.from, 'Feed card source')
 
 /** How far back settled work stays on the Feed: the last day, so morning still shows the night. */
 const SETTLED_WINDOW = 24 * 60 * 60 * 1000
@@ -274,13 +275,16 @@ const postOf = Effect.fn('Feed.postOf')(function* (
   card: Row['card'],
 ): Effect.fn.Return<FeedPost | null, DatabaseFailure> {
   if (card === null) return null
-  const provenance = yield* decodeProvenance(card.provenance)
+  const shown = {
+    provenance: yield* decodeProvenance(card.provenance),
+    from: yield* decodeFrom(card.cameFrom),
+  }
   if (card.display === null) {
     const said = yield* decodeSaid({ title: card.title, words: card.words, actions: card.actions })
-    return Said.make({ ...said, provenance })
+    return Said.make({ ...said, ...shown })
   }
   const drawn = yield* decodeDrawn({ title: card.title, display: card.display })
-  return Drawn.make({ ...drawn, provenance })
+  return Drawn.make({ ...drawn, ...shown })
 })
 
 /** The whole Feed, shared by List and Watch: every item in its stage, newest first. */

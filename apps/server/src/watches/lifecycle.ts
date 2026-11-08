@@ -15,7 +15,7 @@ import {
   Watch,
   WatchState,
   type CreateWatchRequest,
-  type ReviseWatchRequest,
+  type ReviseWatchFilters,
   type WatchStopReason,
 } from '@vivid/contracts'
 import { companyColumnOf, type Actor } from '../auth/access.ts'
@@ -26,7 +26,11 @@ import { untraced } from '../observability/quiet.ts'
 import { WatchedApps, WatchConnectionRemoved } from './apps.ts'
 import { ExecutorEvents, type EventDefinition, type ExecutorEventsFailure } from './events.ts'
 import { secretFor } from './signature.ts'
-import { WatchStore, type WatchRecord } from './store.ts'
+import { WatchStore, subscriptionOf, type WatchRecord } from './store.ts'
+import { watchProgress, WatchMissing } from './progress.ts'
+export { WatchMissing } from './progress.ts'
+import { watchCheckins } from './checkins.ts'
+import { owedStoreLayer } from '../owed/store.ts'
 
 /**
  * Starting, stopping and keeping Watches alive at Executor.
@@ -44,12 +48,6 @@ export const TTL_MS = 7 * 24 * 60 * 60_000
  * before provider expiry. This margin schedules renewal and never caps active Watch work. */
 export const RENEW_WITHIN_MS = 6 * 60 * 60_000
 
-/** The Actor has no live Watch by this name. */
-export class WatchMissing extends Schema.TaggedError<WatchMissing>()(
-  'WatchMissing',
-  {},
-  { title: 'Watch missing' },
-) {}
 /** The account's app declares no event by this name. */
 export class WatchEventUnknown extends Schema.TaggedError<WatchEventUnknown>()(
   'WatchEventUnknown',
@@ -155,7 +153,7 @@ function makeRevision(input: {
   const { store, events, publish, subscribe, base } = input
   /** Grant the revised filters before committing; a failed grant leaves the saved Watch intact.
    * A fresh callback rejects deliveries from the old subscription even if unsubscribe is lost. */
-  const revise = Effect.fn('Watches.revise')(function* (actor: Actor, request: ReviseWatchRequest) {
+  const revise = Effect.fn('Watches.revise')(function* (actor: Actor, request: ReviseWatchFilters) {
     const found = yield* store.named(actor, request.name)
     if (Option.isNone(found)) return yield* new WatchMissing({})
     const previous = found.value
@@ -205,17 +203,16 @@ const make = Effect.fn('Watches.make')(function* () {
   const publish = (record: WatchRecord) => changes.publish([Topic.person(record.personId)])
 
   /** The exact key Executor knows this Watch's subscription by, and the secret it signs with. */
-  const keyOf = (record: WatchRecord) => ({
-    name: record.subscribedName,
-    arguments: record.watch.arguments,
-    url: record.callbackUrl,
-  })
+
   const subscribe = (record: WatchRecord) =>
     events.subscribe({
-      ...keyOf(record),
+      ...subscriptionOf(record),
       secret: secretFor(config.AUTH_SECRET, record.watch.id),
       ttlMs: TTL_MS,
     })
+
+  const progress = yield* watchProgress(subscribe)
+  const checks = yield* watchCheckins()
 
   /** A concurrent stop stays authoritative; a cascaded row means its Integration was removed. */
   const activate = Effect.fn('Watches.activate')(function* (
@@ -245,6 +242,7 @@ const make = Effect.fn('Watches.make')(function* () {
     const declared = eventsOfApp(yield* events.list, app.appSlug)
     if (!declared.some((event) => event.event === request.event))
       return yield* new WatchEventUnknown({ known: declared.map((event) => event.event) })
+    const purpose = yield* checks.planCheckin(actor, request.purpose)
     const id = WatchId.make(NodeCrypto.randomUUID())
     const pending = yield* store.insertPending({
       id,
@@ -257,6 +255,8 @@ const make = Effect.fn('Watches.make')(function* () {
       subscribedName: `${app.appSlug}.${request.event}`,
       arguments: request.arguments,
       instruction: request.instruction,
+      condition: request.condition,
+      purpose,
       callbackUrl: `${base}/api/watches/${id}`,
     })
     const granted = yield* Effect.result(subscribe(pending))
@@ -289,7 +289,7 @@ const make = Effect.fn('Watches.make')(function* () {
     if (Option.isNone(found)) return yield* new WatchMissing({})
     const stopped = yield* store.stop(found.value.watch.id, 'removed')
     if (Option.isNone(stopped)) return yield* new WatchMissing({})
-    yield* events.unsubscribe(keyOf(found.value)).pipe(
+    yield* events.unsubscribe(subscriptionOf(found.value)).pipe(
       Effect.tapError((failure) =>
         Effect.logWarning('Watch unsubscribe did not reach Executor', failure._tag),
       ),
@@ -308,6 +308,10 @@ const make = Effect.fn('Watches.make')(function* () {
   const renewOne = Effect.fn('Watches.renewOne')(function* (record: WatchRecord) {
     const renewed = yield* Effect.result(subscribe(record))
     if (Result.isSuccess(renewed)) {
+      if (WatchState.guards.Paused(record.watch.state)) {
+        yield* store.renewPaused(record.watch.id, renewed.success.refreshBefore.getTime())
+        return
+      }
       const active = yield* activate(record, renewed.success)
       if (WatchState.guards.Pending(record.watch.state)) yield* publish(active)
       return
@@ -323,6 +327,7 @@ const make = Effect.fn('Watches.make')(function* () {
    * One Watch's failure does not hold up the others.
    */
   const renew = Effect.fn('Watches.renew')(function* () {
+    yield* progress.reconcile()
     const now = yield* Clock.currentTimeMillis
     const due = yield* store.due({
       activeBefore: now + RENEW_WITHIN_MS,
@@ -334,9 +339,13 @@ const make = Effect.fn('Watches.make')(function* () {
 
   return {
     create,
+    ...checks,
     revise: makeRevision({ store, events, publish, subscribe, base }),
     find,
     stop,
+    complete: progress.complete,
+    connectionChanged: progress.connectionChanged,
+    pauseCurrent: progress.pauseCurrent,
     list: (actor: Actor) =>
       store.list(actor).pipe(Effect.map((all) => all.map((one) => one.watch))),
     renew,
@@ -347,7 +356,7 @@ export class Watches extends Context.Service<Watches, Effect.Success<ReturnType<
   'vivid/Watches',
 ) {}
 
-export const watchesLayer = Layer.effect(Watches, make())
+export const watchesLayer = Layer.effect(Watches, make()).pipe(Layer.provide(owedStoreLayer))
 
 /**
  * The renewal worker: one pass every ten minutes, scoped to the server, with no detached timer.
