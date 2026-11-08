@@ -171,11 +171,11 @@ export const BindingJudgment = Schema.TaggedUnion({
 
 /**
  * Whether rules that could not be judged leave the answer open. Only a rule that could make the
- * action stricter does: an unjudged `Never` or `Ask` might apply, so the gate must ask. An
+ * action stricter does: an unjudged `Ask` might apply, so the gate must ask. An
  * unjudged `Allow` can only loosen, so losing it leaves the default in force and never causes a
  * question; before this, one unrelated Allow rule made every action ask whenever the judge failed.
  */
-const restricts = (rules: ReadonlyArray<Rule>) => rules.some((rule) => rule.decision !== 'Allow')
+const restricts = (rules: ReadonlyArray<Rule>) => rules.some((rule) => rule.decision === 'Ask')
 
 /**
  * Independent contexts preserve known prohibitions even when the other completion fails, and
@@ -197,8 +197,9 @@ export const judgeBinding = Effect.fn('Rules.judgeBinding')(function* (
       Effect.map(Effect.result(judge.judge(action, scope)), (result) => ({ scope, result })),
     { concurrency: 2 },
   )
-  const applicable = judged.flatMap(({ result }) =>
-    Result.isSuccess(result) ? result.success : [],
+  // An unjudged prohibition still binds conservatively, including when decisions are off.
+  const applicable = judged.flatMap(({ scope, result }) =>
+    Result.isSuccess(result) ? result.success : scope.filter((rule) => rule.decision === 'Never'),
   )
   return judged.some(({ scope, result }) => Result.isFailure(result) && restricts(scope))
     ? BindingJudgment.cases.Uncertain.make({ rules: applicable })

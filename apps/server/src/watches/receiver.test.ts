@@ -113,6 +113,37 @@ describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
       }).pipe(Effect.scoped),
     )
 
+    it.effect('keeps prior runs and ignores retired callbacks after a condition revision', () =>
+      Effect.gen(function* () {
+        const post = yield* receiver()
+        const { actor, watch, url, secret } = yield* activeWatch()
+        expect((yield* post(url, event('before-revision'), secret, Option.none())).status).toBe(200)
+        const prior = yield* deliveriesOf(watch.id)
+        yield* Queue.offer((yield* Executor).answers, {
+          id: 'revised',
+          refreshBefore: new Date(7 * 24 * 60 * 60_000),
+        })
+        const revised = yield* (yield* Watches).revise(actor, {
+          name: watch.name,
+          arguments: { folder: 'important' },
+          instruction: 'Summarize important mail.',
+        })
+        const subscribed = yield* Queue.take((yield* Executor).subscribed)
+        expect(revised.id).toBe(watch.id)
+        expect((yield* post(url, event('stale-subscription'), secret, Option.none())).status).toBe(
+          200,
+        )
+        expect(yield* deliveriesOf(watch.id)).toEqual(prior)
+        expect(
+          (yield* post(subscribed.url, event('after-revision'), secret, Option.none())).status,
+        ).toBe(200)
+        const delivered = yield* deliveriesOf(watch.id)
+        expect(delivered).toHaveLength(2)
+        expect(delivered[0]).toEqual(prior[0])
+        expect(JSON.stringify(delivered[1])).toContain(revised.instruction)
+      }).pipe(Effect.scoped),
+    )
+
     it.effect('wakes Vivid once per event, in a background Thread nobody lists', () =>
       Effect.gen(function* () {
         const post = yield* receiver()
