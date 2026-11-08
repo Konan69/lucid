@@ -19,6 +19,7 @@ import { owedBrowser } from './owedbrowser.mjs'
 import { todosBrowser } from './todosbrowser.mjs'
 import { offerBrowser } from './offer.mjs'
 import { libraryBrowser } from './librarybrowser.mjs'
+import { pushBrowser } from './push.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { createElement } = web('react')
@@ -64,6 +65,7 @@ const recipes = {
   name: { check: 'name' },
   memory: { check: 'memory' },
   learning: { check: 'learning' },
+  push: { check: 'push' },
   devices: { check: 'devices' },
   watch: { check: 'watch' },
   feed: { check: 'feed' },
@@ -134,7 +136,8 @@ const specialRecipes = {
   },
   watch: {
     drive: watchBrowser,
-    scope: 'browser Connect, model Watch, real Executor delivery, Feed reload and Disconnect',
+    scope:
+      'browser Connect, model Watch, real Executor delivery, the posted notice shown by the worker and routed to the Feed (the press itself is not driven), Feed reload and Disconnect',
   },
   replies: {
     drive: offerBrowser,
@@ -170,6 +173,11 @@ const specialRecipes = {
     drive: nameBrowser,
     scope:
       'Web Settings name form, the name after reload, and Vivid answering with it in a Thread. See scope.json for phone and shared-Thread subcases.',
+  },
+  push: {
+    drive: pushBrowser,
+    scope:
+      'Settings row on and off, the server holding this browser once, and a real notify_person reaching the service worker; see scope.json.',
   },
   settings: {
     drive: settingsBrowser,

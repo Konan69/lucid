@@ -758,7 +758,7 @@ layer(
     )
 
     it.effect(
-      'a Background Thread is never quoted by a notification: follow-ups, failures and questions',
+      'a Background Thread announces no Run settling; a question waiting there is one notice',
       () =>
         Effect.scoped(
           Effect.gen(function* () {
@@ -791,15 +791,19 @@ layer(
             )
             const unknown = yield* test.conversation.admit(said(test.threadId, test.ada))
             yield* settled(unknown.runId, Settlement.cases.Unknown.make({}))
-            // A question raised there waits for the Person in the Feed, not in a notification.
+            expect(yield* Ref.get(test.notices)).toEqual([])
+            // A question raised there waits on the Person: it is shown on the Feed, and told.
             const question = yield* askFor(test, test.ada, test.threadId)
             expect(question.state._tag).toBe('Waiting')
-            expect(yield* Ref.get(test.notices)).toEqual([])
+            expect((yield* Ref.get(test.notices)).map((notice) => notice.kind)).toEqual([
+              'needs-you',
+            ])
             // The same Run in a Conversation is announced, so the silence above is the place's.
             yield* place('Conversation')
             const spoken = yield* test.conversation.admit(said(test.threadId, test.ada))
             yield* test.finish(spoken.runId)
             expect((yield* Ref.get(test.notices)).map((notice) => notice.kind)).toEqual([
+              'needs-you',
               'finished',
             ])
           }),

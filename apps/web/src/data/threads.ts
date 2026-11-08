@@ -5,6 +5,7 @@ import { useMemo } from 'react'
 import { change, changing } from './app'
 import { live } from './live'
 import { beginThread, useSending, warmConversation } from './sending'
+import { offerNotifications } from './notifying'
 import { router } from '../router'
 import { scope } from './scope'
 
@@ -73,6 +74,8 @@ export const useLanded = (id: ThreadId): boolean => sending.createdHere(useSendi
  * creation and those words. Creation replay keeps the same Thread id after a lost receipt.
  */
 export function startThread(message: string, projectId: ProjectId | null = scope.filing()) {
+  // In the press itself, so the browser may ask: once only, while the Person was never asked.
+  offerNotifications()
   const id = ThreadId.make(crypto.randomUUID())
   beginThread({
     creation: { id, title: titleFromMessage(message), projectId },

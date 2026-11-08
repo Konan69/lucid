@@ -8,6 +8,7 @@ import type { Delivery } from './delivery'
 import { firstKey, type Way } from './first'
 import { refusalOf, type LiveData } from './live'
 import * as App from './app'
+import { offerNotifications } from './notifying'
 
 /**
  * Starting, speaking in and changing Threads.
@@ -139,12 +140,18 @@ export const firstWay = (data: LiveData): Way => ({
       Effect.map(refusalOf),
     ),
   say: (id, start) =>
-    say(data, {
-      id,
-      body: start.message.words,
-      key: firstKey(id),
-      pictures: start.message.pictures,
-    }).pipe(Effect.map(refusalOf)),
+    // The Person's first words are the moment Vivid offers to notify them (`data/notifying.ts`).
+    Effect.sync(() => offerNotifications(data)).pipe(
+      Effect.andThen(
+        say(data, {
+          id,
+          body: start.message.words,
+          key: firstKey(id),
+          pictures: start.message.pictures,
+        }),
+      ),
+      Effect.map(refusalOf),
+    ),
   returned: (start) => {
     if (draft.in(start.place).length === 0) draft.keep(start.place, start.words)
   },

@@ -6,7 +6,9 @@ import { Effect, Option, Ref, Result, Schema, Layer } from 'effect'
 import { Clock } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import {
+  FeedPost,
   NotificationId,
+  NotificationOpens,
   NotifyPersonOutcome,
   PushOutcome,
   RunId,
@@ -18,7 +20,10 @@ import {
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { sessionTable } from '../auth/tables.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
+import { feedHandlers } from '../feed/handlers.ts'
+import { feedStoreLayer } from '../feed/store.ts'
 import { recordNotice } from '../notifications/notifier.ts'
+import { NotificationStore, notificationStoreLayer } from '../notifications/store.ts'
 import { notifications } from '../notifications/tables.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
 import { Link } from '../rpc/link.ts'
@@ -37,6 +42,17 @@ import { fixture, pushTestLayer, pushTestFoundation, PushProbe, testPushConfig }
 const withPush = <A, E, R>(program: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
     const context = yield* Layer.build(pushTestLayer)
+    return yield* program.pipe(Effect.provide(context))
+  }).pipe(Effect.scoped)
+
+/** The Feed and the notice list over the same per-case push Layer, for a post that tells the Person. */
+const withFeed = <A, E, R>(program: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const context = yield* Layer.build(
+      Layer.mergeAll(feedStoreLayer, notificationStoreLayer).pipe(
+        Layer.provideMerge(pushTestLayer),
+      ),
+    )
     return yield* program.pipe(Effect.provide(context))
   }).pipe(Effect.scoped)
 
@@ -120,6 +136,26 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
           }),
         ),
     )
+    it.effect('takes a Chrome subscription at Google push and refuses any other host', () =>
+      withPush(
+        Effect.gen(function* () {
+          const owner = yield* fixture()
+          const keys = { p256dh: 'B'.repeat(87), auth: 'A'.repeat(22) }
+          const register = (endpoint: string) =>
+            pushHandlers
+              .RegisterPushTarget({
+                destination: PushDestination.cases.Browser.make({ endpoint, keys }),
+              })
+              .pipe(Effect.provideService(AuthContext, owner.auth), Effect.result)
+          const chrome = yield* register(
+            `https://jmt17.google.com/fcm/send/${NodeCrypto.randomUUID()}`,
+          )
+          expect(Result.isSuccess(chrome)).toBe(true)
+          const elsewhere = yield* register(`https://push.example.test/${NodeCrypto.randomUUID()}`)
+          expect(Result.isFailure(elsewhere) && elsewhere.failure._tag).toBe('InvalidRequest')
+        }),
+      ),
+    )
     it.effect(
       'sends once per target across concurrent retry and rebuilding the delivery Layer',
       () =>
@@ -166,7 +202,7 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
             expect(sent[0]).toMatchObject({
               title: input.notice.title,
               body: 'Please review the draft.',
-              threadId: owner.threadId,
+              opens: NotificationOpens.cases.Thread.make({ threadId: owner.threadId }),
             })
             expect(JSON.stringify(sent)).not.toContain(owner.person.id)
             const rows = yield* owner.database.run(
@@ -333,6 +369,67 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
                 .where(eq(notifications.personId, owner.person.id)),
             ),
           ).toEqual([])
+        }),
+      ),
+    )
+    it.effect('a Feed post from a Background Thread notifies once and opens the Feed', () =>
+      withFeed(
+        Effect.gen(function* () {
+          const owner = yield* fixture()
+          yield* (yield* PushTargets).register({
+            personId: owner.person.id,
+            sessionId: owner.sessionId,
+            destination: owner.destination,
+          })
+          yield* owner.database.run(
+            owner.database
+              .update(threads)
+              .set({ place: 'Background' })
+              .where(eq(threads.id, owner.threadId)),
+          )
+          const runs = yield* RunStore
+          const id = RunId.make(NodeCrypto.randomUUID())
+          const reserved = yield* runs.start({
+            id,
+            threadId: owner.threadId,
+            personId: owner.person.id,
+            origin: StoredRunOrigin.cases.Watch.make({ watchName: 'New mail' }),
+          })
+          if (!TurnReservation.guards.Reserved(reserved))
+            expect.fail('Expected a fresh Run reservation')
+          yield* runs.admitted({ runId: id, submissionId: RuntimeSubmissionId.make(1) })
+          const auth = AuthState.Vivid({
+            person: owner.person,
+            workspace: owner.auth.workspace,
+            threadId: owner.threadId,
+          })
+          const post = FeedPost.cases.Said.make({
+            title: 'Ada wrote about the contract',
+            words: 'She asks whether Friday still holds.',
+            actions: [],
+          })
+          const posting = feedHandlers.Post(post).pipe(Effect.provideService(AuthContext, auth))
+          // The same post again, as a retried tool call sends it, is the notice already made.
+          yield* posting
+          yield* posting
+          const feed = NotificationOpens.cases.Feed.make({})
+          const sent = yield* Ref.get((yield* PushProbe).sent)
+          expect(sent).toHaveLength(1)
+          expect(sent[0]).toMatchObject({ title: post.title, body: post.words, opens: feed })
+          // A changed post is new news.
+          yield* feedHandlers
+            .Post(FeedPost.cases.Said.make({ ...post, words: 'Friday moved to Monday.' }))
+            .pipe(Effect.provideService(AuthContext, auth))
+          const listed = yield* (yield* NotificationStore).list({
+            person: owner.person,
+            workspace: owner.auth.workspace,
+            by: 'person',
+            threadId: Option.none(),
+          })
+          expect(listed.notifications.map(({ kind, opens }) => ({ kind, opens }))).toEqual([
+            { kind: 'posted', opens: feed },
+            { kind: 'posted', opens: feed },
+          ])
         }),
       ),
     )

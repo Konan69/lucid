@@ -11,7 +11,22 @@ export const NotificationKind = Schema.Literals([
   'shared',
   /** This Person was invited to a Company. */
   'invited',
+  /** Vivid put something on the Feed from work nobody was watching (a Background Thread). */
+  'posted',
 ] as const)
+
+/**
+ * Where a notice opens when the Person presses it, on every surface. The server derives it from
+ * the notice's Thread: none is a Company invitation, read in Notifications; a Background Thread
+ * is shown on the Feed (its posts, questions and Approvals are drawn there); any other Thread
+ * opens itself. A client routes on it and never works it out again.
+ */
+export const NotificationOpens = Schema.TaggedUnion({
+  Thread: { threadId: ThreadId },
+  Feed: {},
+  Notifications: {},
+})
+export type NotificationOpens = typeof NotificationOpens.Type
 
 /** Durable notification returned by the runtime. */
 export const Notification = Schema.Struct({
@@ -20,6 +35,7 @@ export const Notification = Schema.Struct({
   title: Schema.String,
   body: Schema.String,
   threadId: Schema.NullOr(ThreadId),
+  opens: NotificationOpens,
   createdAt: Schema.Finite,
   readAt: Schema.NullOr(Schema.Finite),
 }).annotate({ identifier: 'Notification', title: 'Notification' })
