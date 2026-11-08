@@ -26,10 +26,16 @@ import {
 import { and, eq } from 'drizzle-orm'
 import { Clock, Effect, Schema } from 'effect'
 import { Database, decodeStored } from '../database/client.ts'
-import { Changes, Topic } from '../live/changes.ts'
 import { documentRun } from '../runtime/client.ts'
 import { requireThread } from '../threads/access.ts'
-import { decodeArtifact, lock, named, workingRun, type Transaction } from './history.ts'
+import {
+  announceArtifacts,
+  decodeArtifact,
+  lock,
+  named,
+  workingRun,
+  type Transaction,
+} from './history.ts'
 import { captureArtifact, FileCapture, type CapturedArtifact } from './render.ts'
 import { artifactFiles, artifactPreparations, artifacts, artifactVersions } from './tables.ts'
 
@@ -347,7 +353,7 @@ export const publishArtifactFile = Effect.fn('Artifacts.publishFile')(function* 
   const outcome = yield* database.transaction((tx) =>
     publish(tx, { personId, threadId, runId, toolCallId: request.toolCallId }, request),
   )
-  yield* (yield* Changes).publish([Topic.thread(threadId)])
+  yield* announceArtifacts(threadId)
   return outcome
 }, Effect.uninterruptible)
 

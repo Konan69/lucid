@@ -45,10 +45,12 @@ import {
   approvalById,
   AskedFirst,
   cardFor,
+  type CardRequest,
   ConnectionCard,
   handoffById,
   requestById,
 } from './Cards'
+import { ArtifactCard } from '../artifact/Card'
 import { Children } from './Children'
 import { Handed } from './Handoff'
 import { Asked } from './Question'
@@ -526,41 +528,46 @@ function ToolCards({
         />
       )
     const card = cardFor(tool.output)
-    if (Option.isNone(card)) return null
-    const wanted = card.value
-    switch (wanted.kind) {
-      case 'connection':
-        return (
-          <ConnectionCard
-            key={tool.toolCallId}
-            id={tool.toolCallId}
-            request={wanted.request}
-            authorization={wanted.authorization}
-            awaited={wanted.awaited}
-            current={live}
-            onCarryOn={(words) => carryOn(context.thread, words)}
-          />
-        )
-      case 'approval': {
-        const approval = approvalById(context.approvals, wanted.id)
-        return Option.isNone(approval) ? null : (
-          <AskedFirst key={tool.toolCallId} approval={approval.value} me={context.me} />
-        )
-      }
-      case 'input': {
-        const request = requestById(context.requests, wanted.id)
-        return Option.isNone(request) ? null : (
-          <Asked key={tool.toolCallId} request={request.value} me={context.me} />
-        )
-      }
-      case 'handoff': {
-        const handoff = handoffById(context.handoffs, wanted.id)
-        return Option.isNone(handoff) ? null : (
-          <Handed key={tool.toolCallId} handoff={handoff.value} me={context.me} />
-        )
-      }
-    }
+    return Option.isNone(card) ? null : drawn(card.value, tool.toolCallId, context, live)
   })
+}
+
+/** One card a tool's output asks for, by its kind. `key` is the tool call it stands for. */
+function drawn(wanted: CardRequest, key: string, context: ThreadContext, live: boolean) {
+  switch (wanted.kind) {
+    case 'connection':
+      return (
+        <ConnectionCard
+          key={key}
+          id={key}
+          request={wanted.request}
+          authorization={wanted.authorization}
+          awaited={wanted.awaited}
+          current={live}
+          onCarryOn={(words) => carryOn(context.thread, words)}
+        />
+      )
+    case 'approval': {
+      const approval = approvalById(context.approvals, wanted.id)
+      return Option.isNone(approval) ? null : (
+        <AskedFirst key={key} approval={approval.value} me={context.me} />
+      )
+    }
+    case 'input': {
+      const request = requestById(context.requests, wanted.id)
+      return Option.isNone(request) ? null : (
+        <Asked key={key} request={request.value} me={context.me} />
+      )
+    }
+    case 'handoff': {
+      const handoff = handoffById(context.handoffs, wanted.id)
+      return Option.isNone(handoff) ? null : (
+        <Handed key={key} handoff={handoff.value} me={context.me} />
+      )
+    }
+    case 'artifact':
+      return <ArtifactCard key={key} delivered={wanted.artifact} />
+  }
 }
 
 /** Who Vivid was answering, in a shared Thread where that is not obvious. */

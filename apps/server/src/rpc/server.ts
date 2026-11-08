@@ -5,7 +5,7 @@ import { VividRpc } from '@vivid/contracts/rpc'
 import { actionHandlers } from '../actions/handlers.ts'
 import { actionLookupLayer } from '../actions/journal.ts'
 import { appearanceHandlers } from '../appearance/handlers.ts'
-import { artifactHandlers } from '../artifacts/handlers.ts'
+import { artifactHandlers, artifactWatchHandlers } from '../artifacts/handlers.ts'
 import { approvalHandlers } from '../approvals/handlers.ts'
 import { auditHandlers } from '../audit/handlers.ts'
 import { buildHandlers } from '../builds/handlers.ts'
@@ -46,10 +46,13 @@ import { liveProtocolLayer } from './link.ts'
  */
 export const rpcHandlersLayer = Layer.mergeAll(
   // The whole group in one `toLayer` passed TypeScript's instantiation depth (TS2589) at 193
-  // calls, so the Dreamer's call and the Watch calls are provided one by one beside it; together
-  // they are still total. A new call is added the same way, with the omit list extended.
+  // calls, so the Dreamer's call, the two live Artifact reads and the Watch calls are provided
+  // one by one beside it; together they are still total. A new call is added the same way, with
+  // the omit list extended.
   VividRpc.omit(
     'Dream',
+    'WatchArtifact',
+    'WatchArtifactShelf',
     'FindAppEvents',
     'CreateWatch',
     'ReviseWatch',
@@ -85,6 +88,8 @@ export const rpcHandlersLayer = Layer.mergeAll(
     ...feedHandlers,
   }),
   VividRpc.toLayerHandler('Dream', dreamHandlers.Dream),
+  VividRpc.toLayerHandler('WatchArtifact', artifactWatchHandlers.WatchArtifact),
+  VividRpc.toLayerHandler('WatchArtifactShelf', artifactWatchHandlers.WatchArtifactShelf),
   VividRpc.toLayerHandler('FindAppEvents', watchHandlers.FindAppEvents),
   VividRpc.toLayerHandler('CreateWatch', watchHandlers.CreateWatch),
   VividRpc.toLayerHandler('ReviseWatch', watchHandlers.ReviseWatch),

@@ -135,6 +135,29 @@ export const ArtifactDetail = Schema.Struct({
 export interface ArtifactDetail extends Schema.Schema.Type<typeof ArtifactDetail> {}
 
 export const ArtifactListResponse = Schema.Struct({ artifacts: Schema.Array(Artifact) })
+
+/**
+ * What a shelf row knows of an Artifact's newest version without opening it: a document is text,
+ * a file is its output's name, type and size. A row draws the type from this, so it never needs
+ * the detail to say "PDF" or "Word".
+ */
+export const ArtifactHolds = Schema.TaggedUnion({
+  Document: {},
+  File: { output: ArtifactFile },
+})
+export type ArtifactHolds = typeof ArtifactHolds.Type
+
+/** One Artifact on the Person's shelf: the Artifact, its newest holds and the Thread it is from. */
+export const ShelvedArtifact = Schema.Struct({
+  artifact: Artifact,
+  holds: ArtifactHolds,
+  /** The Thread's title as its list shows it, so a row can say where it was made. */
+  threadTitle: Schema.String,
+})
+export interface ShelvedArtifact extends Schema.Schema.Type<typeof ShelvedArtifact> {}
+
+/** Every Artifact made in a Thread the Person can read in this workspace, newest first. */
+export const ArtifactShelfResponse = Schema.Struct({ artifacts: Schema.Array(ShelvedArtifact) })
 export const ArtifactResponse = Schema.Struct({ artifact: Artifact })
 
 /** Opening an Artifact, at its newest version or at one named by number. */

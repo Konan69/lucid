@@ -8,7 +8,10 @@ import {
   ArtifactContent,
   ArtifactSource,
   ArtifactPreview,
+  ArtifactHolds,
+  Company,
   SessionId,
+  Workspace,
   ArtifactChanged,
   ReadDocumentOutcome,
   CompanyId,
@@ -18,7 +21,7 @@ import {
   RunId,
   ThreadId,
 } from '@vivid/contracts'
-import { Clock, Context, Effect, Layer, Ref, Result, Schema, Stream } from 'effect'
+import { Clock, Context, Effect, Layer, Option, Ref, Result, Schema, Stream } from 'effect'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
 import { personTable, sessionTable } from '../auth/tables.ts'
@@ -361,6 +364,56 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
           )
           expect(fileResponse.headers.get('content-disposition')).toContain('attachment;')
+        }),
+    )
+
+    it.effect(
+      'shelves a document for whoever can reach its Thread in that workspace and announces the shelf',
+      () =>
+        Effect.gen(function* () {
+          const { database, person, member, threadId, companyId } = yield* fixture()
+          const store = yield* ArtifactStore
+          const company = Company.make({ id: companyId, name: 'Test Company', slug: 'test' })
+          const inCompany = (who: Person) => ({
+            person: who,
+            workspace: Workspace.cases.Company.make({ company, role: 'member' }),
+            by: 'person' as const,
+            threadId: Option.none<ThreadId>(),
+            helper: Option.none<RunId>(),
+          })
+          yield* Ref.set(yield* Published, [])
+          const written = yield* store.write(person.id, threadId, {
+            toolCallId: documentCall,
+            title: 'Shelved plan',
+            body: '# Plan',
+          })
+          expect(yield* Ref.get(yield* Published)).toEqual([
+            Topic.thread(threadId),
+            Topic.part('artifacts')(Topic.person(person.id)),
+            Topic.part('artifacts')(Topic.company(companyId)),
+          ])
+          const shelved = yield* store.shelf(inCompany(person))
+          expect(shelved).toHaveLength(1)
+          expect(shelved[0]).toMatchObject({
+            artifact: { id: written.artifact.id, title: 'Shelved plan', version: 1 },
+            holds: ArtifactHolds.cases.Document.make({}),
+            threadTitle: 'Documents',
+          })
+          // A private Thread's Artifacts are its creator's, whatever the Company.
+          expect(yield* store.shelf(inCompany(member))).toEqual([])
+          // The creator's personal space is another workspace: the Company Thread is not there.
+          expect(
+            yield* store.shelf({
+              ...inCompany(person),
+              workspace: Workspace.cases.Personal.make({}),
+            }),
+          ).toEqual([])
+          yield* database.run(
+            database.update(threads).set({ audience: 'company' }).where(eq(threads.id, threadId)),
+          )
+          expect((yield* store.shelf(inCompany(member))).map((entry) => entry.artifact.id)).toEqual(
+            [written.artifact.id],
+          )
         }),
     )
 

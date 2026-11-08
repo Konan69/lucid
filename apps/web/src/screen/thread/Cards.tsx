@@ -6,6 +6,7 @@ import {
   ConnectionAuthorizationMessage,
   ConnectionRequestMessage,
   type AccountName,
+  type ArtifactReference,
   type Connection,
   HandoffId,
   type HandoffRequest,
@@ -19,6 +20,7 @@ import {
   access,
   answered,
   answering,
+  artifacts,
   Awaited,
   awaitedOf,
   awaitedWords,
@@ -84,6 +86,8 @@ export type CardRequest =
   | { readonly kind: 'approval'; readonly id: ApprovalId }
   | { readonly kind: 'input'; readonly id: InputRequestId }
   | { readonly kind: 'handoff'; readonly id: HandoffId }
+  /** A file or document Vivid delivered (`write_document`, `publish_file`). */
+  | { readonly kind: 'artifact'; readonly artifact: typeof ArtifactReference.Type }
   | {
       readonly kind: 'connection'
       readonly request: ConnectionRequestMessage
@@ -104,6 +108,8 @@ export function cardFor(
   if (Option.isSome(input)) return Option.some({ kind: 'input', id: input.value.requestId })
   const handoff = decodeHandoff(output)
   if (Option.isSome(handoff)) return Option.some({ kind: 'handoff', id: handoff.value.handoffId })
+  const artifact = artifacts.deliveredArtifact(output)
+  if (Option.isSome(artifact)) return Option.some({ kind: 'artifact', artifact: artifact.value })
   return Option.map(decodeConnectionRequest(output), (request) => ({
     kind: 'connection',
     request,

@@ -28,12 +28,14 @@ import { LiveTally, type Moved } from './tally.ts'
  * - `feed`: stages and posted cards in every readable Thread the Person owns. Thread creation,
  *   rename, sharing and removal already announce the whole owner through `audienceTopics`,
  *   which reaches Feed subscribers too; stage-only writes announce this part explicitly.
+ * - `artifacts`: an Artifact made, revised or removed in a Thread the owner can read, for the
+ *   Library's shelf of them. The Thread's own topic still carries the Thread's own readers.
  *
  * These three are the writes one conversation turn makes. On 12 Oct 2026 production counted one
  * turn reloading each of a Person's twenty open queries three times, and their session twenty
  * times each, for three queries that had anything new to send.
  */
-export const Part = Schema.Literals(['activity', 'notifications', 'drafts', 'feed'])
+export const Part = Schema.Literals(['activity', 'notifications', 'drafts', 'feed', 'artifacts'])
 export type Part = typeof Part.Type
 
 type Owner = `p:${string}` | `c:${string}` | `t:${string}`
