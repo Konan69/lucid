@@ -44,6 +44,7 @@ import {
   handoffById,
   requestById,
 } from './Cards'
+import { ArtifactCard } from '../artifact/Card'
 import { Handed } from './Handoff'
 import { Asked } from './Question'
 import { Replies } from './Replies'
@@ -532,6 +533,8 @@ function ToolCards({
           <Handed key={tool.toolCallId} handoff={handoff.value} me={context.me} />
         )
       }
+      case 'artifact':
+        return <ArtifactCard key={tool.toolCallId} delivered={wanted.artifact} />
     }
   })
 }
