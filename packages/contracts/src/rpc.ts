@@ -16,6 +16,7 @@ import {
   WaitShellRequest,
   ComputerHealth,
   ComputerRecoveryOutcome,
+  ComputerRecoveryRecord,
   GetComputerHealthRequest,
   RecoverComputerRequest,
 } from './computers.js'
@@ -227,6 +228,7 @@ import {
   MemoryListing,
   MemoryPage,
   SavedMemory,
+  MemoryExport,
 } from './memory.js'
 import {
   NotificationListResponse,
@@ -1096,6 +1098,8 @@ const ForgetMemory = Rpc.make('ForgetMemory', {
   success: MemoryForgetReceipt,
   error: Schema.Union([RpcFailure, MemoryForgetStale]),
 })
+/** Everything the acting Person's memory holds, whole, for them to download from Settings. */
+const ExportMemory = Rpc.make('ExportMemory', { ...call, success: MemoryExport })
 /** One forget's receipt, live: Settings shows Pending until Vivid's background Run settles. */
 const WatchMemoryForget = Rpc.make('WatchMemoryForget', {
   ...live,
@@ -1144,6 +1148,11 @@ const RecoverComputer = Rpc.make('RecoverComputer', {
   ...call,
   payload: RecoverComputerRequest,
   success: ComputerRecoveryOutcome,
+})
+/** The newest recovery step on the acting Person's Computer, for its health panel. */
+const GetComputerRecovery = Rpc.make('GetComputerRecovery', {
+  ...call,
+  success: ComputerRecoveryRecord,
 })
 const GetComputer = Rpc.make('GetComputer', { ...call, success: ComputerResponse })
 const GetComputerApps = Rpc.make('GetComputerApps', { ...call, success: ComputerInventory })
@@ -1460,6 +1469,7 @@ export const VividRpc = RpcGroup.make(
   PlanMemoryForget,
   ForgetMemory,
   WatchMemoryForget,
+  ExportMemory,
   ListSkills,
   WatchSkills,
   ListSkillSummaries,
@@ -1470,6 +1480,7 @@ export const VividRpc = RpcGroup.make(
   GetCapabilities,
   GetComputerHealth,
   RecoverComputer,
+  GetComputerRecovery,
   GetComputer,
   GetEgress,
   WatchEgress,

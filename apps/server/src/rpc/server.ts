@@ -39,40 +39,45 @@ import { requestProtocolLayer } from './requests.ts'
 import { liveProtocolLayer } from './link.ts'
 
 /**
- * Every product call, implemented once. `VividRpc.toLayer` is total over the contract: a call
- * declared in `packages/contracts/src/rpc.ts` with no handler here does not compile.
+ * Every product call, implemented once. The handlers are total over the contract: a call declared
+ * in `packages/contracts/src/rpc.ts` with no handler here leaves `rpcServerLayer` a requirement it
+ * cannot meet, and does not compile.
  */
-export const rpcHandlersLayer = VividRpc.toLayer({
-  ...artifactHandlers,
-  ...channelHandlers,
-  ...companyHandlers,
-  ...codeHandlers,
-  ...settingsHandlers,
-  ...buildHandlers,
-  ...appearanceHandlers,
-  ...threadHandlers,
-  ...childHandlers,
-  ...approvalHandlers,
-  ...actionHandlers,
-  ...inputHandlers,
-  ...ruleHandlers,
-  ...auditHandlers,
-  ...notificationHandlers,
-  ...pushHandlers,
-  ...projectHandlers,
-  ...owedHandlers,
-  ...todoHandlers,
-  ...libraryHandlers,
-  ...connectionHandlers,
-  ...draftHandlers,
-  ...memoryHandlers,
-  ...skillHandlers,
-  ...computerHandlers,
-  ...searchHandlers,
-  ...watchHandlers,
-  ...feedHandlers,
-  ...dreamHandlers,
-}).pipe(Layer.provide(Layer.mergeAll(draftStoreLayer, feedStoreLayer, actionLookupLayer)))
+export const rpcHandlersLayer = Layer.mergeAll(
+  // The whole group in one `toLayer` passed TypeScript's instantiation depth (TS2589) at 193
+  // calls, so the Dreamer's call is provided on its own; the two together are still total.
+  VividRpc.omit('Dream').toLayer({
+    ...artifactHandlers,
+    ...channelHandlers,
+    ...companyHandlers,
+    ...codeHandlers,
+    ...settingsHandlers,
+    ...buildHandlers,
+    ...appearanceHandlers,
+    ...threadHandlers,
+    ...childHandlers,
+    ...approvalHandlers,
+    ...actionHandlers,
+    ...inputHandlers,
+    ...ruleHandlers,
+    ...auditHandlers,
+    ...notificationHandlers,
+    ...pushHandlers,
+    ...projectHandlers,
+    ...owedHandlers,
+    ...todoHandlers,
+    ...libraryHandlers,
+    ...connectionHandlers,
+    ...draftHandlers,
+    ...memoryHandlers,
+    ...skillHandlers,
+    ...computerHandlers,
+    ...searchHandlers,
+    ...watchHandlers,
+    ...feedHandlers,
+  }),
+  VividRpc.toLayerHandler('Dream', dreamHandlers.Dream),
+).pipe(Layer.provide(Layer.mergeAll(draftStoreLayer, feedStoreLayer, actionLookupLayer)))
 
 /**
  * The live endpoint: one WebSocket per client, carrying every `Watch…` subscription and every

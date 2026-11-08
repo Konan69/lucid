@@ -17,7 +17,6 @@ import { useState, useSyncExternalStore, type ComponentProps } from 'react'
 import { AppState, StatusBar, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
-import type { ShowKey } from './data/connecting'
 import { door, patienceAtom, useDoor } from './data/door'
 import { Front, makeFront, type FrontStore } from './data/front'
 import {
@@ -40,7 +39,6 @@ import { Computer } from './screen/Computer'
 import { Door } from './screen/Door'
 import { Home } from './screen/Home'
 import { Account, NameAccount } from './screen/integration/Account'
-import { Key } from './screen/integration/Key'
 import { FlowProvider } from './screen/integration/Provider'
 import { Panel } from './screen/home/Panel'
 import { Folder, Library } from './screen/Library'
@@ -420,8 +418,7 @@ const drawerPage = (stands: boolean, own: boolean): NativeStackNavigationOptions
  *
  * The integration flow is held around the navigator (`FlowProvider`), once for the shell: the
  * Integrations page, the two bottom sheets and the card in a Thread all begin and finish an
- * account through it. It is outside the navigator, so it is handed the way to open the one
- * route it needs, the key form (`showKey`), through this container's own ref.
+ * account through it; a key is typed inside the card or account that asked for it.
  */
 function Shell() {
   const { colors: c, dark } = useTheme()
@@ -459,21 +456,9 @@ function Shell() {
       if (navigation.isReady()) navigation.dispatch(StackActions.popToTop())
     },
   )
-  /**
-   * Opens the key form over whatever is in front. A press comes from a screen, so the navigator
-   * is ready; were it not, the machine is told, and the press is said to have failed where it
-   * was made. It is made once for the shell, as the navigator's ref is: it is handed to the
-   * session's machine through a view's ref, which would be taken back and handed over again on
-   * every render if this were a new function each time.
-   */
-  const [showKey] = useState((): ShowKey => (asked) => {
-    if (!navigation.isReady()) return false
-    navigation.navigate('Key', asked)
-    return true
-  })
   return (
     <FrontProvider value={front}>
-      <FlowProvider onKey={showKey}>
+      <FlowProvider>
         <NavigationContainer
           ref={navigation}
           theme={navigationTheme(c, dark)}
@@ -532,7 +517,6 @@ function Shell() {
             {/* Bottom sheets as tall as what they hold; each undoes the stack's bar and cross-fade. */}
             <Stack.Screen name="Account" component={Account} options={FITTED_SHEET} />
             <Stack.Screen name="NameAccount" component={NameAccount} options={FITTED_SHEET} />
-            <Stack.Screen name="Key" component={Key} options={FITTED_SHEET} />
             <Stack.Screen name="Add" component={Add} options={FITTED_SHEET} />
           </Stack.Navigator>
         </NavigationContainer>

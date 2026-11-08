@@ -1,6 +1,6 @@
 import { type Connection, type ConnectionId, type SignInSurface } from '@vivid/contracts'
 import { connecting, signInPage, type LiveResult, type makeLive } from '@vivid/state'
-import { Effect, Layer, Option, Result, Stream } from 'effect'
+import { Effect, Equal, Layer, Option, Result, Stream } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
 import * as AtomRegistry from 'effect/reactivity/AtomRegistry'
@@ -25,8 +25,8 @@ import { launch } from './app'
  *   `LiveData.connecting`, and stopped when the session is disposed.
  * - There is no tab to open ahead of the answer and so nothing to be blocked: the provider's page
  *   is handed to the system's browser once the server has said where it is.
- * - The key form is a route on the stack. The navigator is only reachable from inside the shell,
- *   so the shell hands over the way to open it (`keyRoute`) and the machine's `KeyForm` calls it.
+ * - Nothing brings the key form up: like the web, the card or the account that wants a key draws
+ *   it from the machine's `Keying` state (`keyingFor`), inside itself (issue #126).
  * - The app leaves the front for the provider's page, so coming back is said to the machine
  *   (`returned`), which takes it only while a sign-in is away.
  */
@@ -39,25 +39,6 @@ import { launch } from './app'
  * back to the front is what the app listens for; the link itself carries nothing the app reads.
  */
 export const HERE: SignInSurface = 'Phone'
-
-/**
- * What the `Key` route is opened with: the attempt the form belongs to (its answer and its
- * closing say it back to the machine), the account, the service's name, and the fields it asks
- * for.
- */
-export interface KeyRoute {
-  readonly attempt: connecting.AttemptId
-  readonly id: ConnectionId
-  readonly name: string
-  readonly fields: connecting.KeyAsked['fields']
-}
-
-/**
- * Opens the form for a service that takes a key (the `Key` route), and answers whether it could.
- * The shell hands it over, because the machine is held outside the navigator, which is what lets
- * a card, a page and a sheet share it.
- */
-export type ShowKey = (asked: KeyRoute) => boolean
 
 /** What a card is owed when its attempt ends in an account: its Thread is carried on. */
 export type CarryOn = (connection: Connection) => void
@@ -88,6 +69,17 @@ export const standingForCard = (now: Attempt, card: string): connecting.Standing
  * Whether nothing can be pressed: the server is being waited on, or there is no machine to take
  * a press. Every button that begins or picks up an account is disabled by this.
  */
+/**
+ * The key the attempt is waiting for, for whoever made it to draw: a card by the tool call it
+ * stands for, the Integrations page with none. The web reads the same (`keyingFor`,
+ * `apps/web/src/data/connecting.ts`).
+ */
+export const keyingFor = (now: Attempt, card: Option.Option<string>) =>
+  Option.filter(
+    Option.flatMap(now, (state) => connecting.ConnectingStates.get(state, 'Keying')),
+    (keying) => Equal.equals(keying.attempt.card, card),
+  )
+
 export const waitingOn = (now: Attempt): boolean =>
   Option.match(now, { onNone: () => true, onSome: connecting.isWaiting })
 
@@ -259,23 +251,11 @@ function owing() {
 export function makeConnecting(session: Session) {
   const { registry } = session.engine
 
-  /** The way to open the `Key` route, while a shell is mounted to hand it over. */
-  let route: Option.Option<ShowKey> = Option.none()
-
   /**
-   * Opens the `Key` route over whatever is in front. A press comes from a screen, so a shell is
-   * mounted and its navigator ready; were it ever not, the machine is told (`FormRefused`) and
-   * ends the attempt as refused, so the row or card that was pressed says the press did not
-   * start. The machine would otherwise wait in `Keying` on a form nobody can see.
+   * The key form needs nothing brought up: the card or account that asked draws it from the
+   * machine's own `Keying` state (`keyingFor`), so showing it cannot fail.
    */
-  const keyForm = Layer.succeed(connecting.KeyForm, {
-    show: ({ attempt: of, id, serviceName, fields }) =>
-      Effect.suspend(() =>
-        Option.exists(route, (open) => open({ attempt: of, id, name: serviceName, fields }))
-          ? Effect.void
-          : Effect.fail(new connecting.FormRefused()),
-      ),
-  })
+  const keyForm = Layer.succeed(connecting.KeyForm, { show: () => Effect.void })
 
   /** The session's one machine. */
   const machine = connecting.makeConnecting(Layer.merge(reaching(session), keyForm))
@@ -372,19 +352,17 @@ export function makeConnecting(session: Session) {
     },
 
     /**
-     * One opening of the key form, for the attempt that asked for it, and how its one ending is
+     * One showing of the key form, for the attempt that asked for it, and how its one ending is
      * said to the machine.
      *
-     * The sheet ends one of two ways, and the form is what knows which: the server answered its
-     * call with the account (`answered`), or the sheet went without that (`closed`: a swipe, the
-     * way back, the shell going). `closed` is heard as the sheet's view leaving, which also
-     * happens after `answered` has closed the sheet; an ending is said once, so that leaving
-     * says nothing more. Each names the attempt the sheet was opened for, and the machine
-     * declines both for any other, so a sheet left from an attempt that was replaced ends
+     * The form ends one of two ways, and the form is what knows which: the server answered its
+     * call with the account (`answered`), or the Person sent it away (`closed`, its Cancel). An
+     * ending is said once. Each names the attempt the form was shown for, and the machine
+     * declines both for any other, so a form left from an attempt that was replaced ends
      * nothing.
      *
-     * `answered` says whether it was this sheet's ending. An answer that arrives after the sheet
-     * was closed is not: the attempt is already over, and there is no sheet to close.
+     * `answered` says whether it was this form's ending. An answer that arrives after the form
+     * was sent away is not: the attempt is already over.
      */
     keySheet: (of: connecting.AttemptId) => {
       let ended = false
@@ -426,20 +404,6 @@ export function makeConnecting(session: Session) {
           (connected) => connected.connection.id === id,
         ),
       ),
-
-    /**
-     * Hands over the way to open the key form, for as long as a shell is mounted: it answers
-     * with what to call when the shell's view is mounted, which answers with what takes it back
-     * when the view goes (the shape of a ref's cleanup, `Provider.tsx`). One shell is built for
-     * each workspace, so the machine never opens a route on a navigator that is gone.
-     */
-    keyRoute: (show: ShowKey) => () => {
-      route = Option.some(show)
-      return () => {
-        // A newer shell may already have handed its own over; only this one's is taken back.
-        if (Option.exists(route, (held) => held === show)) route = Option.none()
-      }
-    },
 
     /** The session is being disposed: stop listening. The registry ends the machine itself. */
     stop: () => {
