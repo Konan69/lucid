@@ -1047,10 +1047,12 @@ describe.skipIf(!testDatabaseConfigured)(
                 Layer.fresh(codeCallsLayer),
               ).pipe(Effect.provideService(ConnectionStore, changing))
               expect(CodeOutcome.guards.Completed(outcome)).toBe(true)
-              expect(outcome).toHaveProperty('result', {
-                ok: false,
-                reason: 'This display runs automatically. Use a button to make changes.',
-                problems: [],
+              expect(outcome).toMatchObject({
+                result: {
+                  ok: false,
+                  reason: 'This display runs automatically. Use a button to make changes.',
+                  problems: [],
+                },
               })
               expect(yield* Ref.get((yield* ConnectionProbe).calls)).toBe(0)
               expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toEqual([])
@@ -1312,13 +1314,15 @@ describe.skipIf(!testDatabaseConfigured)(
                 ),
                 Layer.fresh(codeCallsLayer),
               ).pipe(Effect.provideService(Executor, provider))
-              expect(outcome).toHaveProperty('result', {
-                first: {
-                  ok: false,
-                  reason: 'Correct the input',
-                  problems: ['repoName: required'],
+              expect(outcome).toMatchObject({
+                result: {
+                  first: {
+                    ok: false,
+                    reason: 'Correct the input',
+                    problems: ['repoName: required'],
+                  },
+                  next: { ok: true, output: { corrected: true } },
                 },
-                next: { ok: true, output: { corrected: true } },
               })
               expect(outcome.calls.map((call) => call.end)).toEqual(['refused', 'completed'])
             }),

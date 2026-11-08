@@ -158,3 +158,6 @@ export const unusedMemory: Memory['Service'] = Memory.of({
   write: () => Effect.die('Unexpected entry write'),
   delete: () => Effect.die('Unexpected entry delete'),
 })
+
+export { toolOutcome } from '../outcomes.ts'
+export { boundIntegrationOutput } from '../result.ts'
