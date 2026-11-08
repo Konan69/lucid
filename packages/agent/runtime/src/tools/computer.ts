@@ -1,3 +1,4 @@
+import { shellTools } from './shell.ts'
 import { defineTool as durableTool } from '@earendil-works/pi-durable'
 import { executeCall, executionResult, toolResult } from './tool.ts'
 import { Type } from '@earendil-works/pi-ai'
@@ -264,7 +265,11 @@ export function desktopModelTool(runTool: RunTool) {
 
 /** The core registers these tools directly; Computer authority still belongs to the server. */
 export function computerTools(runTool: RunTool, run: RunScoped) {
-  return [...machineTools(computerSandbox(run, COMPUTER_HOME)), ...pictureTools(runTool)]
+  return [
+    ...machineTools(computerSandbox(run, COMPUTER_HOME)),
+    ...pictureTools(runTool),
+    ...shellTools(runTool),
+  ]
 }
 
 /** The tools whose results carry a picture. */

@@ -1,3 +1,4 @@
+import { ShellHandle } from './identity.js'
 import { Schema } from 'effect'
 import { Approval } from './approvals.js'
 import {
@@ -411,6 +412,7 @@ export type ApprovalOutcome = typeof ApprovalOutcome.Type
  * - `Answer`: a Person's answer to an Input request, with its questions in `body`.
  * - `Watch`: one event a Watch received. `data` is the event as the Integration sent it, whole;
  *   `occurredAt` is the Integration's own timestamp text, kept as sent.
+ * - `Shell`: a background Computer command finished; the handle identifies its receipt.
  * - `CarryOn`: a card telling Vivid to go on (`CarryOnRequest`); no client draws it.
  * - `Handoff`: the Person finished a step Vivid handed them on its Computer, named by its handoff.
  * - `Forget`: a Settings Forget press, with the instruction to plan and carry it out in `body`.
@@ -427,6 +429,7 @@ export const SignalCue = Schema.TaggedUnion({
     instruction: WatchInstruction,
     data: Schema.Json,
   },
+  Shell: { body: Schema.String, handle: ShellHandle },
   CarryOn: { body: Schema.String },
   Handoff: { body: Schema.String, handoff: HandoffId },
   Forget: { body: Schema.String },
@@ -440,6 +443,8 @@ export const signalTypes = {
   Approval: 'approval',
   Answer: 'answer',
   Watch: 'event',
+  // Completion wakes are internal continuations; clients already hide this signal type.
+  Shell: 'carry-on',
   CarryOn: 'carry-on',
   Handoff: 'handoff',
   Forget: 'forget',
