@@ -1,5 +1,5 @@
 import type { ThreadId } from '@vivid/contracts'
-import { owed, thisReader } from '@vivid/state'
+import { owed } from '@vivid/state'
 import { Check, Ellipsis } from 'lucide-react'
 import { Option } from 'effect'
 import type { CSSProperties, ReactNode } from 'react'
@@ -21,8 +21,6 @@ import {
   DropdownMenuTrigger,
 } from '../../ui/dropdownmenu'
 
-const words = owed.makeOwedWords(thisReader())
-
 /**
  * What the Person is waiting on: one row per record Vivid keeps, soonest due first, the Feed's
  * first section (docs/23, "It chases what I am waiting on"). The direction chosen on 27 October
@@ -35,15 +33,19 @@ const words = owed.makeOwedWords(thisReader())
  * A row a press has closed folds away where it stood (`motion-fold`) until the list drops it.
  */
 export function Owed({
-  waiting,
+  owing,
   now,
   onOpen,
 }: {
-  waiting: ReadonlyArray<owed.Waiting>
+  /** The records and their words, on the Person's own calendar (`owed.owingOf`). */
+  owing: Option.Option<owed.Owing>
   now: number
   onOpen: (thread: ThreadId) => void
 }) {
   const standings = useStandings()
+  const shown = Option.filter(owing, ({ records }) => records.length > 0)
+  if (Option.isNone(shown)) return null
+  const { records: waiting, said: words } = shown.value
   return (
     // The rows' fill runs past the page's text edge, so their words line up with the head's.
     <section aria-labelledby="owed-heading" className="-mx-4">
@@ -72,6 +74,7 @@ export function Owed({
               Option.fromUndefinedOr(standings.get(record.id)),
               (): owed.Standing => 'shown',
             )}
+            words={words}
             now={now}
             onOpen={() => onOpen(record.threadId)}
           />
@@ -89,11 +92,13 @@ export function Owed({
 function Row({
   record,
   standing,
+  words,
   now,
   onOpen,
 }: {
   record: owed.Waiting
   standing: owed.Standing
+  words: owed.OwedWords
   now: number
   onOpen: () => void
 }) {

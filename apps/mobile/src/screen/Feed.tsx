@@ -26,7 +26,6 @@ import { useGo, useOpenThread } from '../workspace'
 import { useStart } from './Home'
 
 const when = makeWhen(thisReader())
-const owedWords = owed.makeOwedWords(thisReader())
 const todoWords = todos.makeTodoWords(thisReader())
 
 /** Today as the head of the page says it: "Tuesday 20 October". */
@@ -66,7 +65,7 @@ const ANSWER = { height: 40, radius: 12 } as const
  */
 type Row = Data.TaggedEnum<{
   Caption: { readonly words: string }
-  Owed: { readonly record: owed.Waiting }
+  Owed: { readonly record: owed.Waiting; readonly said: owed.OwedWords }
   Todo: { readonly todo: todos.Open }
   Computer: { readonly waiting: DeviceWaiting }
   Waiting: { readonly item: feed.Waiting }
@@ -97,10 +96,10 @@ export function Feed() {
   const pleased = usePleased((now) => now.pleased)
   const presses = usePresses((held) => held.presses)
   const standings = useStandings()
-  const records = Option.match(useLiveValue(data.live.owed), {
-    onNone: () => [],
-    onSome: (list) => owed.waitingOf(list.owed),
-  })
+  const owing = owed.owingOf(
+    useLiveValue(data.live.owed),
+    Option.map(useLiveValue(data.live.settings), (settings) => settings.timezone),
+  )
   const toDo = Option.match(useLiveValue(data.live.todos), {
     onNone: () => [],
     onSome: (list) => todos.openOf(list.todos),
@@ -116,8 +115,11 @@ export function Feed() {
   // A card a press has folded no longer waits on the Person, so it leaves the count with it.
   const standing = feed.standingOf(Option.toArray(view.computer).length + shown.length)
   // A record a press has closed is no longer owed, so it leaves the head's sentence with it.
-  const open = records.filter((record) => standings.get(record.id) !== 'folded')
-  const rows = rowsOf(view, records, toDo)
+  const open = Option.match(owing, {
+    onNone: () => [],
+    onSome: ({ records }) => records.filter((record) => standings.get(record.id) !== 'folded'),
+  })
+  const rows = rowsOf(view, owing, toDo)
 
   // One function for the list's life: FlatList refuses a viewability callback that changes. The
   // session's data does not change while this screen is up, so the first one serves.
@@ -137,7 +139,7 @@ export function Feed() {
   const head = (
     <Head
       date={date}
-      head={owed.headOf(open, owedWords.timing, now)}
+      head={Option.flatMap(owing, ({ said }) => owed.headOf(open, said.timing, now))}
       mood={LOOK[feed.feedFace(view, pleased)]}
       standing={standing}
     />
@@ -167,9 +169,10 @@ export function Feed() {
         renderItem={({ item: row }) =>
           Row.$match(row, {
             Caption: ({ words }) => <Caption words={words} />,
-            Owed: ({ record }) => (
+            Owed: ({ record, said }) => (
               <OwedRow
                 record={record}
+                words={said}
                 standing={Option.getOrElse(
                   Option.fromUndefinedOr(standings.get(record.id)),
                   (): owed.Standing => 'shown',
@@ -227,11 +230,19 @@ export function Feed() {
  */
 const rowsOf = (
   view: feed.FeedView,
-  records: ReadonlyArray<owed.Waiting>,
+  owing: Option.Option<owed.Owing>,
   toDo: ReadonlyArray<todos.Open>,
 ): ReadonlyArray<Row> => [
-  ...(records.length > 0 ? [Row.Caption({ words: 'Waiting on' })] : []),
-  ...records.map((record) => Row.Owed({ record })),
+  ...Option.match(
+    Option.filter(owing, ({ records }) => records.length > 0),
+    {
+      onNone: () => [],
+      onSome: ({ records, said }) => [
+        Row.Caption({ words: 'Waiting on' }),
+        ...records.map((record) => Row.Owed({ record, said })),
+      ],
+    },
+  ),
   ...(toDo.length > 0 ? [Row.Caption({ words: 'To do' })] : []),
   ...toDo.map((todo) => Row.Todo({ todo })),
   ...(Option.isSome(view.computer) || view.waiting.length > 0
@@ -354,12 +365,15 @@ const EMPTY = 'When someone promises you something, tell Vivid. It keeps track a
  */
 function OwedRow({
   record,
+  words,
   standing,
   now,
   onClose,
   onOpen,
 }: {
   record: owed.Waiting
+  /** The row's words, on the Person's own calendar (`owed.owedWordsIn`). */
+  words: owed.OwedWords
   standing: owed.Standing
   now: number
   onClose: (closing: owed.Closing) => void
@@ -367,7 +381,7 @@ function OwedRow({
 }) {
   const { colors: c } = useTheme()
   const folded = standing === 'folded'
-  const timing = owedWords.timing(record, now)
+  const timing = words.timing(record, now)
   return (
     <Animated.View
       pointerEvents={folded ? 'none' : 'auto'}
@@ -422,7 +436,7 @@ function OwedRow({
             </Label>
             <Track record={record} now={now} />
             <Label size="label" tone="ink-3" numberOfLines={2}>
-              {owedWords.detail(record, now)}
+              {words.detail(record, now)}
             </Label>
           </View>
         )}

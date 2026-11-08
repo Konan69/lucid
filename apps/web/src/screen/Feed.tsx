@@ -25,7 +25,6 @@ import { Computer } from './thread/Device'
 import { Composer } from './thread/Composer'
 
 const when = makeWhen(thisReader())
-const said = owed.makeOwedWords(thisReader())
 
 /** Today as the head of the page says it: "Tuesday 20 October". */
 const today = new Intl.DateTimeFormat(thisReader().locale, {
@@ -54,16 +53,15 @@ export function Feed({ me, onOpen }: { me: MeResponse; onOpen: (thread: ThreadId
   const state = useLive(live.feed)
   const items = LiveState.$is('Ready')(state) ? state.value.items : []
   const devices = useLiveValue(live.devices)
-  const owedList = useLiveValue(live.owed)
   const todoList = useLiveValue(live.todos)
   return (
     <FeedView
       me={me}
       items={items}
-      waiting={Option.match(owedList, {
-        onNone: () => [],
-        onSome: (list) => owed.waitingOf(list.owed),
-      })}
+      owing={owed.owingOf(
+        useLiveValue(live.owed),
+        Option.map(useLiveValue(live.settings), (settings) => settings.timezone),
+      )}
       toDo={Option.match(todoList, {
         onNone: () => [],
         onSome: (list) => todos.openOf(list.todos),
@@ -78,14 +76,14 @@ export function Feed({ me, onOpen }: { me: MeResponse; onOpen: (thread: ThreadId
 export function FeedView({
   me,
   items,
-  waiting,
+  owing,
   toDo,
   devices,
   onOpen,
 }: {
   me: MeResponse
   items: (typeof FeedResponse.Type)['items']
-  waiting: ReadonlyArray<owed.Waiting>
+  owing: Option.Option<owed.Owing>
   toDo: ReadonlyArray<todos.Open>
   devices: Option.Option<DeviceList>
   onOpen: (thread: ThreadId) => void
@@ -100,13 +98,16 @@ export function FeedView({
   const presses = usePresses((held) => held.presses)
   // A record a press has closed is no longer owed, so it leaves the head's sentence with it.
   const standings = useStandings()
-  const open = waiting.filter((record) => standings.get(record.id) !== 'folded')
+  const open = Option.match(owing, {
+    onNone: () => [],
+    onSome: ({ records }) => records.filter((record) => standings.get(record.id) !== 'folded'),
+  })
   const needs =
     Option.toArray(view.computer).length +
     view.waiting.filter((item) => !feed.folds(item, Option.fromUndefinedOr(presses.get(item.card))))
       .length
   const standing = feed.standingOf(needs)
-  const head = owed.headOf(open, said.timing, now)
+  const head = Option.flatMap(owing, ({ said }) => owed.headOf(open, said.timing, now))
   const place = draftPlace(me.person.id, {
     workspace: workspaceKey(me.workspace),
     thread: Option.none(),
@@ -138,7 +139,7 @@ export function FeedView({
         </div>
 
         <div className="mt-8 flex min-w-0 flex-col gap-8 lg:col-span-3">
-          {waiting.length > 0 && <Owed waiting={waiting} now={now} onOpen={onOpen} />}
+          <Owed owing={owing} now={now} onOpen={onOpen} />
           {toDo.length > 0 && <Todos open={toDo} now={now} onOpen={onOpen} />}
           {(Option.isSome(view.computer) || view.waiting.length > 0) && (
             <section aria-labelledby="needs-heading" className="flex flex-col">
