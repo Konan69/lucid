@@ -1,8 +1,9 @@
 import * as Effect from 'effect/Effect'
 import {
   DreamPass,
+  DreamRequest,
+  DreamResponse,
   Forbidden,
-  OpenDreamResponse,
   SignalCue,
   type OpenDreamRequest,
   type PersonId,
@@ -55,42 +56,50 @@ const dreamOf = Effect.fn('Dreams.dreamOf')(function* (threadId: ThreadId, perso
   return thread
 })
 
+/**
+ * The Person's cell opening the Background Thread one Dreamer run reads in, as Vivid acting for
+ * them from their latest Thread: the same Person and workspace, so the Integrations it reads are
+ * the ones they connected there. Asking again opens the same Thread.
+ */
+const open = Effect.fn('Dreams.open')(function* (request: OpenDreamRequest) {
+  const auth = yield* requireVivid()
+  const thread = yield* (yield* ThreadStore).ensureBackground({
+    id: dreamThread(auth.person.id, request.key),
+    title: TITLES[request.pass],
+    titleSource: 'Assigned',
+    personId: auth.person.id,
+    companyId: companyColumnOf(auth.workspace),
+  })
+  return DreamResponse.cases.Opened.make({ threadId: thread.id })
+})
+
+/**
+ * A Dreamer finding, from the dream's own Thread, woken in that Thread the way a Watch event is
+ * (`watches/receiver.ts` `wake`). One finding per dream: a repeated report lands on the first
+ * delivery's receipt.
+ */
+const report = Effect.fn('Dreams.report')(function* (request: ReportDreamRequest) {
+  const auth = yield* requireVivid()
+  const thread = yield* dreamOf(auth.threadId, auth.person.id)
+  yield* (yield* Conversation).deliver({
+    // The Dreamer works for the Person, so its finding is delivered as theirs, like a Watch.
+    speaker: DeliverySpeaker.cases.Acting.make({}),
+    threadId: thread.id,
+    personId: auth.person.id,
+    message: DeliveryMessage.cases.Signal.make({
+      cue: SignalCue.cases.Dream.make({ body: findingInstruction(request), pass: request.pass }),
+    }),
+    origin: StoredRunOrigin.cases.Dream.make({ pass: request.pass }),
+    idempotencyKey: `dream:${thread.id}`,
+  })
+  yield* (yield* Changes).publish([Topic.person(auth.person.id)])
+  return DreamResponse.cases.Reported.make({})
+})
+
 export const dreamHandlers = {
-  /**
-   * The Person's cell opening the Background Thread one Dreamer run reads in, as Vivid acting for
-   * them from their latest Thread: the same Person and workspace, so the Integrations it reads
-   * are the ones they connected there. Asking again opens the same Thread.
-   */
-  OpenDream: Effect.fn('Rpc.OpenDream')(function* (request: OpenDreamRequest) {
-    const auth = yield* requireVivid()
-    const thread = yield* (yield* ThreadStore).ensureBackground({
-      id: dreamThread(auth.person.id, request.key),
-      title: TITLES[request.pass],
-      titleSource: 'Assigned',
-      personId: auth.person.id,
-      companyId: companyColumnOf(auth.workspace),
-    })
-    return OpenDreamResponse.make({ threadId: thread.id })
-  }),
-  /**
-   * A Dreamer finding, from the dream's own Thread, woken in that Thread the way a Watch event is
-   * (`watches/receiver.ts` `wake`). One finding per dream: a repeated report lands on the first
-   * delivery's receipt.
-   */
-  ReportDream: Effect.fn('Rpc.ReportDream')(function* (request: ReportDreamRequest) {
-    const auth = yield* requireVivid()
-    const thread = yield* dreamOf(auth.threadId, auth.person.id)
-    yield* (yield* Conversation).deliver({
-      // The Dreamer works for the Person, so its finding is delivered as theirs, like a Watch.
-      speaker: DeliverySpeaker.cases.Acting.make({}),
-      threadId: thread.id,
-      personId: auth.person.id,
-      message: DeliveryMessage.cases.Signal.make({
-        cue: SignalCue.cases.Dream.make({ body: findingInstruction(request), pass: request.pass }),
-      }),
-      origin: StoredRunOrigin.cases.Dream.make({ pass: request.pass }),
-      idempotencyKey: `dream:${thread.id}`,
-    })
-    yield* (yield* Changes).publish([Topic.person(auth.person.id)])
+  /** One call, two cases (`DreamRequest`): open the run's Thread, or report its finding there. */
+  Dream: Effect.fn('Rpc.Dream')(function* (request: DreamRequest) {
+    if (DreamRequest.guards.Open(request)) return yield* open(request)
+    return yield* report(request)
   }),
 }

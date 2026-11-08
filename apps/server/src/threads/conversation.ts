@@ -20,16 +20,18 @@ import type { DatabaseInfrastructureError } from '../database/client.ts'
 
 /**
  * The cues a server producer makes itself: an Approval's outcome, an answer, a Watch's event, a
- * card's carry-on, a finished handoff, a Settings forget, a Dreamer finding.
+ * card's carry-on, a finished handoff, a Settings forget, a Dreamer finding, a helper's result.
  */
 export const ServerCue = Schema.Union([
   SignalCue.cases.Approval,
   SignalCue.cases.Answer,
   SignalCue.cases.Watch,
   SignalCue.cases.CarryOn,
+  SignalCue.cases.Shell,
   SignalCue.cases.Handoff,
   SignalCue.cases.Forget,
   SignalCue.cases.Dream,
+  SignalCue.cases.ChildResult,
 ])
 export type ServerCue = typeof ServerCue.Type
 
@@ -76,6 +78,8 @@ export const StoredRunOrigin = Schema.TaggedUnion({
   Forget: {},
   /** A Dreamer finding woke Vivid in the dream's background Thread (`dreams/handlers.ts`). */
   Dream: { pass: DreamPass },
+  /** A helper ended and its result came back to the Thread (`runs/store.ts`). */
+  ChildResult: { childRunId: RunId },
 })
 export type StoredRunOrigin = typeof StoredRunOrigin.Type
 

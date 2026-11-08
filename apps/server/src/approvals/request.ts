@@ -55,6 +55,7 @@ const signalOf = (message: Message) =>
  *   Approval does not record which request its action belonged to.
  * - `Watch`: not trusted: Vivid can create a Watch and write its instruction, and
  *   the event it carries is an outside app's text.
+ * - `ChildResult`: not trusted: a helper's answer is model text and may quote pages it read.
  */
 const spoken = (run: RequestRun, message: Message, answered: ReadonlySet<string>) => {
   const tag = signalOf(message)
@@ -68,6 +69,7 @@ const spoken = (run: RequestRun, message: Message, answered: ReadonlySet<string>
     Forget: () => false,
     // A finding is the Dreamer's research about the Person, never words they said.
     Dream: () => false,
+    ChildResult: () => false,
   })
 }
 

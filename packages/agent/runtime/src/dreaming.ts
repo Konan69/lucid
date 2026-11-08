@@ -19,6 +19,8 @@ import {
 } from '@earendil-works/pi-durable'
 import {
   DreamKey,
+  DreamRequest,
+  DreamResponse,
   type DreamPass,
   MemoryAuthority,
   MemoryCitation,
@@ -140,8 +142,8 @@ type Runtime = TaskRuntime<Input, Step, null, object>
 type At<P extends Step['phase']> = RunningTask<Input, Extract<Step, { phase: P }>, null>
 type Settled = SubmissionRecord & { readonly type: 'input' }
 
-/** The Dreamer run's definition name in Pi's registry. */
-const DREAMING_TASK = 'vivid.dreaming'
+/** The Dreamer run's definition name in Pi's registry; a forget stops live runs by it (`forget.ts`). */
+export const DREAMING_TASK = 'vivid.dreaming'
 
 /** The next 03:00 after `now` in `timezone`, and that night's local date. None for an unknown zone. */
 export function nextNight(now: number, timezone: string) {
@@ -289,9 +291,11 @@ const open = Effect.fn('Dreaming.open')(function* (
   const { input } = record
   const from = yield* decodeThread(input.from).pipe(Effect.mapError(() => new DreamingFailed()))
   const key = yield* decodeKey(input.key).pipe(Effect.mapError(() => new DreamingFailed()))
-  const opened = yield* asked(owner, { threadId: from, personId: owner.host }, (client) =>
-    client.OpenDream({ key, pass: input.pass }),
+  const answer = yield* asked(owner, { threadId: from, personId: owner.host }, (client) =>
+    client.Dream(DreamRequest.cases.Open.make({ key, pass: input.pass })),
   )
+  if (!DreamResponse.guards.Opened(answer)) return yield* new DreamingFailed()
+  const opened = answer
   yield* pi(() =>
     // @effect-diagnostics-next-line asyncFunction:off -- Pi owns the atomic child-creation callback.
     runtime.commit(async (tx) => {
@@ -373,7 +377,7 @@ const report = Effect.fn('Dreaming.report')(function* (
     const threadId = yield* decodeThread(thread).pipe(Effect.mapError(() => new DreamingFailed()))
     const finding = found.finding
     yield* asked(owner, { threadId, personId: owner.host }, (client) =>
-      client.ReportDream({ pass: record.input.pass, finding }),
+      client.Dream(DreamRequest.cases.Report.make({ pass: record.input.pass, finding })),
     )
   }
   yield* pi(() =>

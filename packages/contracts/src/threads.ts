@@ -1,3 +1,4 @@
+import { ShellHandle } from './identity.js'
 import { Schema } from 'effect'
 import { Approval } from './approvals.js'
 import {
@@ -11,6 +12,7 @@ import {
 } from './identity.js'
 import { DreamPass } from './dreams.js'
 import { HandoffRequest, InputRequest } from './inputs.js'
+import { ChildRun, RunFailure } from './runs.js'
 import { WatchId, WatchInstruction, WatchName } from './watches.js'
 
 /** The image formats accepted by the conversation gateway and served inline to every client. */
@@ -223,32 +225,10 @@ export const RunOrigin = Schema.TaggedUnion({
   Forget: { person: PersonSummary },
   /** The Dreamer found something useful and new, or a blocker, overnight or after a conversation. */
   Dream: { person: PersonSummary, pass: DreamPass },
+  /** A helper this Thread's Vivid started finished, and its result came back (`runs.ts`). */
+  ChildResult: { person: PersonSummary },
 })
 export type RunOrigin = typeof RunOrigin.Type
-
-/**
- * Why a Run failed, in the terms a Person would act on. Waiting helps with `RateLimited`; trying
- * again helps with `TimedOut` and `NoAnswer` (the model returned nothing at all); `ModelUnavailable`
- * needs whoever runs this Vivid. `Unexplained` is the honest remainder: the runtime reported a
- * failure Vivid has no name for, and it is never used to hide one of the others.
- */
-export const RunFailure = Schema.Literals([
-  'Delivery',
-  'RateLimited',
-  'ModelUnavailable',
-  'NoAnswer',
-  'TimedOut',
-  'Unexplained',
-])
-export type RunFailure = typeof RunFailure.Type
-
-/** The model-specific Run reasons shared by typed provider failures and telemetry's allowlist. */
-export const ModelFailureReason = RunFailure.pick([
-  'RateLimited',
-  'ModelUnavailable',
-  'NoAnswer',
-  'TimedOut',
-])
 
 /**
  * Where a Run stands. `Unknown` is an honest state: the runtime stopped reporting and the outcome
@@ -361,6 +341,8 @@ export const ThreadDetail = Schema.Struct({
   requests: Schema.Array(InputRequest),
   /** Every handoff raised in this Thread, open or settled, so its card keeps its outcome. */
   handoffs: Schema.Array(HandoffRequest),
+  /** The helpers Vivid started in this Thread, oldest first. Never part of `runs`. */
+  children: Schema.Array(ChildRun),
 }).annotate({ identifier: 'ThreadDetail', title: 'Thread detail' })
 export interface ThreadDetail extends Schema.Schema.Type<typeof ThreadDetail> {}
 
@@ -390,6 +372,8 @@ export const SignalType = Schema.Literals([
   'forget',
   // What the Dreamer found, delivered into its own background Thread (`dreams.ts`).
   'dream',
+  // A helper's result returning to the Thread that started it (`runs.ts`).
+  'child-result',
 ] as const)
 export type SignalType = typeof SignalType.Type
 
@@ -416,10 +400,13 @@ export type ApprovalOutcome = typeof ApprovalOutcome.Type
  * - `Answer`: a Person's answer to an Input request, with its questions in `body`.
  * - `Watch`: one event a Watch received. `data` is the event as the Integration sent it, whole;
  *   `occurredAt` is the Integration's own timestamp text, kept as sent.
+ * - `Shell`: a background Computer command finished; the handle identifies its receipt.
  * - `CarryOn`: a card telling Vivid to go on (`CarryOnRequest`); no client draws it.
  * - `Handoff`: the Person finished a step Vivid handed them on its Computer, named by its handoff.
  * - `Forget`: a Settings Forget press, with the instruction to plan and carry it out in `body`.
  * - `Dream`: what the Dreamer found, as it wrote it, in `body`; `pass` says when it ran.
+ * - `ChildResult`: a helper this Thread's Vivid started ended; `helper` is its number in the
+ *   Thread, the only name the model has for one, and `body` says how it ended (`runs.ts`).
  */
 export const SignalCue = Schema.TaggedUnion({
   Message: { body: Schema.String },
@@ -433,10 +420,15 @@ export const SignalCue = Schema.TaggedUnion({
     instruction: WatchInstruction,
     data: Schema.Json,
   },
+  Shell: { body: Schema.String, handle: ShellHandle },
   CarryOn: { body: Schema.String },
   Handoff: { body: Schema.String, handoff: HandoffId },
   Forget: { body: Schema.String },
   Dream: { body: Schema.String, pass: DreamPass },
+  ChildResult: {
+    body: Schema.String,
+    helper: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0)),
+  },
 })
 export type SignalCue = typeof SignalCue.Type
 
@@ -447,10 +439,13 @@ export const signalTypes = {
   Approval: 'approval',
   Answer: 'answer',
   Watch: 'event',
+  // Completion wakes are internal continuations; clients already hide this signal type.
+  Shell: 'carry-on',
   CarryOn: 'carry-on',
   Handoff: 'handoff',
   Forget: 'forget',
   Dream: 'dream',
+  ChildResult: 'child-result',
 } as const satisfies Record<SignalCue['_tag'], SignalType>
 
 /**

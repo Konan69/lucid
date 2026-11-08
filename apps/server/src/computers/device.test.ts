@@ -922,6 +922,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
             workspace: Workspace.cases.Personal.make({}),
             by: 'vivid',
             threadId: Option.some(busy.threadId),
+            helper: Option.none(),
           }),
         ).toEqual(ActionOrigin.cases.Run.make({ threadId: busy.threadId, runId: busy.runId }))
         expect(
@@ -930,6 +931,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
             workspace: Workspace.cases.Personal.make({}),
             by: 'vivid',
             threadId: Option.some(shared.threadId),
+            helper: Option.none(),
           }).pipe(Effect.flip))._tag,
         ).toBe('NotFound')
         expect(

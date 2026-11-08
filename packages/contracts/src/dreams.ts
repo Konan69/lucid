@@ -38,3 +38,20 @@ export const DreamFinding = Schema.NonEmptyString.check(
 )
 export const ReportDreamRequest = Schema.Struct({ pass: DreamPass, finding: DreamFinding })
 export type ReportDreamRequest = typeof ReportDreamRequest.Type
+
+/**
+ * The one Dreamer call, from the Person's cell as Vivid acting for them. `Open` opens the run's
+ * Background Thread from the Thread the Person last spoke in; `Report` delivers its finding from
+ * that Thread. One call with two cases, because the contract's group is at the size its type can
+ * still be checked in (`rpc.ts`).
+ */
+export const DreamRequest = Schema.TaggedUnion({
+  Open: OpenDreamRequest.fields,
+  Report: ReportDreamRequest.fields,
+})
+export type DreamRequest = typeof DreamRequest.Type
+export const DreamResponse = Schema.TaggedUnion({
+  Opened: OpenDreamResponse.fields,
+  Reported: {},
+})
+export type DreamResponse = typeof DreamResponse.Type

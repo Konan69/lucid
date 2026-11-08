@@ -23,6 +23,7 @@ import { projectsBrowser } from './projectsbrowser.mjs'
 import { offerBrowser } from './offer.mjs'
 import { libraryBrowser } from './librarybrowser.mjs'
 import { pushBrowser } from './push.mjs'
+import { helpersBrowser, helperstopBrowser } from './helpers.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { createElement } = web('react')
@@ -85,6 +86,8 @@ const recipes = {
   projects: { check: 'projects' },
   replies: { check: 'replies' },
   library: { check: 'library' },
+  helpers: { check: 'helpers' },
+  helperstop: { check: 'helperstop' },
   first: {
     phrase:
       'Write a detailed 1000-word guide to planning a community garden. Write directly in this reply as plain paragraphs. Do not create a document or ask questions.',
@@ -205,6 +208,16 @@ const specialRecipes = {
     drive: pushBrowser,
     scope:
       'Settings row on and off, the server holding this browser once, and a real notify_person reaching the service worker; see scope.json.',
+  },
+  helpers: {
+    drive: helpersBrowser,
+    scope:
+      'Two Researcher helpers started from the composer, their rows Done under the step, one opened to its answer, unchanged after reload; see helpers/scope.json for blocked kinds.',
+  },
+  helperstop: {
+    drive: helperstopBrowser,
+    scope:
+      "A working helper stopped with its own row's Stop, Stopped by a Person after reload, and the Thread heard it once.",
   },
   settings: {
     drive: settingsBrowser,
@@ -447,7 +460,7 @@ async function journey(state, feature) {
     evidence: directory,
   }
   const reason =
-    ['memory', 'procedure', 'question', 'approve', 'deny', 'changed', 'outcome', 'owed', 'todos', 'name', 'code', 'projects'].includes(
+    ['memory', 'procedure', 'question', 'approve', 'deny', 'changed', 'outcome', 'owed', 'todos', 'name', 'code', 'projects', 'helpers', 'helperstop'].includes(
       feature,
     ) && state.modelKind !== 'real'
       ? feature + ' requires a real model.'

@@ -232,13 +232,13 @@ priorities, update `user_state.md`).
 next 03:00 in the time zone the Person was last answered in and starts that night's run with the
 conversations of the day. A conversation with six or more of the Person's messages gets one quiet
 pass after it has been quiet for twenty minutes, at most one per conversation and three a day.
-Each run asks the server to open its own Background Thread (`OpenDream`, a reserved `dream-` id),
+Each run asks the server to open its own Background Thread (`Dream` with `Open`, a reserved `dream-` id),
 then reads in a task-owned child conversation whose tools are the shared reads (memory, every
 Integration through `use_tool`, the Library, public pages) plus its own memory write and prune
 (`packages/agent/runtime/src/agents/dreamer.ts`). The host keeps its writes to `memory`, `days`, `bank` (exactly
 `experience.md`, `opinions.md`, `world.md`), `people`, `dreams` and `research`, and the Gate blocks
 every non-read action in a dream Thread before rules or review (`apps/server/src/approvals/gate.ts`).
-It ends with at most one `report_finding`; the run delivers it from its Thread (`ReportDream`) as a
+It ends with at most one `report_finding`; the run delivers it from its Thread (`Dream` with `Report`) as a
 `dream` signal with `RunOrigin.Dream`, and Vivid decides there whether it becomes one Feed card,
 whose cause is recorded as `FeedCause.Dream`. The Dreamer has no `post`, no `notify_person` and no
 Computer. Not yet: a forget does not stop a queued Dreamer run, and the Dreamer cannot read other

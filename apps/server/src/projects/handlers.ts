@@ -8,7 +8,7 @@ import {
 } from '@vivid/contracts'
 import { requireActor, type Actor } from '../auth/access.ts'
 import { live } from '../live/query.ts'
-import { resolveProof } from './evidence.ts'
+import { confirmedProof, resolveProof } from './evidence.ts'
 import { ProjectStore, WorkChange } from './store.ts'
 
 const projects = Effect.fn('Projects.list')(function* (actor: Actor) {
@@ -21,7 +21,10 @@ const completion = (actor: Actor, id: ProjectId, change: Parameters<typeof resol
     WorkChange.cases.Complete.make({ proof }),
   )
 
-/** Turn the wire change into the stored one; only completion reads the conversation. */
+/**
+ * Turn the wire change into the stored one. Vivid's completion reads the conversation; the
+ * Person's own completion cites them, so both reach the store as the same `Complete`.
+ */
 const workChange = (actor: Actor, request: UpdateProjectRequest) =>
   ProjectChange.match<ReturnType<typeof completion>>(request.change, {
     Define: ({ objective, nextStep }) =>
@@ -29,6 +32,10 @@ const workChange = (actor: Actor, request: UpdateProjectRequest) =>
     Progress: ({ text, nextStep }) =>
       Effect.succeed(WorkChange.cases.Progress.make({ text, nextStep })),
     Complete: (change) => completion(actor, request.id, change),
+    Confirm: (change) =>
+      Effect.map(confirmedProof(actor, request.id, change), (proof) =>
+        WorkChange.cases.Complete.make({ proof }),
+      ),
   })
 
 export const projectHandlers = {

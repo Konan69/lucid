@@ -29,6 +29,10 @@ import { Presence } from '../threads/presence.ts'
 import { runStoreLayer } from '../threads/runs.ts'
 import { threadStoreLayer } from '../threads/store.ts'
 import { threads } from '../threads/tables.ts'
+import { inputStoreLayer } from '../inputs/store.ts'
+import { approvalStoreLayer } from '../approvals/store.ts'
+import { ruleStoreLayer } from '../rules/store.ts'
+import { ActionRunner, ActionOutcome } from '../approvals/gate.ts'
 import { ChannelReceiver, channelReceiverLayer } from './inbound.ts'
 import { channelLedgerLayer } from './ledger.ts'
 import {
@@ -158,6 +162,8 @@ const ports = Layer.effectContext(
         return waiting === undefined ? Effect.never : Deferred.await(waiting)
       },
       stop: () => Effect.succeed(false),
+      child: () => Effect.die('Channel tests start no helpers'),
+      stopChild: () => Effect.succeed(false),
       watch: () => Stream.never,
       read: () =>
         Effect.succeed(
@@ -209,7 +215,17 @@ const conversation = conversationLayer.pipe(
   Layer.provide(Layer.mock(ThreadTitles, { afterRun: () => Effect.void })),
   Layer.provideMerge(observedReplies),
 )
-export const channelTestLayer = channelReceiverLayer.pipe(Layer.provideMerge(conversation))
+const trust = Layer.mergeAll(inputStoreLayer, approvalStoreLayer).pipe(
+  Layer.provideMerge(ruleStoreLayer),
+  Layer.provide(
+    Layer.succeed(ActionRunner, {
+      inspect: () => Effect.succeed([]),
+      run: () => Effect.succeed(ActionOutcome.cases.Succeeded.make({ result: 'Sent' })),
+    }),
+  ),
+  Layer.provideMerge(conversation),
+)
+export const channelTestLayer = channelReceiverLayer.pipe(Layer.provideMerge(trust))
 
 /** Cleanup failure is a failing test, never a warning hiding leaked fixtures. */
 const cleanupFailed = () => Effect.sync(() => expect.fail('Channel fixture cleanup failed'))
@@ -253,6 +269,7 @@ export const fixture = Effect.fn('Channels.test.fixture')(function* (
     workspace: Workspace.cases.Personal.make({}),
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   }
   const auth = AuthState.Person({ person, workspace: actor.workspace, sessionId })
   const receiver = yield* ChannelReceiver

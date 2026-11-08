@@ -50,6 +50,7 @@ import { runs, threads } from '../threads/tables.ts'
 import { sendToThread, watchConversation } from '../threads/relay.ts'
 import { threadStoreLayer } from '../threads/store.ts'
 import { threadHandlers } from '../threads/handlers.ts'
+import { ChildRuns } from '../runs/store.ts'
 import { Runtime, runtimeLayer } from './client.ts'
 import { productFixture, productLayer } from './testing.ts'
 
@@ -209,6 +210,8 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (receipt: Receipt) 
     Layer.mock(ThreadTitles, { afterRun: () => Ref.update(titles, (count) => count + 1) }),
     Layer.mock(Presence, { watching: () => Effect.succeed(true) }),
     Layer.succeed(Notifier, { notify: () => Effect.void }),
+    // These Threads start no helpers; Thread Stop finds none to stop.
+    Layer.mock(ChildRuns, { stopThread: () => Effect.void }),
   )
   let serverScope = yield* Scope.make()
   yield* Effect.addFinalizer(() => Scope.close(serverScope, Exit.void))

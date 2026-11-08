@@ -1,6 +1,8 @@
 import {
   ProjectListResponse,
+  ProjectWork,
   ThreadAudience,
+  type ProjectProgress,
   type PersonSummary,
   type Project,
   type ProjectId,
@@ -105,6 +107,28 @@ export const confirmed =
     current.projects.some((candidate) => candidate.id === project.id)
       ? current
       : new ProjectListResponse({ projects: [project, ...current.projects] })
+
+/**
+ * A Project the server has just returned from a change to its work, in the list even if the live
+ * query's next result has not arrived yet. A result that already holds this revision or a later
+ * one is left as it is.
+ */
+export const revised =
+  (project: Project) =>
+  (current: ProjectListResponse): ProjectListResponse =>
+    new ProjectListResponse({
+      projects: current.projects.map((candidate) =>
+        candidate.id === project.id && candidate.revision < project.revision ? project : candidate,
+      ),
+    })
+
+/** A Project's progress log, newest first: the order a Person reads where it has been. */
+export const progressOf = (project: Project): ReadonlyArray<ProjectProgress> =>
+  ProjectWork.match(project.work, {
+    Unspecified: () => [],
+    Active: ({ progress }) => [...progress].reverse(),
+    Completed: ({ progress }) => [...progress].reverse(),
+  })
 
 /**
  * The colours a Project's mark can wear: Vivid's face hues, in the order they are dealt. Violet

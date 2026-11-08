@@ -47,7 +47,12 @@ describe.skipIf(!testDatabaseConfigured)('An Integration added by address with s
       () =>
         Effect.gen(function* () {
           const { personalActor } = yield* fixture()
-          const person = { ...personalActor, by: 'person' as const, threadId: Option.none() }
+          const person = {
+            ...personalActor,
+            by: 'person' as const,
+            threadId: Option.none(),
+            helper: Option.none(),
+          }
           const config = yield* ServerConfig
           const remote = yield* hostedExecutorFixture()
           yield* Ref.set(

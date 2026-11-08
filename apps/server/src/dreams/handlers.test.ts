@@ -2,6 +2,8 @@ import { describe, expect, layer } from '@effect/vitest'
 import {
   DreamKey,
   DreamPass,
+  DreamRequest,
+  DreamResponse,
   ProposedAction,
   ReportDreamRequest,
   SignalCue,
@@ -38,18 +40,25 @@ const finding = ReportDreamRequest.make({
   finding: 'Your passport renewal appointment is tomorrow at 09:00 and the form is not signed.',
 })
 
+const reported = DreamRequest.cases.Report.make(finding)
+
+/** Open the dream's Thread as `home` would, and read the Thread it answers with. */
+const opened = Effect.fn('DreamTest.opened')(function* (home: AuthState) {
+  const answer = yield* dreamHandlers
+    .Dream(DreamRequest.cases.Open.make({ key, pass: 'Night' }))
+    .pipe(Effect.provideService(AuthContext, home))
+  if (!DreamResponse.guards.Opened(answer)) return yield* Effect.die('Open answers Opened')
+  return answer
+})
+
 layer(testLayer)((it) => {
   describe.skipIf(!testDatabaseConfigured)('Dreamer Threads and findings', () => {
     it.effect('opens one Background Thread per dream and reports a finding into it', () =>
       Effect.gen(function* () {
         const actor = yield* person()
         const home = acting(actor, ThreadId.make(crypto.randomUUID()))
-        const first = yield* dreamHandlers
-          .OpenDream({ key, pass: 'Night' })
-          .pipe(Effect.provideService(AuthContext, home))
-        const again = yield* dreamHandlers
-          .OpenDream({ key, pass: 'Night' })
-          .pipe(Effect.provideService(AuthContext, home))
+        const first = yield* opened(home)
+        const again = yield* opened(home)
         expect(again.threadId, 'asking again opens the same Thread').toBe(first.threadId)
         expect(first.threadId).toBe(dreamThread(actor.person.id, key))
         const database = yield* Database
@@ -61,7 +70,7 @@ layer(testLayer)((it) => {
         ])
 
         yield* dreamHandlers
-          .ReportDream(finding)
+          .Dream(reported)
           .pipe(Effect.provideService(AuthContext, acting(actor, first.threadId)))
         const delivered = (yield* Ref.get(yield* Delivered)).filter(
           (delivery) => delivery.threadId === first.threadId,
@@ -87,7 +96,7 @@ layer(testLayer)((it) => {
       Effect.gen(function* () {
         const actor = yield* person()
         const exit = yield* dreamHandlers
-          .ReportDream(finding)
+          .Dream(reported)
           .pipe(
             Effect.provideService(AuthContext, acting(actor, ThreadId.make(crypto.randomUUID()))),
             Effect.exit,
