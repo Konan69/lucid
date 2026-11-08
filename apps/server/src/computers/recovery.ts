@@ -1,7 +1,8 @@
 import { Clock, Effect, Option, Result } from 'effect'
-import { and, eq } from 'drizzle-orm'
+import { and, desc, eq } from 'drizzle-orm'
 import {
   ComputerHealth,
+  ComputerRecoveryRecord,
   ComputerProbeResult,
   ComputerProbeFailure,
   ComputerRecoveryOutcome as Outcome,
@@ -194,3 +195,28 @@ export function computerRecovery(input: Authority) {
     return outcome
   })
 }
+
+/**
+ * The newest recovery step taken on this Person's Computer, for the health panel. The receipt row
+ * is the only record of it: a claimed row with no outcome is `Unsettled`, never "still running",
+ * because a server that stopped mid-step leaves the same row behind (`computerRecovery`).
+ */
+export const latestRecovery = Effect.fn('ComputerRecovery.latest')(function* (person: PersonId) {
+  const database = yield* Database
+  const [row] = yield* database.run(
+    database
+      .select()
+      .from(computerRecoveries)
+      .where(eq(computerRecoveries.personId, person))
+      .orderBy(desc(computerRecoveries.createdAt))
+      .limit(1),
+  )
+  if (row === undefined) return ComputerRecoveryRecord.cases.None.make({})
+  if (row.outcome === null)
+    return ComputerRecoveryRecord.cases.Unsettled.make({ step: row.step, since: row.createdAt })
+  return ComputerRecoveryRecord.cases.Settled.make({
+    step: row.step,
+    since: row.createdAt,
+    outcome: yield* decode(row.outcome),
+  })
+})
