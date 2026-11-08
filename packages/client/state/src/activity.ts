@@ -360,6 +360,38 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.title)],
   },
+  spawn_run: {
+    said: {
+      running: 'Starting a helper',
+      done: 'Started a helper',
+      failed: 'Could not start a helper',
+    },
+    detail: nothing,
+  },
+  wait_runs: {
+    said: {
+      running: 'Waiting for helpers',
+      done: 'Heard back from helpers',
+      failed: 'Could not hear back from helpers',
+    },
+    detail: nothing,
+  },
+  check_run: {
+    said: {
+      running: 'Checking on a helper',
+      done: 'Checked on a helper',
+      failed: 'Could not check on the helper',
+    },
+    detail: nothing,
+  },
+  cancel_run: {
+    said: {
+      running: 'Stopping a helper',
+      done: 'Stopped a helper',
+      failed: 'Could not stop the helper',
+    },
+    detail: nothing,
+  },
   read_page: {
     said: {
       running: 'Opening the page',

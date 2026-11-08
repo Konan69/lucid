@@ -888,6 +888,7 @@ const makeCallbacks = (
         workspace: Workspace.cases.Personal.make({}),
         by: 'person',
         threadId: Option.none(),
+        helper: Option.none(),
       }
       const state = yield* callback(actor, trip.id, address)
       // Read after completion so the latest persisted trip decides where the browser hands back.

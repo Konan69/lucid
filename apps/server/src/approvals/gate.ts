@@ -48,9 +48,13 @@ export type GateExposure = typeof GateExposure.Type
 
 /** Derived from the authenticated Actor. RuntimeThread is a runtime RPC outside an admitted
  * working turn (legacy cloud and Connection callers); it never grants Person-device authority.
- * Run names the admitted turn acting for that Person. Human calls do not propose actions. */
+ * Run names the admitted turn acting for that Person. Helper names the helper Run making the
+ * call (`AuthState.Helper`), which `authenticateHelper` checked is working for that Person; it
+ * is never the oldest working Run, and like RuntimeThread it grants no Person-device authority.
+ * Human calls do not propose actions. */
 export const ActionOrigin = Schema.TaggedUnion({
   Run: { threadId: ThreadId, runId: RunId },
+  Helper: { threadId: ThreadId, runId: RunId },
   RuntimeThread: { threadId: ThreadId },
 })
 export type ActionOrigin = typeof ActionOrigin.Type
@@ -61,6 +65,8 @@ export const actionOrigin = Effect.fn('Gate.origin')(function* (actor: Actor) {
   if (Option.isNone(actor.threadId))
     return yield* new NotFound({ message: 'Action needs a Vivid Thread' })
   const threadId = actor.threadId.value
+  if (Option.isSome(actor.helper))
+    return ActionOrigin.cases.Helper.make({ threadId, runId: actor.helper.value })
   return yield* actingRun(threadId, actor.person.id).pipe(
     Effect.map((runId) => ActionOrigin.cases.Run.make({ threadId, runId })),
     Effect.catchTag('NoActingRun', ({ reason }) =>

@@ -68,6 +68,8 @@ const runtimeLayer = Layer.effect(
       admit: () => Effect.die('not admitted in this test'),
       settled: () => Effect.never,
       stop: () => Effect.succeed(false),
+      child: () => Effect.die('Project tests start no helpers'),
+      stopChild: () => Effect.succeed(false),
       watch: () => Stream.never,
       read: () =>
         Effect.succeed(

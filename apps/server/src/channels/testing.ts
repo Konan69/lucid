@@ -162,6 +162,8 @@ const ports = Layer.effectContext(
         return waiting === undefined ? Effect.never : Deferred.await(waiting)
       },
       stop: () => Effect.succeed(false),
+      child: () => Effect.die('Channel tests start no helpers'),
+      stopChild: () => Effect.succeed(false),
       watch: () => Stream.never,
       read: () =>
         Effect.succeed(
@@ -267,6 +269,7 @@ export const fixture = Effect.fn('Channels.test.fixture')(function* (
     workspace: Workspace.cases.Personal.make({}),
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   }
   const auth = AuthState.Person({ person, workspace: actor.workspace, sessionId })
   const receiver = yield* ChannelReceiver

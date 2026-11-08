@@ -48,6 +48,7 @@ export const actionRunnerLayer = Layer.effect(
             workspace: input.workspace,
             by: 'vivid' as const,
             threadId: Option.some(input.origin.threadId),
+            helper: Option.none(),
           }
           const row = yield* connections.get(actor, target.connectionId)
           return yield* inspectMail(row, target)

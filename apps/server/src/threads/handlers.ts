@@ -25,6 +25,7 @@ import { Database } from '../database/client.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { audienceTopics, requireThread } from './access.ts'
 import { Presence } from './presence.ts'
+import { ChildRuns } from '../runs/store.ts'
 import { RunStore } from './runs.ts'
 import { LiveLink } from '../rpc/link.ts'
 import { ThreadStore, type Shared } from './store.ts'
@@ -42,6 +43,7 @@ const detail = Effect.fn('Threads.detail')(function* (actor: Actor, id: ThreadId
     approvals: yield* (yield* ApprovalStore).inThread(id),
     requests: yield* (yield* InputStore).inThread(id),
     handoffs: yield* handoffsInThread(id),
+    children: yield* (yield* ChildRuns).inThread(id),
   })
 })
 
@@ -187,6 +189,9 @@ export const threadHandlers = {
   StopThread: Effect.fn('Rpc.StopThread')(function* ({ id }: { readonly id: ThreadId }) {
     const auth = yield* requirePerson()
     yield* requireThread(id, auth.person.id)
+    // Helpers first: their results are dropped and their work ends before the Thread's own
+    // abort, so no late result starts the Thread again after this Stop.
+    yield* (yield* ChildRuns).stopThread(id)
     yield* abortThread(id)
   }),
   /**

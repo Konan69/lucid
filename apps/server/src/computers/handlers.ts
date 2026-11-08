@@ -24,7 +24,13 @@ import {
   type ComputerFileWriteRequest,
   type WatchDeviceRequestsRequest,
 } from '@vivid/contracts'
-import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/access.ts'
+import {
+  requireActor,
+  requirePerson,
+  requireVivid,
+  type Actor,
+  requireRun,
+} from '../auth/access.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { live, sessionEnded } from '../live/query.ts'
 import { computerWindow } from './windows.ts'
@@ -246,25 +252,25 @@ export const computerHandlers = {
     )
   }),
   ComputerShell: Effect.fn('Rpc.ComputerShell')(function* (request: ComputerShellRequest) {
-    yield* requireVivid()
+    yield* requireRun()
     return yield* computerShell(yield* requireActor(), request)
   }),
   ComputerFileRead: Effect.fn('Rpc.ComputerFileRead')(function* (request: ComputerFileReadRequest) {
-    yield* requireVivid()
+    yield* requireRun()
     return yield* computerFileRead(yield* requireActor(), request)
   }),
   ComputerFileWrite: Effect.fn('Rpc.ComputerFileWrite')(function* (
     request: ComputerFileWriteRequest,
   ) {
-    yield* requireVivid()
+    yield* requireRun()
     return yield* computerFileWrite(yield* requireActor(), request)
   }),
   Browse: Effect.fn('Rpc.Browse')(function* (request: BrowseRequest) {
-    yield* requireVivid()
+    yield* requireRun()
     return yield* computerBrowse(yield* requireActor(), request)
   }),
   UseDesktop: Effect.fn('Rpc.UseDesktop')(function* (request: UseDesktopRequest) {
-    yield* requireVivid()
+    yield* requireRun()
     return yield* computerDesktop(yield* requireActor(), request)
   }),
 }

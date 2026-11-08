@@ -18,7 +18,13 @@ import type {
   UseDisplayToolRequest,
   UseToolRequest,
 } from '@vivid/contracts'
-import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/access.ts'
+import {
+  requireActor,
+  requirePerson,
+  requireVivid,
+  type Actor,
+  requireRun,
+} from '../auth/access.ts'
 import { live } from '../live/query.ts'
 import { ConnectionStore } from './store.ts'
 import {
@@ -140,7 +146,7 @@ export const connectionHandlers = {
   }),
   /** Only a Run proposes tool actions to the gate. */
   UseTool: Effect.fn('Rpc.UseTool')(function* (request: UseToolRequest) {
-    yield* requireVivid()
+    yield* requireRun()
     return yield* useTool(yield* requireActor(), request)
   }),
   /** A display's Query or Mutation, for the Person looking at it; never Vivid's own call. */
