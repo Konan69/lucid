@@ -1,6 +1,12 @@
 import { Machine } from '@typeonce/effect-machine'
 import { AtomMachine } from '@typeonce/effect-machine/reactivity'
-import { ChildRunState, RunId, type ChildRun, type WorkerKind } from '@vivid/contracts'
+import {
+  ChildFailure,
+  ChildRunState,
+  RunId,
+  type ChildRun,
+  type WorkerKind,
+} from '@vivid/contracts'
 import type { LiveEngine } from './live.js'
 import { Context, Data, Effect, type Layer, Option, Schema } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
@@ -111,12 +117,12 @@ export const stoppable = (run: ChildRun) =>
   ChildRunState.isAnyOf(['Reserved', 'Working'])(run.state)
 
 /** What a Person reads for what a helper is doing; product words, never the implementation's. */
-const KIND: { readonly [Kind in WorkerKind]: string } = {
+const KIND = {
   ReadOnly: 'Reading',
   Researcher: 'Researching',
   Executor: 'Working',
   ComputerUse: 'Using the computer',
-}
+} satisfies { readonly [Kind in WorkerKind]: string }
 
 /** A helper's live state in a Person's words. */
 export const helperStatus = (run: ChildRun) =>
@@ -126,7 +132,7 @@ export const helperStatus = (run: ChildRun) =>
     Stopping: () => 'Stopping',
     Completed: () => 'Done',
     Failed: ({ reason }) =>
-      reason._tag === 'DeadlinePassed' ? 'Ran out of time' : 'Could not finish',
+      ChildFailure.guards.DeadlinePassed(reason) ? 'Ran out of time' : 'Could not finish',
     Stopped: () => 'Stopped',
   })
 

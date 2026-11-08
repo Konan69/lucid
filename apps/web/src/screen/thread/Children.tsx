@@ -1,9 +1,9 @@
-import { ChildRunDetail, ChildRunResult, type ChildRun } from '@vivid/contracts'
+import { ChildFailure, ChildRunDetail, ChildRunResult, type ChildRun } from '@vivid/contracts'
 import { helpers, LiveState } from '@vivid/state'
 import { Option } from 'effect'
 import { ChevronRight } from 'lucide-react'
 import { useState } from 'react'
-import { stopHelper, useHelperResult, useHelperStop } from '../../data/helpers'
+import { stopHelper, useHelperResult, useHelperStop } from '../../data/children'
 import { Button } from '../../ui/button'
 import { cn } from '../../ui/cn'
 import { Markdown } from '../../ui/Markdown'
@@ -86,7 +86,7 @@ function Helper({ run, stop }: { run: ChildRun; stop: helpers.Reading }) {
 function Opened({ run }: { run: ChildRun }) {
   const reading = useHelperResult(run)
   return (
-    <div dir="auto" className="ps-6.5 pt-1 pb-2 text-ink-2 wrap-anywhere">
+    <div dir="auto" className="ps-6.5 pt-1 pb-2 wrap-anywhere text-ink-2">
       {LiveState.$match(reading, {
         Loading: () => <p className="text-label text-ink-3">Opening…</p>,
         Failed: () => (
@@ -110,7 +110,7 @@ function Answer({ result }: { result: ChildRunResult }) {
     Completed: ({ text }) => <Markdown content={text} />,
     Failed: ({ failure }) => (
       <p className="text-label text-ink-3">
-        {failure._tag === 'DeadlinePassed'
+        {ChildFailure.guards.DeadlinePassed(failure)
           ? 'It ran out of time before it had an answer.'
           : 'It could not finish.'}
       </p>

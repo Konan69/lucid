@@ -1,10 +1,10 @@
-import { ChildRunDetail, ChildRunResult, type ChildRun } from '@vivid/contracts'
+import { ChildFailure, ChildRunDetail, ChildRunResult, type ChildRun } from '@vivid/contracts'
 import { helpers } from '@vivid/state'
 import { Option } from 'effect'
 import { ChevronDown, ChevronRight } from 'lucide-react-native'
 import { useState } from 'react'
 import { View } from 'react-native'
-import { stopHelper, useHelperResult, useHelperStop } from '../../data/helpers'
+import { stopHelper, useHelperResult, useHelperStop } from '../../data/children'
 import { LiveState, useLiveData } from '../../data/live'
 import { useTheme } from '../../theme'
 import { Label, Press, radius } from '../../ui/ui'
@@ -139,7 +139,7 @@ function Answer({ result }: { result: ChildRunResult }) {
     Completed: ({ text }) => <Words text={text} />,
     Failed: ({ failure }) => (
       <Label size="label" tone="ink-3">
-        {failure._tag === 'DeadlinePassed'
+        {ChildFailure.guards.DeadlinePassed(failure)
           ? 'It ran out of time before it had an answer.'
           : 'It could not finish.'}
       </Label>

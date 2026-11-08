@@ -35,7 +35,7 @@ import { makeDeviceDecisions } from './devices'
 import { makeHandoffCalls } from './handing'
 import { makeNaming } from './name'
 import { makeNotifying } from './notifying'
-import { makeHelpers } from './helpers'
+import { makeHelpers } from './children'
 import { makeConnecting } from './connecting'
 import { makeSending } from './sending'
 import { door } from './door'
@@ -316,7 +316,6 @@ function makeLiveData(session: SignedIn) {
     drafts: kept((client) => client.WatchDrafts()),
   }
 
-  const catalog = makeCatalog(engine)
   // Where the Person was working when a query was last asked, for the subscription below.
   let whereabouts = Option.none<string>()
 
@@ -374,7 +373,6 @@ function makeLiveData(session: SignedIn) {
   // the session's registry and socket are made: every screen, sheet and card of the session
   // presses and draws from it, and an attempt outlives whichever of them began it.
   const connecting = makeConnecting({ engine, connections: live.connections.atom })
-  const helping = makeHelpers(engine)
 
   followLook(engine, live)
 
@@ -425,7 +423,7 @@ function makeLiveData(session: SignedIn) {
       ...expectations: ReadonlyArray<() => Settle>
     ) => start(engine.change(program, ...expectations)),
     link: link.atom,
-    ...catalog,
+    ...makeCatalog(engine),
     /** Connecting an Integration: the session's one machine (`data/connecting.ts`). */
     connecting,
     devices: makeDeviceDecisions(engine),
@@ -433,8 +431,7 @@ function makeLiveData(session: SignedIn) {
     handing: makeHandoffCalls(engine),
     /** The Person changing their own name in Settings (`data/name.ts`). */
     naming: makeNaming(engine, live.me),
-    /** Stopping a helper and reading its result (`data/helpers.ts`). */
-    helpers: helping,
+    helpers: makeHelpers(engine), // Stopping a helper and reading its result (`data/children.ts`).
     /**
      * What Vivid remembers about the Person, read from their cell. There is no watch on it: the
      * Memory screen begins a new reading each time it is opened (`screen/settings/Memory.tsx`).
