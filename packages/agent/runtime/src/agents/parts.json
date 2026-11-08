@@ -81,6 +81,26 @@
       "signature": "Chart(type: \"bar\" | \"line\" | \"area\" | \"pie\" | \"donut\" | \"scatter\", data: Record<string, string | number>[], x?: string, series?: string[], format?: \"number\" | \"currency\" | \"percent\", currency?: string, stacked?: boolean, height?: number)",
       "description": "Rows of data; x is the category key (a number key for scatter), series the value keys (default: every number key). percent values are like 45; currency is a code like \"EUR\"."
     },
+    "Map": {
+      "signature": "Map(markers: MapMarker[], route?: boolean)",
+      "description": "A picture of a map fitted to its markers, for where something is or a route; route draws a line through the markers in order."
+    },
+    "MapMarker": {
+      "signature": "MapMarker(label: string, lat: number, lng: number, icon?: string)",
+      "description": "A place on a Map; icon is one emoji, else the pin shows its number."
+    },
+    "Week": {
+      "signature": "Week(days: {day: string, date: string | number, items?: {time: string, title: string}[], marked?: boolean}[])",
+      "description": "A week as a strip of days with what is on each: days are {day: \"Tue\", date: \"21\", items: [{time: \"9:00\", title: \"Call with Iyin\"}], marked: true}; marked is the day the card is about."
+    },
+    "Page": {
+      "signature": "Page(url: string, title: string, site?: string, image?: string, summary?: string)",
+      "description": "A web page as a card that opens it: its title, the site, its picture and a short summary. Only an address and picture a tool or the Person gave you."
+    },
+    "Screen": {
+      "signature": "Screen(alt: string)",
+      "description": "Your Computer's screen as it is now, live and watch-only, for work you did on it; alt says what is on it."
+    },
     "Button": {
       "signature": "Button(label: string, action?: ActionExpression, variant?: \"solid\" | \"outline\" | \"soft\" | \"ghost\", color?: \"primary\" | \"danger\" | \"success\", size?: \"sm\" | \"md\" | \"lg\", icon?: string, disabled?: boolean, block?: boolean)",
       "description": "icon is a lucide name."
@@ -139,7 +159,7 @@
     },
     {
       "name": "Data and pictures",
-      "components": ["Table", "Chart", "Image"]
+      "components": ["Table", "Chart", "Image", "Map", "MapMarker", "Week", "Page", "Screen"]
     },
     {
       "name": "Inputs",
@@ -220,6 +240,21 @@
       "Chart": {
         "$ref": "#/$defs/Chart"
       },
+      "Map": {
+        "$ref": "#/$defs/Map"
+      },
+      "MapMarker": {
+        "$ref": "#/$defs/MapMarker"
+      },
+      "Week": {
+        "$ref": "#/$defs/Week"
+      },
+      "Page": {
+        "$ref": "#/$defs/Page"
+      },
+      "Screen": {
+        "$ref": "#/$defs/Screen"
+      },
       "Button": {
         "$ref": "#/$defs/Button"
       },
@@ -269,6 +304,11 @@
       "Image",
       "Table",
       "Chart",
+      "Map",
+      "MapMarker",
+      "Week",
+      "Page",
+      "Screen",
       "Button",
       "Pressable",
       "Input",
@@ -737,6 +777,120 @@
         "required": ["type", "data"],
         "additionalProperties": false,
         "description": "Rows of data; x is the category key (a number key for scatter), series the value keys (default: every number key). percent values are like 45; currency is a code like \"EUR\"."
+      },
+      "Map": {
+        "type": "object",
+        "properties": {
+          "markers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/MapMarker"
+            }
+          },
+          "route": {
+            "type": "boolean"
+          }
+        },
+        "required": ["markers"],
+        "additionalProperties": false,
+        "description": "A picture of a map fitted to its markers, for where something is or a route; route draws a line through the markers in order."
+      },
+      "MapMarker": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "lat": {
+            "type": "number"
+          },
+          "lng": {
+            "type": "number"
+          },
+          "icon": {
+            "type": "string"
+          }
+        },
+        "required": ["label", "lat", "lng"],
+        "additionalProperties": false,
+        "description": "A place on a Map; icon is one emoji, else the pin shows its number."
+      },
+      "Week": {
+        "type": "object",
+        "properties": {
+          "days": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "day": {
+                  "type": "string"
+                },
+                "date": {
+                  "type": ["string", "number"]
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "time": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      }
+                    },
+                    "required": ["time", "title"],
+                    "additionalProperties": false
+                  }
+                },
+                "marked": {
+                  "type": "boolean"
+                }
+              },
+              "required": ["day", "date"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["days"],
+        "additionalProperties": false,
+        "description": "A week as a strip of days with what is on each: days are {day: \"Tue\", date: \"21\", items: [{time: \"9:00\", title: \"Call with Iyin\"}], marked: true}; marked is the day the card is about."
+      },
+      "Page": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "site": {
+            "type": "string"
+          },
+          "image": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": ["url", "title"],
+        "additionalProperties": false,
+        "description": "A web page as a card that opens it: its title, the site, its picture and a short summary. Only an address and picture a tool or the Person gave you."
+      },
+      "Screen": {
+        "type": "object",
+        "properties": {
+          "alt": {
+            "type": "string"
+          }
+        },
+        "required": ["alt"],
+        "additionalProperties": false,
+        "description": "Your Computer's screen as it is now, live and watch-only, for work you did on it; alt says what is on it."
       },
       "Button": {
         "type": "object",
