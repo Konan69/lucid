@@ -53,6 +53,7 @@ const missing = {
   github: 'No browser recipe for the GitHub Key form yet',
 }
 const recipes = {
+  code: { check: 'code' },
   approve: { check: 'approve' },
   deny: { check: 'deny' },
   changed: { check: 'changed' },
