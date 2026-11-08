@@ -248,6 +248,80 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
       ),
     )
 
+    it.effect(
+      'counter text, amount order and duplicate prices do not invalidate a browser approval',
+      () =>
+        scopedCase(
+          services,
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const source = yield* Source
+            yield* Ref.set(
+              source.page,
+              BrowseResult.make({
+                ...page(20),
+                outline: 'Total 20 USD. Fee $5. 8 people viewing.',
+              }),
+            )
+            const action = ProposedAction.make({
+              ...test.connectionAction,
+              effect: 'destructive',
+              target: ActionTarget.cases.Browser.make({
+                target: BrowseTarget.cases.Vivid.make({}),
+                action: BrowserAction.cases.Click.make({ target: 'Pay now' }),
+              }),
+            })
+            const approval = yield* ask(test, action)
+            yield* Ref.set(
+              source.page,
+              BrowseResult.make({
+                ...page(20),
+                outline:
+                  'Fee 5 $. Total usd 20. Total 20 USD. 19 people viewing. A different recommendation.',
+              }),
+            )
+            const settled = yield* (yield* ApprovalStore).decide(test.personal, {
+              id: approval.id,
+              digest: approval.digest,
+              decision: ApprovalDecision.cases.AllowOnce.make({}),
+            })
+            expect(ApprovalState.guards.Succeeded(settled.state)).toBe(true)
+            expect(yield* Ref.get((yield* Observation).actions)).toEqual([action])
+          }),
+          'fresh',
+        ),
+    )
+
+    it.effect('a truncated page binds its visible amounts and can be approved', () =>
+      scopedCase(
+        services,
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          const source = yield* Source
+          yield* Ref.set(source.page, BrowseResult.make({ ...page(20), truncated: true }))
+          const action = ProposedAction.make({
+            ...test.connectionAction,
+            effect: 'destructive',
+            target: ActionTarget.cases.Browser.make({
+              target: BrowseTarget.cases.Vivid.make({}),
+              action: BrowserAction.cases.Click.make({ target: 'Pay now' }),
+            }),
+          })
+          const approval = yield* ask(test, action)
+          expect(approval.binding).toMatchObject({
+            preconditions: [expect.objectContaining({ address: page(20).address })],
+          })
+          const settled = yield* (yield* ApprovalStore).decide(test.personal, {
+            id: approval.id,
+            digest: approval.digest,
+            decision: ApprovalDecision.cases.AllowOnce.make({}),
+          })
+          expect(ApprovalState.guards.Succeeded(settled.state)).toBe(true)
+        }),
+        'fresh',
+      ),
+    )
+
     it.effect('added Gmail recipients invalidate the draft approval and re-ask', () =>
       scopedCase(
         services,

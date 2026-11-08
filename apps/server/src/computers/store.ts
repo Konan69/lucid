@@ -1,6 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import { and, eq, getTableColumns, inArray, sql } from 'drizzle-orm'
 import {
+  Array as Arr,
   Clock,
   Context,
   Duration,
@@ -10,6 +11,7 @@ import {
   Layer,
   Match,
   Option,
+  Order,
   Result,
   Schedule,
   Schema,
@@ -57,7 +59,7 @@ import { Database, decodeStored, type DatabaseInfrastructureError } from '../dat
 import { egressChosen } from './egress/setting.ts'
 import { type Actor } from '../auth/access.ts'
 import { Gate, GateDecision, ActionOutcome, ActionOrigin, actionOrigin } from '../approvals/gate.ts'
-import { contentDigest, unbound } from '../approvals/action.ts'
+import { canonical, contentDigest, unbound } from '../approvals/action.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import {
   isOutage,
@@ -1558,9 +1560,18 @@ const personBrowse = Effect.fn('Computer.personBrowse')(function* (input: {
     )
 })
 
-/** Read the current page without acting on it. A partial outline cannot prove unchanged terms.
- * The same device/Computer and admitted Run are used at capture and at execution; the binding
- * retains only the address and digest, not private checkout text. */
+// Match actual ISO currency codes or Unicode currency symbols on either side of an amount.
+// Keep decimal/grouping punctuation: interpreting a comma without the page's locale can merge
+// different prices. Whitespace, currency-code case and prefix/suffix placement are normalized.
+const currency = `(?:\\p{Sc}|(?<![a-z])(?:${Intl.supportedValuesOf('currency').join('|')})(?![a-z]))`
+const moneyAmounts = new RegExp(
+  `${currency}\\s*[+-]?\\d+(?:[.,]\\d+)*|[+-]?\\d+(?:[.,]\\d+)*\\s*${currency}`,
+  'giu',
+)
+
+/** Read without acting, binding only address, observed money and the gesture's own target label.
+ * Unrelated page text may change freely. Truncated outlines bind the amounts they do expose;
+ * the same rule applies at capture and claim without inventing terms beyond the snapshot. */
 export const inspectBrowser = Effect.fn('Computer.inspectApproval')(function* (input: {
   readonly person: Person
   readonly origin: ActionOrigin
@@ -1590,17 +1601,28 @@ export const inspectBrowser = Effect.fn('Computer.inspectApproval')(function* (i
               ),
         ),
       )
-  if (result.truncated)
-    return yield* new InvalidRequest({
-      message: 'The browser page is truncated; its approval terms cannot be verified.',
-    })
   const address = yield* decodeApprovalPageAddress(result.address).pipe(
     Effect.mapError(() => new InvalidRequest({ message: 'The browser page has no address.' })),
   )
+  const amounts = Arr.sort(
+    Arr.dedupe(
+      (result.outline.match(moneyAmounts) ?? []).map((amount) =>
+        amount
+          .replace(/\s+/gu, '')
+          .toUpperCase()
+          .replace(/^([+-]?\d[\d.,]*)(.+)$/u, '$2$1'),
+      ),
+    ),
+    Order.String,
+  )
+  const action = input.target.action
+  const target = BrowserAction.isAnyOf(['Click', 'Type'])(action) ? action.target : null
   return [
     ApprovalPrecondition.cases.BrowserPage.make({
       address,
-      outlineDigest: ApprovalContentDigest.make(contentDigest(result.outline)),
+      outlineDigest: ApprovalContentDigest.make(
+        contentDigest(canonical({ address, amounts, target })),
+      ),
     }),
   ]
 })
