@@ -38,17 +38,21 @@ export const HELPER_KEY = 'authority'
 /**
  * A helper's tool budget: how many calls it may make and the ones already charged, by call id,
  * so a call Pi runs again after a restart is charged once. Absent, the limit is zero: a
- * conversation nobody budgeted makes no helper tool calls.
+ * conversation nobody budgeted makes no helper tool calls. `recent` names its last few charged
+ * tools, newest last, which is what its parent sees when it checks how the helper is going.
  */
-export const HelperCalls = defineDoc<{ limit: number; counted: string[] }>({
+export const HelperCalls = defineDoc<{ limit: number; counted: string[]; recent: string[] }>({
   kind: 'vivid.helper.calls',
   version: 1,
   scope: 'conversation',
   history: 'latest',
   fork: 'initial',
   checkpointWhen: () => false,
-  initial: () => ({ limit: 0, counted: [] }),
+  initial: () => ({ limit: 0, counted: [], recent: [] }),
 })
+
+/** How many tool names `recent` keeps. */
+export const RECENT_TOOLS = 5
 
 const Facts = Schema.Struct({
   threadId: ThreadId,

@@ -14,6 +14,7 @@ import { resolveCall } from '../authority.ts'
 import type { Helpers, Named } from '../children.ts'
 import { asActing, NobodyToActFor, type ProductService } from '../client.ts'
 import { answeringKey } from '../deliveries.ts'
+import { HelperCalls } from '../helper.ts'
 import { pi } from '../threads.ts'
 import { defineTool } from './tool.ts'
 
@@ -23,7 +24,8 @@ const ANSWER_LIMIT = 12_000
 interface Wiring {
   readonly harness: Effect.Effect<Harness>
   readonly product: ProductService
-  readonly helpers: Helpers
+  /** Made after the registry these tools are mounted in (`person.ts`). */
+  readonly helpers: Effect.Effect<Helpers>
 }
 
 const nobody = (message: string) => new NobodyToActFor({ message })
@@ -45,8 +47,9 @@ const named = Effect.fn('Helpers.namedAll')(function* (
   api: ToolExecutionApi,
   numbers: ReadonlyArray<number>,
 ) {
+  const helpers = yield* wiring.helpers
   return yield* Effect.forEach(numbers, (number) =>
-    wiring.helpers.named(api.conversationId, number).pipe(
+    helpers.named(api.conversationId, number).pipe(
       Effect.flatMap(
         Option.match({
           onNone: () => Effect.fail(nobody(`There is no helper ${number} in this conversation.`)),
@@ -156,10 +159,11 @@ export function childTools(wiring: Wiring) {
           }),
         )
         const at = yield* Clock.currentTimeMillis
+        const helpers = yield* wiring.helpers
         yield* pi(() =>
           api.commit(
             (tx) =>
-              wiring.helpers.start(tx, api.conversationId, run, {
+              helpers.start(tx, api.conversationId, run, {
                 acting: authority.acting,
                 timezone: authority.timezone,
                 at,
@@ -191,10 +195,11 @@ export function childTools(wiring: Wiring) {
         yield* parent(wiring, api)
         const found = yield* named(wiring, api, data.helpers)
         const runIds = found.map(({ found: helper }) => helper.runId)
+        const helpers = yield* wiring.helpers
         // Claimed before waiting, so a result that ends meanwhile comes back here and not twice.
         yield* pi(() =>
           api.commit(
-            (tx) => wiring.helpers.claimWait(tx, api.conversationId, runIds),
+            (tx) => helpers.claimWait(tx, api.conversationId, runIds),
             BACKGROUND_CONTEXT,
           ),
         )
@@ -204,12 +209,55 @@ export function childTools(wiring: Wiring) {
           found,
           ({ number, found: helper }: { readonly number: number; readonly found: Named }) =>
             pi(() => api.waitForTask(helper.anchor, context)).pipe(
-              Effect.andThen(wiring.helpers.answer(helper)),
+              Effect.andThen(helpers.answer(helper)),
               Effect.map((answer) => view(number, answer)),
             ),
           { concurrency: 'unbounded' },
         )
         return { output: { results } }
+      }),
+  })
+
+  const check = defineTool({
+    name: Tool.check_run,
+    description:
+      'Look once at how a helper you started is going: its state, how long it has worked, the tool calls it used of its limit and the tools it used last. Only when the Person asks or a helper seems stuck; never in a loop to wait for it.',
+    // A check only reads.
+    replay: 'safe',
+    input: v.object({ helper: helperNumber }),
+    run: ({ data, api }) =>
+      Effect.gen(function* () {
+        const authority = yield* parent(wiring, api)
+        const [target] = yield* named(wiring, api, [data.helper])
+        if (target === undefined) return yield* nobody(`There is no helper ${data.helper}.`)
+        const detail = yield* asActing(wiring.product, Option.some(authority.acting), (client) =>
+          client.GetChildRun({ id: target.found.runId }),
+        )
+        const run = detail.run
+        const harness = yield* wiring.harness
+        // A helper whose own conversation is not made yet has used no tools.
+        const child = target.found.child
+        const calls = Option.isNone(child)
+          ? undefined
+          : yield* pi(() => harness.snapshot(HelperCalls, child.value, BACKGROUND_CONTEXT))
+        const now = yield* Clock.currentTimeMillis
+        return {
+          output: {
+            helper: run.number,
+            status: stateWord(run),
+            seconds_working: ChildRunState.match(run.state, {
+              Reserved: () => 0,
+              Working: ({ startedAt }) => Math.round((now - startedAt) / 1000),
+              Stopping: () => null,
+              Completed: () => null,
+              Failed: () => null,
+              Stopped: () => null,
+            }),
+            tool_calls_used: calls === undefined ? 0 : calls.counted.length,
+            tool_call_limit: run.budget.toolCalls,
+            recent_tools: calls === undefined ? [] : calls.recent,
+          },
+        }
       }),
   })
 
@@ -231,5 +279,5 @@ export function childTools(wiring: Wiring) {
       }),
   })
 
-  return [spawn, wait, cancel] as const
+  return [spawn, check, wait, cancel] as const
 }

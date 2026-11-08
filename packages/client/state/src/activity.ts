@@ -376,6 +376,14 @@ const STEPS = {
     },
     detail: nothing,
   },
+  check_run: {
+    said: {
+      running: 'Checking on a helper',
+      done: 'Checked on a helper',
+      failed: 'Could not check on the helper',
+    },
+    detail: nothing,
+  },
   cancel_run: {
     said: {
       running: 'Stopping a helper',

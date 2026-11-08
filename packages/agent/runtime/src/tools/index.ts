@@ -25,6 +25,7 @@ export function tools(
   resolvePerson: (call: Parameters<ResolveScope>[0]) => Effect.Effect<MemoryWriter, ToolFailure>,
   memory: Memory['Service'],
   skills: ReadonlyArray<ToolRegistration>,
+  children: ReadonlyArray<ToolRegistration>,
 ) {
   const authority = new NodeAsyncHooks.AsyncLocalStorage<Layer.Layer<Scope, ToolFailure>>()
   /** Node's invocation-local storage keeps concurrent calls isolated while sharing warm tools. */
@@ -51,7 +52,15 @@ export function tools(
   const project: ProjectOf = (name) =>
     // @effect-diagnostics-next-line strictEffectProvide:off -- The per-call authority Layer, as in toolRunner.
     projectNamed(name).pipe(Effect.provide(current()))
-  const registry = capabilityRegistry({ runTool, run, runMemory, project, memory, skills })
+  const registry = capabilityRegistry({
+    runTool,
+    run,
+    runMemory,
+    project,
+    memory,
+    skills,
+    children,
+  })
   const mounted = registry.tools.map((definition) =>
     durableTool({
       ...definition,

@@ -486,6 +486,7 @@ it.effect('keeps another Computer’s same-path mutation independent after cance
       () => Effect.die('Unexpected memory authority'),
       unusedMemory,
       [],
+      [],
     ).tools
     const write = definitions.find((tool) => tool.name === 'write')
     if (write === undefined) expect.fail('Missing write tool.')
@@ -534,6 +535,7 @@ it.effect('probes each Computer before choosing rg or grep', () =>
       () => (++calls === 1 ? ada.layer : dami.layer),
       () => Effect.die('Unexpected memory authority'),
       unusedMemory,
+      [],
       [],
     ).tools
     const grep = definitions.find((tool) => tool.name === 'grep')

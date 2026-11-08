@@ -8,6 +8,7 @@ export const ToolName = Schema.Literals([
   'ask_person',
   'bash',
   'cancel_run',
+  'check_run',
   'browse',
   'complete_todo',
   'connect',

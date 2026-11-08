@@ -5,7 +5,7 @@ import {
   type ToolRegistration,
 } from '@earendil-works/pi-durable'
 import { Tool, WorkerKind, type ToolName } from '@vivid/contracts'
-import { HelperCalls } from '../helper.ts'
+import { HelperCalls, RECENT_TOOLS } from '../helper.ts'
 
 /**
  * The tools each kind of helper gets, by name, from Vivid's own catalogue (`tools/index.ts`). No
@@ -100,6 +100,7 @@ function budgeted(tool: ToolRegistration): ToolRegistration {
             if (calls.counted.includes(api.callId)) return true
             if (calls.counted.length >= calls.limit) return false
             calls.counted.push(api.callId)
+            calls.recent = [...calls.recent, tool.name].slice(-RECENT_TOOLS)
             return true
           }, context)
           .then((allowed) =>

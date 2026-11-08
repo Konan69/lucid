@@ -22,7 +22,7 @@ import { correctionHooks } from './correction.ts'
 import { continuityHooks } from './continuity.ts'
 import { joinHooks } from './response.ts'
 import { followSettlements } from './settled.ts'
-import { helpers } from './children.ts'
+import { helpers, type Helpers } from './children.ts'
 import { BuiltinSkills } from './skills.ts'
 import { PiRejected } from './threads.ts'
 import { childTools } from './tools/children.ts'
@@ -109,11 +109,15 @@ export const openPerson = Effect.fn('Person.open')(function* (
   const opened = Deferred.await(ready)
 
   const memory = yield* Memory
+  // Helper tools are mounted in the registry with the rest; the helpers they start take fixed
+  // subsets of that registry, so they are made once it exists and these tools wait for them.
+  const helpersReady = yield* Deferred.make<Helpers>()
   const registered = tools(
     scopeResolver(opened, product),
     (call) => resolveMemoryCall(opened, product, call),
     memory,
     skills.tools === undefined ? [] : skills.tools,
+    childTools({ harness: opened, product, helpers: Deferred.await(helpersReady) }),
   )
   const all = registered.tools
   const registry = createRegistry()
@@ -133,10 +137,10 @@ export const openPerson = Effect.fn('Person.open')(function* (
     tools: all,
   })
   for (const extension of helping.extensions) registry.install(extension)
-  const offeredTools = [...all, ...childTools({ harness: opened, product, helpers: helping })]
+  yield* Deferred.succeed(helpersReady, helping)
   registry.install(
     definition({
-      tools: offeredTools,
+      tools: all,
       // The run's own record goes first: Pi stops calling `onYield` hooks after the first that continues.
       hooks: [joinHooks(run, opened), continuityHooks(run, opened), correctionHooks(run, opened)],
       frozen: (conversationId) =>
@@ -180,7 +184,7 @@ export const openPerson = Effect.fn('Person.open')(function* (
     agent: {
       model: models.selected,
       thinkingLevel: THINKING,
-      tools: offered(offeredTools, skills),
+      tools: offered(all, skills),
     },
     sources: { product, memory, capabilities: registered.reading },
     quiet,
