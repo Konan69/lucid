@@ -208,6 +208,7 @@ const specialRecipes = {
     drive: pushBrowser,
     scope:
       'Settings row on and off, the server holding this browser once, and a real notify_person reaching the service worker; see scope.json.',
+  },
   helpers: {
     drive: helpersBrowser,
     scope:
