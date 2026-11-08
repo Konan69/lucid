@@ -162,9 +162,10 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (receipt: Receipt) 
     workspace: Workspace.cases.Personal.make({}),
     sessionId,
   })
-  const ended = yield* Queue.unbounded<void>()
   const store = yield* RunStore
   const stopped = yield* Queue.unbounded<void>()
+  // Channel replies go out after the settlement commits, so a settlement read from here is in the
+  // database. `RunStore.end` itself runs inside the observer's transaction and cannot say that.
   const reported = yield* Queue.unbounded<string>()
   const titles = yield* Ref.make(0)
   const observed = RunStore.of({
@@ -174,11 +175,9 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (receipt: Receipt) 
         .end(id, ending)
         .pipe(
           Effect.tap((changed) =>
-            changed && RunEnding.guards.Completed(ending)
-              ? Queue.offer(ended, undefined)
-              : changed && RunEnding.guards.Stopped(ending)
-                ? Queue.offer(stopped, undefined)
-                : Effect.void,
+            changed && RunEnding.guards.Stopped(ending)
+              ? Queue.offer(stopped, undefined)
+              : Effect.void,
           ),
         ),
   })
@@ -232,7 +231,6 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (receipt: Receipt) 
     admission,
     given,
     runtime,
-    ended,
     stopped,
     reported,
     titles,
@@ -314,7 +312,7 @@ layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)), { excludeTestServi
         const { run } = yield* test.send('peer-node')
         yield* answer.entered
         yield* answer.release
-        yield* Queue.take(test.ended)
+        expect(yield* Queue.take(test.reported)).toBe('Completed')
         expect((yield* test.store.get(run.id)).state._tag).toBe('Completed')
       }).pipe(Effect.scoped),
     )
@@ -353,7 +351,7 @@ layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)), { excludeTestServi
         })
         expect(yield* test.store.list(test.threadId)).toHaveLength(1)
         yield* answer.release
-        yield* Queue.take(test.ended)
+        expect(yield* Queue.take(test.reported)).toBe('Completed')
         expect((yield* test.store.get(first.run.id)).state._tag).toBe('Completed')
       }).pipe(Effect.scoped),
     )
@@ -371,7 +369,7 @@ layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)), { excludeTestServi
           expect(run.submissionId).toBeDefined()
           expect((yield* test.store.list(test.threadId)).map((entry) => entry.turn)).toEqual([1])
           yield* answer.release
-          yield* Queue.take(test.ended)
+          expect(yield* Queue.take(test.reported)).toBe('Completed')
           expect((yield* test.store.get(run.id)).state._tag).toBe('Completed')
           expect(test.given.faux.state.callCount).toBe(1)
         }).pipe(Effect.scoped),
@@ -386,7 +384,7 @@ layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)), { excludeTestServi
         yield* answer.entered
         yield* test.restart
         yield* answer.release
-        yield* Queue.take(test.ended)
+        expect(yield* Queue.take(test.reported)).toBe('Completed')
         expect((yield* test.store.get(run.id)).state._tag).toBe('Completed')
         expect(test.given.faux.state.callCount).toBe(1)
       }).pipe(Effect.scoped),
@@ -420,7 +418,6 @@ layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)), { excludeTestServi
         expect((yield* test.store.get(run.id)).state._tag).toBe('Working')
         expect(yield* Queue.size(test.stopped)).toBe(0)
         yield* answer.release
-        yield* Queue.take(test.ended)
         expect(yield* Queue.take(test.reported)).toBe('Completed')
         expect((yield* test.store.get(run.id)).state._tag).toBe('Completed')
       }).pipe(Effect.scoped),
@@ -452,7 +449,7 @@ layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)), { excludeTestServi
           expect.objectContaining({ key: 'reply', submissionId: run.submissionId }),
         )
         yield* answer.release
-        yield* Queue.take(test.ended)
+        expect(yield* Queue.take(test.reported)).toBe('Completed')
         expect((yield* test.store.get(run.id)).state._tag).toBe('Completed')
         yield* Fiber.interrupt(watching)
         // A reconnect starts again with a Whole, never an operation from the old link.
@@ -510,7 +507,7 @@ layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)))((it) => {
       const { run } = yield* Fiber.join(sending)
       yield* answer.entered
       yield* answer.release
-      yield* Queue.take(test.ended)
+      expect(yield* Queue.take(test.reported)).toBe('Completed')
       expect((yield* test.store.get(run.id)).state._tag).toBe('Completed')
     }).pipe(Effect.scoped),
   )
