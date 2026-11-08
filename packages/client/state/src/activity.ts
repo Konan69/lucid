@@ -34,6 +34,8 @@ const Asked = Schema.Struct({
   site: text,
   /** What is owed, or what to do, on the steps that keep the Person's waiting-on and to-do lists. */
   what: text,
+  /** The earlier conversation a step reads, by the name Vivid used for it. */
+  thread: text,
 })
 type Asked = typeof Asked.Type
 
@@ -610,6 +612,15 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.what)],
   },
+  // The Dreamer's report to Vivid; it runs in a conversation no screen shows.
+  report_finding: {
+    said: {
+      running: 'Noting what it found',
+      done: 'Noted what it found',
+      failed: 'Could not note what it found',
+    },
+    detail: nothing,
+  },
   start_shell: {
     said: {
       running: 'Starting a long job on its computer',
@@ -658,6 +669,25 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.name)],
   },
+  search_threads: {
+    said: {
+      running: 'Looking through earlier conversations',
+      done: 'Looked through earlier conversations',
+      failed: 'Could not look through earlier conversations',
+    },
+    detail: (asked, answered) => [
+      quoted(asked.query),
+      counted(answered.results, 'message', 'messages'),
+    ],
+  },
+  read_thread: {
+    said: {
+      running: 'Reading an earlier conversation',
+      done: 'Read an earlier conversation',
+      failed: 'Could not read that conversation',
+    },
+    detail: (asked) => [said(asked.thread)],
+  },
 } satisfies Record<ToolName, Step>
 
 /** Old histories and newer runtimes can name tools this client no longer describes. */
@@ -679,6 +709,7 @@ const NOTHING_ASKED: Asked = {
   question: Option.none(),
   site: Option.none(),
   what: Option.none(),
+  thread: Option.none(),
 }
 
 const NOTHING_ANSWERED: Answered = {

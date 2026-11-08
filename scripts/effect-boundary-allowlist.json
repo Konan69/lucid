@@ -15,6 +15,16 @@
     "symbols": ["<module>", "gate", "starter"]
   },
   {
+    "file": "packages/agent/runtime/src/dreaming.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["<module>", "open", "wait", "start", "follow"]
+  },
+  {
+    "file": "packages/agent/runtime/src/agents/dreamer.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["execute"]
+  },
+  {
     "file": "packages/agent/runtime/src/children.ts",
     "classification": "third-party-adapter",
     "symbols": ["<module>", "open", "claimWake", "start", "claimWait"]

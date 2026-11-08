@@ -195,16 +195,16 @@ export const CreateWatchRequest = Schema.Struct({
 })
 export interface CreateWatchRequest extends Schema.Schema.Type<typeof CreateWatchRequest> {}
 
-/** Stopping a Watch by the name it was given; names are unique among a Person's live Watches. */
-export const StopWatchRequest = Schema.Struct({ name: WatchName })
-export interface StopWatchRequest extends Schema.Schema.Type<typeof StopWatchRequest> {}
-
-/** The admitted Watch Run supplies completion authority; model input supplies evidence only. */
-export const CompleteWatchRequest = Schema.Struct({
-  name: WatchName,
-  evidence: Schema.NonEmptyString,
+/**
+ * Ending a Watch by the name it was given; names are unique among a Person's live Watches.
+ * `Removed`: the Person or Vivid stops it. `Finished`: the Run the Watch started saw its end
+ * condition met and gives the evidence; the admitted Run, not the model, is the authority.
+ */
+export const StopWatchRequest = Schema.TaggedUnion({
+  Removed: { name: WatchName },
+  Finished: { name: WatchName, evidence: Schema.NonEmptyString },
 })
-export interface CompleteWatchRequest extends Schema.Schema.Type<typeof CompleteWatchRequest> {}
+export type StopWatchRequest = typeof StopWatchRequest.Type
 
 /** Only server admission establishes which Watch the current Run may finish. */
 export class WatchRunRequired extends Schema.TaggedError<WatchRunRequired>()(

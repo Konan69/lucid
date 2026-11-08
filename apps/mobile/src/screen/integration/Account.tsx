@@ -5,16 +5,18 @@ import {
   ConnectionState,
   type AccountName,
   type Connection,
+  type ConnectionDataClass,
 } from '@vivid/contracts'
-import { asksName, nameTaken, typedAccountName, whichAccount } from '@vivid/state'
-import { Effect, Option } from 'effect'
+import { access, asksName, nameTaken, typedAccountName, whichAccount } from '@vivid/state'
+import { Effect, Option, Result } from 'effect'
 import { useState } from 'react'
+import { Alert, View } from 'react-native'
 import { Plus } from 'lucide-react-native'
 import { commit } from '../../data/haptics'
 import { standingOf } from '../../data/integration'
 import { useLiveData, useLiveValue } from '../../data/live'
 import { FittedSheet } from '../../ui/Sheet'
-import { Button, Field, Label, Labelled, Notice, Skeleton } from '../../ui/ui'
+import { Button, Field, Label, Labelled, Notice, Segmented, Skeleton } from '../../ui/ui'
 import type { Routes } from '../../workspace'
 import { useFlow } from './flow'
 import { start } from '../../data/app'
@@ -102,6 +104,7 @@ export function Account({ route, navigation }: NativeStackScreenProps<Routes, 'A
         others={accounts.filter((account) => account.id !== connection.id)}
         onRename={(name) => flow.rename(connection, name)}
       />
+      <Access connection={connection} />
       {connection.origin === 'Catalogue' && (
         <Button
           icon={Plus}
@@ -118,6 +121,78 @@ export function Account({ route, navigation }: NativeStackScreenProps<Routes, 'A
         onPress={() => flow.disconnect(connection, () => navigation.goBack())}
       />
     </FittedSheet>
+  )
+}
+
+/**
+ * What the account was given and what Vivid may read through it: the access the service granted,
+ * in words, what it did not grant, and an Allowed/Off switch for each kind of data the Person can
+ * keep from Vivid on it. The same reading and switches as the web's account panel (`AccessPanel`
+ * in `apps/web/src/screen/settings/Connections.tsx`) and the Thread's card for a refused call.
+ *
+ * A switch is said to the server at once and drawn from the live list, which moves when the
+ * server has taken it; a change the server refused is said in the system's own alert, so nothing
+ * here is set after the answer.
+ */
+function Access({ connection }: { connection: Connection }) {
+  const data = useLiveData()
+  const granted = access.grantedOf(connection.grant)
+  const classes = access.dataClassesOf(connection)
+  const permit = (dataClass: ConnectionDataClass, allowed: boolean) =>
+    start(
+      Effect.gen(function* () {
+        commit()
+        const result = yield* data.changing((client) =>
+          client.SetConnectionPermission({
+            id: connection.id,
+            dataClass,
+            decision: allowed ? 'Allow' : 'Never',
+          }),
+        )
+        if (Result.isFailure(result)) Alert.alert('That was not saved', 'Try again.')
+      }),
+    )
+  return (
+    <View style={{ gap: 6 }}>
+      <Label size="footnote">What it was given</Label>
+      <Label size="label" tone="ink-2">
+        {granted.summary}
+      </Label>
+      {granted.given.map((words) => (
+        <Label key={`given-${words}`} size="label" tone="ink-2">
+          ✓ {words}
+        </Label>
+      ))}
+      {granted.missing.map((words) => (
+        <Label key={`missing-${words}`} size="label" tone="status-attention">
+          ✕ {words} · not given
+        </Label>
+      ))}
+      {classes.length > 0 && (
+        <View style={{ gap: 10, marginTop: 8 }}>
+          <Label size="footnote">What Vivid may read</Label>
+          {classes.map((entry) => (
+            <View key={entry.dataClass} style={{ gap: 6 }}>
+              <View>
+                <Label size="label">{entry.name}</Label>
+                <Label size="label" tone="ink-3">
+                  {entry.detail}
+                </Label>
+              </View>
+              <Segmented
+                label={`Whether Vivid may read ${entry.name.toLocaleLowerCase()} on ${connection.account}`}
+                value={entry.allowed ? 'allowed' : 'off'}
+                onChange={(value) => void permit(entry.dataClass, value === 'allowed')}
+                options={[
+                  { value: 'allowed', label: 'Allowed' },
+                  { value: 'off', label: 'Off' },
+                ]}
+              />
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
   )
 }
 

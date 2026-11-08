@@ -55,3 +55,4 @@ export * from './words.js'
 export * from './tools.js'
 
 export * from './capabilities.js'
+export * from './dreams.js'

@@ -16,6 +16,7 @@ import { helperOf } from './helper.ts'
 import { recoverAuthority, resolveAuthority, type DeliveryAuthority } from './delivery.ts'
 import { pi, threadOf } from './threads.ts'
 import { learnerAuthority } from './learning.ts'
+import { dreamerAuthority } from './dreaming.ts'
 import type { MemoryWriter } from './memory.ts'
 import type { ToolFailure } from './tools/result.ts'
 import { Scope, type ResolveScope } from './tools/scope.ts'
@@ -73,6 +74,16 @@ export const resolveCall: (
     call: Parameters<ResolveScope>[0],
   ) {
     const opened = yield* harness
+    // A Dreamer child acts in its dream's Thread, from its host-written authority (`dreaming.ts`).
+    const dreamer = yield* dreamerAuthority(opened, call.conversationId).pipe(
+      Effect.mapError(() => nobody('The Dreamer authority could not be read.')),
+    )
+    if (Option.isSome(dreamer))
+      return {
+        acting: dreamer.value.acting,
+        timezone: dreamer.value.timezone,
+        helper: Option.none(),
+      }
     // A helper acts for the Person its parent Run acts for, as itself; it has no delivery.
     const helper = yield* helperOf(opened, call.conversationId)
     if (Option.isSome(helper))
@@ -124,6 +135,10 @@ export const resolveMemoryCall: (
       Effect.mapError(() => nobody('The learning authority could not be read.')),
     )
     if (Option.isSome(learning)) return learning.value
+    const dreamer = yield* dreamerAuthority(yield* harness, call.conversationId).pipe(
+      Effect.mapError(() => nobody('The Dreamer authority could not be read.')),
+    )
+    if (Option.isSome(dreamer)) return dreamer.value.writer
     const { acting } = yield* resolveCall(harness, product, call)
     const opened = yield* harness
     const live = yield* pi(() =>

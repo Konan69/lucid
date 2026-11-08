@@ -23,6 +23,7 @@ import { projectsBrowser } from './projectsbrowser.mjs'
 import { offerBrowser } from './offer.mjs'
 import { libraryBrowser } from './librarybrowser.mjs'
 import { pushBrowser } from './push.mjs'
+import { computerBrowser, integrationsBrowser } from './accessbrowser.mjs'
 import { helpersBrowser, helperstopBrowser } from './helpers.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
@@ -54,10 +55,6 @@ function normaliseReply(text) {
 }
 
 const missing = {
-  integrations:
-    'Grant and result evidence presentation awaits the Claude UI unit; see features/integrations.md',
-  capabilities: 'Backend-only unit. The Computer panel UI unit owns its browser recipe.',
-  computer: 'Backend-only unit. The Computer panel UI unit owns its browser recipe.',
   handoff: 'No proof-owned Computer',
   discord: 'No browser recipe for the Discord Key form and Allow card yet',
   github: 'No browser recipe for the GitHub Key form yet',
@@ -86,6 +83,9 @@ const recipes = {
   projects: { check: 'projects' },
   replies: { check: 'replies' },
   library: { check: 'library' },
+  integrations: { check: 'integrations' },
+  capabilities: { check: 'capabilities' },
+  computer: { check: 'computer' },
   helpers: { check: 'helpers' },
   helperstop: { check: 'helperstop' },
   first: {
@@ -208,6 +208,21 @@ const specialRecipes = {
     drive: pushBrowser,
     scope:
       'Settings row on and off, the server holding this browser once, and a real notify_person reaching the service worker; see scope.json.',
+  },
+  integrations: {
+    drive: integrationsBrowser,
+    scope:
+      'Verify Pulse key typed in its Settings card, its access panel saying the server grant, and a real model read whose partial coverage is said under the reply, each before and after reload; see scope.json.',
+  },
+  computer: {
+    drive: computerBrowser,
+    scope:
+      'Settings Vivid’s computer panel: server health title, recovery ladder shown and never offered, after Check again and reload, without waking a Computer; see scope.json.',
+  },
+  capabilities: {
+    drive: computerBrowser,
+    scope:
+      'What Vivid can do on its Computer is drawn in the same panel from its health; for this run’s absent Computer that is the panel’s title and ladder only. See scope.json.',
   },
   helpers: {
     drive: helpersBrowser,
@@ -460,9 +475,22 @@ async function journey(state, feature) {
     evidence: directory,
   }
   const reason =
-    ['memory', 'procedure', 'question', 'approve', 'deny', 'changed', 'outcome', 'owed', 'todos', 'name', 'code', 'projects', 'helpers', 'helperstop'].includes(
-      feature,
-    ) && state.modelKind !== 'real'
+    [
+      'memory',
+      'procedure',
+      'question',
+      'approve',
+      'deny',
+      'changed',
+      'outcome',
+      'owed',
+      'todos',
+      'name',
+      'code',
+      'projects',
+      'helpers',
+      'helperstop',
+    ].includes(feature) && state.modelKind !== 'real'
       ? feature + ' requires a real model.'
       : feature === 'code' && state.computer !== 'disposable'
         ? 'Needs a disposable Person Computer. Launch had no VIVID_BOAT_API_KEY.'

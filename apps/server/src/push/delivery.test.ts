@@ -508,6 +508,8 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
               words: 'The signing moved to today at noon.',
               urgency: 'urgent',
             })
+            // A minute later, so the two notices are ordered by time.
+            yield* TestClock.adjust('1 minute')
             const posting = feedHandlers.Post(urgent).pipe(Effect.provideService(AuthContext, auth))
             yield* posting
             yield* posting

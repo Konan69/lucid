@@ -10,11 +10,10 @@ import {
   ServiceUnavailable,
   WatchListResponse,
   WatchResponse,
-  type CompleteWatchRequest,
   type CreateWatchRequest,
   ReviseWatchRequest,
   type FindAppEventsRequest,
-  type StopWatchRequest,
+  StopWatchRequest,
 } from '@vivid/contracts'
 import { requireActor, type Actor } from '../auth/access.ts'
 import type { DatabaseInfrastructureError } from '../database/client.ts'
@@ -171,25 +170,22 @@ export const watchHandlers = {
   ListWatches: Effect.fn('Rpc.ListWatches')(function* () {
     return yield* listed(yield* requireActor())
   }),
-  CompleteWatch: Effect.fn('Rpc.CompleteWatch')(function* (request: CompleteWatchRequest) {
-    const watch = yield* (yield* Watches)
-      .complete(yield* requireActor(), request.name, request.evidence)
-      .pipe(
-        Effect.catchTag('WatchMissing', () =>
-          Effect.fail(new NotFound({ message: 'No Watch has that name.' })),
-        ),
-      )
-    return WatchResponse.make({ watch })
-  }),
-  /** Stopping by name: the model knows Watches only by the names they were given. */
+  /**
+   * Ending by name: the model knows Watches only by the names they were given. A Watch is removed,
+   * or finished by its own Run on evidence that its end condition is met.
+   */
   StopWatch: Effect.fn('Rpc.StopWatch')(function* (request: StopWatchRequest) {
-    const watch = yield* (yield* Watches)
-      .stop(yield* requireActor(), request.name)
-      .pipe(
-        Effect.catchTag('WatchMissing', () =>
-          Effect.fail(new NotFound({ message: 'No Watch has that name.' })),
-        ),
-      )
+    const actor = yield* requireActor()
+    const watches = yield* Watches
+    const ended = StopWatchRequest.match(request, {
+      Removed: ({ name }) => watches.stop(actor, name),
+      Finished: ({ name, evidence }) => watches.complete(actor, name, evidence),
+    })
+    const watch = yield* ended.pipe(
+      Effect.catchTag('WatchMissing', () =>
+        Effect.fail(new NotFound({ message: 'No Watch has that name.' })),
+      ),
+    )
     return WatchResponse.make({ watch })
   }),
 }

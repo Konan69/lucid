@@ -1,6 +1,13 @@
 import { intent, purpose } from './checkins.ts'
 import { defineTool } from './tool.ts'
-import { Tool, Watch, WatchState, WatchCondition, WatchPurpose } from '@vivid/contracts'
+import {
+  StopWatchRequest,
+  Tool,
+  Watch,
+  WatchState,
+  WatchCondition,
+  WatchPurpose,
+} from '@vivid/contracts'
 import { Effect } from 'effect'
 import * as v from 'valibot'
 import { summary, text } from './inputs.ts'
@@ -154,7 +161,12 @@ function endingTools(runTool: RunTool) {
             const { client } = yield* Scope
             return {
               output: view(
-                (yield* client.CompleteWatch({ name: data.name, evidence: data.evidence })).watch,
+                (yield* client.StopWatch(
+                  StopWatchRequest.cases.Finished.make({
+                    name: data.name,
+                    evidence: data.evidence,
+                  }),
+                )).watch,
               ),
             }
           }),
@@ -170,7 +182,9 @@ function endingTools(runTool: RunTool) {
         return runTool(
           Effect.gen(function* () {
             const { client } = yield* Scope
-            const response = yield* client.StopWatch({ name: data.name.trim() })
+            const response = yield* client.StopWatch(
+              StopWatchRequest.cases.Removed.make({ name: data.name.trim() }),
+            )
             return { output: view(response.watch) }
           }),
           { signal, tool: 'stop_watching' },

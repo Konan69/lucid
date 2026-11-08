@@ -12,6 +12,7 @@ import {
   type PersonId,
 } from '@vivid/contracts'
 import { Effect, Option, Predicate, Result, Schema } from 'effect'
+import { DREAMING_TASK } from './dreaming.ts'
 import { LEARNING_TASK, LearningInput } from './learning.ts'
 import {
   Memory,
@@ -33,8 +34,9 @@ const learnsFor = (input: JsonValue, person: PersonId) =>
  * Stop every live learning task in this cell that holds an exchange of this Person: a learner
  * reads captured words and writes memory, so one queued before the forget could write the fact
  * back. Which exchange mentions it cannot be told from data, so all of them stop; learning is
- * opportunistic and the next conversation learns again. Pi's abort cascades to the learner's
- * child conversation (`Harness.abortTask`).
+ * opportunistic and the next conversation learns again. A queued Dreamer run stops too, for the
+ * same reason; the nightly schedule holds no words and keeps running. Pi's abort cascades to the
+ * learner's or Dreamer's child conversation (`Harness.abortTask`).
  */
 const stopLearning = Effect.fn('Forget.stopLearning')(function* (
   harness: Harness,
@@ -43,9 +45,10 @@ const stopLearning = Effect.fn('Forget.stopLearning')(function* (
   const inspection = yield* pi(() => harness.inspect(BACKGROUND_CONTEXT))
   const learning = inspection.tasks.filter(
     (task) =>
-      task.record.kind === LEARNING_TASK &&
       !task.record.abortRequested &&
-      learnsFor(task.record.input, person),
+      ((task.record.kind === LEARNING_TASK && learnsFor(task.record.input, person)) ||
+        // Every Dreamer run in this cell is its Person's; one re-reading the day could save it again.
+        task.record.kind === DREAMING_TASK),
   )
   yield* Effect.forEach(learning, (task) =>
     pi(() => harness.abortTask(task.record.id, BACKGROUND_CONTEXT)),

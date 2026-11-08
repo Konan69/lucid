@@ -789,5 +789,17 @@ export const sourcesOf = (entry: SavedMemory) =>
     }),
   )
 
+/**
+ * What the Dreamer found: its notes in layer `dreams`, which it writes overnight and after a long
+ * conversation goes quiet (`packages/agent/runtime/src/dreaming.ts`). Every surface lists them
+ * apart from what Vivid remembers, so a Person can see what it researched while they were away.
+ */
+export const found = (lines: ReadonlyArray<MemoryLine>) =>
+  lines.filter((line) => line.layer === 'dreams')
+
+/** Everything else Vivid remembers, as the list has always shown it. */
+export const kept = (lines: ReadonlyArray<MemoryLine>) =>
+  lines.filter((line) => line.layer !== 'dreams')
+
 /** A forget the Person pressed, before its first receipt has arrived: Vivid is at it. */
 export const pendingForget = (id: MemoryForgetId) => MemoryForgetReceipt.cases.Pending.make({ id })

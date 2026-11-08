@@ -195,6 +195,7 @@ const causeOf = Effect.fn('FeedStore.causeOf')(function* (tx: Transaction, threa
     Decision: threadRun,
     WatchUnrecorded: threadRun,
     Forget: threadRun,
+    Dream: ({ pass }): FeedCause => FeedCause.cases.Dream.make({ run, pass }),
     ChildResult: threadRun,
   })
 })

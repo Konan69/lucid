@@ -46,6 +46,7 @@ import {
   computerFileWrite,
 } from './store.ts'
 import { getCapabilities } from './capabilities.ts'
+import { latestRecovery } from './recovery.ts'
 import { computerInventory } from './inventory.ts'
 export { computerRunner } from './store.ts'
 
@@ -122,6 +123,11 @@ export const computerHandlers = {
   RecoverComputer: Effect.fn('Rpc.RecoverComputer')(function* (request: RecoverComputerRequest) {
     const actor = yield* requireActor()
     return yield* (yield* ComputerStore).recover(actor, request)
+  }),
+  /** The Person's own panel reads it; Vivid learns a step's outcome from the step it took. */
+  GetComputerRecovery: Effect.fn('Rpc.GetComputerRecovery')(function* () {
+    const auth = yield* requirePerson()
+    return yield* latestRecovery(auth.person.id)
   }),
   /** Public receipt contains only the outcome and count; cookies never cross the runtime RPC. */
   CopySignIn: Effect.fn('Rpc.CopySignIn')(function* (request: CopySignInRequest) {

@@ -43,6 +43,7 @@ import { todoTools } from './todos.ts'
 import { watchTools } from './watches.ts'
 import { checkinTools } from './checkins.ts'
 import { skillTools } from './skills.ts'
+import { recallTools, type Transcripts } from './recall.ts'
 
 type Requirement = keyof typeof requirements
 
@@ -69,6 +70,8 @@ interface RegistryInput {
   readonly project: ProjectOf
   readonly memory: Memory['Service']
   readonly skills: ReadonlyArray<ToolRegistration>
+  /** The Person's own conversations in this cell, for finding and reading earlier work. */
+  readonly transcripts: Transcripts
   /** Starting, checking, waiting on and stopping helpers (`tools/children.ts`). */
   readonly children: ReadonlyArray<ToolRegistration>
 }
@@ -266,6 +269,12 @@ const definitions: ReadonlyArray<{
       'Read current capabilities and passive Computer health, or request one targeted recovery step. Never replay an interrupted action or automatically climb the recovery ladder.',
     requirement: 'Product',
     mount: inspectionTools,
+  },
+  {
+    description:
+      'Search and read the person’s earlier conversations to recover original requests, decisions and work that saved memory may not hold.',
+    requirement: 'Product',
+    mount: ({ runTool, transcripts }) => recallTools(runTool, transcripts),
   },
 ]
 

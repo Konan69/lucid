@@ -1,4 +1,5 @@
 import * as Schema from 'effect/Schema'
+import { DreamPass } from './dreams.js'
 import { RunId, ThreadId } from './identity.js'
 import { WatchId } from './watches.js'
 
@@ -77,12 +78,14 @@ export interface FeedSource extends Schema.Schema.Type<typeof FeedSource> {}
 /**
  * What started the work a card reports, found from the record and never from the model. `Watch`:
  * the Run one Watch event started, with the Watch's id and name as they were then, so the cause
- * outlives the Watch. `ThreadRun`: the Run that started the Thread, when no recorded Watch did.
+ * outlives the Watch. `Dream`: the Run a Dreamer finding started, and whether the Dreamer ran
+ * overnight or after a conversation. `ThreadRun`: the Run that started the Thread, when neither did.
  */
 export const FeedCause = Schema.TaggedUnion({
   Watch: { run: RunId, watch: WatchId, watchName: Schema.String, eventId: Schema.NonEmptyString },
   /** The Run a check-in's timer started, with the check-in Watch's id and name as they were. */
   Checkin: { run: RunId, watch: WatchId, watchName: Schema.String },
+  Dream: { run: RunId, pass: DreamPass },
   ThreadRun: { run: RunId },
 })
 export type FeedCause = typeof FeedCause.Type

@@ -1,6 +1,6 @@
 import * as NodeFS from 'node:fs'
 import { describe, expect, layer } from '@effect/vitest'
-import { FeedItem, TimerReceipt } from '@vivid/contracts'
+import { FeedItem, TimerReceipt, StopWatchRequest } from '@vivid/contracts'
 import { Duration, Effect, Option, Schema, Stream } from 'effect'
 import { chainFixture, chainLayer, completeRun, replyText, toolParts } from '../runtime/chains.ts'
 
@@ -102,7 +102,9 @@ describe.skipIf(process.env['VIVID_LIVE_REMINDER'] !== '1')('Reminder live chain
           const watches = (yield* fixture.rpc.ListWatches()).watches
           expect(watches.length).toBeGreaterThan(0)
           yield* Effect.addFinalizer(() =>
-            Effect.forEach(watches, (watch) => fixture.rpc.StopWatch({ name: watch.name })).pipe(
+            Effect.forEach(watches, (watch) =>
+              fixture.rpc.StopWatch(StopWatchRequest.cases.Removed.make({ name: watch.name })),
+            ).pipe(
               Effect.catch(() => Effect.sync(() => expect.fail('Reminder watch stop failed'))),
             ),
           )

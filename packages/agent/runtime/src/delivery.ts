@@ -57,6 +57,7 @@ export const signalAttributes = (envelope: SignalEnvelope): Record<string, strin
     CarryOn: () => attribution,
     Handoff: ({ handoff }) => ({ ...attribution, handoff }),
     Forget: () => attribution,
+    Dream: ({ pass }) => ({ ...attribution, pass }),
     // A helper is named to the model by its number in the Thread, never by its id.
     ChildResult: ({ helper }) => ({ ...attribution, helper: String(helper) }),
   })
@@ -241,6 +242,7 @@ export function signalShown(placed: PlacedSignal) {
     CarryOn: ({ body }) => ({ tagName, attributes, body }),
     Handoff: ({ body }) => ({ tagName, attributes, body }),
     Forget: ({ body }) => ({ tagName, attributes, body }),
+    Dream: ({ body }) => ({ tagName, attributes, body }),
     ChildResult: ({ body }) => ({ tagName, attributes, body }),
   })
 }
@@ -335,6 +337,8 @@ const cueText = (cue: SignalCue) =>
     CarryOn: ({ body }) => body,
     Handoff: ({ body }) => body,
     Forget: ({ body }) => body,
+    // A finding is woken like a Watch event: nobody is watching, and the Feed is how it reaches them.
+    Dream: ({ body }) => [BACKGROUND_INSTRUCTION, body].join('\n\n'),
     ChildResult: ({ body }) => body,
   })
 

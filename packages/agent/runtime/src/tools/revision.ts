@@ -1,4 +1,9 @@
-import { InvalidRequest, ReviseMadeIntegrationRequest, ReviseWatchRequest, Tool } from '@vivid/contracts'
+import {
+  InvalidRequest,
+  ReviseMadeIntegrationRequest,
+  ReviseWatchRequest,
+  Tool,
+} from '@vivid/contracts'
 import { Effect, Schema } from 'effect'
 import * as v from 'valibot'
 import { defineTool } from './tool.ts'

@@ -1,4 +1,4 @@
-import { unusedMemory } from './tests/harness.ts'
+import { unusedMemory, unusedTranscripts } from './tests/harness.ts'
 import { describe, expect, it } from '@effect/vitest'
 import { PersonId, ThreadId } from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
@@ -69,7 +69,7 @@ describe('core tool catalogue', () => {
             return calls.length === 1 ? ada.layer : dami.layer
           },
           () => Effect.die('Unexpected memory authority'),
-          unusedMemory,
+          { memory: unusedMemory, transcripts: unusedTranscripts },
           { skills: [], children: [] },
         ).tools
         expect(calls).toHaveLength(0)
@@ -81,8 +81,8 @@ describe('core tool catalogue', () => {
           'grep',
           'glob',
           'use_desktop',
-          'browse',
-          'use_person_computer',
+          'start_shell',
+          'read_shell',
         ])
         const search = definitions.find((tool) => tool.name === 'search_library')
         if (search === undefined) expect.fail('Missing Library tool.')

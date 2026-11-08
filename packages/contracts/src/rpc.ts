@@ -16,6 +16,7 @@ import {
   WaitShellRequest,
   ComputerHealth,
   ComputerRecoveryOutcome,
+  ComputerRecoveryRecord,
   GetComputerHealthRequest,
   RecoverComputerRequest,
 } from './computers.js'
@@ -74,7 +75,6 @@ import {
 import type { AuthContext } from './auth.js'
 import {
   CreateWatchRequest,
-  CompleteWatchRequest,
   CheckinNotFound,
   CheckinNotScheduled,
   WatchRunRequired,
@@ -232,6 +232,7 @@ import {
   MemoryListing,
   MemoryPage,
   SavedMemory,
+  MemoryExport,
 } from './memory.js'
 import {
   NotificationListResponse,
@@ -304,6 +305,7 @@ import {
   DeliveryScopeRequest,
   AcknowledgeRunDeliveryRequest,
 } from './threads.js'
+import { DreamRequest, DreamResponse } from './dreams.js'
 import {
   ChildRun,
   ChildRunDetail,
@@ -386,6 +388,14 @@ const Post = Rpc.make('Post', {
   payload: PostRequest,
   success: PostOutcome,
 })
+
+// ── The Dreamer ─────────────────────────────────────────────────────────────
+/**
+ * Runtime-only, called by the Person's cell as Vivid acting for them: open the Background Thread
+ * one Dreamer run reads in, or report its finding there (`DreamRequest`). The Person, workspace
+ * and Thread come from the call's authority, never from the payload.
+ */
+const Dream = Rpc.make('Dream', { ...call, payload: DreamRequest, success: DreamResponse })
 
 // ── The signed-in Person and where they are working ────────────────────────
 const Me = Rpc.make('Me', { ...call, success: MeResponse })
@@ -846,14 +856,9 @@ const CreateWatch = Rpc.make('CreateWatch', {
   success: WatchResponse,
 })
 const ListWatches = Rpc.make('ListWatches', { ...call, success: WatchListResponse })
-const CompleteWatch = Rpc.make('CompleteWatch', {
-  ...call,
-  error: Schema.Union([RpcFailure, WatchRunRequired, WatchEndConditionRequired]),
-  payload: CompleteWatchRequest,
-  success: WatchResponse,
-})
 const StopWatch = Rpc.make('StopWatch', {
   ...call,
+  error: Schema.Union([RpcFailure, WatchRunRequired, WatchEndConditionRequired]),
   payload: StopWatchRequest,
   success: WatchResponse,
 })
@@ -1105,6 +1110,8 @@ const ForgetMemory = Rpc.make('ForgetMemory', {
   success: MemoryForgetReceipt,
   error: Schema.Union([RpcFailure, MemoryForgetStale]),
 })
+/** Everything the acting Person's memory holds, whole, for them to download from Settings. */
+const ExportMemory = Rpc.make('ExportMemory', { ...call, success: MemoryExport })
 /** One forget's receipt, live: Settings shows Pending until Vivid's background Run settles. */
 const WatchMemoryForget = Rpc.make('WatchMemoryForget', {
   ...live,
@@ -1153,6 +1160,11 @@ const RecoverComputer = Rpc.make('RecoverComputer', {
   ...call,
   payload: RecoverComputerRequest,
   success: ComputerRecoveryOutcome,
+})
+/** The newest recovery step on the acting Person's Computer, for its health panel. */
+const GetComputerRecovery = Rpc.make('GetComputerRecovery', {
+  ...call,
+  success: ComputerRecoveryRecord,
 })
 const GetComputer = Rpc.make('GetComputer', { ...call, success: ComputerResponse })
 const GetComputerApps = Rpc.make('GetComputerApps', { ...call, success: ComputerInventory })
@@ -1408,6 +1420,7 @@ export const VividRpc = RpcGroup.make(
   WatchFeed,
   MarkFeedCard,
   Post,
+  Dream,
   WatchNotifications,
   ReadNotifications,
   FindAppEvents,
@@ -1416,7 +1429,6 @@ export const VividRpc = RpcGroup.make(
   ReadMadeIntegration,
   ReviseMadeIntegration,
   ListWatches,
-  CompleteWatch,
   StopWatch,
   ListProjects,
   WatchProjects,
@@ -1469,6 +1481,7 @@ export const VividRpc = RpcGroup.make(
   PlanMemoryForget,
   ForgetMemory,
   WatchMemoryForget,
+  ExportMemory,
   ListSkills,
   WatchSkills,
   ListSkillSummaries,
@@ -1479,6 +1492,7 @@ export const VividRpc = RpcGroup.make(
   GetCapabilities,
   GetComputerHealth,
   RecoverComputer,
+  GetComputerRecovery,
   GetComputer,
   GetEgress,
   WatchEgress,
