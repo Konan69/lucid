@@ -105,7 +105,7 @@ const spawnTool = (wiring: Wiring) =>
       kind: v.pipe(
         v.picklist(WorkerKind.literals),
         v.description(
-          'ReadOnly: read files on your computer, pages, the Library, documents and memory. Researcher: read the page addresses you give and the Library, no computer. Executor: also run commands, write files and use connected Integrations. ComputerUse: drive your computer’s browser and desktop (one at a time).',
+          'ReadOnly: read files on your computer, pages, the Library, documents and memory. Researcher: read the page addresses you give, the Library and the person’s earlier conversations, no computer. Executor: also run commands, write files and use connected Integrations. ComputerUse: drive your computer’s browser and desktop (one at a time).',
         ),
       ),
       brief: v.pipe(
