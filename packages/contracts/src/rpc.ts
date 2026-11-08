@@ -246,6 +246,7 @@ import {
   UpdateOwedRequest,
   NudgedOwedRequest,
   ResolveOwedRequest,
+  OwedResultUndelivered,
   DropOwedRequest,
 } from './owed.js'
 import {
@@ -839,7 +840,12 @@ const WatchOwed = Rpc.make('WatchOwed', { ...live, success: OwedListResponse })
 const TrackOwed = Rpc.make('TrackOwed', { ...call, payload: TrackOwedRequest, success: Owed })
 const UpdateOwed = Rpc.make('UpdateOwed', { ...call, payload: UpdateOwedRequest, success: Owed })
 const NudgedOwed = Rpc.make('NudgedOwed', { ...call, payload: NudgedOwedRequest, success: Owed })
-const ResolveOwed = Rpc.make('ResolveOwed', { ...call, payload: ResolveOwedRequest, success: Owed })
+const ResolveOwed = Rpc.make('ResolveOwed', {
+  ...call,
+  payload: ResolveOwedRequest,
+  success: Owed,
+  error: Schema.Union([RpcFailure, OwedResultUndelivered]),
+})
 const DropOwed = Rpc.make('DropOwed', { ...call, payload: DropOwedRequest, success: Owed })
 
 // ── The Person's to-do list ───────────────────────────────────────────────

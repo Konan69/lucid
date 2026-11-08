@@ -23,6 +23,7 @@ import {
   type WatchEndConditionRequired,
   type CheckinNotFound,
   type CheckinNotScheduled,
+  type OwedResultUndelivered,
 } from '@vivid/contracts'
 import type { RpcFailure } from '@vivid/contracts/rpc'
 import * as Config from 'effect/Config'
@@ -68,6 +69,7 @@ export type ToolFailure =
   | ArtifactInspectionStale
   | CheckinNotFound
   | CheckinNotScheduled
+  | OwedResultUndelivered
   | WatchRunRequired
   | WatchEndConditionRequired
   | NoDeviceConnected
@@ -305,6 +307,7 @@ export const settle = Effect.fn('Tools.settle')(function* (
         ),
       CheckinNotFound: ({ message }) => failure(message),
       CheckinNotScheduled: ({ message }) => failure(message),
+      OwedResultUndelivered: ({ message }) => failure(message),
       WatchRunRequired: ({ message }) => failure(message),
       WatchEndConditionRequired: ({ message }) => failure(message),
       NoDeviceConnected: () => failure('The Person’s computer is not connected.'),

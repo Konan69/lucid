@@ -1,5 +1,10 @@
 import { RpcConnection, isTransientSocketReason, VividRpcClient } from '@vivid/client-runtime'
-import type { ApprovalChanged, ApprovalExpired, SkillReadOnly } from '@vivid/contracts'
+import type {
+  ApprovalChanged,
+  ApprovalExpired,
+  OwedResultUndelivered,
+  SkillReadOnly,
+} from '@vivid/contracts'
 import type { HandoffFailure, InputAnswerFailure, RpcFailure } from '@vivid/contracts/rpc'
 import {
   Cause,
@@ -23,6 +28,8 @@ import * as AtomRegistry from 'effect/reactivity/AtomRegistry'
 export type ProductFailure =
   | RpcFailure
   | SkillReadOnly
+  // Only Vivid's own close of an owed record in the background meets it; a Person's press never does.
+  | OwedResultUndelivered
   | ApprovalChanged
   | ApprovalExpired
   | InputAnswerFailure
@@ -171,6 +178,7 @@ const FINAL = {
   DatabaseFailure: true,
   DatabaseConstraintViolation: true,
   SkillReadOnly: true,
+  OwedResultUndelivered: true,
   InputAnswerCountMismatch: true,
   InputAnswerEmptyWords: true,
   InputAnswerRepeatedLabel: true,
