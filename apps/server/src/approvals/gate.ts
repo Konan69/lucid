@@ -89,7 +89,7 @@ export interface GateService {
    * Person's own, or is `destructive`, goes to the `Reviewer`, and `policy.ts#reviewOutcome` asks
    * only when the Person did not ask for it and it reaches other people or cannot be undone. With
    * no review (decisions switched off or unavailable) a `write` runs and a `destructive` action
-   * asks. If a rule that could forbid the action could not be weighed, the answer is to ask.
+   * asks. An unjudged Never rule conservatively refuses; an unjudged Ask rule asks.
    * Unwatched work asks before a non-read unless reviewed as contained. An unwatched destructive action always asks.
    *
    * `bound` is what the action was prepared against: the sign-in of the Integration it uses and
@@ -272,7 +272,7 @@ export const gateLayer = Layer.effect(
           connectionGeneration: bound.connectionGeneration,
           preconditions: [...bound.preconditions, ...external],
         })
-        // An applicable Ask rule, rules that could not be weighed, and something personal
+        // An applicable or unjudged Ask rule, and something personal
         // entering a shared Thread always ask: none of these is a judgment about the request.
         //
         // A write on the Person's own signed-in browser is deliberately NOT in this group. It

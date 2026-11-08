@@ -155,9 +155,10 @@ export const Approval = Schema.Struct({
   id: ApprovalId,
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
+  /** What Vivid asked to do; once a Person sent it edited (`AllowEdited`), what was sent. */
   action: ProposedAction,
   /**
-   * A digest of the action, its binding, the Thread and the Person. A decision must echo it, so a
+   * A digest of the action as it was asked, its binding, the Thread and the Person. A decision must echo it, so a
    * Person approves exactly what they were shown.
    */
   digest: Schema.String,
@@ -173,10 +174,18 @@ export interface Approval extends Schema.Schema.Type<typeof Approval> {}
 /**
  * A Person's answer. `AlwaysAllow` approves this action and writes a rule so the same kind of
  * action does not ask again; the rule is theirs and they can remove it.
+ *
+ * `AllowEdited` is a draft the Person changed before sending it: the Integration action once,
+ * with `input` in place of what Vivid wrote. The owner, 27 October 2026: "wants to send, needs a
+ * draft to send". `input` keeps every field Vivid wrote and changes only words (text, or a list
+ * of texts such as recipients); anything else is refused, so an edit can rewrite the message and
+ * who it goes to but never turn the action into a different one. The decision still quotes the
+ * digest of what was asked, and once it is taken the Approval's `action` is what was sent.
  */
 export const ApprovalDecision = Schema.TaggedUnion({
   AllowOnce: {},
   AlwaysAllow: {},
+  AllowEdited: { input: Schema.JsonObject },
   Deny: {},
 })
 export type ApprovalDecision = typeof ApprovalDecision.Type

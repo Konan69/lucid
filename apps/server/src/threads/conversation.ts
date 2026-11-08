@@ -26,6 +26,7 @@ export const ServerCue = Schema.Union([
   SignalCue.cases.Answer,
   SignalCue.cases.Watch,
   SignalCue.cases.CarryOn,
+  SignalCue.cases.Shell,
   SignalCue.cases.Handoff,
   SignalCue.cases.Forget,
 ])
