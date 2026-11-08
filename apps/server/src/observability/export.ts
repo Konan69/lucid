@@ -242,6 +242,7 @@ const rulesOf = (): Rules => {
     ['rpc.service', codeName],
     ['rpc.method', codeName],
     ['http.request.method', oneOf(METHODS)],
+    ['db.system.name', oneOf(['postgresql'])],
     ['http.response.status_code', integer(100, 599)],
     ['url.scheme', oneOf(['http', 'https'])],
   ])

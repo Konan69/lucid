@@ -2,6 +2,7 @@
 
 Read the touched feature before launching. A verdict belongs to the recorded commit. HTTP and browser are separate claims. The seeded map is not full product coverage.
 
+- [Monitoring](monitoring.md).
 - [First message](first.md).
 - [Android product journeys](phone.md).
 - [Reload a Thread](reload.md).

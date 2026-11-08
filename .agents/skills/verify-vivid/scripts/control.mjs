@@ -271,9 +271,9 @@ try {
               process.execPath,
               '--import',
               loader,
-              skill + '/scripts/browser.mjs',
+              skill + (args.includes('monitoring') ? '/scripts/monitoring.mjs' : '/scripts/browser.mjs'),
               state.evidence + '/state.json',
-              args.filter((arg) => !arg.startsWith('pi-'))[0] ?? 'all',
+              args.includes('monitoring') ? 'browser' : args.filter((arg) => !arg.startsWith('pi-'))[0] ?? 'all',
             ],
             {
               heavy: true,

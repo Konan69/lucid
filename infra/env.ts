@@ -111,6 +111,7 @@ export interface PushAccess {
 export interface ObservabilityAccess {
   readonly url: string
   readonly headers: Redacted.Redacted
+  readonly dsn: Option.Option<string>
 }
 
 export interface ExecutorAccess {
@@ -176,11 +177,12 @@ export const loadInfrastructureEnvironment = Effect.gen(function* () {
       message: 'Telemetry export must provide both variables or neither',
     })
   }
-  const observability = Option.zipWith(
-    otlpUrl,
-    otlpHeaders,
-    (url, headers): ObservabilityAccess => ({ url, headers }),
-  )
+  const observability = Option.zipWith(otlpUrl, otlpHeaders, (url, headers) => ({ url, headers }))
+  const dsn = yield* optionalString('SENTRY_DSN')
+  const monitoring = Option.map(observability, (access): ObservabilityAccess => ({
+    ...access,
+    dsn,
+  }))
 
   const computer: ComputerAccess = {
     key: yield* requiredSecret('VIVID_BOAT_API_KEY'),
@@ -203,7 +205,7 @@ export const loadInfrastructureEnvironment = Effect.gen(function* () {
     push,
     decisions,
     discordPeople,
-    observability,
+    observability: monitoring,
     computer,
   } satisfies InfrastructureEnvironment
 }).pipe(Effect.withSpan('loadInfrastructureEnvironment'))

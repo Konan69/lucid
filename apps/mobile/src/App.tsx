@@ -17,6 +17,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import type { ShowKey } from './data/connecting'
 import { door, patienceAtom, useDoor } from './data/door'
+import { navigationTelemetry } from './data/telemetry'
 import { Front, makeFront } from './data/front'
 import {
   Entry,
@@ -444,6 +445,7 @@ function Shell() {
           // Kept each time the Thread in front changes, from the moment there is a stack to read
           // beside it. The store is this shell's own and goes with it, listener and all.
           onReady={() => {
+            navigationTelemetry.registerNavigationContainer(navigation)
             front.subscribe(() => keep(front.showing()))
           }}
           // And each time the stack changes: a page opened, closed, or gone back from.

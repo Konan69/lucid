@@ -132,12 +132,18 @@ const pushAccess = ({ push }: InfrastructureEnvironment) => ({
 const observabilityAccess = (environment: InfrastructureEnvironment) =>
   Option.match(environment.observability, {
     onNone: () => ({}),
-    onSome: ({ url, headers }) => ({
-      VIVID_OTLP_URL: url,
-      VIVID_OTLP_HEADERS: headers,
-      VIVID_ENVIRONMENT: '${{RAILWAY_ENVIRONMENT_NAME}}',
-      VIVID_COMMIT: '${{RAILWAY_GIT_COMMIT_SHA}}',
-    }),
+    onSome: ({ url, headers, dsn }) => {
+      const access = {
+        VIVID_OTLP_URL: url,
+        VIVID_OTLP_HEADERS: headers,
+        VIVID_ENVIRONMENT: '${{RAILWAY_ENVIRONMENT_NAME}}',
+        VIVID_COMMIT: '${{RAILWAY_GIT_COMMIT_SHA}}',
+      }
+      return Option.match(dsn, {
+        onNone: () => access,
+        onSome: (address) => ({ ...access, SENTRY_DSN: address }),
+      })
+    },
   })
 
 /** A setting the server has its own default for is sent only when the deploy sets it. */

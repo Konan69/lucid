@@ -20,6 +20,7 @@ import { offer } from './offer.mjs'
 import { discordProof, discordBlocked } from './discord.mjs'
 import { githubProof, githubBlocked } from './github.mjs'
 import { library } from './library.mjs'
+import { monitoring } from './monitoring.mjs'
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { pictureAddress } = await import(web.resolve('@vivid/state'))
 
@@ -49,6 +50,7 @@ export const features = [
   'learning',
   'discord',
   'github',
+  'monitoring',
 ]
 export const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
@@ -424,6 +426,7 @@ async function learning(state, id, directory) {
 }
 
 const recipes = {
+  monitoring,
   first,
   reload,
   stop,

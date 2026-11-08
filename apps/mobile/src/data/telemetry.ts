@@ -1,4 +1,11 @@
-import { captureException, getClient, init, setTag, wrap } from '@sentry/react-native'
+import {
+  captureException,
+  getClient,
+  init,
+  setTag,
+  wrap,
+  reactNavigationIntegration,
+} from '@sentry/react-native'
 // The SDK's own transport, which hands an envelope to its native half. The package does not
 // export it from its entry, and `guarded` needs it to wrap: `init` uses this same function when
 // it is given none (`makeNativeTransportFactory` in the SDK's `sdk.js`).
@@ -8,7 +15,8 @@ import * as Updates from 'expo-updates'
 import type { ComponentType } from 'react'
 import { Platform } from 'react-native'
 import { reportsFrom, type Reports } from './build'
-import { guarded, scrub, scrubBreadcrumb } from './scrub'
+import { guarded, scrub, scrubBreadcrumb, scrubTransaction } from './scrub'
+import { origin } from './origin'
 
 /**
  * Sending the phone app's errors and crashes to Sentry, beside the report `fault.ts` sends to
@@ -36,15 +44,11 @@ const ADDRESS =
  *   `integrations/expocontext.js`). `startTelemetry` sets the three tags that matter itself.
  * - `TurboModuleContext` writes the native module and method being called into the native scope
  *   on every call. Only what `startTelemetry` names goes into that scope.
- * - `ExpoUpdatesListener` and `TimeToDisplay` are tracing instruments; this SDK installs the
- *   second whenever `tracesSampleRate` is a number, zero included (`integrations/default.js`).
  */
-const LEFT_OUT = new Set([
-  'ExpoContext',
-  'TurboModuleContext',
-  'ExpoUpdatesListener',
-  'TimeToDisplay',
-])
+const LEFT_OUT = new Set(['ExpoContext', 'TurboModuleContext'])
+
+/** Register the actual navigation container so spans name routes, never route parameter values. */
+export const navigationTelemetry = reactNavigationIntegration({ enableTimeToInitialDisplay: true })
 
 /**
  * Which over-the-air update is running, as the tags the SDK's own `ExpoContext` would have set.
@@ -58,64 +62,11 @@ const updates = () =>
   ] as const
 
 /**
- * Starts reporting. Called once at launch, first (`index.ts`), so an error in anything that
- * starts after it is reported. Only a release build on a phone reports: a development build and
- * the web build stop at the first line, and without a start every capture below does nothing.
- *
- * A start that throws is left at that. This runs before the app is registered, so an exception
- * here would be an app that does not open, and reporting errors is not worth the app. Nothing is
- * reported for that launch and nothing else is tried.
- *
- * `release` is left to the SDK, which reads it from the binary: the bundle identifier, the app's
- * version and its build number (`nativeReleaseIntegration`), the same for a JavaScript error and
- * a native crash.
- *
- * ## The two ways a report leaves
- *
- * A report made in JavaScript (an error, a rejected promise, what a boundary caught) passes
- * `scrub` and `scrubBreadcrumb`, and then `guarded` around the transport, which lets only
- * scrubbed error reports through (`scrub.ts`).
- *
- * A crash in native code does not. The native SDK writes it as the app dies and sends it on the
- * next launch, and the SDK removes `beforeSend`, `beforeBreadcrumb` and `integrations` from the
- * options before it starts its native half (`initNativeSdk` in the SDK's `wrapper.js`): a
- * function cannot cross to native code. Native crash reporting stays on, because finding a native
- * crash on a phone is the main reason this exists, so what such a report can carry is limited
- * here by what the native SDK is given and what it is told not to collect.
- *
- * What JavaScript puts into the native scope, which a native report includes (`scopeSync.js`):
- * - the three update tags below, and nothing else that is set: no user, no extra, no context;
- * - the breadcrumbs that passed `scrubBreadcrumb`, so a request's method, status and place and a
- *   move between screens.
- *
- * What a native crash report can still carry that no code here sees, read from the SDK's bridge
- * (`ios/RNSentryStart.m`, `android/.../RNSentryStart.java`) and its options, not from the native
- * SDKs themselves, whose source is not installed:
- * - the native exception's type and its reason string, written by the system or by the native
- *   code that failed. This is free text and is not checked by anything here;
- * - the native stack frames and the loaded images they belong to;
- * - the facts about the device, the system and the app that the native SDK collects itself;
- * - the release and the environment given below.
- *
- * ## Each option, and why
- * - `tracesSampleRate: 0` and every tracing switch off: errors and crashes only. Vivid had a
- *   telemetry volume problem.
- * - `enableAutoSessionTracking: false` and `sendClientReports: false`: a session record for each
- *   launch and the SDK's counts of what it dropped are volume, not errors. Both reach the native
- *   SDKs too, which read the same names.
- * - `enableAppHangTracking: false`: a slow screen is not a crash, and each one would be a report.
- *   This is the iPhone's switch. Android's is not an option of this SDK; it is turned off in the
- *   app's manifest (`io.sentry.anr.enable`, written by `app.config.ts`).
- * - `sendDefaultPii: false`, `attachScreenshot: false`, `attachViewHierarchy: false`: nothing of
- *   the screen or the Person is attached, in JavaScript or natively.
- * - The native breadcrumb switches are all off, so the only breadcrumbs in the native scope are
- *   the scrubbed ones from JavaScript. On the iPhone `enableNetworkBreadcrumbs` would note every
- *   request with its whole address, and `enableAutoBreadcrumbTracking` every touch and screen
- *   (`SentryAutoBreadcrumbTrackingIntegration` in sentry-cocoa 9.30.0 starts the touch tracker
- *   under that switch). On Android the five named here are the ones this SDK passes on; touches
- *   are a sixth it does not, turned off in the manifest (`io.sentry.breadcrumbs.user-interaction`).
- * - `enableCaptureFailedRequests: false`: a failed request is not reported as an error by itself.
- * - `enableNativeCrashHandling: true` is the SDK's default, written out because it is the point.
+ * Start one native client before launch work. Performance and session health are enabled;
+ * JavaScript envelopes are rebuilt by the transport allowlist before leaving the phone.
+ * Native crash reports take a separate SDK path and retain native stack/device diagnostics.
+ * No screenshots, view hierarchy, private request bodies or automatic native breadcrumbs are collected.
+ * A failed telemetry start must not prevent the app from opening.
  */
 export const startTelemetry = (): void => {
   if (__DEV__ || Platform.OS === 'web') return
@@ -123,19 +74,25 @@ export const startTelemetry = (): void => {
     dsn: ADDRESS,
     environment: 'production',
     transport: (given) => guarded(makeNativeTransport(given)),
-    integrations: (defaults) => defaults.filter(({ name }) => !LEFT_OUT.has(name)),
+    integrations: (defaults) => [
+      ...defaults.filter(({ name }) => !LEFT_OUT.has(name)),
+      navigationTelemetry,
+    ],
     beforeSend: scrub,
     beforeBreadcrumb: scrubBreadcrumb,
+    beforeSendTransaction: scrubTransaction,
     enableNativeCrashHandling: true,
-    tracesSampleRate: 0,
-    enableAutoPerformanceTracing: false,
-    enableAppStartTracking: false,
-    enableNativeFramesTracking: false,
-    enableStallTracking: false,
-    enableUserInteractionTracing: false,
-    enableAutoSessionTracking: false,
+    tracesSampleRate: 0.2,
+    tracePropagationTargets: Option.toArray(origin),
+    propagateTraceparent: true,
+    enableAutoPerformanceTracing: true,
+    enableAppStartTracking: true,
+    enableNativeFramesTracking: true,
+    enableStallTracking: true,
+    enableUserInteractionTracing: true,
+    enableAutoSessionTracking: true,
     sendClientReports: false,
-    enableAppHangTracking: false,
+    enableAppHangTracking: true,
     sendDefaultPii: false,
     attachScreenshot: false,
     attachViewHierarchy: false,

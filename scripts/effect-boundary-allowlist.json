@@ -145,5 +145,10 @@
     "file": "apps/server/src/threads/adoption/main.ts",
     "classification": "cli-entrypoint",
     "symbols": ["command"]
+  },
+  {
+    "file": "apps/server/src/observability/issues.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["issuesLayer"]
   }
 ]

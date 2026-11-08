@@ -56,7 +56,10 @@ export function selection(state) {
 /** Credentials require an explicit file or environment; other tools' auth stores are never read. */
 export async function provider() {
   const candidates = process.env.VIVID_VERIFY_KEY_FILE ? [process.env.VIVID_VERIFY_KEY_FILE] : []
-  const names = ['OPENROUTER_API_KEY', 'OPENCODE_API_KEY']
+  const names = [
+    'OPENROUTER_API_KEY', 'OPENCODE_API_KEY',
+    'VIVID_VERIFY_SENTRY_DSN', 'VIVID_VERIFY_OTLP_URL', 'VIVID_VERIFY_OTLP_HEADERS',
+  ]
   const env = Object.fromEntries(
     names.flatMap((name) => (process.env[name] ? [[name, process.env[name]]] : [])),
   )

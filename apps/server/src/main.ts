@@ -56,6 +56,7 @@ import { titleModelLayer } from './threads/model.ts'
 import { threadTitlesLayer } from './threads/generation.ts'
 import { notifierLayer } from './notifications/notifier.ts'
 import { observabilityLayer } from './observability/export.ts'
+import { issuesLayer } from './observability/issues.ts'
 import { notificationStoreLayer } from './notifications/store.ts'
 import { projectStoreLayer } from './projects/store.ts'
 import { owedStoreLayer } from './owed/store.ts'
@@ -194,4 +195,10 @@ const serverProgram = Effect.gen(function* () {
   return yield* Layer.launch(application)
 }).pipe(Effect.withSpan('Server.launch'))
 
-NodeRuntime.runMain(serverProgram)
+NodeRuntime.runMain(
+  Layer.launch(
+    Layer.effectDiscard(serverProgram.pipe(Effect.withErrorReporting)).pipe(
+      Layer.provide(issuesLayer),
+    ),
+  ),
+)

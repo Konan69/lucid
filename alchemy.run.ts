@@ -5,7 +5,9 @@ import * as Docker from 'alchemy/Docker'
 import * as GitHub from 'alchemy/GitHub'
 import * as Railway from 'alchemy/Railway'
 import * as Effect from 'effect/Effect'
+import * as Config from 'effect/Config'
 import * as Layer from 'effect/Layer'
+import * as Option from 'effect/Option'
 import { computerBinariesRelease } from './infra/github.ts'
 import { cellVariables } from './infra/cells.ts'
 import { databaseUrlFor } from './infra/database.ts'
@@ -149,6 +151,15 @@ const railwayStack = () =>
     Effect.gen(function* () {
       const target = yield* requireRunnableTarget(deployTarget)
       const hosted = yield* railwayResources(target, yield* loadInfrastructureEnvironment)
+      // Management authority stays in Alchemy's process, never in Railway or a client bundle.
+      const sentry = yield* Config.option(Config.Redacted('SENTRY_MANAGEMENT_TOKEN'))
+      if (Option.isSome(sentry))
+        yield* Command.Exec('sentry-alerts', {
+          command: 'node scripts/monitoring.mjs --apply',
+          cwd: '.',
+          env: { SENTRY_AUTH_TOKEN: sentry.value },
+          memo: { include: ['scripts/monitoring.mjs'] },
+        })
       /** The Computer binaries' release: the same resource on every target. */
       yield* computerBinariesRelease()
       return { webUrl: hosted.serverUrl, serverUrl: hosted.serverUrl }

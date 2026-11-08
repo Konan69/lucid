@@ -616,7 +616,7 @@ export function makeLive(layer: Layer.Layer<VividRpcClient | RpcConnection>) {
   const run = <Value, Failure>(program: Effect.Effect<Value, Failure, VividRpcClient>) =>
     Effect.result(
       Effect.flatMap(AtomRegistry.getResult(registry, runtime), (context) =>
-        Effect.provideContext(program, context),
+        Effect.provideContext(program.pipe(Effect.withErrorReporting), context),
       ).pipe(
         Effect.tapError((failure) =>
           Predicate.isTagged(failure, 'Unauthenticated') ? gone : Effect.void,
