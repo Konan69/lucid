@@ -1,9 +1,9 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "39854a2e-76cf-46db-92df-ba421f848e76",
+  "id": "867145ad-fabc-4f0f-9592-410ffa9efea9",
   "prevIds": [
-    "7af70872-67f5-492a-a982-191ffe047969"
+    "b3f4685e-582e-47da-8b05-7f31a2dcadf7"
   ],
   "ddl": [
     {
@@ -68,6 +68,12 @@
     {
       "isRlsEnabled": false,
       "name": "vivid_computers",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "vivid_connection_permissions",
       "entityType": "tables",
       "schema": "public"
     },
@@ -1145,6 +1151,45 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "name": "connection_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_connection_permissions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "data_class",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_connection_permissions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "decision",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_connection_permissions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
       "name": "id",
       "entityType": "columns",
       "schema": "public",
@@ -1315,6 +1360,19 @@
       "generated": null,
       "identity": null,
       "name": "authorization_generation",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_connections"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "grant_observation",
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_connections"
@@ -5345,6 +5403,23 @@
     {
       "nameExplicit": false,
       "columns": [
+        "connection_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "vivid_connections",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "name": "vivid_connection_permissions_NwHVbmKUGHeI_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "vivid_connection_permissions"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
         "person_id"
       ],
       "schemaTo": "public",
@@ -6190,6 +6265,17 @@
       "entityType": "pks",
       "schema": "public",
       "table": "vivid_channel_messages"
+    },
+    {
+      "columns": [
+        "connection_id",
+        "data_class"
+      ],
+      "nameExplicit": false,
+      "name": "vivid_connection_permissions_pkey",
+      "entityType": "pks",
+      "schema": "public",
+      "table": "vivid_connection_permissions"
     },
     {
       "columns": [
