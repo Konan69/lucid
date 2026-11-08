@@ -13,6 +13,7 @@ import {
   ArtifactDetail,
   ArtifactId,
   ArtifactNote,
+  ArtifactShape,
   ArtifactTitle,
   ArtifactVersion,
   DatabaseFailure,
@@ -20,6 +21,7 @@ import {
   NotFound,
   ReadDocumentOutcome,
   Role,
+  ShelvedArtifact,
   WriteDocumentOutcome,
   type GetArtifactRequest,
   type Person,
@@ -31,7 +33,7 @@ import {
 } from '@vivid/contracts'
 import { Array, Clock, Context, Effect, Layer, Option, Schema } from 'effect'
 import type { RuntimeUnavailable } from '@vivid/contracts/rpc'
-import { isAdmin, summaryOf } from '../auth/access.ts'
+import { inWorkspace, isAdmin, summaryOf, type Actor } from '../auth/access.ts'
 import { membershipTable } from '../companies/tables.ts'
 import {
   Database,
@@ -39,11 +41,20 @@ import {
   returned,
   type DatabaseInfrastructureError,
 } from '../database/client.ts'
-import { Changes, Topic } from '../live/changes.ts'
+import { Changes } from '../live/changes.ts'
 import { documentRun, Runtime } from '../runtime/client.ts'
-import { requireThread } from '../threads/access.ts'
+import { readableBy, requireThread } from '../threads/access.ts'
+import { threads } from '../threads/tables.ts'
 import { artifacts, artifactVersions } from './tables.ts'
-import { decodeArtifact, find, lock, named, workingRun, type Transaction } from './history.ts'
+import {
+  announceArtifacts,
+  decodeArtifact,
+  find,
+  lock,
+  named,
+  workingRun,
+  type Transaction,
+} from './history.ts'
 import { loadFileContent } from './files.ts'
 import { fillDocuments, namedDocuments } from './placeholder.ts'
 import { contentDigest } from '../approvals/action.ts'
@@ -61,6 +72,10 @@ const decodeArtifactTitle = decodeStored(Schema.Struct({ title: ArtifactTitle })
 const decodeVersion = decodeStored(VersionRow, 'Artifact version')
 const encodeAuthor = Schema.encodeEffect(ArtifactAuthor)
 const decodeRole = decodeStored(Role, 'Membership role')
+const decodeShelfFile = decodeStored(
+  Schema.Struct({ file: Schema.NullOr(ArtifactContent.cases.File) }),
+  'Artifact shelf file',
+)
 type AccessFailure = NotFound | Forbidden | DatabaseInfrastructureError
 
 /** The document authority serves Person edits and runtime writes through the same immutable history. */
@@ -78,6 +93,10 @@ export interface ArtifactStoreService {
     request: typeof ReviseArtifactRequest.Type,
   ) => Effect.Effect<Artifact, AccessFailure | ArtifactChanged | ArtifactNotEditable>
   readonly remove: (personId: PersonId, id: ArtifactId) => Effect.Effect<void, AccessFailure>
+  /** Every Artifact the Actor can reach in their workspace, newest first, for the Library. */
+  readonly shelf: (
+    actor: Actor,
+  ) => Effect.Effect<ReadonlyArray<ShelvedArtifact>, DatabaseInfrastructureError>
   readonly write: (
     personId: PersonId,
     threadId: ThreadId,
@@ -182,7 +201,6 @@ const write = Effect.fn('Artifacts.write')(function* (
   request: WriteDocumentRequest,
 ) {
   const database = yield* Database
-  const changes = yield* Changes
   // Check access before reading runtime history; repeat it under the lock before any write.
   yield* requireThread(threadId, personId)
   // Network lookup precedes the transaction and must still cancel if the tool leaves its response.
@@ -227,7 +245,7 @@ const write = Effect.fn('Artifacts.write')(function* (
       return { artifact: revised, created: false, changed: true }
     }),
   )
-  if (result.changed) yield* changes.publish([Topic.thread(threadId)])
+  if (result.changed) yield* announceArtifacts(threadId)
   return WriteDocumentOutcome.make({
     artifact: { id: result.artifact.id, version: result.artifact.version },
     title: result.artifact.title,
@@ -258,7 +276,7 @@ const revise = Effect.fn('Artifacts.revise')(function* (
       })
     }),
   )
-  yield* (yield* Changes).publish([Topic.thread(artifact.threadId)])
+  yield* announceArtifacts(artifact.threadId)
   return artifact
 }, Effect.uninterruptible)
 
@@ -393,7 +411,7 @@ const remove = Effect.fn('Artifacts.remove')(function* (personId: PersonId, id: 
       return undefined
     }),
   )
-  yield* (yield* Changes).publish([Topic.thread(initial.threadId)])
+  yield* announceArtifacts(initial.threadId)
 }, Effect.uninterruptible)
 
 /** Read the pointer and immutable history under one Thread lock so concurrent writes cannot mix snapshots. */
@@ -464,11 +482,48 @@ export const artifactStoreLayer = Layer.effect(
       )
       return yield* Effect.forEach(rows, decodeArtifact)
     })
+    /**
+     * One row per Artifact with its newest version's file, if it is one, and its Thread's title.
+     * Reach is the Thread list's rule (`threads/access.ts` `readableBy`) inside the Actor's
+     * workspace, so the shelf never shows an Artifact whose Thread the Person could not open.
+     */
+    const shelf = Effect.fn('ArtifactStore.shelf')(function* (actor: Actor) {
+      const rows = yield* database.run(
+        database
+          .select({ artifact: artifacts, threadTitle: threads.title, file: artifactVersions.file })
+          .from(artifacts)
+          .innerJoin(threads, eq(threads.id, artifacts.threadId))
+          .innerJoin(
+            artifactVersions,
+            and(
+              eq(artifactVersions.artifactId, artifacts.id),
+              eq(artifactVersions.number, artifacts.version),
+            ),
+          )
+          .where(and(inWorkspace(threads, actor), readableBy(actor.person.id)))
+          .orderBy(desc(artifacts.updatedAt), desc(artifacts.id)),
+      )
+      return yield* Effect.forEach(rows, (row) =>
+        Effect.gen(function* () {
+          const artifact = yield* decodeArtifact(row.artifact)
+          const { file } = yield* decodeShelfFile({ file: row.file })
+          return ShelvedArtifact.make({
+            artifact,
+            threadTitle: row.threadTitle,
+            shape:
+              file === null
+                ? ArtifactShape.cases.Document.make({})
+                : ArtifactShape.cases.File.make({ output: file.output }),
+          })
+        }),
+      )
+    })
     return ArtifactStore.of({
       list: (personId, threadId) => provide(list(personId, threadId)),
       get: (personId, request) => provide(get(personId, request)),
       revise: (person, request) => provide(revise(person, request)),
       remove: (personId, id) => provide(remove(personId, id)),
+      shelf,
       write: (personId, threadId, request) => provide(write(personId, threadId, request)),
       /** A missing title names only this visible Thread's documents, never a cross-Thread search. */
       read: Effect.fn('ArtifactStore.read')(function* (personId, threadId, request) {

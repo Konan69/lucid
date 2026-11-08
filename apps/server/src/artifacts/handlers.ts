@@ -1,5 +1,6 @@
 import {
   ArtifactListResponse,
+  ArtifactShelfResponse,
   type InspectArtifactFileRequest,
   type PublishArtifactFileRequest,
   ArtifactResponse,
@@ -10,10 +11,11 @@ import {
   type ThreadId,
   type WriteDocumentRequest,
 } from '@vivid/contracts'
-import { Effect } from 'effect'
+import { Effect, Stream } from 'effect'
 import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/access.ts'
 import { Topic } from '../live/changes.ts'
 import { live } from '../live/query.ts'
+import { find } from './history.ts'
 import { ArtifactStore } from './store.ts'
 import { inspectArtifactFile, publishArtifactFile } from './files.ts'
 
@@ -21,6 +23,21 @@ import { inspectArtifactFile, publishArtifactFile } from './files.ts'
 const load = Effect.fn('Artifacts.load')(function* (actor: Actor, threadId: ThreadId) {
   return ArtifactListResponse.make({
     artifacts: [...(yield* (yield* ArtifactStore).list(actor.person.id, threadId))],
+  })
+})
+
+/** One Artifact as the Actor may read it, at the version asked for or the newest. */
+const detail = Effect.fn('Artifacts.detail')(function* (
+  actor: Actor,
+  request: typeof GetArtifactRequest.Type,
+) {
+  return yield* (yield* ArtifactStore).get(actor.person.id, request)
+})
+
+/** The shelf as the wire carries it. */
+const shelf = Effect.fn('Artifacts.shelf')(function* (actor: Actor) {
+  return ArtifactShelfResponse.make({
+    artifacts: [...(yield* (yield* ArtifactStore).shelf(actor))],
   })
 })
 
@@ -47,6 +64,22 @@ export const artifactHandlers = {
   }),
   WatchArtifacts: ({ threadId }: { readonly threadId: ThreadId }) =>
     live('WatchArtifacts', [], (actor) => load(actor, threadId), [Topic.thread(threadId)]),
+  /**
+   * One Artifact, read again whenever its Thread moves: a new version adds to its history and a
+   * removal ends the stream with `NotFound`. The Thread is found first only to name its topic;
+   * access is the store's, on every read, exactly as `GetArtifact` decides it.
+   */
+  WatchArtifact: (request: typeof GetArtifactRequest.Type) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const { threadId } = yield* find(request.id)
+        return live('WatchArtifact', [], (actor) => detail(actor, request), [
+          Topic.thread(threadId),
+        ])
+      }),
+    ),
+  /** The Person's shelf of Artifacts, read again when one moves in a Thread they can reach. */
+  WatchArtifactShelf: () => live('WatchArtifactShelf', ['artifacts'], shelf),
   GetArtifact: Effect.fn('Rpc.GetArtifact')(function* (request: typeof GetArtifactRequest.Type) {
     return yield* (yield* ArtifactStore).get((yield* requireActor()).person.id, request)
   }),

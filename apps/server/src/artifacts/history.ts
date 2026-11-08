@@ -10,9 +10,10 @@ import {
   ThreadId,
   type PersonId,
 } from '@vivid/contracts'
-import { Effect, Schema } from 'effect'
+import { Effect, Option, Schema } from 'effect'
 import { Database, decodeStored } from '../database/client.ts'
-import { requireThread } from '../threads/access.ts'
+import { Changes, Topic } from '../live/changes.ts'
+import { findThread, requireThread } from '../threads/access.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { artifacts } from './tables.ts'
 
@@ -74,4 +75,22 @@ export const workingRun = Effect.fn('Artifacts.workingRun')(function* (
     .for('update')
   if (run === undefined) return yield* new NotFound({ message: 'Working Run not found' })
   return (yield* decodeRun(run)).id
+})
+
+/**
+ * Says that a Thread's Artifacts moved: on the Thread, for whoever has it open, and on the
+ * `artifacts` part of every owner whose shelf can list it (`live/changes.ts`). A personal Thread
+ * is its creator's alone; a Company Thread is announced to the Company, whose members' shelves
+ * each read again and keep only what that Person may reach.
+ */
+export const announceArtifacts = Effect.fn('Artifacts.announce')(function* (threadId: ThreadId) {
+  const thread = yield* findThread(threadId)
+  const shelves = Option.match(thread, {
+    onNone: () => [],
+    onSome: ({ personId, companyId }) =>
+      companyId === null
+        ? [Topic.person(personId)]
+        : [Topic.person(personId), Topic.company(companyId)],
+  })
+  yield* (yield* Changes).publish([Topic.thread(threadId), ...shelves.map(Topic.part('artifacts'))])
 })
