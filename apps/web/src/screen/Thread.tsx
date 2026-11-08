@@ -28,6 +28,7 @@ import {
   workspaceKey,
   type Following,
 } from '@vivid/state'
+import { useSearch } from '@tanstack/react-router'
 import { Option } from 'effect'
 import { ArrowDown } from 'lucide-react'
 import { memo, useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
@@ -227,6 +228,11 @@ const settledSets = new WeakMap<ReadonlyArray<object>, ReadonlySet<string>>()
  */
 const turnsOf = makeTurns(thisReader())
 
+/** Brings a found message's row into the middle of the conversation when it first appears. */
+const landOn = (node: HTMLLIElement | null) => {
+  if (node !== null) node.scrollIntoView({ block: 'center' })
+}
+
 const Rows = memo(function Rows({
   said,
   visible,
@@ -234,6 +240,7 @@ const Rows = memo(function Rows({
   working,
   settled,
   onContinue,
+  found,
 }: {
   said: ReadonlyArray<ConversationMessage>
   visible: ReadonlyArray<ConversationMessage>
@@ -242,6 +249,8 @@ const Rows = memo(function Rows({
   /** The submissions the conversation has settled (`settledIn`); a reply's displays wait for its own. */
   settled: ReadonlySet<string>
   onContinue: (text: string, pictures?: ReadonlyArray<Picture>) => void
+  /** The message a search opened the Thread on (`?at`, `routes/thread.tsx`), when there is one. */
+  found: Option.Option<string>
 }) {
   const newest = visible.at(-1)
   const drawn = new Map(visible.map((message) => [message.id, message]))
@@ -274,7 +283,18 @@ const Rows = memo(function Rows({
         return (
           // A reply with nothing to show yet draws nothing (`FromVivid`), and its row then takes
           // no room either, so the line at the foot does not jump when the reply begins.
-          <li key={key} data-arrives className="empty:hidden">
+          // A message search opened the Thread on is brought into view once, when its row first
+          // appears, and stays marked so the eye finds it among its neighbours.
+          <li
+            key={key}
+            ref={Option.contains(found, key) ? landOn : undefined}
+            data-arrives
+            className={
+              Option.contains(found, key)
+                ? '-mx-3 rounded-row bg-wash-selected px-3 py-2 empty:hidden'
+                : 'empty:hidden'
+            }
+          >
             {turn !== undefined && (
               <p className="mb-4 text-center text-meta font-meta text-ink-3 tabular-nums">{turn}</p>
             )}
@@ -339,6 +359,9 @@ function ConversationMessages({
   ended: ReturnType<typeof newestRun>
   onSay: (text: string, pictures?: ReadonlyArray<Picture>) => void
 }) {
+  const at = useSearch({ strict: false, select: (search) => search.at })
+  // Kept as one value while the address stays the same, so `Rows` is not drawn again for it.
+  const found = useMemo(() => Option.fromUndefinedOr(at), [at])
   return (
     <Messages
       hero={hero}
@@ -357,6 +380,7 @@ function ConversationMessages({
         working={working}
         settled={settled}
         onContinue={onContinue}
+        found={found}
       />
       {marked(unsent, context.shared).map((failed) => (
         <NotSent

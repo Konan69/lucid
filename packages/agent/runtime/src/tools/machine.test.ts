@@ -1,4 +1,4 @@
-import { unusedMemory } from './tests/harness.ts'
+import { unusedMemory, unusedTranscripts } from './tests/harness.ts'
 import { describe, expect, it } from '@effect/vitest'
 import { vi } from 'vitest'
 import {
@@ -484,7 +484,7 @@ it.effect('keeps another Computer’s same-path mutation independent after cance
     const definitions = catalogue(
       () => (++calls === 1 ? ada.layer : dami.layer),
       () => Effect.die('Unexpected memory authority'),
-      unusedMemory,
+      { memory: unusedMemory, transcripts: unusedTranscripts },
       { skills: [], children: [] },
     ).tools
     const write = definitions.find((tool) => tool.name === 'write')
@@ -533,7 +533,7 @@ it.effect('probes each Computer before choosing rg or grep', () =>
     const definitions = catalogue(
       () => (++calls === 1 ? ada.layer : dami.layer),
       () => Effect.die('Unexpected memory authority'),
-      unusedMemory,
+      { memory: unusedMemory, transcripts: unusedTranscripts },
       { skills: [], children: [] },
     ).tools
     const grep = definitions.find((tool) => tool.name === 'grep')

@@ -38,6 +38,20 @@ const describe = (result: Found) =>
       ),
       go: () => void router.navigate({ to: '/library' }),
     }),
+    // A message found in a conversation: the Thread it is in, the words around the match, and
+    // choosing it opens the Thread on that message.
+    Message: ({ thread, hit }) => ({
+      key: `message:${thread.id}:${hit.messageId}`,
+      title: thread.title,
+      detail: hit.author === 'Person' ? `You: ${hit.snippet}` : hit.snippet,
+      icon: <PlaceMark place="thread" />,
+      go: () =>
+        void router.navigate({
+          to: '/t/$id',
+          params: { id: thread.id },
+          search: { at: hit.messageId },
+        }),
+    }),
   })
 
 /** One thing the palette can do or go to. */
@@ -196,9 +210,16 @@ const nothingSaid = (answer: LiveState<SearchResponse>) =>
   })
 
 /**
+ * Whether the words of the Person's conversations were left out of an answer: they live in the
+ * conversation runtime, which can be out of reach while Threads and the Library answer.
+ */
+const messagesMissed = (answer: LiveState<SearchResponse>) =>
+  LiveState.$is('Ready')(answer) && answer.value.messages === 'Unavailable'
+
+/**
  * Find anything, do anything (⌘K). With nothing typed it lists what can be done and the Threads
- * last worked in. Typing narrows the actions and searches Threads, Tasks and Library items on
- * the server, so the answer respects exactly what the Person may see. The arrow keys
+ * last worked in. Typing narrows the actions and searches Threads, Library items and the words
+ * of the Person's conversations on the server, so the answer respects exactly what the Person may see. The arrow keys
  * and Enter choose. The last answer stays up while the next is on its way.
  */
 export function Palette({ onClose }: { onClose: () => void }) {
@@ -301,6 +322,11 @@ export function Palette({ onClose }: { onClose: () => void }) {
             {items.length === 0 && (
               <p className="px-3 py-6 text-center text-label text-ink-3" aria-live="polite">
                 {nothingSaid(answer)}
+              </p>
+            )}
+            {typed.trim().length > 0 && !typed.startsWith('>') && messagesMissed(answer) && (
+              <p className="px-3 pt-2 pb-1 text-meta font-meta text-ink-3" aria-live="polite">
+                Messages could not be searched right now.
               </p>
             )}
             {groups.map((group) => (
