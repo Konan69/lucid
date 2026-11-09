@@ -113,9 +113,8 @@ jobs:
           restore-keys: |
             turbo-${{ runner.os }}-${{ strategy.job-index }}-${{ hashFiles('pnpm-lock.yaml') }}-
 
-      # The gate prints only its verdict at the end, so a failure or a timeout showed nothing. The
-      # trap prints this run's stage logs and keeps the gate's exit; the runner's SIGTERM on a
-      # timeout fires it at once (SIGINT waits for the gate). A pass removes it.
+      # Preserve the stage logs when the shell exits on failure. A pass removes the trap;
+      # cancellation logs depend on whether the runner lets the shell handle its signal.
       - name: Run the gate stages
         run: |
           trap 'status=$?; cat .cache/gate/runs/*/*.log || true; exit $status' EXIT
