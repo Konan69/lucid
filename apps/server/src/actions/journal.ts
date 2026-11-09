@@ -17,6 +17,8 @@ import {
   ActionReconciliationRequired,
   ActionTarget,
   NotFound,
+  InvalidRequest,
+  ProposedAction,
   type ApprovalId,
   type PersonId,
   type ReconcileActionResponse,
@@ -28,6 +30,7 @@ import { canonical } from '../approvals/action.ts'
 import { Database, decodeStored, encodeStored } from '../database/client.ts'
 import { requireThread } from '../threads/access.ts'
 import { actions } from './tables.ts'
+import { approvals } from '../approvals/tables.ts'
 
 type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
 type Row = typeof actions.$inferSelect
@@ -70,6 +73,42 @@ const fingerprintOf = Effect.fn('Actions.fingerprint')(function* (target: Action
     Desktop: () => encoded,
   })
   return NodeCrypto.createHash('sha256').update(canonical(essential)).digest('hex')
+})
+
+/**
+ * A decline holds for the proposing Run regardless of call id, summary or route. Reuse the
+ * journal's fingerprint over the stored target; a later Run may ask for a fresh Approval.
+ */
+export const requireNotDeclined = Effect.fn('Actions.requireNotDeclined')(function* (input: {
+  readonly threadId: ThreadId
+  readonly runId: RunId | null
+  readonly target: ActionTarget
+}) {
+  if (input.runId === null || !ActionTarget.guards.Connection(input.target))
+    return yield* Effect.void
+  const database = yield* Database
+  const denied = yield* database.run(
+    database
+      .select({ action: approvals.action })
+      .from(approvals)
+      .where(
+        and(
+          eq(approvals.threadId, input.threadId),
+          eq(approvals.runId, input.runId),
+          eq(approvals.status, 'denied'),
+        ),
+      ),
+  )
+  const fingerprint = yield* fingerprintOf(input.target)
+  for (const row of denied) {
+    const action = yield* decodeStored(ProposedAction, 'Declined action')(row.action)
+    if ((yield* fingerprintOf(action.target)) === fingerprint)
+      return yield* new InvalidRequest({
+        message:
+          'The Person declined this action. Do not send it or ask again unless the Person asks for it in a later Run.',
+      })
+  }
+  return yield* Effect.void
 })
 
 /** The digest a `Completed` receipt carries in place of the provider's answer. */
