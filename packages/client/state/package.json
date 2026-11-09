@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./responding": "./src/responding.ts"
   },
   "scripts": {
     "typecheck": "node ../../../scripts/types.mjs tsconfig.types.json",

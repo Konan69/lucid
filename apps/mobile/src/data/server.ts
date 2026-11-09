@@ -59,6 +59,9 @@ export const accountAddress = (server: ServerAddress, path: string): string =>
 export const liveAddress = (server: ServerAddress): string =>
   `${server.replace(/^http/u, 'ws')}/api/live`
 
+/** The product's calls as single HTTP requests, for an answer given while no socket is open. */
+export const rpcAddress = (server: ServerAddress): string => `${server}/api/rpc`
+
 /** Library bytes, which travel over plain HTTP beside the socket. */
 export const libraryAddress = (server: ServerAddress, path: string): string =>
   `${server}/api/library${path}`
