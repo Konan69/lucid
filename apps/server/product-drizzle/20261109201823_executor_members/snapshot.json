@@ -1,9 +1,9 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "b119ded4-17c2-4c8c-9f1a-383d2fca13c1",
+  "id": "495aa405-c668-470d-b44e-67009ba2cd95",
   "prevIds": [
-    "4942ae88-86a1-499a-a150-867f58bb69e1"
+    "0d1039a1-ae48-4564-b79c-fdeb2bc9af87"
   ],
   "ddl": [
     {
@@ -3906,6 +3906,19 @@
       "generated": null,
       "identity": null,
       "name": "conversation_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_notifications"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "approval_id",
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_notifications"
