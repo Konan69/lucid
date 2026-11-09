@@ -368,7 +368,7 @@ export const testMembersLayer = Layer.mergeAll(
         Effect.succeed(
           Match.value(principal).pipe(
             Match.when('installation', () => installationCaller),
-            Match.whenOr('member', 'adopted', () =>
+            Match.whenOr('member', 'adopted-account', 'adopted-public', () =>
               ExecutorCaller.cases.Member.make({
                 user: ExecutorUserId.make('test-executor-user'),
                 key: Redacted.make('test-member-key'),

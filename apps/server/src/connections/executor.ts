@@ -93,10 +93,16 @@ export const ExecutorAuthorizationId = Schema.NonEmptyString.pipe(
  * are refused its tools (executor@2.0.0-beta.23 `concepts/organizations-and-access.md`), so a
  * mistake in Vivid's own mapping cannot reach another Person's account.
  *
- * `adopted`: execution and Watches use that Person's member, while app and account management
- * stays with the installation creator. The app's group grants use only to that member.
+ * Adopted execution uses the member. `adopted-account` keeps its creator for Watches and status
+ * because beta.23 requires personal-account access; `adopted-public` uses the member for both.
+ * Management stays with the installation creator in either case.
  */
-export const ExecutorPrincipal = Schema.Literals(['installation', 'member', 'adopted'])
+export const ExecutorPrincipal = Schema.Literals([
+  'installation',
+  'member',
+  'adopted-account',
+  'adopted-public',
+])
 export type ExecutorPrincipal = typeof ExecutorPrincipal.Type
 
 /**
@@ -128,9 +134,10 @@ export type AccountIdentity = typeof AccountIdentity.Type
 const decodeAccountIdentity = Schema.decodeUnknownOption(AccountIdentity)
 
 /** Deletion authority is either a Vivid allocation, a proven migration copy, or access only. */
+export const AdoptionFinalization = Schema.TaggedUnion({ Pending: {}, Completed: {} })
 export const ExecutorAppOwnership = Schema.TaggedUnion({
   Dedicated: {},
-  Adopted: { group: AdoptionGroupId, source: AdoptedSource },
+  Adopted: { group: AdoptionGroupId, source: AdoptedSource, finalization: AdoptionFinalization },
   Copied: { original: ExecutorAppId },
   Unproven: {},
 })

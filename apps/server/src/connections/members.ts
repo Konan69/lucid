@@ -302,7 +302,7 @@ const makeMembers = Effect.fn('ExecutorMembers.make')(function* () {
     caller: ({ principal, personId }) =>
       Match.value(principal).pipe(
         Match.when('installation', () => Effect.succeed(installationCaller)),
-        Match.whenOr('member', 'adopted', () => member(personId)),
+        Match.whenOr('member', 'adopted-account', 'adopted-public', () => member(personId)),
         Match.exhaustive,
       ),
   })
@@ -424,7 +424,34 @@ export const callerOf = (connection: {
     members.caller({ principal: connection.executorPrincipal, personId: connection.personId }),
   ).pipe(Effect.mapError(memberFailure))
 
-/** The adapter's operations on one Connection, sent as its own caller (`callerOf`). */
+/** Watch authority is explicit for every principal. Account delegation grants app use, not
+ * direct personal-account use, which beta.23 requires when authorizing event delivery. */
+export const watchPrincipal = (principal: ExecutorPrincipal) =>
+  Match.value(principal).pipe(
+    Match.whenOr('installation', 'adopted-account', () => 'installation' as const),
+    Match.whenOr('member', 'adopted-public', () => 'member' as const),
+    Match.exhaustive,
+  )
+
+/** Separate execution from creator management, with the status authority chosen by the case. */
+function adoptedOperations(
+  management: ExecutorConnectionOperations,
+  execution: ExecutorConnectionOperations,
+  status: ExecutorConnectionOperations['status'],
+): ExecutorConnectionOperations {
+  return {
+    ...management,
+    appSlug: (app) => execution.appSlug(app),
+    tools: (references) => execution.tools(references),
+    call: (input) => execution.call(input),
+    status,
+    refresh: execution.refresh,
+    reviseMade: (app, files) =>
+      management.reviseMade(app, files).pipe(Effect.tap(() => execution.refresh)),
+  }
+}
+
+/** Adopted Account status uses the same owner authority as reauthorize's initial status probe. */
 export const operationsOf = Effect.fn('ExecutorMembers.operationsOf')(function* (connection: {
   readonly executorPrincipal: ExecutorPrincipal
   readonly personId: PersonId
@@ -432,25 +459,15 @@ export const operationsOf = Effect.fn('ExecutorMembers.operationsOf')(function* 
   const caller = yield* callerOf(connection)
   const executor = yield* Executor
   const own = executor.as(caller)
+  const owner = executor.as(installationCaller)
   return Match.value(connection.executorPrincipal).pipe(
     Match.whenOr('installation', 'member', () => own),
-    // Adopted apps keep their creator for management, while execution never gains owner authority.
-    Match.when('adopted', () => ({
-      ...executor.as(installationCaller),
-      appSlug: own.appSlug,
-      tools: own.tools,
-      call: own.call,
-      status: own.status,
-      refresh: own.refresh,
-      reviseMade: (
-        app: Parameters<ExecutorConnectionOperations['reviseMade']>[0],
-        files: Parameters<ExecutorConnectionOperations['reviseMade']>[1],
-      ) =>
-        executor
-          .as(installationCaller)
-          .reviseMade(app, files)
-          .pipe(Effect.tap(() => own.refresh)),
-    })),
+    Match.when('adopted-account', () =>
+      adoptedOperations(owner, own, (references) => owner.status(references)),
+    ),
+    Match.when('adopted-public', () =>
+      adoptedOperations(owner, own, (references) => own.status(references)),
+    ),
     Match.exhaustive,
   )
 })

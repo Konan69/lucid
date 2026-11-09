@@ -1,4 +1,4 @@
-import { and, eq, isNull, or, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm'
 import {
   ApprovalInvalidation,
   ConnectionId,
@@ -10,33 +10,39 @@ import { Database, decodeStored } from '../database/client.ts'
 import { ServerConfig } from '../config.ts'
 import { invalidatePending, usingConnection } from '../approvals/stale.ts'
 import { ExecutorEvents } from '../watches/events.ts'
-import { disconnectWatches } from '../watches/apps.ts'
 import { secretFor } from '../watches/signature.ts'
 import { watches } from '../watches/tables.ts'
-import { ExecutorAdoption } from './adopter.ts'
+import { AdoptionMemberMissing, AdoptionOwnerMissing, ExecutorAdoption } from './adopter.ts'
 import { AdoptionSourceUnsupported, adoptionFiles, adoptedFiles } from './adoption.ts'
 import {
   AdoptedSource,
+  AdoptionFinalization,
   Executor,
   ExecutorCaller,
-  ExecutorAccessDenied,
   ExecutorAppOwnership,
   ExecutorBinding,
   ExecutorReferences,
+  ExecutorRetired,
+  retirementOf,
+  executorReconnectMessage,
   installationCaller,
 } from './executor.ts'
-import { ExecutorMembers } from './members.ts'
+import { ExecutorMembers, watchPrincipal } from './members.ts'
 import { decodeRow, encodeReferences, type ConnectionRecord } from './records.ts'
 import { connections } from './tables.ts'
 
 type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
 const sourceUnsupported = Schema.is(AdoptionSourceUnsupported)
+const permanent = Schema.is(
+  Schema.Union([AdoptionSourceUnsupported, AdoptionMemberMissing, AdoptionOwnerMissing]),
+)
 const decodeArguments = decodeStored(WatchArguments, 'Watch adoption arguments')
 const decodeClaim = decodeStored(
   Schema.Struct({ rows: Schema.Tuple([Schema.Struct({ acquired: Schema.Boolean })]) }),
   'Connection adoption claim',
 )
 const Outcome = Schema.TaggedUnion({
+  Prepared: {},
   Moved: {},
   Finalized: {},
   Busy: {},
@@ -47,7 +53,6 @@ const Outcome = Schema.TaggedUnion({
       'Unproven',
       'PendingAuthorization',
       'RetiredResources',
-      'AccountEvents',
       'Binding',
     ]),
   },
@@ -83,14 +88,66 @@ const memberFor = Effect.fn('Connections.adoptionMember')(function* (row: Connec
     principal: 'member',
     personId: row.personId,
   })
-  if (!ExecutorCaller.guards.Member(caller))
-    return yield* ExecutorAccessDenied.make({ service: 'connections', tool: null })
+  if (!ExecutorCaller.guards.Member(caller)) return yield* AdoptionMemberMissing.make({})
   return { caller, user: caller.user }
 })
 
-/** The bridge marker commits before any source or link changes. A refused source stays entirely
- * Installation-owned. Pending browser grants still target the original user and cannot simply
- * be relabelled Member: preserve them until completion, then adopt their saved account. */
+/** An unfinished sign-in has no credential to preserve. Retire its installation-owned app
+ * before changing the principal, keeping a typed reconnect state for the next member Begin.
+ * An account already completed upstream is deferred rather than deleting its new credential. */
+const retireUnconnected = Effect.fn('Connections.retireUnconnected')(function* (
+  row: ConnectionRecord,
+  tx: Transaction,
+) {
+  const references = row.references
+  const owner = (yield* Executor).as(installationCaller)
+  const retired = ExecutorReferences.guards.ReconnectRequired(references)
+    ? references.retired
+    : retirementOf(references)
+  const owned = yield* (yield* ExecutorAdoption).apps
+  const hasApp = owned.some((app) => app === retired.original || retired.copies.includes(app))
+  const resources = hasApp ? yield* owner.prepareRetirement(retired) : retired
+  if (Option.isSome(resources.account))
+    return Outcome.cases.Deferred.make({ reason: 'PendingAuthorization' })
+  const held = yield* tx
+    .select({ id: connections.id })
+    .from(connections)
+    .where(
+      and(
+        ne(connections.id, row.id),
+        inArray(connections.executorApp, [resources.original, ...resources.copies]),
+      ),
+    )
+    .limit(1)
+  if (held.length > 0) return Outcome.cases.Deferred.make({ reason: 'RetiredResources' })
+  // The operator explicitly retires the original app of these unconnected rows as well as copies.
+  if (hasApp)
+    yield* owner.retire({
+      resources: ExecutorRetired.make({ ...resources, ownership: 'Dedicated' }),
+      retainedApps: [],
+      retainedAccounts: [],
+    })
+  const reset = ExecutorReferences.cases.ReconnectRequired.make({
+    service: references.service,
+    owner: references.owner,
+    retired: ExecutorRetired.make({ ...resources, authorization: Option.none(), copies: [] }),
+    reason: 'UnresolvedMigration',
+  })
+  yield* tx
+    .update(connections)
+    .set({
+      executorPrincipal: 'member',
+      references: yield* encodeReferences(reset),
+      executorApp: null,
+      status: 'failed',
+      reason: executorReconnectMessage,
+      updatedAt: Math.max(yield* Clock.currentTimeMillis, row.updatedAt + 1),
+    })
+    .where(eq(connections.id, row.id))
+  return Outcome.cases.Moved.make({})
+})
+
+/** Commit the bridge before HTTP changes. Unsupported source remains Installation-owned. */
 const prepare = Effect.fn('Connections.prepareAdoption')(function* (
   row: ConnectionRecord,
   tx: Transaction,
@@ -102,26 +159,14 @@ const prepare = Effect.fn('Connections.prepareAdoption')(function* (
     return Outcome.cases.Gone.make({})
   if (row.companyId !== null) return Outcome.cases.Deferred.make({ reason: 'Shared' })
   const references = row.references
-  if (ExecutorReferences.guards.ReconnectRequired(references)) {
-    if (Option.isSome(references.retired.account))
-      return Outcome.cases.Deferred.make({ reason: 'RetiredResources' })
-    yield* tx
-      .update(connections)
-      .set({ executorPrincipal: 'member' })
-      .where(eq(connections.id, row.id))
-    return Outcome.cases.Moved.make({})
-  }
   if (!ExecutorReferences.isAnyOf(['Public', 'Authorized'])(references))
-    return Outcome.cases.Deferred.make({ reason: 'PendingAuthorization' })
+    return yield* retireUnconnected(row, tx)
   if (!ExecutorAppOwnership.guards.Dedicated(references.appOwnership))
     return Outcome.cases.Deferred.make({ reason: 'Unproven' })
   if (ExecutorReferences.guards.Public(references)) return Outcome.cases.Gone.make({})
   const binding = references.binding
   if (!ExecutorBinding.guards.Account(binding) || binding.scope !== 'user')
     return Outcome.cases.Deferred.make({ reason: 'Binding' })
-  // beta.23 event delivery requires direct account access, even for app-linked personal accounts.
-  if ((yield* disconnectWatches(tx, row.id)).length > 0)
-    return Outcome.cases.Deferred.make({ reason: 'AccountEvents' })
   const adopter = yield* ExecutorAdoption
   const source = yield* adopter.source(references.app)
   yield* adoptionFiles(source, binding.requirement, 'vividAdopted')
@@ -145,10 +190,10 @@ const prepare = Effect.fn('Connections.prepareAdoption')(function* (
       updatedAt: Math.max(yield* Clock.currentTimeMillis, row.updatedAt + 1),
     })
     .where(eq(connections.id, row.id))
-  return Outcome.cases.Moved.make({})
+  return Outcome.cases.Prepared.make({})
 })
 
-/** Subscribe with the member before committing the principal. The staged audience still lets
+/** Subscribe with the final Watch principal before committing the principal. The staged audience still lets
  * the old owner deliver, so an interrupted handover keeps a working subscription. Repeated
  * subscribe reuses Executor's deterministic key; the receiver deduplicates overlapping deliveries. */
 const handover = Effect.fn('Connections.handoverWatches')(function* (
@@ -180,11 +225,6 @@ const move = Effect.fn('Connections.moveAdoption')(function* (
   const references = row.references
   if (!ExecutorReferences.isAnyOf(['Public', 'Adopting'])(references) || row.companyId !== null)
     return Outcome.cases.Gone.make({})
-  if (
-    ExecutorReferences.guards.Adopting(references) &&
-    (yield* disconnectWatches(tx, row.id)).length > 0
-  )
-    return Outcome.cases.Deferred.make({ reason: 'AccountEvents' })
   const member = yield* memberFor(row)
   const adopter = yield* ExecutorAdoption
   const executor = yield* Executor
@@ -203,7 +243,11 @@ const move = Effect.fn('Connections.moveAdoption')(function* (
     })
   }
   yield* adopter.audience(references.app, group.id)
-  const appOwnership = ExecutorAppOwnership.cases.Adopted.make({ group: group.id, source })
+  const appOwnership = ExecutorAppOwnership.cases.Adopted.make({
+    group: group.id,
+    source,
+    finalization: AdoptionFinalization.cases.Pending.make({}),
+  })
   const adopted = ExecutorReferences.guards.Adopting(references)
     ? ExecutorReferences.cases.Authorized.make({
         service: references.service,
@@ -225,14 +269,18 @@ const move = Effect.fn('Connections.moveAdoption')(function* (
       })
   yield* executor.as(member.caller).refresh
   yield* executor.as(member.caller).tools(adopted)
-  yield* handover(tx, row, member.caller)
+  const principal = ExecutorReferences.guards.Adopting(references)
+    ? ('adopted-account' as const)
+    : ('adopted-public' as const)
+  const watcher = watchPrincipal(principal) === 'installation' ? installationCaller : member.caller
+  yield* handover(tx, row, watcher)
   const [saved] = yield* tx
     .update(connections)
     .set({
       references: yield* encodeReferences(adopted),
-      executorPrincipal: 'adopted',
+      executorPrincipal: principal,
       authorizationGeneration: sql`${connections.authorizationGeneration} + 1`,
-      updatedAt: yield* Clock.currentTimeMillis,
+      updatedAt: Math.max(yield* Clock.currentTimeMillis, row.updatedAt + 1),
     })
     .where(eq(connections.id, row.id))
     .returning({ generation: connections.authorizationGeneration })
@@ -249,15 +297,15 @@ const move = Effect.fn('Connections.moveAdoption')(function* (
   return Outcome.cases.Moved.make({})
 })
 
-/** This post-commit step runs for every Adopted row, even after a crash. Source retirement and
- * subscription removal precede owner removal. A failure leaves the member working and retries
+/** Complete each adopted row once. Public rows retire the old owner subscription and audience;
+ * Account rows retain owner Watch/status authority. A failure leaves the member working and retries
  * the same exact resources, never reinstalling an app or discarding its stored data. */
 const finalize = Effect.fn('Connections.finalizeAdoption')(function* (
   row: ConnectionRecord,
   tx: Transaction,
 ) {
   if (
-    row.executorPrincipal !== 'adopted' ||
+    !['adopted-account', 'adopted-public'].includes(row.executorPrincipal) ||
     !ExecutorReferences.isAnyOf(['Public', 'Authorized'])(row.references)
   )
     return Outcome.cases.Gone.make({})
@@ -265,6 +313,8 @@ const finalize = Effect.fn('Connections.finalizeAdoption')(function* (
   const ownership = references.appOwnership
   if (!ExecutorAppOwnership.guards.Adopted(ownership))
     return Outcome.cases.Deferred.make({ reason: 'Unproven' })
+  if (AdoptionFinalization.guards.Completed(ownership.finalization))
+    return Outcome.cases.Gone.make({})
   const adopter = yield* ExecutorAdoption
   const member = yield* memberFor(row)
   if (AdoptedSource.guards.Account(ownership.source)) {
@@ -273,14 +323,27 @@ const finalize = Effect.fn('Connections.finalizeAdoption')(function* (
     if (files !== source) yield* adopter.deploy(references.app, files)
     yield* (yield* Executor).as(member.caller).refresh
   }
-  const events = yield* ExecutorEvents
-  for (const watch of yield* tx.select().from(watches).where(eq(watches.connectionId, row.id)))
-    yield* events.unsubscribe(installationCaller, {
-      name: watch.subscribedName,
-      arguments: yield* decodeArguments(watch.arguments),
-      url: watch.callbackUrl,
+  if (row.executorPrincipal === 'adopted-public') {
+    const events = yield* ExecutorEvents
+    for (const watch of yield* tx.select().from(watches).where(eq(watches.connectionId, row.id)))
+      yield* events.unsubscribe(installationCaller, {
+        name: watch.subscribedName,
+        arguments: yield* decodeArguments(watch.arguments),
+        url: watch.callbackUrl,
+      })
+    yield* adopter.group(`vivid-adopt-${row.id}`, member.user, false)
+  }
+  const appOwnership = ExecutorAppOwnership.cases.Adopted.make({
+    ...ownership,
+    finalization: AdoptionFinalization.cases.Completed.make({}),
+  })
+  yield* tx
+    .update(connections)
+    .set({
+      references: yield* encodeReferences({ ...references, appOwnership }),
+      updatedAt: Math.max(yield* Clock.currentTimeMillis, row.updatedAt + 1),
     })
-  yield* adopter.group(`vivid-adopt-${row.id}`, member.user, false)
+    .where(eq(connections.id, row.id))
   return Outcome.cases.Finalized.make({})
 })
 
@@ -288,7 +351,6 @@ const finalize = Effect.fn('Connections.finalizeAdoption')(function* (
  * typed result, so one unsupported app cannot block other Persons' Connections or their reads. */
 export const adoptConnections = Effect.fn('Connections.adopt')(function* () {
   const adopter = yield* ExecutorAdoption
-  yield* adopter.probe
   const database = yield* Database
   const rows = yield* database.run(
     database
@@ -299,23 +361,28 @@ export const adoptConnections = Effect.fn('Connections.adopt')(function* () {
           isNull(connections.companyId),
           or(
             eq(connections.executorPrincipal, 'installation'),
-            eq(connections.executorPrincipal, 'adopted'),
+            and(
+              inArray(connections.executorPrincipal, ['adopted-account', 'adopted-public']),
+              sql`${connections.references}->'appOwnership'->'finalization'->>'_tag' = 'Pending'`,
+            ),
           ),
         ),
       ),
   )
+  if (rows.length === 0) return false
+  yield* adopter.probe
   let remaining = false
   for (const raw of rows) {
     const id = ConnectionId.make(raw.id)
     const result = yield* Effect.gen(function* () {
       const prepared = yield* claim(id, prepare)
-      if (Outcome.isAnyOf(['Deferred', 'Busy'])(prepared)) return prepared
+      if (Outcome.isAnyOf(['Deferred', 'Busy', 'Moved'])(prepared)) return prepared
       const moved = yield* claim(id, move)
       if (Outcome.isAnyOf(['Deferred', 'Busy'])(moved)) return moved
       return yield* claim(id, finalize)
     }).pipe(Effect.result)
     if (Result.isFailure(result)) {
-      remaining = true
+      if (!permanent(result.failure)) remaining = true
       if (sourceUnsupported(result.failure))
         yield* Effect.logWarning('Integration source cannot be adopted', {
           connectionId: id,
@@ -327,12 +394,8 @@ export const adoptConnections = Effect.fn('Connections.adopt')(function* () {
           reason: result.failure._tag,
         })
     } else {
-      if (
-        Outcome.guards.Busy(result.success) ||
-        (Outcome.guards.Deferred(result.success) &&
-          result.success.reason === 'PendingAuthorization')
-      )
-        remaining = true
+      if (Outcome.guards.Busy(result.success)) remaining = true
+      if (Outcome.guards.Gone(result.success)) continue
       yield* Effect.logInfo('Integration adoption', { connectionId: id, outcome: result.success })
     }
   }

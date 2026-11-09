@@ -16,6 +16,18 @@ import {
 } from './executor.ts'
 import { requiredSetting, settingSecret } from '../config.ts'
 
+/** A missing directory relation cannot improve within this boot without a configuration change. */
+export class AdoptionMemberMissing extends Schema.TaggedError<AdoptionMemberMissing>()(
+  'AdoptionMemberMissing',
+  {},
+  { title: 'Executor adoption member missing' },
+) {}
+export class AdoptionOwnerMissing extends Schema.TaggedError<AdoptionOwnerMissing>()(
+  'AdoptionOwnerMissing',
+  {},
+  { title: 'Executor adoption owner missing' },
+) {}
+
 const Group = Schema.Struct({
   id: AdoptionGroupId,
   revision: Schema.String,
@@ -98,8 +110,8 @@ function groupManager(transport: Transport) {
     const inventory = yield* transport.exchange(Groups)('GET', '/groups', {})
     const member = inventory.members.find((entry) => entry.userId === user)
     const owner = inventory.members.find((entry) => entry.email === transport.email)
-    if (member === undefined || owner === undefined)
-      return yield* ExecutorAccessDenied.make(context)
+    if (member === undefined) return yield* AdoptionMemberMissing.make({})
+    if (owner === undefined) return yield* AdoptionOwnerMissing.make({})
     const memberIds = staged ? [member.id, owner.id] : [member.id]
     const existing = inventory.groups.find((entry) => entry.name === name)
     const body = { name, description: 'Vivid Integration adoption', memberIds }
@@ -175,6 +187,10 @@ const makeAdopter = Effect.fn('Adopter.make')(function* () {
   return {
     group: groupManager(transport),
     probe: groups().pipe(Effect.asVoid),
+    /** Absence is checked through owner management visibility, including partly retired requests. */
+    apps: transport
+      .exchange(ManagedResources)('GET', '/resources?view=managed', {})
+      .pipe(Effect.map((resources) => resources.apps.map((entry) => entry.app.id))),
     remove: removeAdopted(transport),
     audience,
     /** The original app id keeps app SQL data, event names and existing Watch identities intact. */

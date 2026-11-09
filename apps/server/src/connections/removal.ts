@@ -3,7 +3,7 @@ import { Clock, Effect, Option, Result } from 'effect'
 import { ApprovalInvalidation, Conflict } from '@vivid/contracts'
 import { Database } from '../database/client.ts'
 import { executorFailure, ConnectionReclamationBlocked } from './errors.ts'
-import { callerOf, operationsOf } from './members.ts'
+import { callerOf, operationsOf, watchPrincipal } from './members.ts'
 import { ExecutorAdoption } from './adopter.ts'
 import {
   ExecutorAppId,
@@ -110,7 +110,10 @@ const removeResources = Effect.fn('Connections.removeResources')(function* (row:
   // A member's app and personal account are removed with that member's own key: the owner may
   // delete a member's app but not the account the member connected (`members.ts`). Its Watches
   // were subscribed as that member, so they are unsubscribed as it too.
-  const caller = yield* callerOf(row)
+  const caller = yield* callerOf({
+    executorPrincipal: watchPrincipal(row.executorPrincipal),
+    personId: row.personId,
+  })
   const executor = yield* operationsOf(row)
   if (
     !ExecutorReferences.guards.ReconnectRequired(row.references) &&
