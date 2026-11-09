@@ -16,18 +16,18 @@ final class NotificationService: UNNotificationServiceExtension {
       finish()
       return
     }
-    let payload = content.userInfo["body"] as? [String: Any] ?? content.userInfo
+    let payload = content.userInfo["body"] as? [AnyHashable: Any] ?? content.userInfo
     let opens = payload["opens"] as? [String: Any]
     let thread = opens?["threadId"] as? String
     if let thread { content.threadIdentifier = thread }
     let avatar = UIImage(named: "Avatar").flatMap { $0.pngData() }.map { INImage(imageData: $0) }
-    let sender = INPerson(personHandle: INPersonHandle(value: "vivid", type: .unknown), nameComponents: nil,
-      displayName: "Vivid", image: avatar, contactIdentifier: nil, customIdentifier: "vivid", isMe: false)
-    let intent = INSendMessageIntent(recipients: nil, outgoingMessageType: .outgoingMessageText,
+    let sender: INPerson = INPerson(personHandle: INPersonHandle(value: "vivid", type: .unknown), nameComponents: nil,
+      displayName: "Vivid", image: avatar, contactIdentifier: nil, customIdentifier: "vivid", isMe: false, suggestionType: INPersonSuggestionType.none)
+    let intent: INSendMessageIntent = INSendMessageIntent(recipients: nil, outgoingMessageType: INOutgoingMessageType.outgoingMessageText,
       content: content.body, speakableGroupName: nil, conversationIdentifier: thread,
       serviceName: nil, sender: sender, attachments: nil)
     let interaction = INInteraction(intent: intent, response: nil)
-    interaction.direction = .incoming
+    interaction.direction = INInteractionDirection.incoming
     work = Task { [weak self] in
       if let address = payload["previewUrl"] as? String, let url = URL(string: address), url.scheme == "https" {
         await self?.attach(url, to: content)
