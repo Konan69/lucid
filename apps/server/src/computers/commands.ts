@@ -19,6 +19,13 @@ import {
   DeliverySpeaker,
   StoredRunOrigin,
 } from '../threads/conversation.ts'
+import {
+  noteRunning,
+  noteUnreachable,
+  owesWake,
+  recordCommand,
+  releaseCommand,
+} from './background.ts'
 import { MachineOperationFailed, MachineResponseInvalid } from './machine.ts'
 import { ComputerStore, executionRefusals, executionReason } from './store.ts'
 
@@ -136,6 +143,9 @@ export const startShell = Effect.fn('Shell.start')(function* (
         () => new DatabaseFailure({ message: 'Shell completion could not be queued.' }),
       ),
     )
+  // After the queue entry, so a listed command always has a wake owed; a server stopped in between
+  // leaves the queue's first read to write the row (`noteRunning`).
+  yield* recordCommand(job)
   // An accepted queue entry still owns its handle when the Computer is temporarily unavailable.
   // Returning an ordinary refusal here would invite a second command while the first remains owed.
   const queued = Effect.succeed(ShellSnapshot.cases.Queued.make({ handle: job.handle }))
@@ -159,11 +169,8 @@ export const shellRefusals = {
     ),
 }
 
-/** Retry running commands through the native SQL queue. Terminal delivery is idempotent even
- * when the server dies after admission and before the queue's success acknowledgement. */
-export const completeCommand = Effect.fn('Shell.complete')(function* (job: Command) {
-  const result = yield* launchCommand(job)
-  if (ShellSnapshot.guards.Running(result)) return yield* new CommandPending()
+/** Hands a command's final receipt to its Thread, once whatever retries: keyed by its handle. */
+const wake = Effect.fn('Shell.wake')(function* (job: Command, result: ShellSnapshot) {
   const conversation = yield* Conversation
   return yield* conversation.deliver({
     personId: job.personId,
@@ -175,6 +182,22 @@ export const completeCommand = Effect.fn('Shell.complete')(function* (job: Comma
     origin: StoredRunOrigin.cases.Decision.make({}),
     idempotencyKey: `shell:${job.handle}`,
   })
+})
+
+/** Retry running commands through the native SQL queue. Terminal delivery is idempotent even
+ * when the server dies after admission and before the queue's success acknowledgement. Each read
+ * of the receipt is written down for the work view (`background.ts`), which never asks the
+ * Computer itself; the row leaves once the Thread has its wake, or was spared it by a Stop. */
+export const completeCommand = Effect.fn('Shell.complete')(function* (job: Command) {
+  const result = yield* launchCommand(job).pipe(
+    Effect.tapError((failure) => noteUnreachable(job, executionReason(failure))),
+  )
+  if (ShellSnapshot.guards.Running(result)) {
+    yield* noteRunning(job, result)
+    return yield* new CommandPending()
+  }
+  if (yield* owesWake(job.handle, result)) yield* wake(job, result)
+  yield* releaseCommand(job)
 })
 
 /** SQL persists pending retries across restart. Shutdown releases the claimed row; non-interrupt
