@@ -249,7 +249,7 @@ function Lanes({ threads, ...props }: ListProps & { threads: ReadonlyArray<Threa
         {...scrolling}
         data={matching(threads, props.query)}
         keyExtractor={(thread) => thread.id}
-        ListEmptyComponent={<Said>No thread matches that.</Said>}
+        ListEmptyComponent={<Said>No matching threads.</Said>}
         ListFooterComponent={<FoundMessages onOpen={props.onOpen} />}
         renderItem={({ item }) => <ThreadRow thread={item} now={now} {...props} />}
       />

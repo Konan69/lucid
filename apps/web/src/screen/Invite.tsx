@@ -39,7 +39,7 @@ const previewOf = (id: InvitationId) => {
  */
 const REFUSALS = {
   unconfirmed:
-    'This Vivid cannot confirm the email address of an account with a password yet, so you cannot join with this account.',
+    'This Vivid can’t verify email addresses for password accounts yet, so you can’t join with this account.',
   refused: 'This invitation is for a different email address, or it was already used.',
   failed: 'Could not join right now. Try again.',
 } as const
@@ -86,7 +86,7 @@ export function Invite({ id }: { id: InvitationId }) {
       <Face size={48} mood="happy" />
       {preview === null ? (
         <>
-          <h1 className="text-page font-title text-ink">This invitation is not here</h1>
+          <h1 className="text-page font-title text-ink">Invitation not found</h1>
           <p className="max-w-sm text-body text-ink-3">
             It may have been withdrawn. Ask whoever invited you for a new link.
           </p>
@@ -131,8 +131,8 @@ export function Invite({ id }: { id: InvitationId }) {
 const SHARED = [
   'Threads you start for everyone or share',
   'The company’s Library and Projects',
-  'Integrations an admin sets up for all',
-  'Rules its admins write',
+  'Integrations an admin sets up for everyone',
+  'Rules set by its admins',
 ]
 const YOURS = [
   'Your private threads',
@@ -145,7 +145,7 @@ function Boundaries({ company }: { company: string }) {
   return (
     <div className="grid w-full max-w-lg gap-2.5 text-left sm:grid-cols-2">
       <Boundary title={`Shared with ${company}`} lines={SHARED} />
-      <Boundary title="Still only yours" lines={YOURS} note="Admins cannot read these." />
+      <Boundary title="Stays yours" lines={YOURS} note="Admins cannot read these." />
     </div>
   )
 }

@@ -70,8 +70,8 @@ const Over = Data.taggedEnum<Over>()
  * is. Integrations is the row before them and a screen of its own (`Shared`).
  */
 const IN_PLACE = [
-  { title: 'Rules', detail: 'What Vivid must ask about first.', over: Over.Rules() },
-  { title: 'Record', detail: 'What Vivid did, and for whom.', over: Over.Record() },
+  { title: 'Rules', detail: 'What Vivid needs to ask you about first.', over: Over.Rules() },
+  { title: 'Record', detail: 'Vivid’s actions and who they were for.', over: Over.Record() },
 ] as const satisfies ReadonlyArray<{ title: string; detail: string; over: Over }>
 
 /**
@@ -134,7 +134,7 @@ export function Settings() {
           />
           <Row
             title="What Vivid knows"
-            detail="What it has kept about you, to correct or remove."
+            detail="What Vivid remembers about you. Correct or remove anything."
             onPress={() => go.navigate('Memory')}
           />
           <Row
@@ -147,7 +147,7 @@ export function Settings() {
         <Section title="Devices">
           <Row
             title="Your computers"
-            detail="Allow or stop allowing Vivid to use a personal computer."
+            detail="Choose which of your computers Vivid can use."
             onPress={() => setOver(Over.Devices())}
           />
         </Section>
@@ -221,8 +221,8 @@ function VividRow({ workspace, onCustomise }: { workspace: Workspace; onCustomis
         title={name}
         detail={
           editable
-            ? 'Its name and colour, wherever it appears.'
-            : 'An owner or admin of this Company chooses its name and colour.'
+            ? 'Change Vivid’s name and colour everywhere it appears.'
+            : 'Only an owner or admin of this company can change its name and colour.'
         }
         wrap
         onPress={editable ? onCustomise : undefined}
@@ -282,7 +282,7 @@ function Sharing({ workspace, onPeople }: { workspace: Workspace; onPeople: () =
       />
     ),
     Company: () => (
-      <Row title="People" detail="Who is here, invitations and roles." onPress={onPeople} />
+      <Row title="People" detail="Members, invitations and roles." onPress={onPeople} />
     ),
   })
 }
@@ -412,7 +412,7 @@ function Preferences({ settings, onZone }: { settings: SettingsRecord; onZone: (
             }}
           />
         </Setting>
-        <Setting title="Theme" detail="The colours Vivid is painted in on this phone.">
+        <Setting title="Theme" detail="Vivid’s colours on this phone.">
           <Themes />
         </Setting>
         <Away />
@@ -439,7 +439,7 @@ function Zone({ onClose }: { onClose: () => void }) {
   return (
     <NameSheet
       title="Time zone"
-      detail={`Write a zone by its name, like ${here}, which is where this phone is.`}
+      detail={`Enter a time zone name. This phone is in ${here}.`}
       label="Time zone"
       initial={settings.value.timezone}
       placeholder={here}

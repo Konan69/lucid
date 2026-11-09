@@ -16,8 +16,8 @@ const ENDINGS = {
     detail: 'Nothing changed. Try again when you are ready.',
   },
   expired: {
-    title: 'This sign-in ran out',
-    detail: 'It waits five minutes for you to choose an account. Start again when you are ready.',
+    title: 'This sign-in expired',
+    detail: 'You have five minutes to choose an account. Start again when you’re ready.',
   },
   refused: {
     title: 'Vivid could not finish signing you in',

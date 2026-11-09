@@ -200,7 +200,7 @@ export const displayToolResult = (outcome: ToolOutcome): DisplayToolResult =>
     // one, so this says plainly that nothing new happened.
     Repeated: () => failed('This was already done, so it was not done again.'),
     ConnectionNotReady: () => failed('This Integration needs to be connected again.'),
-    OutcomeUnknown: () => failed('No answer came back. It may or may not have happened.'),
+    OutcomeUnknown: () => failed('No response came back, so it’s unclear whether it happened.'),
   })
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.Json)
@@ -264,7 +264,7 @@ export const displayCodeResult = (outcome: DisplayCodeOutcome): DisplayToolResul
         ApprovalRequired: () => failed('This needs your approval in the Thread.'),
         Blocked: () => failed('A rule prevents this action.'),
         Failed: ({ failure }) => failed(programFailure(failure)),
-        OutcomeUnknown: () => failed('No answer came back. It may or may not have happened.'),
+        OutcomeUnknown: () => failed('No response came back, so it’s unclear whether it happened.'),
       })
 
 /**

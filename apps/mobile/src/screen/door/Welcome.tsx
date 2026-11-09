@@ -24,7 +24,7 @@ function Unforgotten() {
   if (!Forgetting.$is('Refused')(forgetting)) return null
   return (
     <View style={{ gap: 8 }}>
-      <Notice message="You are signed out, but this phone could not remove its saved sign-in. Until it does, Vivid may open signed in again." />
+      <Notice message="You’re signed out, but this phone couldn’t clear its saved sign-in. Until it does, Vivid may open signed in again." />
       <Button
         morph
         label={trying ? 'Trying…' : 'Try again'}
@@ -102,7 +102,7 @@ export function Welcome() {
         {Option.isSome(ended) && <Notice message={ended.value} />}
         <Unforgotten />
         {Option.isSome(said) && <Notice message={said.value} />}
-        <Button kind="primary" label="Log in" onPress={() => go.navigate('Email')} />
+        <Button kind="primary" label="Sign in" onPress={() => go.navigate('Email')} />
         <GoogleButton
           busy={Standing.$is('Trading')(google)}
           onPress={() => {

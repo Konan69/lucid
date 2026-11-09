@@ -578,7 +578,7 @@ function LevelActions({
         <Search className="size-4" />
       </IconButton>
       <Segmented
-        label="How the Library is drawn"
+        label="Library view"
         value={grid ? 'grid' : 'list'}
         options={[
           { value: 'grid', name: 'Grid', label: <LayoutGrid className="size-4" /> },
@@ -758,8 +758,8 @@ function NothingHere({
       <p className="mt-4 text-section font-title text-ink">Nothing here yet</p>
       <p className="mt-1 mb-5 max-w-sm text-label text-pretty text-ink-3">
         {company
-          ? 'Add a file and Vivid can read it in every Member’s Threads.'
-          : 'Add a file and Vivid can read it in your Threads.'}
+          ? 'Add a file and Vivid can read it in every member’s threads.'
+          : 'Add a file and Vivid can read it in your threads.'}
       </p>
       <FilePicker label="Upload files" look="button" onFiles={onUpload}>
         <Upload className="size-3.5" />
@@ -1200,7 +1200,7 @@ const uploadNote = (status: UploadStatus): string =>
   UploadStatus.$match(status, {
     Sending: ({ percent }) => `${percent}%`,
     Reading: () => 'Vivid is reading it',
-    Duplicate: () => 'Already on this shelf',
+    Duplicate: () => 'Already in this Library',
     Failed: ({ message }) => message,
   })
 
@@ -1466,7 +1466,7 @@ function MoveDialog({
   // this list, and a choice is looked up in it, so the value and where it leads cannot disagree.
   const places: ReadonlyArray<{ value: string; label: string; folderId: LibraryFolderId | null }> =
     [
-      { value: TOP, label: 'The top of the shelf', folderId: null },
+      { value: TOP, label: 'Top of the Library', folderId: null },
       ...destinations.map((folder) => ({
         value: folder.id,
         label: folder.name,

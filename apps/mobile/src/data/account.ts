@@ -20,8 +20,7 @@ import { bearer, request } from './transport'
  */
 
 const UNREACHABLE = 'Vivid could not be reached at that address. Check the server and try again.'
-const NO_SESSION =
-  'That server signed you in but gave this device nothing to stay signed in with. Try again.'
+const NO_SESSION = 'That server signed you in, but this device couldn’t stay signed in. Try again.'
 
 const Refusal = Schema.fromJsonString(Schema.Struct({ message: Schema.optionalKey(Schema.String) }))
 const decodeRefusal = Schema.decodeUnknownOption(Refusal)

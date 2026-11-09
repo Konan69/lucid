@@ -34,7 +34,7 @@ export function Filing({ thread, onClose }: { thread: Thread; onClose: () => voi
       Effect.gen(function* () {
         const result = yield* patchThread(data, thread.id, { projectId })
         if (Result.isFailure(result)) {
-          setRefused(Option.some('That thread could not be moved just now. Try again.'))
+          setRefused(Option.some('Couldn’t move that thread. Try again.'))
           return
         }
         confirm()
@@ -92,7 +92,7 @@ export function Filing({ thread, onClose }: { thread: Thread; onClose: () => voi
       </Live>
       {thread.projectId !== null && (
         <Section title="Or">
-          <Row title="Remove from its project" trailing={null} onPress={() => void file(null)} />
+          <Row title="Remove from project" trailing={null} onPress={() => void file(null)} />
         </Section>
       )}
     </Sheet>

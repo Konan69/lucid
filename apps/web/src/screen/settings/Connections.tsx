@@ -278,7 +278,7 @@ export function Connections({ me }: { me: MeResponse }) {
         whose={
           admin && Option.isSome(company) ? (
             <Segmented
-              label="Who the next integration is for"
+              label="Who new integrations are for"
               value={forCompany ? 'company' : 'you'}
               onChange={(value) => setForCompany(value === 'company')}
               options={[
@@ -396,7 +396,8 @@ function Connected({
       </ul>
       {Option.isSome(company) && (
         <p className="mt-2.5 px-0.5 text-meta font-meta text-pretty text-ink-3">
-          Yours act only for you. Every member’s Vivid can read through {company.value}’s.
+          Your integrations act only for you. Vivid can read data from {company.value}’s
+          integrations for every member.
         </p>
       )}
     </section>
@@ -820,7 +821,7 @@ function AccountActions({
           </IconButton>
         }
         title={naming}
-        why="Your own name for it, such as Work. Vivid uses it too. Leave it empty to remove the name."
+        why="Your name for it, such as Work. Vivid uses this name too. Leave it empty to remove the name."
         action="Save"
         current={Option.fromNullOr(connection.name)}
         others={others}
@@ -1031,7 +1032,7 @@ function Catalog({
       <section>
         <Heading title={searching ? 'Results' : 'Popular'}>{whose}</Heading>
         {/* The tiles' own shapes hold the height, so nothing jumps when they arrive. */}
-        <ul className={GRID} aria-busy aria-label="Looking through the integrations">
+        <ul className={GRID} aria-busy aria-label="Loading integrations">
           {['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'].map((slot) => (
             <li key={slot} className={cn(TILE, 'opacity-50')} />
           ))}
@@ -1048,7 +1049,7 @@ function Catalog({
           onClick={again}
           className="cursor-pointer rounded-xs text-ink-2 underline underline-offset-4 hover:text-ink focus-visible:text-ink"
         >
-          Look again
+          Try again
         </button>
       </p>
     )

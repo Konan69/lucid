@@ -206,8 +206,8 @@ function Gone() {
       >
         <Empty
           icon={MessageCircleDashed}
-          title="This thread is not here"
-          line="It may have been deleted, or it is in a space you are not working in right now."
+          title="Thread not found"
+          line="It may have been deleted, or it belongs to another space."
           room="page"
         >
           <Button kind="primary" label="New thread" onPress={() => front.fresh()} />
@@ -642,7 +642,7 @@ function useWaiting(detail: Option.Option<ThreadDetail>, me: PersonId) {
 }
 
 /** What is said over the composer when a decision about an Approval did not go through. */
-const UNDECIDED = 'This was already decided, or it changed. Look again.'
+const UNDECIDED = 'This was already decided or has changed. Check it again.'
 
 /**
  * The banner over the composer, for what it holds: an Approval (`useAllowing`, `chat/Allow.tsx`)
@@ -1124,7 +1124,7 @@ function Foot({
       )}
       {stopping.refused && (
         <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
-          <Notice message="Vivid could not be stopped just now. Try again." />
+          <Notice message="Couldn’t stop Vivid. Try again." />
         </View>
       )}
       <View onLayout={(event) => onDock(event.nativeEvent.layout.height)}>

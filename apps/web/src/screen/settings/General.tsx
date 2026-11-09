@@ -86,7 +86,7 @@ export function General({ me }: { me: MeResponse }) {
         </div>
         {stuck && (
           <p role="alert" className="px-4 pb-3 text-label text-danger">
-            You are still signed in: Vivid could not be reached to sign you out. Try again.
+            Couldn’t reach Vivid to sign you out. You’re still signed in. Try again.
           </p>
         )}
         <Name current={me.person.name} />
@@ -157,8 +157,8 @@ function VividSection({ me }: { me: MeResponse }) {
           <span className="block truncate text-title font-title text-ink">{name}</span>
           <span className="block text-label text-pretty text-ink-3">
             {editable
-              ? 'Its name and colour, wherever it appears.'
-              : 'An owner or admin of this Company chooses its name and colour.'}
+              ? 'Change Vivid’s name and colour everywhere it appears.'
+              : 'Only an owner or admin of this company can change its name and colour.'}
           </span>
         </span>
         {editable && (
@@ -213,12 +213,10 @@ function Preferences({ settings }: { settings: Settings }) {
   return (
     <>
       <Refusal
-        message={
-          unsaved ? 'That change was not saved: Vivid could not be reached. Try again.' : null
-        }
+        message={unsaved ? 'Couldn’t reach Vivid, so that change wasn’t saved. Try again.' : null}
       />
       <Section title="Preferences">
-        <Row label="Appearance" detail="How Vivid looks on this device and your others.">
+        <Row label="Appearance" detail="How Vivid looks on this device and your other devices.">
           <Segmented
             label="Appearance"
             value={settings.theme}

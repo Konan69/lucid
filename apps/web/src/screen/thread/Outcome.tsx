@@ -10,10 +10,10 @@ const FAILED = {
   Delivery: { words: 'Vivid could not start on that. Send it again.', again: true },
   RateLimited: { words: 'Vivid’s model is busy. Give it a moment, then try again.', again: true },
   ModelUnavailable: {
-    words: 'Vivid’s model can’t be reached. Whoever runs this Vivid needs to look at it.',
+    words: 'Vivid’s model can’t be reached. Ask whoever runs this Vivid to check it.',
     again: false,
   },
-  NoAnswer: { words: 'Vivid came back with nothing to say.', again: true },
+  NoAnswer: { words: 'Vivid’s reply was empty.', again: true },
   TimedOut: { words: 'Vivid took too long and stopped.', again: true },
   Unexplained: { words: 'Vivid couldn’t finish that.', again: true },
 } satisfies Record<RunFailure, { words: string; again: boolean }>

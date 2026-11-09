@@ -78,8 +78,8 @@ export function Library() {
     <LevelScreen
       title="Library"
       subtitle={Workspace.match(me.workspace, {
-        Personal: () => 'What Vivid can read in your threads.',
-        Company: () => 'What Vivid can read, yours and the company’s.',
+        Personal: () => 'Files Vivid can read in your threads.',
+        Company: () => 'Files Vivid can read, yours and the company’s.',
       })}
       level={level}
       above={
@@ -140,7 +140,7 @@ function useAdd(level: Level) {
           return
         }
         if (Option.exists(result.success, (uploaded) => uploaded.duplicate)) {
-          setSaid(Option.some('That file is already on this shelf.'))
+          setSaid(Option.some('That file is already in this Library.'))
         } else if (Option.isSome(result.success)) commit()
       }),
     )
@@ -352,7 +352,7 @@ function FolderActions({ id, name }: { id: LibraryFolderId; name: string }) {
   const remove = () =>
     confirmDestructive({
       title: `Delete “${name}”?`,
-      detail: 'The folder is removed. This cannot be undone.',
+      detail: 'The folder will be deleted. This cannot be undone.',
       action: 'Delete folder',
       onConfirm: () => {
         warn()

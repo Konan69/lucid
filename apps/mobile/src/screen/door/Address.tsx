@@ -34,7 +34,7 @@ export function Address() {
   return (
     <Step
       title="Developer address"
-      lead="Development builds only. Where is the Vivid this phone should open?"
+      lead="Development builds only. Which Vivid should this phone open?"
       foot={
         <Button
           kind="primary"

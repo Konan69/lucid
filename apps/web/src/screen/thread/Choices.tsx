@@ -414,7 +414,7 @@ export function Head({
       type="button"
       aria-expanded={open}
       aria-controls={panel}
-      title={open ? 'Hide what is asked and its options' : 'Show what is asked and its options'}
+      title={open ? 'Hide the question and its options' : 'Show the question and its options'}
       onClick={onToggle}
       className="flex min-h-7 w-full cursor-pointer items-start gap-1 rounded-row text-start transition-colors duration-150 hover:bg-wash-hover focus-visible:-outline-offset-2"
     >
