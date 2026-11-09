@@ -97,8 +97,10 @@ export const sendActivity = Effect.fn('Activity.send')(function* (
 }, Effect.asVoid)
 
 /** APNs owns external delivery authority; tests replace only this network boundary. */
-export class ActivityPush extends Context.Service<
-  ActivityPush,
-  { readonly send: typeof sendActivity }
->()('vivid/ActivityPush') {}
+export interface ActivityPushService {
+  readonly send: typeof sendActivity
+}
+export class ActivityPush extends Context.Service<ActivityPush, ActivityPushService>()(
+  'vivid/ActivityPush',
+) {}
 export const activityPushLayer = Layer.succeed(ActivityPush, { send: sendActivity })

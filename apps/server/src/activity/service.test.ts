@@ -36,18 +36,15 @@ describe.skipIf(!testDatabaseConfigured)('ActivityKit registration', () => {
         const refused = yield* Deferred.make<void>()
         const oldToken = 'b'.repeat(64)
         const newToken = 'c'.repeat(64)
+        const staleReply = Deferred.succeed(sent, undefined).pipe(
+          Effect.andThen(Deferred.await(refused)),
+          Effect.andThen(Effect.fail(new PushTargetGone({}))),
+        )
         const activities = yield* makeActivities().pipe(
           Effect.provideService(
             ActivityPush,
             ActivityPush.of({
-              send: (_authority, token) =>
-                token === oldToken
-                  ? Effect.gen(function* () {
-                      yield* Deferred.succeed(sent, undefined)
-                      yield* Deferred.await(refused)
-                      return yield* new PushTargetGone({})
-                    })
-                  : Effect.void,
+              send: (_authority, token) => (token === oldToken ? staleReply : Effect.void),
             }),
           ),
           Effect.provideService(ConfigProvider.ConfigProvider, signingConfig),

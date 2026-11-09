@@ -181,7 +181,7 @@ const refreshFor = (services: DeliveryServices, signing: Option.Option<Credentia
         .from(runs)
         .innerJoin(threads, eq(runs.threadId, threads.id))
         .where(and(eq(runs.personId, personId), eq(runs.state, 'working')))
-        .orderBy(desc(runs.startedAt)),
+        .orderBy(desc(runs.startedAt), desc(runs.id)),
     )
     const readable = yield* Effect.filter(working, (thread) =>
       canSee(thread.id, personId).pipe(Effect.provideService(Database, database)),
