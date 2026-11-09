@@ -251,7 +251,7 @@ function Under({ side, words, motion }: { side: 1 | -1; words: string; motion: M
   const wash = useAnimatedStyle(() => ({ opacity: 0.06 + 0.1 * on() }))
   const said = useAnimatedStyle(() => ({
     opacity: on(),
-    transform: [{ translateX: (1 - on()) * -8 * side }],
+    transform: [{ translateY: (1 - on()) * 4 }],
   }))
   const mark = useAnimatedStyle(() => {
     const p = Math.max(0, (x.get() / width.get()) * side)
@@ -267,42 +267,46 @@ function Under({ side, words, motion }: { side: 1 | -1; words: string; motion: M
   return (
     <Animated.View
       pointerEvents="none"
-      style={[styles.under, { flexDirection: side > 0 ? 'row' : 'row-reverse' }, shown]}
+      style={[styles.under, { justifyContent: side > 0 ? 'flex-start' : 'flex-end' }, shown]}
     >
       <Animated.View
         style={[StyleSheet.absoluteFill, styles.round, { backgroundColor: tone }, wash]}
       />
-      <Animated.View style={[styles.mark, mark]}>
-        <Svg width={44} height={44} style={styles.ring}>
-          <Circle
-            cx={22}
-            cy={22}
-            r={20}
-            stroke={tone}
-            strokeOpacity={0.14}
-            strokeWidth={2.5}
-            fill="none"
-          />
-          <AnimatedCircle
-            cx={22}
-            cy={22}
-            r={20}
-            stroke={tone}
-            strokeWidth={2.5}
-            strokeLinecap="round"
-            strokeDasharray={RING}
-            fill="none"
-            animatedProps={ring}
-          />
-        </Svg>
-        <Animated.View style={[styles.core, { backgroundColor: tone }, filled]} />
-        <Glyph size={18} strokeWidth={2.6} color={tone} />
-      </Animated.View>
-      <Animated.View style={said}>
-        <Label size="body" style={{ fontWeight: '600', color: tone }} numberOfLines={1}>
-          {words}
-        </Label>
-      </Animated.View>
+      {/* The mark over its word, in the strip the card has just left: beside the mark the card
+          still covered the word at the line (Android emulator, 10 November 2026). */}
+      <View style={styles.side}>
+        <Animated.View style={[styles.mark, mark]}>
+          <Svg width={44} height={44} style={styles.ring}>
+            <Circle
+              cx={22}
+              cy={22}
+              r={20}
+              stroke={tone}
+              strokeOpacity={0.14}
+              strokeWidth={2.5}
+              fill="none"
+            />
+            <AnimatedCircle
+              cx={22}
+              cy={22}
+              r={20}
+              stroke={tone}
+              strokeWidth={2.5}
+              strokeLinecap="round"
+              strokeDasharray={RING}
+              fill="none"
+              animatedProps={ring}
+            />
+          </Svg>
+          <Animated.View style={[styles.core, { backgroundColor: tone }, filled]} />
+          <Glyph size={18} strokeWidth={2.6} color={tone} />
+        </Animated.View>
+        <Animated.View style={said}>
+          <Label size="label" style={{ fontWeight: '600', color: tone }} numberOfLines={1}>
+            {words}
+          </Label>
+        </Animated.View>
+      </View>
     </Animated.View>
   )
 }
@@ -311,10 +315,11 @@ const styles = StyleSheet.create({
   under: {
     position: 'absolute',
     inset: 0,
+    flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 20,
+    paddingHorizontal: 8,
   },
+  side: { width: 96, alignItems: 'center', gap: 6 },
   round: { borderRadius: 24, borderCurve: 'continuous' },
   lift: {
     position: 'absolute',
