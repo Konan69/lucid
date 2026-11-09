@@ -1,5 +1,6 @@
 import {
   CapabilityReading,
+  LocationReading,
   PersonName,
   SkillSummary,
   VividName,
@@ -62,6 +63,12 @@ export const VividContext = Schema.Struct({
   name: VividName,
   /** The acting Person's plain name, absent when no valid name could be read through Me. */
   person: Schema.Option(PersonName),
+  /**
+   * The latest place the acting Person shared, with the instant this context read it so its age
+   * can be said (`asOf` is locked to the hour and too coarse for "12 minutes ago"). Absent while
+   * they do not share it, before any device has sent one, and when Settings could not be read.
+   */
+  location: Schema.Option(Schema.Struct({ reading: LocationReading, readAt: Schema.Finite })),
 })
 export interface VividContext extends Schema.Schema.Type<typeof VividContext> {}
 
