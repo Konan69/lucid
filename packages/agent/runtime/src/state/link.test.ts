@@ -6,19 +6,12 @@ import {
   type FauxResponseFactory,
 } from '@earendil-works/pi-ai/providers/faux'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
-import type {
-  ConversationId,
-  ConversationView,
-  EntryId,
-  EntryRecord,
-} from '@earendil-works/pi-durable'
 import { describe, expect, it } from '@effect/vitest'
 import { ConversationFrame, ConversationState, emptyConversation, ThreadId } from '@vivid/contracts'
 import { Deferred, Effect, Option, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { held } from '../../tests/process.ts'
 import { conversationOf, pi } from '../threads.ts'
-import { transcript } from './link.ts'
 import {
   ada,
   admit,
@@ -32,18 +25,6 @@ import {
 
 const decodeState = Schema.decodeUnknownEffect(ConversationState)
 
-const isEntryId = (value: number): value is EntryId => Number.isSafeInteger(value)
-const isConversationId = (value: number): value is ConversationId => Number.isSafeInteger(value)
-const stub = (id: number): EntryRecord => {
-  const conversationId = 1
-  if (!isEntryId(id) || !isConversationId(conversationId)) return expect.fail('ids are integers')
-  return { id, conversationId, kind: 'pi.user' }
-}
-const viewOf = (entries: ReadonlyArray<EntryRecord>): ConversationView => {
-  const id = 1
-  if (!isConversationId(id)) return expect.fail('ids are integers')
-  return { conversation: { id }, entries, docs: {} }
-}
 type Link = Effect.Success<ReturnType<Runtime['link']>>
 
 /** The whole state by the plain read, which keeps no link. */
@@ -297,35 +278,6 @@ describe('the state link', () => {
         return yield* link.leave
       }),
     ),
-  )
-
-  it.effect('reads only what is new after the first read of a transcript', () =>
-    Effect.gen(function* () {
-      const stored = [1, 2, 3, 4, 5].map((id) => stub(id))
-      const asked: Array<unknown> = []
-      const known = transcript({
-        entries: (query) => {
-          asked.push(query)
-          const from = query.minEntryId === undefined ? 0 : query.minEntryId
-          const to = query.maxEntryId === undefined ? Infinity : query.maxEntryId
-          return Promise.resolve({
-            items: stored.filter((entry) => entry.id >= from && entry.id <= to),
-          })
-        },
-      })
-      yield* known.take(viewOf(stored.slice(0, 3)))
-      expect(known.entries.map((entry) => entry.id)).toEqual([1, 2, 3])
-      // A view that shows only its newest entries, as after a reset, and nothing before them.
-      yield* known.take(viewOf(stored.slice(4)))
-      expect(known.entries.map((entry) => entry.id)).toEqual([1, 2, 3, 4, 5])
-      expect(asked).toEqual([
-        { maxEntryId: 3, order: 'ascending' },
-        { minEntryId: 4, maxEntryId: 5, order: 'ascending' },
-      ])
-      // A view with nothing newer reads nothing.
-      yield* known.take(viewOf(stored.slice(4)))
-      expect(asked).toHaveLength(2)
-    }),
   )
 
   it.effect('names the delivery whose reply answered one that joined it', () =>

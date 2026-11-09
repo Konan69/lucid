@@ -1,6 +1,6 @@
 import { activeReferences } from './testing.ts'
 import { describe, expect, layer } from '@effect/vitest'
-import { Layer, Effect, Ref } from 'effect'
+import { Layer, Effect, Ref, Option } from 'effect'
 import {
   ConnectionId,
   ConnectionStep,
@@ -416,6 +416,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
           // The approved action store must retain the failing discovery adapter.
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
           return yield* connectionRunner({
+            operation: Option.none(),
             person: ownerActor.person,
             workspace: ownerActor.workspace,
             target: ActionTarget.cases.Connection.make({
@@ -564,6 +565,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         yield* store.remove(ownerActor, step.connection.id)
         const calls = yield* Ref.get(probe.calls)
         const outcome = yield* connectionRunner({
+          operation: Option.none(),
           person: ownerActor.person,
           workspace: ownerActor.workspace,
           target: ActionTarget.cases.Connection.make({
@@ -629,6 +631,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
             .pipe(Effect.provideService(AuthContext, auth))
           expect(repeated).toMatchObject({ message: 'The saved app no longer exists.' })
           const approved = yield* connectionRunner({
+            operation: Option.none(),
             person: ownerActor.person,
             workspace: ownerActor.workspace,
             target: ActionTarget.cases.Connection.make({

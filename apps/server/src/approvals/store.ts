@@ -705,6 +705,7 @@ const decide = Effect.fn('Approvals.decide')(function* (
   const outcome = yield* runJournaled(
     row,
     (yield* ActionRunner).run({
+      operation: Option.some(operationOf.approval(row.id)),
       person: actor.person,
       workspace: actor.workspace,
       action: row.action,
