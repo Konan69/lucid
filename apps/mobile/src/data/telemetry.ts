@@ -12,7 +12,6 @@ import {
 import { makeNativeTransport } from '@sentry/react-native/dist/js/transports/native'
 import { Option, Schema } from 'effect'
 import * as Updates from 'expo-updates'
-import Constants from 'expo-constants'
 import type { ComponentType } from 'react'
 import { Platform } from 'react-native'
 import { reportsFrom, type Reports } from './build'
@@ -51,13 +50,8 @@ const LEFT_OUT = new Set(['ExpoContext', 'TurboModuleContext'])
 /** Register the actual navigation container so spans name routes, never route parameter values. */
 export const navigationTelemetry = reactNavigationIntegration({ enableTimeToInitialDisplay: true })
 
-/** Older installed binaries have no environment field; their shipped configuration is production. */
-const Launch = Schema.Struct({
-  extra: Schema.Struct({
-    telemetryEnvironment: Schema.optionalKey(Schema.Literals(['production', 'verification'])),
-  }),
-})
-const launch = Schema.decodeUnknownOption(Launch)
+/** Metro embeds this public JavaScript build setting; an OTA needs no native config change. */
+const launch = Schema.decodeUnknownOption(Schema.Literals(['production', 'verification']))
 
 /**
  * Which over-the-air update is running, as the tags the SDK's own `ExpoContext` would have set.
@@ -79,11 +73,11 @@ const updates = () =>
  */
 export const startTelemetry = (): void => {
   if (__DEV__ || Platform.OS === 'web') return
-  const configuration = launch(Constants.expoConfig)
+  const configuration = launch(process.env.EXPO_PUBLIC_VIVID_ENVIRONMENT ?? 'production')
   if (Option.isNone(configuration)) return
   const started = Option.liftThrowable(init)({
     dsn: ADDRESS,
-    environment: configuration.value.extra.telemetryEnvironment ?? 'production',
+    environment: configuration.value,
     transport: (given) => guarded(makeNativeTransport(given)),
     integrations: (defaults) => [
       ...defaults.filter(({ name }) => !LEFT_OUT.has(name)),
@@ -93,7 +87,7 @@ export const startTelemetry = (): void => {
     beforeBreadcrumb: scrubBreadcrumb,
     beforeSendTransaction: scrubTransaction,
     enableNativeCrashHandling: true,
-    tracesSampleRate: configuration.value.extra.telemetryEnvironment === 'verification' ? 1 : 0.2,
+    tracesSampleRate: configuration.value === 'verification' ? 1 : 0.2,
     tracePropagationTargets: Option.toArray(origin),
     propagateTraceparent: true,
     enableAutoPerformanceTracing: true,
