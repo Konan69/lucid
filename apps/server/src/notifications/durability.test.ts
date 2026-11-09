@@ -10,7 +10,7 @@ import { PushTargets } from '../push/targets.ts'
 import { pushDeliveries } from '../push/tables.ts'
 import { threads } from '../threads/tables.ts'
 import { NotificationDelivery, notificationDelivery, takeNotification } from './delivery.ts'
-import { oweNotice } from './notifier.ts'
+import { oweNotice, recordNotice } from './notifier.ts'
 import { notifications } from './tables.ts'
 import { CHANNEL, Topic } from '../live/changes.ts'
 import { payload, silent } from '../live/testing.ts'
@@ -24,14 +24,11 @@ class Abandoned extends Schema.TaggedError<Abandoned>()(
 const noticeTable = `notice_${crypto.randomUUID().replaceAll('-', '')}`
 
 /** A separate SDK table prevents other suites' outstanding notices entering this consumer. */
-const deliveryLayer = PersistedQueue.layer.pipe(
-  Layer.provide(
-    PersistedQueue.layerStoreSql({
-      tableName: noticeTable,
-    }),
+const deliveryLayer = Layer.fresh(
+  PersistedQueue.layer.pipe(
+    Layer.provide(PersistedQueue.layerStoreSql({ tableName: noticeTable })),
   ),
-  Layer.provideMerge(pushTestLayer),
-)
+).pipe(Layer.provideMerge(pushTestLayer))
 
 describe.skipIf(!testDatabaseConfigured)('durable notification delivery', () => {
   layer(deliveryLayer)((it) => {
@@ -60,6 +57,47 @@ describe.skipIf(!testDatabaseConfigured)('durable notification delivery', () => 
         yield* takeNotification()
         yield* oweNotice({ id, notice })
         yield* silent(heard)
+      }),
+    )
+
+    it.effect('concurrent recordNotice writers own one notice and one device send', () =>
+      Effect.gen(function* () {
+        const probe = yield* PushProbe
+        yield* Effect.addFinalizer(() => Ref.set(probe.sent, []))
+        const owner = yield* fixture()
+        yield* (yield* PushTargets).register({
+          personId: owner.person.id,
+          sessionId: owner.sessionId,
+          destination: owner.destination,
+        })
+        const id = NotificationId.make(crypto.randomUUID())
+        const input = {
+          id,
+          notice: {
+            personId: owner.person.id,
+            companyId: null,
+            kind: 'needs-you' as const,
+            title: 'Concurrent notice',
+            body: 'Review it.',
+            threadId: owner.threadId,
+          },
+        }
+        const results = yield* Effect.all([recordNotice(input), recordNotice(input)], {
+          concurrency: 'unbounded',
+        })
+        expect(results.map((result) => result._tag)).toEqual(['Created', 'Created'])
+        expect(
+          yield* owner.database.run(
+            owner.database.select().from(notifications).where(eq(notifications.id, id)),
+          ),
+        ).toHaveLength(1)
+        const sql = yield* PgClient
+        expect(yield* sql`SELECT id FROM ${sql(noticeTable)} WHERE id = ${`${id}:publish`}`)
+          .toHaveLength(1)
+        expect(yield* Ref.get((yield* PushProbe).sent)).toHaveLength(1)
+        yield* takeNotification()
+        yield* takeNotification()
+        expect(yield* Ref.get((yield* PushProbe).sent)).toHaveLength(1)
       }),
     )
 
@@ -125,7 +163,7 @@ describe.skipIf(!testDatabaseConfigured)('durable notification delivery', () => 
             ),
           ).toEqual(before)
           expect(
-            yield* sql`SELECT id FROM ${sql(noticeTable)} WHERE queue_name = 'notification-delivery'`,
+            yield* sql`SELECT id FROM ${sql(noticeTable)} WHERE queue_name = 'notification-delivery' AND id LIKE ${`${id}:%`}`,
           ).toEqual([])
           yield* write
           expect(yield* Ref.get((yield* PushProbe).sent)).toEqual([])
