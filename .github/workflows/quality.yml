@@ -50,7 +50,7 @@ jobs:
     # stays cancelled, which `always()` would not allow.
     if: ${{ !cancelled() && needs.signoff.outputs.signed != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       # A push to main must compare with its previous tip, even when origin/main is already HEAD.
       CEILINGS_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -60,12 +60,17 @@ jobs:
         include:
           - name: Policy, format and tooling
             stages: policy,format,tooling
+            # actions/cache refuses a key that contains a comma, so the key uses its own spelling.
+            cache: policy-format-tooling
           - name: Lint with native type analysis
             stages: lint
+            cache: lint
           - name: Typecheck
             stages: typecheck
+            cache: typecheck
           - name: Production builds
             stages: build
+            cache: build
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -109,9 +114,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .turbo/cache
-          key: turbo-${{ runner.os }}-${{ matrix.stages }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          key: turbo-${{ runner.os }}-${{ matrix.cache }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
           restore-keys: |
-            turbo-${{ runner.os }}-${{ matrix.stages }}-${{ hashFiles('pnpm-lock.yaml') }}-
+            turbo-${{ runner.os }}-${{ matrix.cache }}-${{ hashFiles('pnpm-lock.yaml') }}-
 
       - name: Run the gate stages
         run: node scripts/gate.mjs full --here --only ${{ matrix.stages }} --ceilings-base "$CEILINGS_BASE"
@@ -176,8 +181,24 @@ jobs:
           restore-keys: |
             turbo-${{ runner.os }}-test-${{ hashFiles('pnpm-lock.yaml') }}-
 
+      # The desktop suites start a real Electron under xvfb. Ubuntu 24.04 runners forbid the
+      # unprivileged user namespaces Chromium's sandbox needs, and Electron exits before the
+      # proof reports (`browser.test.ts`, NativeProofFailed with an empty message).
+      - name: Allow Electron's sandbox on the runner
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Run the test stage
         run: node scripts/gate.mjs full --here --only test
+
+      # The gate prints one line per failing package; the failing test's own output is only in
+      # the run's logs, so keep them when the stage fails.
+      - name: Keep the test logs of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-test-logs
+          path: .cache/gate/runs/
+          retention-days: 7
 
   proof:
     name: Regression proof
