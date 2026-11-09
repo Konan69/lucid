@@ -142,9 +142,11 @@ describe.skipIf(!testDatabaseConfigured)('several accounts on one Integration', 
             const { outcome: used } = yield* connectionHandlers
               .UseTool(toolRequest(resolved.connectionId, 'read'))
               .pipe(Effect.provideService(AuthContext, vivid))
-            expect(used).toEqual(
-              ToolOutcome.cases.Completed.make({ output: { ok: true }, receipt: null }),
-            )
+            expect(used).toMatchObject({ output: { ok: true } })
+            expect(ToolOutcome.guards.Completed(used)).toBe(true)
+            if (!ToolOutcome.guards.Completed(used) || used.receipt === null)
+              return expect.fail('Expected a journaled read that can pause')
+            expect(used.receipt._tag).toBe('Completed')
             const row = yield* (yield* ConnectionStore).get(ownerActor, work.id)
             expect((yield* Ref.get(probe.inputs)).slice(inputAt)).toEqual([
               { references: row.references, tool: 'read', input: {} },

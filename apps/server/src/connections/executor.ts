@@ -2661,6 +2661,17 @@ function makeResolveRemovalAccount(http: ExecutorHttp) {
   })
 }
 
+/** A discovery failure precedes dispatch and therefore leaves the call safe to correct or retry. */
+function discoveryFailed() {
+  return Effect.fail(
+    ExecutorRejected.make({
+      service: 'connections',
+      tool: null,
+      message: 'Tool discovery failed before the action was sent. Retry discovery.',
+    }),
+  )
+}
+
 /** MCP has no discovery flag proving a tool cannot elicit, including reads. All tool calls use
  * model mode; management and discovery stay on REST. The account envelope is unchanged.
  */
@@ -2669,39 +2680,55 @@ function makeCall(
   discover: ReturnType<typeof makeDiscovery>,
   mcp: ReturnType<typeof mcpCalls>,
 ) {
-  return Effect.fn('Executor.call')(function* ({ references, tool, input }: typeof CallInput.Type) {
-    if (ExecutorReferences.guards.ReconnectRequired(references))
-      return ExecutorCallOutcome.cases.NotReady.make({})
-    const catalog = yield* discover(references)
-    const selected = catalog.items.find((candidate) => candidate.tool.name === tool)
-    if (selected === undefined)
-      return ExecutorCallOutcome.cases.Rejected.make({
-        message: 'Tool not found. Discover the current tools.',
-      })
-    const app = yield* http.readApp(
-      Effect.succeed(HttpClientRequest.get(`/apps/${query(references.app)}`)),
-      tool,
-    )
-    const path = `tools[${JSON.stringify(app.slug)}]${tool
-      .split('.')
-      .map((part) => `[${JSON.stringify(part)}]`)
-      .join('')}`
-    const outcome = yield* mcp('call', {
-      calls: {
-        path,
-        input: ToolAccount.match(selected.account, {
-          Direct: () => input,
-          Account: ({ accountId }) => ({ accountId, input }),
+  return Effect.fn('Executor.call')(
+    function* ({ references, tool, input }: typeof CallInput.Type) {
+      if (ExecutorReferences.guards.ReconnectRequired(references))
+        return ExecutorCallOutcome.cases.NotReady.make({})
+      const catalog = yield* discover(references).pipe(
+        Effect.catchTags({
+          ExecutorTransportFailure: discoveryFailed,
+          ExecutorExecutionUncertain: discoveryFailed,
+          ExecutorResponseInvalid: discoveryFailed,
         }),
-      },
-    }).pipe(
-      Effect.catchTags({
-        ExecutorTransportFailure: () => Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),
-        ExecutorResponseInvalid: () => Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),
-      }),
-    )
-    return fromMcp(outcome)
-  })
+      )
+      const selected = catalog.items.find((candidate) => candidate.tool.name === tool)
+      if (selected === undefined)
+        return ExecutorCallOutcome.cases.Rejected.make({
+          message: 'Tool not found. Discover the current tools.',
+        })
+      const app = yield* http.readApp(
+        Effect.succeed(HttpClientRequest.get(`/apps/${query(references.app)}`)),
+        tool,
+      )
+      const path = `tools[${JSON.stringify(app.slug)}]${tool
+        .split('.')
+        .map((part) => `[${JSON.stringify(part)}]`)
+        .join('')}`
+      const outcome = yield* mcp('call', {
+        calls: {
+          path,
+          input: ToolAccount.match(selected.account, {
+            Direct: () => input,
+            Account: ({ accountId }) => ({ accountId, input }),
+          }),
+        },
+      }).pipe(
+        Effect.catchTags({
+          ExecutorTransportFailure: () => Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),
+          ExecutorResponseInvalid: () => Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),
+        }),
+      )
+      return fromMcp(outcome)
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.catchTags({
+          ExecutorNotReady: () => Effect.succeed(ExecutorCallOutcome.cases.NotReady.make({})),
+          ExecutorRejected: ({ message }) =>
+            Effect.succeed(ExecutorCallOutcome.cases.Rejected.make({ message })),
+        }),
+      ),
+  )
 }
 
 /** Preserve pauses and expiry before interpreting an ordinary provider result. */

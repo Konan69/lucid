@@ -867,6 +867,51 @@ const hostedRead = Effect.fn('Executor.HostedTest.read')(function* (
   return hostedRemoved
 })
 
+const decodeHostedMcp = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    params: Schema.Struct({
+      name: Schema.Literal('call'),
+      arguments: Schema.Struct({
+        calls: Schema.Struct({ path: Schema.String, input: Schema.Json }),
+      }),
+    }),
+  }),
+)
+
+/** Mirror beta.23's single-call MCP result without replacing Vivid's HTTP transport. Account routing still uses the existing bound-account check. */
+const hostedMcp = Effect.fn('Executor.HostedTest.mcp')(function* (
+  state: HostedState,
+  request: HostedRequest,
+) {
+  const { params } = yield* decodeHostedMcp(request.body)
+  const call = params.arguments.calls
+  const app = (yield* Ref.get(state.apps)).find((item) =>
+    call.path.startsWith(`tools[${JSON.stringify(`slug-${item.id}`)}]`),
+  )
+  if (app === undefined) return yield* Effect.die('MCP fixture call must name an installed app')
+  const refused = yield* hostedCall(state, {
+    ...request,
+    path: `POST /apps/${app.id}/tools/call`,
+    body: { input: call.input },
+  })
+  if (Option.isSome(refused))
+    return yield* Effect.die('MCP fixture received the wrong bound account')
+  yield* (yield* Ref.get(state.afterWrite))(request)
+  return {
+    jsonrpc: '2.0',
+    id: 1,
+    result: {
+      structuredContent: {
+        status: 'completed',
+        execution: {
+          ok: true,
+          value: { path: call.path, ok: true, value: yield* Ref.get(state.result) },
+        },
+      },
+    },
+  }
+})
+
 /** This scoped HTTP fixture reuses the old transport suite's loopback-server mechanism. No
  * production process, Executor instance, credentials, or database is involved. Unknown routes
  * fail explicitly, so forgotten local endpoints cannot pass using a permissive response.
@@ -933,6 +978,8 @@ export const hostedExecutorFixture = Effect.fn('Executor.HostedTest.fixture')(fu
     const reply = (yield* Ref.get(state.replies)).get(received.path)
     if (reply !== undefined)
       return HttpServerResponse.jsonUnsafe(appReply(reply.body), { status: reply.status })
+    if (request.method === 'POST' && url.pathname === '/mcp')
+      return HttpServerResponse.jsonUnsafe(yield* hostedMcp(state, received))
     if (!url.pathname.startsWith(`${hostedPrefix}/`))
       return HttpServerResponse.jsonUnsafe(fixtureRouteMissing.make({}), { status: 404 })
     const local = {

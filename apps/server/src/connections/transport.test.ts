@@ -27,7 +27,6 @@ import {
   Executor,
   ExecutorAccountId,
   ExecutorAppId,
-  ExecutorApprovalUnsupported,
   ExecutorCallOutcome,
   ExecutorAuthorizationId,
   ExecutorOwnerId,
@@ -109,20 +108,6 @@ const signInRequirement = {
 const isFirstInstall = Schema.is(Schema.Struct({ entry: Schema.Literal(hostedService) }))
 const decodeInstallName = Schema.decodeUnknownSync(Schema.Struct({ name: Schema.String }))
 const decodeJson = Schema.decodeUnknownEffect(Schema.Json)
-const approvalRequiredReply = Schema.TaggedStruct('ToolApprovalRequired', {
-  app: Schema.String,
-  deployment: Schema.String,
-  tool: Schema.String,
-})
-/** Raw provider fixtures deliberately permit absent or malformed validation detail so the
- * production decoder, rather than the fixture constructor, determines rejection behavior.
- */
-const inputInvalidReply = Schema.TaggedStruct('InputInvalid', {
-  app: Schema.optionalKey(Schema.String),
-  deployment: Schema.optionalKey(Schema.String),
-  tool: Schema.optionalKey(Schema.String),
-  problems: Schema.optionalKey(Schema.Json),
-})
 const oauthClientUnavailableReply = Schema.TaggedStruct('OAuthClientUnavailable', {})
 const storageErrorReply = Schema.TaggedStruct('StorageError', {})
 
@@ -154,7 +139,9 @@ const scenario = <E>(
     // but expose a safe receipt before individual assertions hide the request's provenance.
     expect(
       requests
-        .filter((request) => !request.path.includes(`${hostedPrefix}/`))
+        .filter(
+          (request) => !request.path.includes(`${hostedPrefix}/`) && request.path !== 'POST /mcp',
+        )
         .map(({ path, peer, headers }) => ({
           path,
           peer,
@@ -166,9 +153,17 @@ const scenario = <E>(
         })),
     ).toEqual([])
     for (const request of requests) {
-      expect(request.path).toContain(`${hostedPrefix}/`)
+      expect(request.path === 'POST /mcp' || request.path.includes(`${hostedPrefix}/`)).toBe(true)
       expect(request.headers.authorization).toBe('Bearer isolated-test-key')
-      expect(request.headers.accept).toBe('application/json')
+      expect(request.headers.accept).toBe(
+        request.path === 'POST /mcp' ? 'application/json, text/event-stream' : 'application/json',
+      )
+      if (request.path === 'POST /mcp') {
+        expect(request.headers['mcp-name']).toBe('call')
+        expect(request.headers['mcp-method']).toBe('tools/call')
+        expect(request.headers['mcp-protocol-version']).toBe('2026-07-28')
+        expect(request.headers['x-executor-organization']).toBe(hostedOrganization)
+      }
       expect(request.headers.cookie).toBeUndefined()
       expect(request.headers.origin).toBeUndefined()
       if (request.body !== null) expect(request.headers['content-type']).toBe('application/json')
@@ -183,6 +178,12 @@ const scenario = <E>(
       expect(sent).not.toContain('unrelated-account')
     }
   }).pipe(Effect.scoped)
+
+/** Direct call fixtures name an app that already exists, as their saved references do. */
+const calling = <E>(run: Parameters<typeof scenario<E>>[0]) =>
+  scenario((remote) =>
+    Ref.set(remote.apps, [{ id: 'app', name: 'Call fixture' }]).pipe(Effect.andThen(run(remote))),
+  )
 
 /** Keep failure injection at the HTTP seam so the real status/tag decoder chooses recovery. */
 const failRoute = Effect.fn('Executor.TransportTest.failRoute')(function* (
@@ -201,98 +202,6 @@ const failRoute = Effect.fn('Executor.TransportTest.failRoute')(function* (
 })
 
 describe('Executor hosted transport', () => {
-  it.effect(
-    'retains validation problems, removes sensitive detail, and permits a corrected retry',
-    () =>
-      scenario((remote) =>
-        Effect.gen(function* () {
-          yield* failRoute(remote, 'POST /apps/app/tools/call', {
-            status: 422,
-            body: inputInvalidReply.make({
-              app: 'internal-app',
-              deployment: 'internal-deployment',
-              tool: 'read',
-              problems: ['Input did not match the tool schema'],
-            }),
-          })
-          const executor = yield* Executor
-          const outcome = yield* executor
-            .as(installationCaller)
-            .call({ references, tool: 'read', input: {} })
-          expect(ExecutorCallOutcome.guards.Rejected(outcome)).toBe(true)
-          expect(outcome).toMatchObject({
-            problems: ['Input did not match the tool schema'],
-          })
-          expect(JSON.stringify(outcome)).not.toMatch(
-            /private-value|short-private|internal-app|internal-deployment/,
-          )
-          yield* Ref.set(remote.replies, new Map())
-          const retry = yield* executor.as(installationCaller).call({
-            references,
-            tool: 'read',
-            input: { repoName: 'facebook/react' },
-          })
-          expect(retry._tag).toBe('Completed')
-        }),
-      ),
-  )
-
-  it.effect('keeps invalid or absent validation detail a definite rejection', () =>
-    scenario((remote) =>
-      Effect.gen(function* () {
-        const executor = yield* Executor
-        for (const body of [
-          inputInvalidReply.make({}),
-          inputInvalidReply.make({ problems: [42] }),
-          inputInvalidReply.make({ problems: 'invalid' }),
-        ]) {
-          yield* failRoute(remote, 'POST /apps/app/tools/call', { status: 422, body })
-          expect(
-            yield* executor.as(installationCaller).call({ references, tool: 'read', input: {} }),
-          ).toEqual(
-            ExecutorCallOutcome.cases.Rejected.make({
-              message:
-                'Input did not match the tool schema. Inspect the current tool and correct its input.',
-            }),
-          )
-        }
-      }),
-    ),
-  )
-
-  it.effect(
-    'accepts future safe field problems without response identity and removes call references',
-    () =>
-      scenario((remote) =>
-        Effect.gen(function* () {
-          yield* Ref.set(remote.selections, new Map([['app', { slot: ['account'] }]]))
-          yield* failRoute(remote, 'POST /apps/app/tools/call', {
-            status: 422,
-            body: inputInvalidReply.make({
-              problems: [
-                'owner: required',
-                'id: expected a string',
-                'selection app version account',
-              ],
-            }),
-          })
-          const outcome = yield* (yield* Executor).as(installationCaller).call({
-            references: authorized,
-            tool: 'read',
-            input: {},
-          })
-          expect(ExecutorCallOutcome.guards.Rejected(outcome)).toBe(true)
-          expect(outcome).toMatchObject({
-            problems: [
-              'owner: required',
-              'id: expected a string',
-              'selection [REDACTED] [REDACTED] [REDACTED]',
-            ],
-          })
-        }),
-      ),
-  )
-
   it.effect('allocates an app per Connection and reuses only the exact Connection retry', () =>
     scenario((remote) =>
       Effect.gen(function* () {
@@ -624,8 +533,8 @@ describe('Executor hosted transport', () => {
     )
   }
 
-  it.effect('reads every cursor page and pins the snapshot for invocation', () =>
-    scenario((remote) =>
+  it.effect('reads every cursor page and dispatches the discovered tool through MCP', () =>
+    calling((remote) =>
       Effect.gen(function* () {
         yield* Ref.set(remote.paginated, true)
         const executor = yield* Executor
@@ -646,14 +555,13 @@ describe('Executor hosted transport', () => {
           'next/with+&symbols',
         )
         expect(new URLSearchParams(requestAt(pages, 1).search).get('version')).toBe('version')
-        expect(
-          requests.find((request) => request.path === `POST ${hostedPrefix}/apps/app/tools/call`),
-        ).toMatchObject({
+        expect(requests.find((request) => request.path === 'POST /mcp')).toMatchObject({
           body: {
-            version: 'version',
-            kind: 'mutation',
-            tool: 'write',
-            input: { value: 1 },
+            method: 'tools/call',
+            params: {
+              name: 'call',
+              arguments: { calls: { path: 'tools["slug-app"]["write"]', input: { value: 1 } } },
+            },
           },
         })
       }),
@@ -696,7 +604,7 @@ describe('Executor hosted transport', () => {
     { title: 'plain OpenAPI result', result: 'plain OpenAPI result' },
   ]) {
     it.effect(`preserves the raw successful result: ${value.title}`, () =>
-      scenario((remote) =>
+      calling((remote) =>
         Effect.gen(function* () {
           const result = yield* decodeJson(value.result)
           yield* Ref.set(remote.result, result)
@@ -713,7 +621,7 @@ describe('Executor hosted transport', () => {
   it.effect(
     'maps isError to the existing tool-error outcome with sensitive diagnostics removed',
     () =>
-      scenario((remote) =>
+      calling((remote) =>
         Effect.gen(function* () {
           yield* Ref.set(remote.result, {
             content: [{ type: 'text', text: 'Bearer sensitive-provider-value' }],
@@ -728,33 +636,6 @@ describe('Executor hosted transport', () => {
           expect(JSON.stringify(result)).not.toContain('sensitive-provider-value')
         }),
       ),
-  )
-
-  it.effect('reports hosted approval as unsupported with no invented request id', () =>
-    scenario((remote) =>
-      Effect.gen(function* () {
-        yield* failRoute(remote, 'POST /apps/app/tools/call', {
-          status: 409,
-          body: approvalRequiredReply.make({
-            app: 'app',
-            deployment: 'deployment',
-            tool: 'read',
-          }),
-        })
-        const error = yield* (yield* Executor)
-          .as(installationCaller)
-          .call({ references, tool: 'read', input: {} })
-          .pipe(Effect.flip)
-        expect(error).toBeInstanceOf(ExecutorApprovalUnsupported)
-        expect(error).toHaveProperty('tool', 'read')
-        expect(error).not.toHaveProperty('requestId')
-        const publicError = executorFailure(error)
-        expect(publicError).toBeInstanceOf(InvalidRequest)
-        expect(publicError.message).toBe(
-          'This Integration action needs an approval Vivid cannot give yet.',
-        )
-      }),
-    ),
   )
 
   it.effect(
@@ -1318,7 +1199,7 @@ describe('Executor hosted transport', () => {
         })
         expect(result._tag).toBe('NotReady')
         expect(
-          (yield* Ref.get(remote.requests)).some((request) => request.path.endsWith('/tools/call')),
+          (yield* Ref.get(remote.requests)).some((request) => request.path === 'POST /mcp'),
         ).toBe(false)
       }),
     ),
@@ -1402,37 +1283,6 @@ describe('Executor hosted transport', () => {
       }),
     ),
   )
-
-  for (const [tag, status, failure] of [
-    ['OAuthRenewalFailed', 502, 'Rejected'],
-    ['AppProviderFailed', 502, 'Rejected'],
-    ['ToolListingTimedOut', 504, 'Rejected'],
-    ['BuildMemoryExceeded', 422, 'Rejected'],
-    ['AccountRequired', 409, 'NotReady'],
-    ['ToolKindMismatch', 409, 'Rejected'],
-    ['OAuthCompletionFailed', 422, 'Rejected'],
-    ['Unauthorized', 403, 'ExecutorAccessDenied'],
-  ] as const) {
-    it.effect(`maps hosted ${tag} without provider diagnostics`, () =>
-      scenario((remote) =>
-        Effect.gen(function* () {
-          yield* failRoute(remote, 'POST /apps/app/tools/call', {
-            status,
-            body: { _tag: tag, message: 'secret-provider-diagnostic' },
-          })
-          const operation = (yield* Executor)
-            .as(installationCaller)
-            .call({ references, tool: 'read', input: {} })
-          const outcome =
-            failure === 'ExecutorAccessDenied'
-              ? yield* operation.pipe(Effect.flip)
-              : yield* operation
-          expect(outcome._tag).toBe(failure)
-          expect(JSON.stringify(outcome)).not.toContain('secret-provider-diagnostic')
-        }),
-      ),
-    )
-  }
 })
 
 const Exchange = Schema.TaggedUnion({
