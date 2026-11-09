@@ -260,7 +260,7 @@ const memberLock = (person: PersonId) =>
 
 const makeMembers = Effect.fn('ExecutorMembers.make')(function* () {
   const database = yield* Database
-  const { url, organization } = yield* executorAddress()
+  const { organization } = yield* executorAddress()
   const ownerEmail = yield* requiredSetting(
     'VIVID_EXECUTOR_OWNER_EMAIL',
     settingText,
@@ -271,8 +271,18 @@ const makeMembers = Effect.fn('ExecutorMembers.make')(function* () {
     settingSecret,
     "the Executor owner's password",
   )
+  // Executor's sign-in routes check the Origin against the address browsers use (its public
+  // domain, from which it derives its own auth URL). The private mesh address the API calls use is
+  // refused there, so every member sign-in goes to the public address.
+  const publicUrl = yield* requiredSetting(
+    'VIVID_EXECUTOR_PUBLIC_URL',
+    Schema.NonEmptyString.check(
+      Schema.makeFilter((value) => URL.canParse(value) || 'an absolute URL'),
+    ),
+    "Executor's public absolute URL",
+  )
   const secret = yield* sealSecret()
-  const auth = makeAuth(yield* HttpClient.HttpClient, url)
+  const auth = makeAuth(yield* HttpClient.HttpClient, publicUrl.replace(/\/$/u, ''))
   const invite = yield* makeOwner(
     auth,
     { email: ownerEmail, password: ownerPassword },
