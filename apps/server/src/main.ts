@@ -1,6 +1,6 @@
+import { activitiesLayer } from './activity/service.ts'
 import { commandWorkerLayer } from './computers/commands.ts'
 import * as NodeHttp from 'node:http'
-import { migrationLayer } from './connections/migration.ts'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as PersistedQueue from 'effect/persistence/PersistedQueue'
@@ -111,6 +111,7 @@ const serverProgram = Effect.gen(function* () {
     Layer.provideMerge(data),
   )
   const foundation = Layer.mergeAll(
+    activitiesLayer,
     changesLayer,
     tallyLayer,
     channelProviderLayer,
@@ -179,7 +180,6 @@ const serverProgram = Effect.gen(function* () {
     Layer.provideMerge(work),
   )
   const background = Layer.mergeAll(
-    migrationLayer,
     commandWorkerLayer,
     watchRenewalLayer,
     feedPacingLayer,

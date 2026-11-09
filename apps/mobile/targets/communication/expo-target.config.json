@@ -1,0 +1,12 @@
+{
+  "type": "notification-service",
+  "bundleIdentifier": ".communication",
+  "deploymentTarget": "18.0",
+  "frameworks": ["UserNotifications", "Intents", "UIKit"],
+  "entitlements": {
+    "com.apple.developer.usernotifications.communication": true
+  },
+  "images": {
+    "Avatar": "../../assets/icon.png"
+  }
+}

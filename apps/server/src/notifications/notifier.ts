@@ -2,7 +2,6 @@ import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Clock from 'effect/Clock'
 import * as Layer from 'effect/Layer'
-import { eq } from 'drizzle-orm'
 import {
   type ApprovalId,
   DatabaseFailure,
@@ -14,7 +13,6 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
-import { settingsTable } from '../settings/tables.ts'
 import { notifications } from '../notifications/tables.ts'
 import { Push } from '../push/delivery.ts'
 import { PushTargets } from '../push/targets.ts'
@@ -33,12 +31,6 @@ export const oweNotice = Effect.fn('Notifier.owe')(function* (input: {
   return yield* database
     .transaction((tx) =>
       Effect.gen(function* () {
-        const rows = yield* tx
-          .select({ notify: settingsTable.notify })
-          .from(settingsTable)
-          .where(eq(settingsTable.personId, notice.personId))
-          .limit(1)
-        if (rows[0] !== undefined && !rows[0].notify) return false
         const now = yield* Clock.currentTimeMillis
         const inserted = yield* tx
           .insert(notifications)
@@ -49,6 +41,7 @@ export const oweNotice = Effect.fn('Notifier.owe')(function* (input: {
             kind: notice.kind,
             title: notice.title,
             body: notice.body,
+            previewUrl: notice.previewUrl,
             conversationId: notice.threadId,
             approvalId: notice.approvalId,
             createdAt: now,
@@ -91,7 +84,7 @@ export const recordNotice = Effect.fn('Notifier.record')(function* (input: {
   readonly id: NotificationId
   readonly notice: Notice
 }) {
-  if (!(yield* oweNotice(input))) return NotifyPersonOutcome.cases.Disabled.make({})
+  yield* oweNotice(input)
   const push = yield* Push
   const outcome = yield* push
     .deliver(input.notice.personId, input.id)
@@ -110,6 +103,7 @@ export interface Notice {
   readonly kind: typeof NotificationKind.Type
   readonly title: string
   readonly body: string
+  readonly previewUrl?: string
   readonly threadId: ThreadId | null
   /** The Approval the notice asks the Person to decide; null when it asks nothing of its own. */
   readonly approvalId: ApprovalId | null
@@ -118,8 +112,7 @@ export interface Notice {
 export interface NotifierService {
   /**
    * Tells one Person something happened: stores the notification and wakes their open clients.
-   * A Person who turned notifications off in Settings is not told; that is their choice and not an
-   * error. Every other domain notifies through here and never writes the table itself.
+   * Device registration controls push delivery; every notice remains available in the inbox.
    */
   readonly notify: (notice: Notice) => Effect.Effect<void, DatabaseInfrastructureError>
 }

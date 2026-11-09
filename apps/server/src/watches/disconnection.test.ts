@@ -18,7 +18,7 @@ import {
   ExecutorOwnerId,
   ExecutorReferences,
 } from '../connections/executor.ts'
-import { removeConnection } from '../connections/migration.ts'
+import { removeConnection } from '../connections/removal.ts'
 import { decodeRow, encodeReferences, listRecords } from '../connections/records.ts'
 import { connections } from '../connections/tables.ts'
 import { ServerConfig } from '../config.ts'

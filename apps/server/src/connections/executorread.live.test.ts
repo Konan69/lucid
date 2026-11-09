@@ -39,7 +39,7 @@ const configured = executorLayer.pipe(
 )
 
 /** Acceptance proof against the deployed image, not the newer checkout's import contract.
- * Executor packages/catalog/src/contracts/imports.ts now declares ImportAuth, but beta.8
+ * Executor packages/catalog/src/contracts/imports.ts now declares ImportAuth, but the hosted adapter
  * ignores it. These tests stay opt-in and must pass before claiming a Person can connect
  * GitHub with their own token. Only the credential submission receives the redacted token.
  */
@@ -112,7 +112,7 @@ describe.skipIf(!enabled)('GitHub authenticated read acceptance', () => {
             .as(installationCaller)
             .tools(references)
             .pipe(Effect.flip)
-          // beta.8 masks a deleted app as organization access denial, before its tool route.
+          // Executor masks a deleted app as organization access denial, before its tool route.
           expect(unavailable._tag).toBe('ExecutorAccessDenied')
           NodeProcess.stdout.write(`GitHub read tools=${tools.length} reads=1 removed-app=1\n`)
           return yield* Effect.void

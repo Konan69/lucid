@@ -55,3 +55,5 @@ export const schemaMigrations = pgTable('vivid_schema_migrations', {
   version: integer('version').primaryKey(),
   appliedAt: bigint('applied_at', { mode: 'number' }).notNull(),
 })
+
+export { activityTargets } from '../activity/tables.ts'

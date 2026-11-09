@@ -49,7 +49,7 @@ const configured = executorLayer.pipe(
   ),
 )
 
-/** Real RPC handlers, SQL and beta.8 adapter prove that the key card completes without moving
+/** Real RPC handlers, SQL and Executor adapter prove that the key card completes without moving
  * credentials into product records, audit or model views. Only Gate/model judgement is supplied
  * by the existing test Layer; the provider registration, discovery and call are real. */
 describe.skipIf(!enabled)('keyed MCP product acceptance', () => {

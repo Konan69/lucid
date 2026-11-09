@@ -112,12 +112,9 @@ export class ConnectionProbe extends Context.Service<ConnectionProbe, Connection
   'vivid/ConnectionProbe',
 ) {}
 
-/** Fixtures requiring a live app refuse migration-only states before building protocol values. */
+/** Fixtures requiring a live app refuse reconnection states before building protocol values. */
 export function activeReferences(references: ExecutorReferences): ExecutorActiveReferences {
-  if (
-    ExecutorReferences.guards.ReconnectRequired(references) ||
-    ExecutorReferences.guards.MigrationPending(references)
-  )
+  if (ExecutorReferences.guards.ReconnectRequired(references))
     expect.fail('An active app reference is required by this fixture')
   return references
 }
@@ -139,8 +136,6 @@ const authorized = (input: ExecutorReferences) => {
 /** Source effects and recorded calls belong to the external adapter test boundary. */
 const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
   return Executor.of({
-    inventory: Effect.succeed({ apps: [], accounts: [], links: [] }),
-    reconcile: () => Effect.die('Legacy rows require the real reconciliation adapter'),
     authorization: Effect.fn('Executor.Test.authorization')(() =>
       Effect.succeed(ServiceAuthorization.cases.None.make({})),
     ),

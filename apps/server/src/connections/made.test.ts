@@ -1,3 +1,4 @@
+import { appsVersion } from './framework.ts'
 import { NodeHttpServerRequest } from '@effect/platform-node'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as TestClock from 'effect/testing/TestClock'
@@ -248,7 +249,7 @@ describe.skipIf(!testDatabaseConfigured)('made Integrations through real adapter
           const manifest = body.files.find((file) => file.path === 'package.json')
           if (manifest === undefined) return expect.fail('Expected pinned manifest')
           expect(yield* decodeManifest(manifest.content)).toEqual({
-            dependencies: { apps: '0.0.1-beta.92' },
+            dependencies: { apps: appsVersion },
           })
           expect(
             requests

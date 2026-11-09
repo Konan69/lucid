@@ -1,3 +1,4 @@
+import { VividRpcClient } from '@vivid/client-runtime'
 import { RegistryContext } from '@effect/atom-react'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import {
@@ -12,7 +13,7 @@ import {
 } from '@react-navigation/native-stack'
 import { NotificationOpens } from '@vivid/contracts'
 import { workspaceKey } from '@vivid/state'
-import { Option } from 'effect'
+import { Effect, Option } from 'effect'
 import { useState, useSyncExternalStore, type ComponentProps } from 'react'
 import { AppState, StatusBar, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
@@ -335,6 +336,7 @@ function usePressedNotifications(
   front: FrontStore,
   navigation: NavigationContainerRefWithCurrent<Routes>,
 ) {
+  const data = useLiveData()
   /** Puts a page in front. The stack as `keep` reads it: before there is one there is nothing to put it on. */
   const show = (name: 'Feed' | 'Notifications') => {
     if (!navigation.isReady()) return
@@ -353,6 +355,14 @@ function usePressedNotifications(
           Feed: () => show('Feed'),
           Notifications: () => show('Notifications'),
         }),
+        ({ threadId, text, key }) => {
+          void data.run(
+            Effect.gen(function* () {
+              const client = yield* VividRpcClient
+              return yield* client.SendToThread({ threadId, text, key, pictures: [] })
+            }),
+          )
+        },
       ),
   )
   useSyncExternalStore(listen, NOTHING, NOTHING)

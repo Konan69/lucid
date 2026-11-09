@@ -1,3 +1,4 @@
+import { appsVersion } from './framework.ts'
 import * as NodeCrypto from 'node:crypto'
 import { ServiceId } from '@vivid/contracts'
 import { Effect, Option, Schema } from 'effect'
@@ -10,16 +11,12 @@ import { requiredSetting, settingSecret, settingText } from '../config.ts'
  * configure. They were once a file of app identifiers an operator produced on one Executor and
  * named in a setting; a deploy could not carry it, so the hosted server never offered Google.
  *
- * What was run on the hosted Executor's own build (upstream source at commit `304bf60`, `apps`
- * framework `0.0.1-beta.22`): each source deploys and starts sign-in at Google with these scopes
+ * What was run on the hosted Executor's own build (`executor-selfhost:2.0.0-beta.23`, `apps`
+ * framework `appsVersion`): each source deploys and starts sign-in at Google with these scopes
  * (`google.live.test.ts`). Listing tools needs a connected account, so a copy of each source with
  * a key in place of sign-in was deployed beside it: the six definitions compile to 211 tools, one
  * for every operation, and a call reaches Google's API host, which refuses the stand-in key.
  */
-
-/** The `apps` framework the sources below are written for. Executor requires an app to name the
- * exact version it uses and keeps serving it after the host moves on. */
-export const googleAppsVersion = '0.0.1-beta.22'
 
 /** The sign-in method's name in a Google app's source. The helper fills the OpenAPI security
  * scheme of the same name, and every Google definition names its scheme `googleOAuth2`. */
@@ -125,14 +122,67 @@ export function googleService(service: ServiceId) {
   return Option.fromUndefinedOr(googleServices.find((candidate) => candidate.service === service))
 }
 
+/** The structured send remains a mutation; its optional Message-ID is overwritten by the journal. */
+export const gmailAttachmentSend = 'sendWithAttachments'
+
+/** Authored inside Executor so file envelopes become provider-native MIME without model-written bytes. */
+const gmailFilesSource = String.raw`
+import { mutation, object, string, array, json, decodeJson } from "apps";
+const file = object({ name: string({ minLength: 1 }), mimeType: string({ minLength: 1 }), base64: string() });
+// Header values cannot introduce another recipient or MIME part.
+const header = (value) => { if (/[\r\n]/u.test(value)) throw new Error("Invalid mail header"); return value; };
+const base64 = (value) => btoa(Array.from(new TextEncoder().encode(value), byte => String.fromCharCode(byte)).join(""));
+const folded = (value) => value.replace(/.{1,76}/gu, "$&\r\n");
+export const fileTools = ({ accounts, fetch, signal }) => ({
+  sendWithAttachments: mutation({ description: "Send an email with file attachments to recipients using Gmail", input: object({ to: array(string({ minLength: 1 })), cc: array(string()).optional(), bcc: array(string()).optional(), subject: string(), body: string(), attachments: array(file), messageId: string().optional() }), output: json() }, async (_context, input) => {
+    if (input.to.length === 0) throw new Error("A recipient is required");
+    const boundary = "vivid_" + crypto.randomUUID();
+    const lines = ["MIME-Version: 1.0", "To: " + input.to.map(header).join(", "), "Subject: =?UTF-8?B?" + base64(input.subject) + "?=", 'Content-Type: multipart/mixed; boundary="' + boundary + '"'];
+    if (input.cc !== undefined) lines.push("Cc: " + input.cc.map(header).join(", "));
+    if (input.bcc !== undefined) lines.push("Bcc: " + input.bcc.map(header).join(", "));
+    if (input.messageId !== undefined) lines.push("Message-ID: <" + header(input.messageId) + ">");
+    lines.push("", "--" + boundary, 'Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: base64", "", folded(base64(input.body)));
+    for (const attachment of input.attachments) {
+      if (!/^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/u.test(attachment.mimeType)) throw new Error("Invalid attachment MIME type");
+      // Decode and re-encode the envelope so whitespace or malformed base64 cannot become MIME syntax.
+      lines.push("--" + boundary, "Content-Type: " + attachment.mimeType, "Content-Disposition: attachment; filename*=UTF-8''" + encodeURIComponent(attachment.name).replace(/'/gu, "%27"), "Content-Transfer-Encoding: base64", "", folded(btoa(atob(attachment.base64))));
+    }
+    lines.push("--" + boundary + "--", "");
+    const raw = base64(lines.join("\r\n")).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "");
+    const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", { method: "POST", signal, headers: { Authorization: "Bearer " + accounts.google.fields.access_token, "Content-Type": "application/json" }, body: JSON.stringify({ raw }) });
+    return decodeJson(response, json());
+  }),
+});
+`
+
+/** Drive multipart media is binary, so the envelope is decoded before joining the two parts. */
+const driveFilesSource = String.raw`
+import { mutation, object, string, json, decodeJson } from "apps";
+export const fileTools = ({ accounts, fetch, signal }) => ({
+  uploadFile: mutation({ description: "Upload a file to Google Drive, optionally inside a folder", input: object({ file: object({ name: string({ minLength: 1 }), mimeType: string({ minLength: 1 }), base64: string() }), folderId: string({ minLength: 1 }).optional() }), output: json() }, async (_context, { file, folderId }) => {
+    if (!/^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/u.test(file.mimeType)) throw new Error("Invalid file MIME type");
+    const boundary = "vivid_" + crypto.randomUUID();
+    const metadata = { name: file.name, mimeType: file.mimeType };
+    if (folderId !== undefined) metadata.parents = [folderId];
+    const prefix = new TextEncoder().encode("--" + boundary + "\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n" + JSON.stringify(metadata) + "\r\n--" + boundary + "\r\nContent-Type: " + file.mimeType + "\r\n\r\n");
+    const bytes = Uint8Array.from(atob(file.base64), char => char.charCodeAt(0));
+    const suffix = new TextEncoder().encode("\r\n--" + boundary + "--\r\n");
+    const body = new Uint8Array(prefix.length + bytes.length + suffix.length);
+    body.set(prefix); body.set(bytes, prefix.length); body.set(suffix, prefix.length + bytes.length);
+    const response = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", { method: "POST", signal, headers: { Authorization: "Bearer " + accounts.google.fields.access_token, "Content-Type": 'multipart/related; boundary="' + boundary + '"' }, body });
+    return decodeJson(response, json());
+  }),
+});
+`
+
 /**
  * The source of one Google app, as Executor's guide writes an OpenAPI service
  * (`packages/app-templates/executor/skills/app-authoring/integrations.md` and `accounts.md` in the
  * Executor repository): `liveOpenapiRouter` reads the definition inside the app, and the provider
  * signs in through Google's published metadata.
  *
- * - One account, not `provider.many()`: a Connection owns one app holding one account, so a tool
- *   takes Google's own input and no account identifier (as `keyed.ts` does).
+ * - A user-scoped many requirement permits setup before linking. Vivid supplies the one account
+ *   selected by the Connection, so tools keep Google's input without an account identifier.
  * - `hosts` keeps the token out of app code: it is a handle that Executor's network swaps for the
  *   real value only on a request to Google's API host.
  * - `resource: null` because Google's authorization server takes no resource parameter, and
@@ -171,21 +221,36 @@ export function googleFiles(google: GoogleService) {
   const provider = `import { decodeJson, defineProvider, oauth2, object, string } from "apps";
 export const provider = defineProvider({ name: ${JSON.stringify(google.name)}, hosts: ${JSON.stringify(hosts)}, auth: { ${googleMethod}: oauth2(${JSON.stringify(sign)}) }, async health({ account, fetch, signal }) { const response = await fetch(${JSON.stringify(googleUserinfo)}, { signal, headers: { Authorization: "Bearer " + account.fields.access_token } }); const user = await decodeJson(response, object({ email: string() })); return { accountInfo: { email: user.email } }; } });
 `
-  const index = `import { defineApp } from "apps";
+  const fileSource = new Map([
+    [gmailServiceId, gmailFilesSource],
+    ['google/drive', driveFilesSource],
+  ]).get(google.service)
+  const namespace = google.service === gmailServiceId ? 'gmailApi' : 'googleDriveApi'
+  // Remount the API under its existing namespace so every original public tool name survives.
+  const index = `import { defineApp, router, renameTools } from "apps";
+${fileSource === undefined ? '' : 'import { fileTools } from "./files.ts";'}
 import { liveOpenapiRouter } from "apps/openapi";
 import { provider } from "./provider.ts";
-export default defineApp({ accounts: { google: provider } }, async ({ accounts, cache, fetch, signal }) => ({ tools: liveOpenapiRouter({ cache, fetch, signal, source: { url: ${JSON.stringify(google.definition)} }, allowedOrigin: ${JSON.stringify(google.origin)}, securitySchemes: ${JSON.stringify(schemes)}, methods: {}, oauth: [${JSON.stringify(googleMethod)}], account: accounts.google }) }));
+export default defineApp({ user: { accounts: { google: provider.many() } } }, async ({ user, cache, fetch, signal }) => {
+  if (user === undefined) return { tools: router({}) };
+  const [google] = user.accounts.google;
+  if (google === undefined) return { tools: router({}) };
+  const accounts = { google };
+  const api = liveOpenapiRouter({ cache, fetch, signal, source: { url: ${JSON.stringify(google.definition)} }, allowedOrigin: ${JSON.stringify(google.origin)}, securitySchemes: ${JSON.stringify(schemes)}, methods: {}, oauth: [${JSON.stringify(googleMethod)}], account: accounts.google });
+  return { tools: ${fileSource === undefined ? 'api' : `router({ ${namespace}: renameTools(api, name => name.slice(${namespace.length + 1})), ...fileTools({ accounts, fetch, signal }) })`} };
+});
 `
   return [
     { path: 'index.ts', content: index },
     { path: 'provider.ts', content: provider },
+    ...(fileSource === undefined ? [] : [{ path: 'files.ts', content: fileSource }]),
     {
       path: 'package.json',
       content: JSON.stringify({
         name: `vivid-${google.service.replace('/', '-')}`,
         private: true,
         type: 'module',
-        dependencies: { apps: googleAppsVersion },
+        dependencies: { apps: appsVersion },
       }),
     },
   ]

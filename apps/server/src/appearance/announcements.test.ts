@@ -156,7 +156,6 @@ describe.skipIf(!testDatabaseConfigured)('appearance transaction announcements',
         expect(rows[0]).toMatchObject({
           theme: 'system',
           timezone: 'UTC',
-          notify: true,
           updatedAt: new Date(at),
         })
         yield* payload(notices, [Topic.person(personId)])

@@ -2,7 +2,7 @@ import * as NodeCrypto from 'node:crypto'
 import { Forbidden, ServiceCatalog, ServiceId, type Person } from '@vivid/contracts'
 import { Effect, Option, type Schema } from 'effect'
 import { optionalSetting, settingText } from '../config.ts'
-import { googleAppsVersion } from './google.ts'
+import { appsVersion } from './framework.ts'
 
 export const discordServiceId = ServiceId.make('vivid/discord')
 
@@ -206,13 +206,16 @@ function literal(value: Schema.Json) {
     .replace(/\u2029/gu, '\\u2029')
 }
 
-/** beta.22 already supplies Google's liveOpenapiRouter and keyed providers' secrets.
- * CredentialBinding.prefix in executor@2.0.0-beta.23 adds Bot without embedding a credential. */
+/** CredentialBinding.prefix in executor@2.0.0-beta.23 adds Bot without embedding a credential. */
 export function discordFiles(): ReadonlyArray<{ path: string; content: string }> {
-  const source = `import { defineApp, defineProvider, secrets, object, string } from "apps";
+  const source = `import { defineApp, defineProvider, secrets, object, string, router } from "apps";
 import { liveOpenapiRouter } from "apps/openapi";
 const discord = defineProvider({ name: "Discord", hosts: ["discord.com"], auth: { discord: secrets({ label: "Bot token", fields: object({ token: string() }) }) } });
-export default defineApp({ accounts: { discord } }, async ({ accounts, cache, fetch, signal }) => ({ tools: liveOpenapiRouter({ cache, fetch, signal, source: { document: ${literal(document)} }, allowedOrigin: "https://discord.com", securitySchemes: ${literal(securitySchemes)}, methods: { discord: [{ scheme: "discord", field: "token", part: "value", prefix: "Bot " }] }, oauth: [], account: accounts.discord, kinds: ${literal(kinds)} }) }));
+export default defineApp({ user: { accounts: { discord: discord.many() } } }, async ({ user, cache, fetch, signal }) => {
+if (user === undefined) return { tools: router({}) };
+const [account] = user.accounts.discord;
+if (account === undefined) return { tools: router({}) };
+return { tools: liveOpenapiRouter({ cache, fetch, signal, source: { document: ${literal(document)} }, allowedOrigin: "https://discord.com", securitySchemes: ${literal(securitySchemes)}, methods: { discord: [{ scheme: "discord", field: "token", part: "value", prefix: "Bot " }] }, oauth: [], account, kinds: ${literal(kinds)} }) }; });
 `
   return [
     { path: 'index.ts', content: source },
@@ -222,7 +225,7 @@ export default defineApp({ accounts: { discord } }, async ({ accounts, cache, fe
         name: 'vivid-discord',
         private: true,
         type: 'module',
-        dependencies: { apps: googleAppsVersion },
+        dependencies: { apps: appsVersion },
       }),
     },
   ]

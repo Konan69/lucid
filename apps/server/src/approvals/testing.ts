@@ -1,3 +1,4 @@
+import { activitiesLayer } from '../activity/service.ts'
 import * as NodeCrypto from 'node:crypto'
 import { expect } from '@effect/vitest'
 import { eq, inArray } from 'drizzle-orm'
@@ -226,7 +227,9 @@ export const storeServices = Layer.merge(approvalStoreLayer, inputStoreLayer).pi
   Layer.provideMerge(policy),
 )
 /** Stateful observations and stores are acquired per case over the suite's shared database. */
-export const trustTestServices = gateLayer.pipe(Layer.provideMerge(storeServices))
+export const trustTestServices = Layer.merge(gateLayer, activitiesLayer).pipe(
+  Layer.provideMerge(storeServices),
+)
 /** Complete fixtures remain available to suites that compose their own dependency graph. */
 export const stores = storeServices.pipe(Layer.provideMerge(testDatabaseLayer))
 export const trustTestLayer = trustTestServices.pipe(Layer.provideMerge(testDatabaseLayer))

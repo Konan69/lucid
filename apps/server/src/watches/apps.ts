@@ -148,7 +148,6 @@ const dedicatedApp = (row: ConnectionRecord): Dedicated =>
     Public: ({ app, appOwnership }) => ready(row, app, appOwnership),
     Authorized: ({ app, appOwnership }) => ready(row, app, appOwnership),
     ReconnectRequired: shared,
-    MigrationPending: notReady,
     EnteringKey: notReady,
     SigningIn: notReady,
     OAuthSigningIn: notReady,

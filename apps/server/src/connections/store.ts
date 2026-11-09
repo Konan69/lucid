@@ -59,7 +59,6 @@ import {
   ExecutorNotReady,
   ExecutorPublicAddressRequired,
   connectionSetupMessage,
-  executorMigrationMessage,
   resourceReason,
   ExecutorStatus,
   ExecutorStep,
@@ -92,7 +91,7 @@ import {
   type ConnectionRecord,
 } from './records.ts'
 import { namedAccounts } from './names.ts'
-import { removeConnection } from './migration.ts'
+import { removeConnection } from './removal.ts'
 import { connections, connectionPermissions } from './tables.ts'
 import { classPolicies } from './permissions.ts'
 import { callbackHash, correlateSignIn } from './correlation.ts'
@@ -944,11 +943,6 @@ const resumeExisting = Effect.fn('Connections.resumeExistingState')(function* (
   const { executor, provide, get } = input
   const row = yield* get(actor, id)
   yield* mayManage(actor, row)
-  if (ExecutorReferences.guards.MigrationPending(row.references))
-    return yield* new ServiceUnavailable({
-      service: 'connections',
-      message: executorMigrationMessage,
-    })
   return yield* Match.value(row.status).pipe(
     Match.when('ready', () =>
       // No trip is opened for an account that is already ready, so nothing is written: this is

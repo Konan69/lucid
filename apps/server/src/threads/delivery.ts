@@ -1,4 +1,6 @@
+import { Activities, activitiesLayer } from '../activity/service.ts'
 import * as Effect from 'effect/Effect'
+import * as Stream from 'effect/Stream'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Predicate from 'effect/Predicate'
@@ -86,6 +88,7 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
   const threads = yield* ThreadStore
   const runs = yield* RunStore
   const changes = yield* Changes
+  const activities = yield* Activities
   const titles = yield* ThreadTitles
   const channels = yield* ChannelReplies
   const devices = yield* DeviceRegistry
@@ -152,8 +155,25 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
   })
 
   return Effect.fn('Conversation.observe')(function* (run: Followed) {
+    const updates = yield* changes.subscribe(
+      [Topic.thread(run.threadId), Topic.person(run.person.id)],
+      ['activity', 'notifications'],
+    )
+    const refresh = activities
+      .refresh(run.person.id)
+      .pipe(Effect.catch(() => Effect.logWarning('Live Activity refresh failed')))
+    yield* updates.pipe(
+      Stream.runForEach(() => refresh),
+      Effect.forkScoped,
+    )
+    yield* activities
+      .refresh(run.person.id)
+      .pipe(Effect.catch(() => Effect.logWarning('Live Activity refresh failed')))
     const settlement = yield* runtime.settled(run.threadId, run.id)
     const changed = yield* database.transaction(() => end(run, settlement))
+    yield* activities
+      .refresh(run.person.id)
+      .pipe(Effect.catch(() => Effect.logWarning('Live Activity refresh failed')))
     // The conditional write owns reporting too: replay and restart observers cannot count twice.
     if (changed && Settlement.guards.Failed(settlement))
       yield* recordRunFailure({
@@ -189,7 +209,7 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
         Effect.logWarning('A channel reply could not be sent', { reason: error._tag }),
       ),
     )
-  })
+  }, Effect.scoped)
 })
 
 const threadMissing = () => Effect.fail(new NotFound({ message: 'Thread not found' }))
@@ -399,4 +419,5 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
 export const conversationLayer = Layer.effect(Conversation, makeConversation()).pipe(
   Layer.provide(workLayer),
   Layer.provideMerge(deviceLayer),
+  Layer.provide(activitiesLayer),
 )

@@ -1,3 +1,4 @@
+import { activityActionRoutes } from '../activity/actions.ts'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as HttpRouter from 'effect/http/HttpRouter'
@@ -59,6 +60,7 @@ const healthRoute = HttpRouter.add(
  * `main.ts`, because whether it exists depends on launch configuration.
  */
 export const routerLayer = Layer.mergeAll(
+  activityActionRoutes,
   rpcServerLayer,
   closedRoute,
   authRoute,
