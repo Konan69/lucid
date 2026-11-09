@@ -39,6 +39,7 @@ import { connections } from '../connections/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { Runtime } from '../runtime/client.ts'
+import { ChildRuns } from '../runs/store.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
 import { stopPersonRun } from '../threads/stop.ts'
 import { Signal } from './signal.ts'
@@ -58,13 +59,20 @@ const runtime = Layer.succeed(
     settled: () => Effect.never,
     child: () => Effect.die('Stale approval tests start no helpers'),
     stopChild: () => Effect.succeed(false),
+    messageChild: () => Effect.die('This fake follows up no helpers'),
     stop: () => Effect.succeed(true),
     watch: () => Stream.never,
     read: () => Effect.die('Stale approval tests do not read history'),
   }),
 )
 const services = artifactStoreLayer.pipe(
-  Layer.provideMerge(Layer.merge(trustTestServices, runtime)),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      trustTestServices,
+      runtime,
+      Layer.mock(ChildRuns, { stopThread: () => Effect.void }),
+    ),
+  ),
 )
 
 /** A document in the Thread, as `write_document` leaves one at version 1. */

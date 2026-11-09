@@ -27,7 +27,7 @@
   {
     "file": "packages/agent/runtime/src/children.ts",
     "classification": "third-party-adapter",
-    "symbols": ["<module>", "open", "claimWake", "start", "claimWait"]
+    "symbols": ["<module>", "open", "claimWake", "start", "claimWait", "startRound"]
   },
   {
     "file": "packages/agent/runtime/src/agents/worker.ts",

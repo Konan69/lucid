@@ -80,9 +80,42 @@ export const ChildStopCause = Schema.Literals(['Vivid', 'Person'])
 export type ChildStopCause = typeof ChildStopCause.Type
 
 /**
+ * Who sent a helper a follow-up. `Vivid`: the Thread's own Run (`message_run`). `Person`:
+ * someone in the Thread, from the helper's row.
+ */
+export const ChildSender = Schema.Literals(['Vivid', 'Person'])
+export type ChildSender = typeof ChildSender.Type
+
+/**
+ * What a helper is working on, or last worked on. `Brief`: the work it was started with, its
+ * first round. `FollowUp`: more instructions, a correction or a new direction sent to it later,
+ * which reaches its own conversation as its next turn so it keeps everything it already knows
+ * (Grok Bot `MessageSubagent` and Task `resume`, Codex `followup_task`, Pi's background subagent
+ * example). `round` counts its pieces of work from one; each runtime report names its round, so
+ * the ending of an earlier round never ends a later one. `key` is the sender's idempotency key:
+ * the same follow-up sent again starts no further round.
+ */
+export const ChildTurn = Schema.TaggedUnion({
+  Brief: {},
+  FollowUp: {
+    round: Schema.Int.check(Schema.isGreaterThan(1)),
+    message: Schema.String,
+    by: ChildSender,
+    key: Schema.String,
+    sentAt: Schema.Finite,
+  },
+})
+export type ChildTurn = typeof ChildTurn.Type
+
+/** The round a helper's current or last piece of work is. */
+export const roundOf = (turn: ChildTurn) =>
+  ChildTurn.match(turn, { Brief: () => 1, FollowUp: ({ round }) => round })
+
+/**
  * Where a helper stands. `Reserved` exists before the runtime accepted its work; `Stopping`
- * after a stop was asked for and before the runtime said its work ended. The three terminal
- * states never change again.
+ * after a stop was asked for and before the runtime said its work ended. `Stopped` never changes
+ * again. `Completed` and `Failed` end one round: a follow-up makes the helper `Working` again in
+ * its next round (`ChildTurn`).
  */
 export const ChildRunState = Schema.TaggedUnion({
   Reserved: {},
@@ -114,6 +147,7 @@ export const ChildRun = Schema.Struct({
   budget: ChildBudget,
   requestedAt: Schema.Finite,
   state: ChildRunState,
+  turn: ChildTurn,
 }).annotate({ identifier: 'ChildRun', title: 'Helper Run' })
 export interface ChildRun extends Schema.Schema.Type<typeof ChildRun> {}
 
@@ -177,18 +211,55 @@ export const ChildEnding = Schema.TaggedUnion({
 export type ChildEnding = typeof ChildEnding.Type
 
 /**
- * What the runtime reports about one helper. `Started`: its work was admitted. `Ended`: its work
- * ended. `wake` says whether the parent still needs to hear the result as a new delivery; it is
- * false when the parent already read it by waiting (`wait_runs`).
+ * What the runtime reports about one helper. `Started`: its work was admitted. `Ended`: one round
+ * of its work ended (`ChildTurn`). `wake` says whether the parent still needs to hear the result
+ * as a new delivery; it is false when the parent already read it by waiting (`wait_runs`).
  */
 export const ChildReport = Schema.TaggedUnion({
   Started: { receipt: ChildReceipt },
-  Ended: { ending: ChildEnding, wake: Schema.Boolean },
+  Ended: {
+    ending: ChildEnding,
+    wake: Schema.Boolean,
+    round: Schema.Int.check(Schema.isGreaterThan(0)),
+  },
 })
 export type ChildReport = typeof ChildReport.Type
 
 export const SettleChildRunRequest = Schema.Struct({ id: RunId, report: ChildReport })
 export interface SettleChildRunRequest extends Schema.Schema.Type<typeof SettleChildRunRequest> {}
+
+/**
+ * A follow-up for one helper, by its id: the words it gets as its next turn. `key` is the
+ * sender's idempotency key (the model's tool call, or the Person's press), so sending it again
+ * starts no second round.
+ */
+export const FollowUpChildRunRequest = Schema.Struct({
+  id: RunId,
+  message: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(8000)),
+  key: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
+})
+export interface FollowUpChildRunRequest extends Schema.Schema.Type<
+  typeof FollowUpChildRunRequest
+> {}
+
+/**
+ * The server handing the runtime one helper's next round: the words it gets, who sent them, and
+ * the budget the round works within (the helper's own, again).
+ */
+export const RuntimeChildMessage = Schema.Struct({
+  round: Schema.Int.check(Schema.isGreaterThan(1)),
+  message: Schema.String,
+  by: ChildSender,
+  budget: ChildBudget,
+})
+export interface RuntimeChildMessage extends Schema.Schema.Type<typeof RuntimeChildMessage> {}
+
+/**
+ * What the runtime did with a follow-up. `Started`: that round's work began (or had already, for
+ * a repeat). `Absent`: the runtime has no work for this helper to continue.
+ */
+export const RuntimeChildMessaged = Schema.TaggedUnion({ Started: {}, Absent: {} })
+export type RuntimeChildMessaged = typeof RuntimeChildMessaged.Type
 
 /** Opening or stopping one helper, by its id. */
 export const ChildRunRequest = Schema.Struct({ id: RunId })

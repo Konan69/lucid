@@ -313,6 +313,7 @@ import {
   ChildRun,
   ChildRunDetail,
   ChildRunRequest,
+  FollowUpChildRunRequest,
   SettleChildRunRequest,
   SpawnChildRunRequest,
 } from './runs.js'
@@ -605,6 +606,16 @@ const GetChildRun = Rpc.make('GetChildRun', {
 const CancelChildRun = Rpc.make('CancelChildRun', {
   ...call,
   payload: ChildRunRequest,
+  success: ChildRun,
+})
+/**
+ * Sends one helper a follow-up that reaches its own conversation as its next turn: it steers a
+ * helper still at work and starts the next round of one that finished. Anyone who may stop its
+ * Thread, or Vivid there for the Person its Runs act for. A stopped helper takes none.
+ */
+const FollowUpChildRun = Rpc.make('FollowUpChildRun', {
+  ...call,
+  payload: FollowUpChildRunRequest,
   success: ChildRun,
 })
 
@@ -1409,6 +1420,7 @@ export const VividRpc = RpcGroup.make(
   SettleChildRun,
   GetChildRun,
   CancelChildRun,
+  FollowUpChildRun,
   ListArtifacts,
   WatchArtifacts,
   GetArtifact,

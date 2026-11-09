@@ -1,6 +1,7 @@
 import { unbound } from '../approvals/action.ts'
 import { scopedCase } from '../../tests/case.ts'
 import { Runtime } from '../runtime/client.ts'
+import { ChildRuns } from '../runs/store.ts'
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
 import { eq, inArray } from 'drizzle-orm'
@@ -363,9 +364,13 @@ const dependencies = Layer.mergeAll(
   gateLayer,
 )
 /** Device answers may stop their Run through the public runtime abort adapter. */
-const runtimeTestLayer = Layer.mock(Runtime, {
-  stop: Effect.fn('ComputerTest.abort')((_thread) => Effect.succeed(true)),
-})
+const runtimeTestLayer = Layer.merge(
+  Layer.mock(Runtime, {
+    stop: Effect.fn('ComputerTest.abort')((_thread) => Effect.succeed(true)),
+  }),
+  // These Threads start no helpers, so a Stop has none to stop.
+  Layer.mock(ChildRuns, { stopThread: () => Effect.void }),
+)
 const testLayer = computerStoreLayer.pipe(
   Layer.provideMerge(deviceLayer),
   Layer.provideMerge(runtimeTestLayer),
