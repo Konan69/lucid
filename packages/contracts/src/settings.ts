@@ -1,5 +1,6 @@
 import { Schema } from 'effect'
 import { PersonId } from './identity.js'
+import { LocationSharing } from './location.js'
 
 export const Theme = Schema.Literals(['system', 'light', 'dark'] as const)
 export type Theme = typeof Theme.Type
@@ -18,6 +19,8 @@ export class Settings extends Schema.Class<Settings>('Settings')(
      * and with it this field.
      */
     egress: Schema.Boolean,
+    /** Whether the Person shares where they are, and their latest reading (`location.ts`). */
+    location: LocationSharing,
   },
   { title: 'Settings' },
 ) {}
@@ -30,6 +33,8 @@ export class PatchSettingsRequest extends Schema.Class<PatchSettingsRequest>(
     timezone: Schema.optional(Schema.String),
     notify: Schema.optional(Schema.Boolean),
     egress: Schema.optional(Schema.Boolean),
+    /** Turns sharing on or off. Off forgets the last reading; on keeps one already known. */
+    location: Schema.optional(Schema.Boolean),
   },
   { title: 'Patch Settings request' },
 ) {}

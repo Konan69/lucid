@@ -274,6 +274,7 @@ import { Appearance } from './appearance.js'
 import { EgressStatus } from './egress.js'
 import { StopAllWorkResponse, StopWorkResponse, WorkListResponse, WorkRef } from './work.js'
 import { PatchSettingsRequest, Settings } from './settings.js'
+import { LocationNotShared, ShareLocationRequest } from './location.js'
 import {
   SkillReadOnly,
   PatchSkillRequest,
@@ -1374,6 +1375,15 @@ const StopWork = Rpc.make('StopWork', {
 })
 /** Stop everything that stops without loss, in one call, with a line per piece of work. */
 const StopAllWork = Rpc.make('StopAllWork', { ...call, success: StopAllWorkResponse })
+/**
+ * One of the Person's own devices says where it is now (`location.ts`). Only a signed-in Person's
+ * device sends it; the latest reading replaces the last, and nothing is kept while sharing is off.
+ */
+const ShareLocation = Rpc.make('ShareLocation', {
+  payload: ShareLocationRequest,
+  success: Settings,
+  error: Schema.Union([RpcFailure, LocationNotShared]),
+})
 
 export const VividRpc = RpcGroup.make(
   Me,
@@ -1576,4 +1586,5 @@ export const VividRpc = RpcGroup.make(
   WatchWork,
   StopWork,
   StopAllWork,
+  ShareLocation,
 ).middleware(RpcAuthMiddleware)
