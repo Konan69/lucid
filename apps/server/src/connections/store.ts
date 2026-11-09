@@ -17,6 +17,8 @@ import {
 import {
   AddIntegrationRequest,
   MakeIntegrationRequest,
+  MadeIntegrationSource,
+  type ReviseMadeIntegrationRequest,
   ServiceId,
   SignInSurface,
   AuditEvent,
@@ -27,6 +29,10 @@ import {
   Connection,
   ConnectionId,
   ConnectionState,
+  ConnectionGrant,
+  GrantObservation,
+  ObservationTime,
+  SetConnectionPermissionRequest,
   ConnectionStep,
   InvalidRequest,
   NotFound,
@@ -48,6 +54,7 @@ import {
   ExecutorTool,
   ExecutorOwnerId,
   ExecutorReferences,
+  ExecutorAppOwnership,
   ExecutorResourceMissing,
   ExecutorNotReady,
   ExecutorPublicAddressRequired,
@@ -61,11 +68,15 @@ import {
   ExecutorAuthorizationUnavailable,
   ExecutorBuildFailed,
 } from './executor.ts'
-import { madeFiles, madeService } from './made.ts'
+import { madeFiles, madeService, MADE } from './made.ts'
 import { executorFailure } from './errors.ts'
 import {
   connectionOf,
   encodeReferences,
+  encodeGrantObservation,
+  grantOf,
+  readyGrant,
+  permissionsOf,
   getRecord,
   callbackTrip,
   listRecords,
@@ -79,11 +90,15 @@ import {
 } from './records.ts'
 import { namedAccounts } from './names.ts'
 import { removeConnection } from './migration.ts'
-import { connections } from './tables.ts'
+import { connections, connectionPermissions } from './tables.ts'
+import { classPolicies } from './permissions.ts'
 import { callbackHash, correlateSignIn } from './correlation.ts'
 import { catalogService, IMPORTED, serviceLogo } from './logo.ts'
 import { loadCuration } from './curation.ts'
 import { connectionAddressLayer, type ConnectionSource } from './address.ts'
+import { Watches, watchesLayer } from '../watches/lifecycle.ts'
+import { watchStoreLayer } from '../watches/store.ts'
+import { watchedAppsLayer } from '../watches/apps.ts'
 
 const isResourceMissing = Schema.is(ExecutorResourceMissing)
 const isPublicAddressRequired = Schema.is(ExecutorPublicAddressRequired)
@@ -224,7 +239,21 @@ const finish = Effect.fn('Connections.finish')(function* (
       }),
     },
   )
-  const saved = yield* identify(yield* saveState(row, next.state, next.references))
+  const saved = yield* identify(
+    yield* saveState(
+      row,
+      next.state,
+      next.references,
+      ConnectionState.match(next.state, {
+        Ready: () => readyGrant(next.references),
+        NeedsAuthorization: () =>
+          row.status === 'ready' || ConnectionGrant.guards.ReauthorizationRequired(grantOf(row))
+            ? ConnectionGrant.cases.ReauthorizationRequired.make({})
+            : ConnectionGrant.cases.Pending.make({}),
+        Failed: () => grantOf(row),
+      }),
+    ),
+  )
   yield* recordChanged(actor, saved)
   if (row.status !== 'ready' && saved.status === 'ready') {
     const attribution =
@@ -313,6 +342,14 @@ const begin = Effect.fn('Connections.begin')(function* <E>(
           references: yield* encodeReferences(step.references),
           executorApp: step.references.app,
           status,
+          grantObservation: yield* encodeGrantObservation(
+            GrantObservation.make({
+              grant: ExecutorStep.guards.Done(step)
+                ? readyGrant(step.references)
+                : ConnectionGrant.cases.Pending.make({}),
+              checkedAt: ObservationTime.make(now),
+            }),
+          ),
           returnsTo: request.from,
           reason: null,
           createdAt: now,
@@ -382,6 +419,7 @@ const retainAuthorization = Effect.fn('Connections.retainAuthorization')(functio
     row,
     ConnectionState.cases.NeedsAuthorization.make({}),
     error.references,
+    ConnectionGrant.cases.ReauthorizationRequired.make({}),
   )
   yield* recordChanged(actor, saved)
   return yield* executorFailure(error)
@@ -416,6 +454,11 @@ const resume = Effect.fn('Connections.resume')(function* (actor: Actor, row: Con
         ? ConnectionState.cases.Ready.make({})
         : ConnectionState.cases.NeedsAuthorization.make({}),
       step.references,
+      ExecutorStep.guards.Done(step)
+        ? readyGrant(step.references)
+        : ConnectionGrant.isAnyOf(['ReauthorizationRequired', 'Expired', 'Revoked'])(grantOf(row))
+          ? grantOf(row)
+          : ConnectionGrant.cases.Pending.make({}),
     ),
   )
   yield* recordChanged(actor, saved)
@@ -460,9 +503,22 @@ const isNotReady = Schema.is(ExecutorNotReady)
 const loadTools = Effect.fn('Connections.tools')(function* (actor: Actor, row: ConnectionRecord) {
   const executor = yield* Executor
   return yield* executor.tools(row.references).pipe(
-    Effect.map((tools) => ToolDiscovery.cases.Ready.make({ tools })),
     Effect.mapError((error) =>
       isResourceMissing(error) || isNotReady(error) ? error : executorFailure(error),
+    ),
+    Effect.flatMap(
+      Effect.fn('Connections.observeDiscovery')(function* (tools) {
+        if (ConnectionGrant.guards.Unverified(grantOf(row))) {
+          const saved = yield* saveState(
+            row,
+            ConnectionState.cases.Ready.make({}),
+            row.references,
+            readyGrant(row.references),
+          )
+          yield* recordChanged(actor, saved)
+        }
+        return ToolDiscovery.cases.Ready.make({ tools })
+      }),
     ),
     Effect.catchTags({
       ExecutorResourceMissing: Effect.fn('Connections.failDiscovery')(function* ({ resource }) {
@@ -471,6 +527,7 @@ const loadTools = Effect.fn('Connections.tools')(function* (actor: Actor, row: C
           row,
           ConnectionState.cases.Failed.make({ reason }),
           row.references,
+          grantOf(row),
         )
         yield* recordChanged(actor, saved)
         return ToolDiscovery.cases.Failed.make({ reason })
@@ -480,6 +537,7 @@ const loadTools = Effect.fn('Connections.tools')(function* (actor: Actor, row: C
           row,
           ConnectionState.cases.NeedsAuthorization.make({}),
           row.references,
+          ConnectionGrant.cases.ReauthorizationRequired.make({}),
         )
         yield* recordChanged(actor, saved)
         return ToolDiscovery.cases.NeedsAuthorization.make({})
@@ -512,6 +570,8 @@ const withCatalogMarks = (
           origin: item.origin,
           ownership: item.ownership,
           state: item.state,
+          grant: item.grant,
+          permissions: item.permissions,
           createdAt: item.createdAt,
         })
       : item,
@@ -559,7 +619,7 @@ const rememberListCatalog = Effect.fn('Connections.rememberListCatalog')(
     ),
 )
 
-type ConnectionAuthority = Executor | Database | Audit | ServerConfig | Changes
+type ConnectionAuthority = Executor | Database | Audit | ServerConfig | Changes | Watches
 type ProvideAuthority = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ) => Effect.Effect<A, E, Exclude<R, ConnectionAuthority>>
@@ -576,7 +636,8 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     Audit,
     ServerConfig,
     Changes,
-  )(yield* Effect.context<Executor | Database | Audit | ServerConfig | Changes>())
+    Watches,
+  )(yield* Effect.context<ConnectionAuthority>())
   const provide: ProvideAuthority = (effect) => effect.pipe(Effect.provide(dependencies))
   const catalogServices = Effect.fn('Connections.catalog')(function* () {
     return (yield* executor.catalog.pipe(Effect.mapError(executorFailure))).map(catalogService)
@@ -619,7 +680,16 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     if (ServiceAuthorization.guards.SetupRequired(entry.authorization)) return entry
     return yield* inspectService(entry)
   })
-  const get = (actor: Actor, id: ConnectionId) => provide(getRecord(actor, id, false))
+  /** Reading an already-expired dependency also pauses the current background Watch. */
+  const get = Effect.fn('Connections.get')(
+    function* (actor: Actor, id: ConnectionId) {
+      const record = yield* provide(getRecord(actor, id, false))
+      if (record.status === 'needs-authorization')
+        yield* provide((yield* Watches).pauseCurrent(actor, id))
+      return record
+    },
+    (effect) => provide(effect),
+  )
   const management = makeManagement({ executor, database, provide, get })
 
   return {
@@ -644,8 +714,14 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     list: Effect.fn('Connections.list')(function* (actor: Actor) {
       // Named oldest first, which is what fixes each account's name; shown newest first.
       const named = namedAccounts(yield* provide(listRecords(actor))).toReversed()
-      const items = yield* Effect.forEach(named, ({ row, account }) =>
-        connectionOf(actor, row, account),
+      const items = yield* provide(
+        Effect.forEach(
+          named,
+          Effect.fnUntraced(function* ({ row, account }) {
+            const permissions = yield* permissionsOf(row.id)
+            return yield* connectionOf(actor, row, account, permissions)
+          }),
+        ),
       )
       const catalog = yield* listCatalog.pipe(
         Effect.catchTag('ServiceUnavailable', () => Effect.succeed<ReadonlyArray<Service>>([])),
@@ -655,6 +731,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     records: (actor: Actor) => provide(listRecords(actor)),
     tools: (actor: Actor, row: ConnectionRecord) => provide(loadTools(actor, row)),
     ...makeRegistration({ executor, provide, catalogServices }),
+    ...makeAuthoredManagement({ executor, provide }),
     ...management,
   }
 })
@@ -824,6 +901,7 @@ const makeCallbacks = (
         workspace: Workspace.cases.Personal.make({}),
         by: 'person',
         threadId: Option.none(),
+        helper: Option.none(),
       }
       const state = yield* callback(actor, trip.id, address)
       // Read after completion so the latest persisted trip decides where the browser hands back.
@@ -883,6 +961,31 @@ const resumeExisting = Effect.fn('Connections.resumeExistingState')(function* (
   )
 })
 
+/** Class choices use Connection ownership and remain independent of credential authorization. */
+const setPermission = Effect.fn('Connections.permission')(function* (
+  actor: Actor,
+  request: SetConnectionPermissionRequest,
+) {
+  const row = yield* getRecord(actor, request.id, false)
+  yield* mayManage(actor, row)
+  if (row.service !== classPolicies[request.dataClass].service)
+    return yield* new InvalidRequest({
+      message: 'This data class does not belong to this Integration.',
+    })
+  const database = yield* Database
+  yield* database.run(
+    database
+      .insert(connectionPermissions)
+      .values({ connectionId: row.id, dataClass: request.dataClass, decision: request.decision })
+      .onConflictDoUpdate({
+        target: [connectionPermissions.connectionId, connectionPermissions.dataClass],
+        set: { decision: request.decision },
+      }),
+  )
+  yield* recordChanged(actor, row)
+  return yield* publicConnection(actor, row)
+})
+
 /** Management shares the Layer's authority and publishes every persisted state change. */
 const makeManagement = (input: {
   readonly executor: ExecutorService
@@ -922,6 +1025,8 @@ const makeManagement = (input: {
       return yield* provide(finish(actor, row, references))
     }),
     ...makeCallbacks(input, withResume),
+    permission: (actor: Actor, request: SetConnectionPermissionRequest) =>
+      provide(setPermission(actor, request)),
     /**
      * What a Person calls an account is theirs to give, change and take away. Whoever may remove
      * the Connection may name it, so a member cannot rename the account their Company shares.
@@ -981,14 +1086,19 @@ const makeManagement = (input: {
       reason: string,
     ) {
       const saved = yield* provide(
-        saveState(row, ConnectionState.cases.Failed.make({ reason }), row.references),
+        saveState(row, ConnectionState.cases.Failed.make({ reason }), row.references, grantOf(row)),
       )
       yield* provide(recordChanged(actor, saved))
     }),
     /** Persist authorization loss before publishing the change. */
     notReady: Effect.fn('Connections.notReady')(function* (actor: Actor, row: ConnectionRecord) {
       const saved = yield* provide(
-        saveState(row, ConnectionState.cases.NeedsAuthorization.make({}), row.references),
+        saveState(
+          row,
+          ConnectionState.cases.NeedsAuthorization.make({}),
+          row.references,
+          ConnectionGrant.cases.ReauthorizationRequired.make({}),
+        ),
       )
       yield* provide(recordChanged(actor, saved))
     }),
@@ -1002,4 +1112,57 @@ export class ConnectionStore extends Context.Service<
 >()('vivid/ConnectionStore') {}
 export const connectionStoreLayer = Layer.effect(ConnectionStore, makeStore()).pipe(
   Layer.provideMerge(connectionAddressLayer),
+  Layer.provideMerge(watchesLayer.pipe(Layer.provide([watchStoreLayer, watchedAppsLayer]))),
 )
+
+/** Authored source belongs only to its Person and a dedicated, ready Executor app. */
+function makeAuthoredManagement(input: {
+  readonly executor: ExecutorService
+  readonly provide: ProvideAuthority
+}) {
+  const selected = Effect.fn('Connections.authored')(function* (actor: Actor, account: string) {
+    const found = namedAccounts(yield* input.provide(listRecords(actor))).find(
+      (entry) => entry.account.trim().toLowerCase() === account.trim().toLowerCase(),
+    )
+    if (found === undefined) return yield* new NotFound({ message: 'Integration not found.' })
+    const { row } = found
+    if (row.personId !== actor.person.id || row.companyId !== null || !row.service.startsWith(MADE))
+      return yield* new InvalidRequest({
+        message: 'Only an Integration Vivid made for you can be revised.',
+      })
+    const references = row.references
+    if (row.status !== 'ready' || !ExecutorReferences.isAnyOf(['Public', 'Authorized'])(references))
+      return yield* new InvalidRequest({
+        message: 'Reconnect this Integration before revising it.',
+      })
+    if (!ExecutorAppOwnership.guards.Dedicated(references.appOwnership))
+      return yield* new InvalidRequest({
+        message: 'This Integration does not own a dedicated app.',
+      })
+    return { account: found.account, app: references.app }
+  })
+  const readMade = Effect.fn('Connections.readMade')(function* (actor: Actor, account: string) {
+    const held = yield* selected(actor, account)
+    const files = yield* input.executor.readMade(held.app).pipe(Effect.mapError(executorFailure))
+    return MadeIntegrationSource.make({ account: held.account, files })
+  })
+  return {
+    readMade,
+    /** Build failures leave the old active version intact; readback reports only deployed source. */
+    reviseMade: Effect.fn('Connections.reviseMade')(function* (
+      actor: Actor,
+      request: ReviseMadeIntegrationRequest,
+    ) {
+      const held = yield* selected(actor, request.account)
+      yield* input.executor
+        .reviseMade(held.app, madeFiles({ name: held.account, files: request.files }))
+        .pipe(
+          Effect.mapError(madeBeginFailure),
+          Effect.catchTag('ExecutorBuildFailed', ({ message }) =>
+            Effect.fail(new InvalidRequest({ message })),
+          ),
+        )
+      return yield* readMade(actor, held.account)
+    }),
+  }
+}

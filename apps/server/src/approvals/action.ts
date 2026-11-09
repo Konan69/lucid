@@ -8,15 +8,18 @@ import {
   type ProposedAction,
 } from '@vivid/contracts'
 import * as Array from 'effect/Array'
+import * as Option from 'effect/Option'
 import * as Order from 'effect/Order'
 import * as Schema from 'effect/Schema'
 
 const isObject = Schema.is(Schema.JsonObject)
 const isArray = Schema.is(Schema.Array(Schema.Json))
+const isText = Schema.is(Schema.String)
+const isTexts = Schema.is(Schema.Array(Schema.String))
 const entryOrder = Order.mapInput(Order.String, (entry: readonly [string, Schema.Json]) => entry[0])
 
 /** Recursive key ordering preserves array order and binds the entire encoded invocation. */
-const canonical = (value: Schema.Json): string => {
+export const canonical = (value: Schema.Json): string => {
   if (isArray(value)) return `[${value.map(canonical).join(',')}]`
   if (isObject(value))
     return `{${Array.sort(Object.entries(value), entryOrder)
@@ -39,6 +42,46 @@ export const actionDigest = (proposal: {
   NodeCrypto.createHash('sha256')
     .update(canonical({ ...proposal }))
     .digest('hex')
+
+/** Whether one field of a draft may read `edited`: as it was asked, or words for words. */
+const editable = (asked: Schema.Json, edited: Schema.Json) =>
+  canonical(asked) === canonical(edited) ||
+  (isText(asked) && isText(edited)) ||
+  (isTexts(asked) && isTexts(edited))
+
+/**
+ * The action as the Person edited its draft before sending it (`AllowEdited`), or none when the
+ * edit is more than a draft's words. Only an Integration action has fields to edit. The edited
+ * input must hold exactly the fields Vivid wrote, and a field may change only from text to text or
+ * from a list of texts to a list of texts (the recipients); a number, a flag or anything nested
+ * stays as it was asked. The summary and the reason stay Vivid's: they say what was asked.
+ */
+export const editedAction = (
+  action: ProposedAction,
+  input: Schema.JsonObject,
+): Option.Option<ProposedAction> => {
+  const target = action.target
+  if (!ActionTarget.guards.Connection(target) || !isObject(target.input)) return Option.none()
+  const asked = Object.entries(target.input)
+  const same =
+    asked.length === Object.keys(input).length &&
+    asked.every(([key, value]) => {
+      const edited = input[key]
+      return edited !== undefined && editable(value, edited)
+    })
+  if (!same) return Option.none()
+  return Option.some({
+    summary: action.summary,
+    rationale: action.rationale,
+    effect: action.effect,
+    target: ActionTarget.cases.Connection.make({
+      connectionId: target.connectionId,
+      account: target.account,
+      tool: target.tool,
+      input,
+    }),
+  })
+}
 
 /** An action on a Computer: it uses no Integration and carries no document, so nothing binds it. */
 export const unbound = ApprovalBinding.make({ connectionGeneration: null, preconditions: [] })

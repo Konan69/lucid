@@ -93,6 +93,8 @@ import { stores, fixture as trustFixture } from '../approvals/testing.ts'
 import { approvals } from '../approvals/tables.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
 import { runs, threads } from '../threads/tables.ts'
+import { handoffs } from '../inputs/tables.ts'
+import { Definition } from '../inputs/handoff.ts'
 import * as Schema from 'effect/Schema'
 import { deviceRequests, computers } from './tables.ts'
 
@@ -289,6 +291,8 @@ const providerLayer = Layer.effect(
         Effect.fail(new MachineOperationFailed({ operation })),
       )
     return Machine.of({
+      health: unused('health'),
+      recover: unused('recover'),
       copySignIn: unused('copySignIn'),
       status,
       inspect,
@@ -305,6 +309,9 @@ const providerLayer = Layer.effect(
       browse,
       screen,
       desktop,
+      findFields: unused('findFields'),
+      fillFields: unused('fillFields'),
+      clearFields: unused('clearFields'),
     })
   }),
 ).pipe(Layer.provide(evidenceLayer))
@@ -370,6 +377,7 @@ const browserRunnerLayer = Layer.effect(
   Effect.gen(function* () {
     const context = yield* Effect.context<ComputerStore | DeviceRegistry>()
     return ActionRunner.of({
+      inspect: () => Effect.succeed([]),
       run: ({ person, action, origin }) => {
         if (ActionTarget.guards.Connection(action.target))
           return Effect.succeed(
@@ -1625,6 +1633,78 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           yield* Deferred.succeed(gate, undefined)
           expect((yield* Fiber.join(action)).stdout).toBe('hello')
           expect(yield* Ref.get(evidence.ensures)).toEqual([key])
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect(
+      'an open handoff holds the Computer against Vivid and a Hand back until it ends',
+      () =>
+        Effect.gen(function* () {
+          const { first } = yield* fixture()
+          const database = yield* Database
+          yield* start(first)
+          const threadId = ThreadId.make(NodeCrypto.randomUUID())
+          yield* database.run(
+            database.insert(threads).values({
+              id: threadId,
+              title: 'Handoff',
+              titleSource: 'Person',
+              personId: first.id,
+              companyId: null,
+              audience: 'private',
+              updatedAt: 0,
+            }),
+          )
+          // A handoff is handed over from a Run, which its row references.
+          const runId = RunId.make(NodeCrypto.randomUUID())
+          yield* database.run(
+            database.insert(runs).values({
+              id: runId,
+              threadId,
+              personId: first.id,
+              turn: 1,
+              state: 'working',
+              origin: encodeRunOrigin(StoredRunOrigin.cases.Message.make({})),
+              startedAt: 0,
+              admittedAt: 0,
+            }),
+          )
+          const id = NodeCrypto.randomUUID()
+          yield* database.run(
+            database.insert(handoffs).values({
+              id,
+              threadId,
+              runId,
+              personId: first.id,
+              summary: 'Sign in',
+              request: Definition.cases.Screen.make({ kind: 'Captcha' }),
+              page: { origin: 'https://example.test', address: 'https://example.test/' },
+              binding: { target: 'window', tab: 'tab', digest: 'digest' },
+              status: 'waiting',
+              createdAt: 0,
+            }),
+          )
+          const store = yield* ComputerStore
+          const refused = ComputerShellOutcome.cases.Unavailable.make({
+            reason: 'the Person is using the Computer',
+          })
+          expect((yield* store.get(first.id)).heldByPerson).toBe(true)
+          expect(yield* computerHandlers.ComputerShell(request).pipe(asVivid(first))).toEqual(
+            refused,
+          )
+          // The Computer panel's Hand back is not the handoff's to give: it stays held.
+          yield* computerHandlers.HoldComputer({ held: false }).pipe(asPerson(first))
+          expect((yield* store.get(first.id)).heldByPerson).toBe(true)
+          expect(yield* computerHandlers.ComputerShell(request).pipe(asVivid(first))).toEqual(
+            refused,
+          )
+          yield* database.run(
+            database.update(handoffs).set({ status: 'completed' }).where(eq(handoffs.id, id)),
+          )
+          expect((yield* store.get(first.id)).heldByPerson).toBe(false)
+          expect((yield* computerHandlers.ComputerShell(request).pipe(asVivid(first)))._tag).toBe(
+            'Completed',
+          )
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 

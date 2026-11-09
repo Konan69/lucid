@@ -1,6 +1,11 @@
 import { RpcConnection, isTransientSocketReason, VividRpcClient } from '@vivid/client-runtime'
-import type { ApprovalChanged, ApprovalExpired, SkillReadOnly } from '@vivid/contracts'
-import type { InputAnswerFailure, RpcFailure } from '@vivid/contracts/rpc'
+import type {
+  ApprovalChanged,
+  ApprovalExpired,
+  OwedResultUndelivered,
+  SkillReadOnly,
+} from '@vivid/contracts'
+import type { HandoffFailure, InputAnswerFailure, RpcFailure } from '@vivid/contracts/rpc'
 import {
   Cause,
   Data,
@@ -23,9 +28,12 @@ import * as AtomRegistry from 'effect/reactivity/AtomRegistry'
 export type ProductFailure =
   | RpcFailure
   | SkillReadOnly
+  // Only Vivid's own close of an owed record in the background meets it; a Person's press never does.
+  | OwedResultUndelivered
   | ApprovalChanged
   | ApprovalExpired
   | InputAnswerFailure
+  | HandoffFailure
   | RpcClientError.RpcClientError
 
 type Client = VividRpcClient['Service']
@@ -170,6 +178,7 @@ const FINAL = {
   DatabaseFailure: true,
   DatabaseConstraintViolation: true,
   SkillReadOnly: true,
+  OwedResultUndelivered: true,
   InputAnswerCountMismatch: true,
   InputAnswerEmptyWords: true,
   InputAnswerRepeatedLabel: true,
@@ -178,6 +187,11 @@ const FINAL = {
   InputAnswerWrittenForbidden: true,
   ApprovalChanged: true,
   ApprovalExpired: true,
+  // A handoff refusal is the Person's to act on: they press again, nothing asks again by itself.
+  HandoffClosed: true,
+  HandoffNotAddressee: true,
+  HandoffComputerUnavailable: true,
+  HandoffNotCleared: true,
 } as const satisfies Partial<Record<ProductFailure['_tag'], true>>
 
 /**

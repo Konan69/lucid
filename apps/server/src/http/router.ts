@@ -4,6 +4,7 @@ import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import { Auth, AuthUnavailable } from '../auth/provider.ts'
+import { artifactBytesRoutes } from '../artifacts/bytes.ts'
 import { computerScreenRoutes } from '../computers/screen.ts'
 import { egressRoutes } from '../computers/egress/route.ts'
 import { connectionReturnRoutes } from '../connections/return.ts'
@@ -63,6 +64,7 @@ export const routerLayer = Layer.mergeAll(
   authRoute,
   gatewayRoutes,
   bytesRoutes,
+  artifactBytesRoutes,
   faultRoutes,
   connectionReturnRoutes,
   watchRoutes,

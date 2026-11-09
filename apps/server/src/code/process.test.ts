@@ -55,6 +55,7 @@ describe('Supervised programs', () => {
         value: call.input,
         summary: call.kind,
         end: 'completed',
+        receipt: null,
       }),
     ),
   )
@@ -84,6 +85,7 @@ describe('Supervised programs', () => {
               value: { ok: true, output: 'sent' },
               summary: 'Send mail',
               end: 'completed',
+              receipt: null,
             })
           })
           const outcome = yield* run(
@@ -150,6 +152,7 @@ describe('Supervised programs', () => {
               value: null,
               summary: 'Read',
               end: 'completed',
+              receipt: null,
             })
           })
           const code =
@@ -252,6 +255,7 @@ describe('Supervised programs', () => {
               value,
               summary: 'Read records',
               end: 'completed',
+              receipt: null,
             })
           })
           const outcome = yield* run(
@@ -363,8 +367,9 @@ describe('Supervised programs', () => {
                     value: { changed: true },
                     summary: 'First action',
                     end: 'completed',
+                    receipt: null,
                   })
-                : CallOutcome.cases.Unknown.make({ summary: 'Second action' }),
+                : CallOutcome.cases.Unknown.make({ summary: 'Second action', receipt: null }),
             ),
           )
           check(
@@ -426,6 +431,7 @@ describe('Supervised programs', () => {
               value: null,
               summary: '😀'.repeat(200),
               end: 'completed',
+              receipt: null,
             }),
           ),
         )
@@ -446,6 +452,7 @@ describe('Supervised programs', () => {
               value: null,
               summary: '😀'.repeat(200),
               end: 'completed',
+              receipt: null,
             }),
           ),
         )
@@ -517,6 +524,7 @@ describe('Supervised programs', () => {
             value: count,
             summary: 'Read a record',
             end: 'completed',
+            receipt: null,
           })
         })
         const outcome = yield* run(
@@ -551,6 +559,7 @@ describe('Supervised programs', () => {
               value: true,
               summary: 'Read',
               end: 'completed',
+              receipt: null,
             })
           })
           const fiber = yield* Effect.forkChild(
@@ -609,6 +618,7 @@ describe('Supervised programs', () => {
               value: { ok: false },
               summary: 'Invalid arguments',
               end: 'refused',
+              receipt: null,
             }),
           ),
         )
@@ -643,6 +653,7 @@ describe('Supervised programs', () => {
               value: 'x'.repeat(262_000),
               summary: 'Read records',
               end: 'completed',
+              receipt: null,
             }),
           ),
         )
@@ -821,6 +832,7 @@ describe('Supervised programs', () => {
               value: true,
               summary: 'Filed the note',
               end: 'completed',
+              receipt: null,
             })
           })
           const running = yield* Effect.forkChild(
@@ -895,6 +907,7 @@ describe('Supervised programs', () => {
               value: true,
               summary: 'Completed action',
               end: 'completed',
+              receipt: null,
             })
           })
           const running = yield* Effect.forkChild(
@@ -1038,6 +1051,7 @@ standalone.effect(
                 value: null,
                 summary: call.kind,
                 end: 'completed',
+                receipt: null,
               }),
             ),
         )

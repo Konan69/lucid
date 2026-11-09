@@ -1,5 +1,11 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { ConnectionId, CreateWatchRequest, ServiceId } from '@vivid/contracts'
+import {
+  ConnectionId,
+  CreateWatchRequest,
+  WatchCondition,
+  WatchIntent,
+  ServiceId,
+} from '@vivid/contracts'
 import { Effect, Layer, Option, Queue, Ref, Result } from 'effect'
 import {
   Executor as ConnectionExecutor,
@@ -29,6 +35,8 @@ const request = CreateWatchRequest.make({
   event: 'message.received',
   arguments: {},
   instruction: 'Tell me when a client writes.',
+  condition: WatchCondition.cases.Continuous.make({}),
+  purpose: WatchIntent.cases.Event.make({}),
 })
 
 /** Own the persisted fixture so reversal against main still reaches each removal assertion. */

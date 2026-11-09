@@ -17,6 +17,7 @@ import {
   inThread,
   isLive,
   isTooLong,
+  handing,
   lasting,
   QUIET_MS,
   readingOf,
@@ -27,12 +28,14 @@ import {
   workspaceKey,
   type Following,
 } from '@vivid/state'
+import { useSearch } from '@tanstack/react-router'
 import { Option } from 'effect'
 import { ArrowDown } from 'lucide-react'
 import { memo, useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { openedFor, useArrival } from '../data/arrival'
 import { act } from '../data/app'
 import { change, changing, LiveState, presentIn, seenThread, typingIn, useLive } from '../data/live'
+import { offerNotifications } from '../data/notifying'
 import { router } from '../router'
 import { link } from '../data/runtime'
 import { orSay } from '../data/said'
@@ -51,6 +54,8 @@ import { Face } from '../ui/Face'
 import { arriving } from '../ui/settle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { Asks, useAsks } from './thread/Allow'
+import { Handing } from './thread/Handoff'
+import { pages } from '../data/pages'
 import type { Asking } from './thread/asking'
 import type { Picture } from './thread/Attach'
 import { Composer } from './thread/Composer'
@@ -181,6 +186,8 @@ function contextFor({
     runs,
     approvals: Option.match(detail, { onNone: () => [], onSome: (value) => value.approvals }),
     requests: Option.match(detail, { onNone: () => [], onSome: (value) => value.requests }),
+    handoffs: Option.match(detail, { onNone: () => [], onSome: (value) => value.handoffs }),
+    children: Option.match(detail, { onNone: () => [], onSome: (value) => value.children }),
   }
 }
 
@@ -221,6 +228,11 @@ const settledSets = new WeakMap<ReadonlyArray<object>, ReadonlySet<string>>()
  */
 const turnsOf = makeTurns(thisReader())
 
+/** Brings a found message's row into the middle of the conversation when it first appears. */
+const landOn = (node: HTMLLIElement | null) => {
+  if (node !== null) node.scrollIntoView({ block: 'center' })
+}
+
 const Rows = memo(function Rows({
   said,
   visible,
@@ -228,6 +240,7 @@ const Rows = memo(function Rows({
   working,
   settled,
   onContinue,
+  found,
 }: {
   said: ReadonlyArray<ConversationMessage>
   visible: ReadonlyArray<ConversationMessage>
@@ -236,6 +249,8 @@ const Rows = memo(function Rows({
   /** The submissions the conversation has settled (`settledIn`); a reply's displays wait for its own. */
   settled: ReadonlySet<string>
   onContinue: (text: string, pictures?: ReadonlyArray<Picture>) => void
+  /** The message a search opened the Thread on (`?at`, `routes/thread.tsx`), when there is one. */
+  found: Option.Option<string>
 }) {
   const newest = visible.at(-1)
   const drawn = new Map(visible.map((message) => [message.id, message]))
@@ -268,7 +283,18 @@ const Rows = memo(function Rows({
         return (
           // A reply with nothing to show yet draws nothing (`FromVivid`), and its row then takes
           // no room either, so the line at the foot does not jump when the reply begins.
-          <li key={key} data-arrives className="empty:hidden">
+          // A message search opened the Thread on is brought into view once, when its row first
+          // appears, and stays marked so the eye finds it among its neighbours.
+          <li
+            key={key}
+            ref={Option.contains(found, key) ? landOn : undefined}
+            data-arrives
+            className={
+              Option.contains(found, key)
+                ? '-mx-3 rounded-row bg-wash-selected px-3 py-2 empty:hidden'
+                : 'empty:hidden'
+            }
+          >
             {turn !== undefined && (
               <p className="mb-4 text-center text-meta font-meta text-ink-3 tabular-nums">{turn}</p>
             )}
@@ -333,6 +359,9 @@ function ConversationMessages({
   ended: ReturnType<typeof newestRun>
   onSay: (text: string, pictures?: ReadonlyArray<Picture>) => void
 }) {
+  const at = useSearch({ strict: false, select: (search) => search.at })
+  // Kept as one value while the address stays the same, so `Rows` is not drawn again for it.
+  const found = useMemo(() => Option.fromUndefinedOr(at), [at])
   return (
     <Messages
       hero={hero}
@@ -351,6 +380,7 @@ function ConversationMessages({
         working={working}
         settled={settled}
         onContinue={onContinue}
+        found={found}
       />
       {marked(unsent, context.shared).map((failed) => (
         <NotSent
@@ -501,6 +531,8 @@ function Conversation({
    */
   const send = useCallback(
     (text: string, key: string, pictures: ReadonlyArray<Picture>) => {
+      // In the press itself, so the browser may ask: once only, while the Person was never asked.
+      offerNotifications()
       if (unnamed) {
         void change((sdk) => sdk.PatchThread({ id, patch: { title: titleFromMessage(text) } }))
       }
@@ -519,10 +551,9 @@ function Conversation({
 
   const lastSaid = lastWords(visible, me)
   const ended = working ? Option.none() : newestRun(runs)
-  const { unsent } = drawn
   const cut = useCut(reading, {
     // Words drawn in the conversation that did not arrive; a shared Thread draws none ahead.
-    unsent: !shared && unsent.length > 0,
+    unsent: !shared && drawn.unsent.length > 0,
     // Until a new Thread's first words have landed the server may not have the Thread at all,
     // and says so; that is the Thread arriving, not a conversation out of reach.
     arriving: !FirstWords.$is('Settled')(first),
@@ -538,7 +569,7 @@ function Conversation({
       usingTool={working && Option.isSome(Option.flatMap(replyIn(visible), stepIn))}
       // What Vivid's face answers for: words that did not arrive, a server that cannot be
       // reached, a Run that ended without an answer.
-      failed={cut || unsent.length > 0 || Option.exists(ended, ranBadly)}
+      failed={cut || drawn.unsent.length > 0 || Option.exists(ended, ranBadly)}
       panelOpen={panelOpen}
       onTogglePanel={onTogglePanel}
     >
@@ -551,6 +582,9 @@ function Conversation({
           me={me.person.id}
           approvals={context.approvals}
           requests={context.requests}
+          handoffs={context.handoffs}
+          panelOpen={panelOpen}
+          onTogglePanel={onTogglePanel}
           working={working}
           // A picture goes with a message straight to Vivid; a shared Thread's messages take
           // another path that cannot carry one yet.
@@ -576,7 +610,7 @@ function Conversation({
               }),
             )}
             onContinue={say}
-            unsent={unsent}
+            unsent={drawn.unsent}
             lastSaid={lastSaid}
             onUnsentAgain={() => sayAgain(id)}
             ended={ended}
@@ -611,6 +645,9 @@ function Column({
   me,
   approvals,
   requests,
+  handoffs,
+  panelOpen,
+  onTogglePanel,
   working,
   pictures,
   onSay,
@@ -625,6 +662,11 @@ function Column({
   approvals: ThreadContext['approvals']
   /** Every request Vivid has made in this Thread, oldest first. */
   requests: ThreadContext['requests']
+  /** Every step Vivid has handed over in this Thread, oldest first. */
+  handoffs: ThreadContext['handoffs']
+  /** The Computer panel is showing; a step is finished on its screen. */
+  panelOpen: boolean
+  onTogglePanel: () => void
   working: boolean
   /** Whether a picture can be sent from the composer. */
   pictures: boolean
@@ -647,7 +689,23 @@ function Column({
   return (
     <>
       {children}
-      <Asks allowing={allowing} asked={asked} />
+      {/* A step on the Computer holds it, so it comes before a question or an Approval; those
+          keep waiting, and rise once the step is over. */}
+      {Option.match(handing.handoffUp(handoffs, me), {
+        onNone: () => <Asks allowing={allowing} asked={asked} />,
+        onSome: (handoff) => (
+          <Handing
+            key={handoff.id}
+            handoff={handoff}
+            panelOpen={panelOpen}
+            onOpenScreen={() => {
+              // The step is finished on Vivid's computer, not on a page left in front.
+              pages.toComputer()
+              if (!panelOpen) onTogglePanel()
+            }}
+          />
+        ),
+      })}
       <Composer
         place={place}
         // While a request from Vivid waits, what is sent from here is the reply to it.

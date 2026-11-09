@@ -79,7 +79,12 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             )
             const store = yield* ApprovalStore
             const approval = yield* store.raise(
-              { ...test.owner, by: 'vivid', threadId: Option.some(test.companyId) },
+              {
+                ...test.owner,
+                by: 'vivid',
+                threadId: Option.some(test.companyId),
+                helper: Option.none(),
+              },
               test.connectionAction,
               test.bound,
             )
@@ -135,7 +140,12 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           )
           const store = yield* ApprovalStore
           const approval = yield* store.raise(
-            { ...test.owner, by: 'vivid', threadId: Option.some(test.companyId) },
+            {
+              ...test.owner,
+              by: 'vivid',
+              threadId: Option.some(test.companyId),
+              helper: Option.none(),
+            },
             test.connectionAction,
             test.bound,
           )
@@ -215,7 +225,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           expect(deliveries[0]).toMatchObject({
             idempotencyKey: `approval-${approval.id}`,
             personId: test.personal.person.id,
-            message: { type: 'approval', attributes: { outcome: 'Succeeded' } },
+            message: { cue: { outcome: 'Succeeded' } },
           })
           expect((yield* loadAudit(test.personal)).entries).toEqual([
             expect.objectContaining({
@@ -230,6 +240,78 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
         }),
         'fresh',
       ),
+    )
+
+    it.effect(
+      'an edited draft sends the Person’s words, and an edit beyond words runs nothing',
+      () =>
+        scopedCase(
+          trustTestServices,
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const store = yield* ApprovalStore
+            const asked = {
+              to: ['dami@example.com'],
+              subject: 'The NDA',
+              body: 'Signed.',
+              copies: 1,
+            }
+            const send = ProposedAction.make({
+              summary: 'Send the signed NDA to Dami',
+              rationale: 'Dami asked for it',
+              effect: 'write',
+              target: ActionTarget.cases.Connection.make({
+                connectionId: test.connectionId,
+                account: 'Work account',
+                tool: 'send_email',
+                input: asked,
+              }),
+            })
+            const approval = yield* store.raise(test.vivid, send, test.bound)
+            const edit = (input: Schema.JsonObject) => ({
+              id: approval.id,
+              digest: approval.digest,
+              decision: ApprovalDecision.cases.AllowEdited.make({ input }),
+            })
+            // A field Vivid did not write, and a number turned into words, are not a draft's words.
+            for (const input of [
+              { ...asked, bcc: 'someone@example.com' },
+              { ...asked, copies: 'many' },
+            ]) {
+              const refused = yield* store.decide(test.personal, edit(input)).pipe(Effect.flip)
+              expect(refused).toBeInstanceOf(InvalidRequest)
+            }
+            expect((yield* store.inbox(test.personal)).map((each) => each.id)).toEqual([
+              approval.id,
+            ])
+            const observed = yield* Observation
+            expect(yield* Ref.get(observed.actions)).toEqual([])
+
+            const edited = {
+              to: ['dami@example.com', 'legal@example.com'],
+              subject: 'The signed NDA',
+              body: 'Signed and attached.',
+              copies: 1,
+            }
+            const sent = yield* store.decide(test.personal, edit(edited))
+            expect(sent.state._tag).toBe('Succeeded')
+            const asSent = ProposedAction.make({
+              ...send,
+              target: ActionTarget.cases.Connection.make({
+                connectionId: test.connectionId,
+                account: 'Work account',
+                tool: 'send_email',
+                input: edited,
+              }),
+            })
+            expect(yield* Ref.get(observed.actions)).toEqual([asSent])
+            // The record says what was sent, and the item has left the Person's inbox.
+            expect(sent.action).toEqual(asSent)
+            expect(sent.digest).toBe(approval.digest)
+            expect(yield* store.inbox(test.personal)).toEqual([])
+          }),
+          'fresh',
+        ),
     )
 
     it.effect('a changed digest fails without executing', () =>
@@ -290,8 +372,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
                 personId: test.personal.person.id,
                 idempotencyKey: `approval-${approval.id}`,
                 message: expect.objectContaining({
-                  type: 'approval',
-                  attributes: { approval: approval.id, outcome: 'expired' },
+                  cue: expect.objectContaining({ outcome: 'expired' }),
                 }),
               }),
             ])
@@ -525,8 +606,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
                 personId: test.member.person.id,
                 idempotencyKey: `approval-${approval.id}`,
                 message: expect.objectContaining({
-                  type: 'approval',
-                  attributes: { approval: approval.id, outcome: 'OutcomeUnknown' },
+                  cue: expect.objectContaining({ outcome: 'OutcomeUnknown' }),
                 }),
               }),
             ])
@@ -584,7 +664,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           expect(yield* Ref.get(observed.deliveries)).toEqual([
             expect.objectContaining({
               message: expect.objectContaining({
-                attributes: { approval: approval.id, outcome: 'Failed' },
+                cue: expect.objectContaining({ outcome: 'Failed' }),
               }),
             }),
           ])

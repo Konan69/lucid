@@ -7,9 +7,20 @@ import * as NodeHttp from 'node:http'
 import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import {
+  CapabilityComputerFact,
+  CapabilityDeviceFact,
+  ComputerLifecycle,
+  ComputerHealth,
+  ComputerRecoveryRefusal,
+  ComputerRecoveryId,
+  ComputerRecoveryOutcome,
+  ComputerRecoveryRecord,
+  InstallationId,
+  ThreadId,
   BrowserAction,
   ComputerState,
   DesktopAction,
+  HandoffFieldResult,
   Person,
   PersonId,
   SessionId,
@@ -26,6 +37,7 @@ import {
   Layer,
   Option,
   Queue,
+  Redacted,
   Ref,
   Schema,
   Predicate,
@@ -40,11 +52,13 @@ import {
 } from 'effect/http'
 import { Gate, GateDecision } from '../approvals/gate.ts'
 import { personTable } from '../auth/tables.ts'
+import { connectionTestLayer } from '../connections/testing.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { silentChangesLayer } from '../live/changes.ts'
 import { boatMachineLayer } from './boat.ts'
-import { deviceLayer } from './device.ts'
+import { DeviceRegistry, deviceLayer } from './device.ts'
+import { computerRecoveries, computers } from './tables.ts'
 import { computerHandlers } from './handlers.ts'
 import {
   isOutage,
@@ -122,6 +136,10 @@ interface EvidenceService {
   readonly active: Ref.Ref<boolean | null>
   readonly extraTab: Ref.Ref<boolean>
   readonly prepared: Ref.Ref<ReadonlySet<string>>
+  /** Every target and tab id pair a bind minted, as JSON: Cua mints fresh ones per bind. */
+  readonly minted: Ref.Ref<ReadonlyArray<string>>
+  /** The effect the next `browser_type` receipts report: the driver may be unsure what it typed. */
+  readonly typeEffect: Ref.Ref<'unverifiable' | 'partial'>
   readonly breakCreate: Ref.Ref<boolean>
   readonly breakCommand: Ref.Ref<boolean>
   readonly refuseBrowser: Ref.Ref<boolean>
@@ -173,6 +191,8 @@ const evidenceLayer = Layer.effect(
       active: yield* Ref.make<boolean | null>(true),
       extraTab: yield* Ref.make(false),
       prepared: yield* Ref.make<ReadonlySet<string>>(new Set()),
+      minted: yield* Ref.make<ReadonlyArray<string>>([]),
+      typeEffect: yield* Ref.make<'unverifiable' | 'partial'>('unverifiable'),
       breakCreate: yield* Ref.make(false),
       breakCommand: yield* Ref.make(false),
       refuseBrowser: yield* Ref.make(false),
@@ -476,6 +496,10 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
         return commandReply('{"status":"refused","refusal":{"code":"consent_required"}}')
       const address = yield* Ref.get(evidence.address)
       if (Object.hasOwn(args, 'snapshot_format')) {
+        if (
+          !(yield* Ref.get(evidence.minted)).includes(JSON.stringify([args.target_id, args.tab_id]))
+        )
+          return commandReply('{"status":"refused","refusal":{"code":"browser_binding_stale"}}')
         const snapshot = yield* Ref.updateAndGet(evidence.snapshots, (count) => count + 1)
         return commandReply(
           JSON.stringify({
@@ -497,9 +521,14 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
           }),
         )
       }
+      // As Cua's bind does (`browser/engine.rs`): a new target id and new tab ids every time.
+      const bind = (yield* Ref.get(evidence.minted)).length
+      const target = `fixture-target-${bind}`
+      const tab = `fixture-tab-${bind}`
+      yield* Ref.update(evidence.minted, (minted) => [...minted, JSON.stringify([target, tab])])
       const tabs = [
         {
-          tab_id: 'fixture-tab',
+          tab_id: tab,
           title: 'Example',
           url: address,
           active: yield* Ref.get(evidence.active),
@@ -511,7 +540,7 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
         JSON.stringify({
           status: 'ok',
           mode: 'bind',
-          target_id: 'fixture-target',
+          target_id: target,
           binding_quality: 'exact',
           tabs,
         }),
@@ -609,13 +638,22 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
         '{"effect":"refused","route":"trusted_input","escalation":{"reason":"route_unavailable","target":"page"}}',
       )
     case 'browser_type':
+      if (
+        !(yield* Ref.get(evidence.minted)).includes(JSON.stringify([args.target_id, args.tab_id]))
+      )
+        return commandReply('{"status":"refused","refusal":{"code":"browser_binding_stale"}}')
       expect(args.ref).toBe(`p${yield* Ref.get(evidence.snapshots)}:2`)
       expect(args.replace).toBe(true)
-      expect(args.text).toBe('private-fixture-input')
+      // The Person's or Vivid's text, or nothing when a handoff's field is emptied.
+      expect(['private-fixture-input', '']).toContain(args.text)
       if (!(yield* Ref.get(evidence.noType)))
         yield* Ref.set(evidence.text, yield* decodeAddress(args.text))
       return commandReply(
-        '{"effect":"unverifiable","route":"trusted_input","delivery":{"mode":"background"}}',
+        JSON.stringify({
+          effect: yield* Ref.get(evidence.typeEffect),
+          route: 'trusted_input',
+          delivery: { mode: 'background' },
+        }),
       )
     default:
       return rejected(400)
@@ -901,6 +939,7 @@ const accountsLayer = computerStoreLayer.pipe(
       ),
     ),
   ),
+  Layer.provideMerge(connectionTestLayer),
 )
 
 /** Two real accounts; their rows, Computers and bindings are removed whatever the test did. */
@@ -1069,6 +1108,193 @@ const fixture = Effect.fn('BoatTest.fixture')(function* () {
 
 describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => {
   layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
+    it.effect(
+      'reads scoped capability facts passively and retains recovery receipts across retries',
+      () =>
+        Effect.gen(function* () {
+          const { first, second } = yield* accounts()
+          const database = yield* Database
+          const store = yield* ComputerStore
+          const actor = (person: Person) => ({
+            person,
+            workspace: Workspace.cases.Personal.make({}),
+            by: 'person' as const,
+            threadId: Option.none(),
+            helper: Option.none(),
+          })
+          const absent = yield* computerHandlers.GetCapabilities().pipe(asAccount(first))
+          expect(absent.computer).toEqual(
+            CapabilityComputerFact.cases.Available.make({
+              value: { state: ComputerLifecycle.cases.Absent.make({}), heldByPerson: false },
+            }),
+          )
+          expect(
+            (yield* computerHandlers.GetComputerHealth({ depth: 'Shallow' }).pipe(asAccount(first)))
+              ._tag,
+          ).toBe('Absent')
+          const now = Date.now()
+          yield* database.run(
+            database.insert(computers).values({
+              id: NodeCrypto.randomUUID(),
+              personId: first.id,
+              machine: computerMachineKey(first.id),
+              status: 'stopped',
+              since: now,
+              createdAt: now,
+              lastActivityAt: 73,
+            }),
+          )
+          const sleeping = yield* computerHandlers.GetCapabilities().pipe(asAccount(first))
+          expect(
+            CapabilityComputerFact.guards.Available(sleeping.computer) &&
+              sleeping.computer.value.state._tag,
+          ).toBe('Stopped')
+          expect(
+            (yield* computerHandlers.GetComputerHealth({ depth: 'Shallow' }).pipe(asAccount(first)))
+              ._tag,
+          ).toBe('Sleeping')
+          expect((yield* store.health(first.id, 'Deep'))._tag).toBe('Sleeping')
+          const registry = yield* DeviceRegistry
+          const device = yield* registry.enrol(first.id, {
+            installation: InstallationId.make(NodeCrypto.randomUUID()),
+            name: 'Proof desktop',
+          })
+          yield* registry.allow(first.id, device.id)
+          const personal = yield* computerHandlers.GetCapabilities().pipe(asAccount(first))
+          expect(
+            CapabilityDeviceFact.guards.Available(personal.devices) &&
+              personal.devices.value.map((current) => [
+                current.id,
+                current.access._tag,
+                current.presence._tag,
+              ]),
+          ).toEqual([[device.id, 'Allowed', 'Offline']])
+          expect(
+            (yield* computerHandlers.GetCapabilities().pipe(asAccount(second))).devices,
+          ).toEqual(CapabilityDeviceFact.cases.Available.make({ value: [] }))
+          const unsupported = {
+            id: ComputerRecoveryId.make(NodeCrypto.randomUUID()),
+            step: 'Restore' as const,
+          }
+          const refusal = {
+            id: ComputerRecoveryId.make(NodeCrypto.randomUUID()),
+            step: 'RestartBrowser' as const,
+          }
+          expect((yield* store.recover(actor(first), unsupported))._tag).toBe('Unsupported')
+          expect(yield* store.recover(actor(first), refusal)).toEqual(
+            ComputerRecoveryOutcome.cases.Refused.make({
+              cause: ComputerRecoveryRefusal.cases.WrongStep.make({}),
+            }),
+          )
+          const saved = yield* store.recover(actor(first), unsupported)
+          expect(yield* store.recover(actor(first), unsupported)).toEqual(saved)
+          const restarted = Context.get(
+            yield* Layer.build(Layer.fresh(computerStoreLayer)),
+            ComputerStore,
+          )
+          expect(yield* restarted.recover(actor(first), unsupported)).toEqual(saved)
+          const runtimeReceipt = {
+            id: ComputerRecoveryId.make(NodeCrypto.randomUUID()),
+            step: 'Reconnect' as const,
+          }
+          expect(
+            yield* computerHandlers.RecoverComputer(runtimeReceipt).pipe(
+              Effect.provideService(
+                AuthContext,
+                AuthState.Vivid({
+                  person: first,
+                  workspace: Workspace.cases.Personal.make({}),
+                  threadId: ThreadId.make(NodeCrypto.randomUUID()),
+                }),
+              ),
+            ),
+          ).toEqual(
+            ComputerRecoveryOutcome.cases.Refused.make({
+              cause: ComputerRecoveryRefusal.cases.RunRequired.make({}),
+            }),
+          )
+
+          expect(yield* store.recover(actor(first), { ...unsupported, step: 'Reboot' })).toEqual(
+            ComputerRecoveryOutcome.cases.Refused.make({
+              cause: ComputerRecoveryRefusal.cases.KeyReused.make({}),
+            }),
+          )
+          expect(yield* store.recover(actor(second), unsupported)).toEqual(
+            ComputerRecoveryOutcome.cases.Refused.make({
+              cause: ComputerRecoveryRefusal.cases.KeyReused.make({}),
+            }),
+          )
+          const interrupted = {
+            id: ComputerRecoveryId.make(NodeCrypto.randomUUID()),
+            step: 'Reboot' as const,
+          }
+          yield* database.run(
+            database
+              .insert(computerRecoveries)
+              .values({ ...interrupted, personId: first.id, createdAt: now }),
+          )
+          expect(yield* store.recover(actor(first), interrupted)).toEqual(
+            ComputerRecoveryOutcome.cases.OutcomeUnknown.make({ receipt: interrupted.id }),
+          )
+          const [row] = yield* database.run(
+            database.select().from(computers).where(eq(computers.personId, first.id)),
+          )
+          if (row === undefined) return expect.fail('Expected the stopped fixture row')
+          expect(row.lastActivityAt).toBe(73)
+          expect(yield* Ref.get((yield* Evidence).created)).toBe(0)
+          expect(yield* Ref.get((yield* Evidence).viewers)).toBe(0)
+          yield* (yield* Machine).ensure(computerMachineKey(first.id))
+          yield* Ref.set((yield* Evidence).wrongIdentity, true)
+          const invalid = yield* store.health(first.id, 'Shallow')
+          expect(invalid._tag).toBe('Unavailable')
+          if (!ComputerHealth.guards.Unavailable(invalid))
+            return expect.fail('Expected the typed provider observation failure')
+          expect(invalid.cause._tag).toBe('InvalidObservation')
+        }).pipe(Effect.scoped, (program) => scopedCase(accountsLayer, program, 'inherited')),
+    )
+
+    it.effect('the Person’s panel reads the newest recovery receipt, settled or not', () =>
+      Effect.gen(function* () {
+        const { first, second } = yield* accounts()
+        const database = yield* Database
+        const store = yield* ComputerStore
+        const owner = {
+          person: first,
+          workspace: Workspace.cases.Personal.make({}),
+          by: 'person' as const,
+          threadId: Option.none(),
+          helper: Option.none(),
+        }
+        const read = (person: Person) =>
+          computerHandlers.GetComputerRecovery().pipe(asAccount(person))
+        expect(yield* read(first)).toEqual(ComputerRecoveryRecord.cases.None.make({}))
+        const restore = {
+          id: ComputerRecoveryId.make(NodeCrypto.randomUUID()),
+          step: 'Restore' as const,
+        }
+        const outcome = yield* store.recover(owner, restore)
+        expect(outcome._tag).toBe('Unsupported')
+        const settled = yield* read(first)
+        if (!ComputerRecoveryRecord.guards.Settled(settled))
+          return expect.fail('Expected the settled Restore receipt')
+        expect([settled.step, settled.outcome]).toEqual(['Restore', outcome])
+        const interrupted = {
+          id: ComputerRecoveryId.make(NodeCrypto.randomUUID()),
+          step: 'Reboot' as const,
+          personId: first.id,
+          createdAt: settled.since + 1000,
+        }
+        yield* database.run(database.insert(computerRecoveries).values(interrupted))
+        expect(yield* read(first)).toEqual(
+          ComputerRecoveryRecord.cases.Unsettled.make({
+            step: 'Reboot',
+            since: interrupted.createdAt,
+          }),
+        )
+        expect(yield* read(second)).toEqual(ComputerRecoveryRecord.cases.None.make({}))
+      }).pipe(Effect.scoped, (program) => scopedCase(accountsLayer, program, 'inherited')),
+    )
+
     it.effect('adopts for one Person without writing an intent for a refused Person', () =>
       Effect.gen(function* () {
         const first = yield* fixture()
@@ -1684,6 +1910,94 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           expect(
             (yield* Ref.get(evidence.calls)).filter((tool) => tool === 'browser_type').length,
           ).toBe(1)
+          expect((yield* Ref.get(evidence.files)).size).toBe(0)
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    /** A handoff's page is the one Prepare bound; every later bind mints new ids for the same tab. */
+    it.effect('fills the prepared tab by its prepared ids and refuses it once it moved on', () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        const evidence = yield* Evidence
+        yield* machine.ensure(key)
+        yield* machine.browse({
+          key,
+          egress: false,
+          action: BrowserAction.cases.Open.make({ address: 'https://example.com/signin' }),
+        })
+        const found = yield* machine.findFields({ key, labels: ['Message'] })
+        expect(found.fields).toEqual([Option.none()])
+        // Another step binds the browser again, as Vivid's own reads do; its ids are new.
+        yield* machine.browse({ key, egress: false, action: BrowserAction.cases.Read.make({}) })
+        const typed = () =>
+          Ref.get(evidence.calls).pipe(
+            Effect.map((calls) => calls.filter((tool) => tool === 'browser_type').length),
+          )
+        const before = yield* typed()
+        const entry = { label: 'Message', value: Redacted.make('private-fixture-input') }
+        const filled = yield* machine.fillFields({ key, page: found.page, entries: [entry] })
+        expect(filled).toEqual([HandoffFieldResult.cases.Filled.make({})])
+        expect(yield* typed()).toBe(before + 1)
+        expect(yield* Ref.get(evidence.text)).toBe('private-fixture-input')
+        // The same tab at another address is not the page the Person was asked about.
+        yield* machine.browse({
+          key,
+          egress: false,
+          action: BrowserAction.cases.Open.make({ address: 'https://example.com/other' }),
+        })
+        const moved = yield* machine.fillFields({ key, page: found.page, entries: [entry] })
+        expect(moved).toEqual([HandoffFieldResult.cases.Refused.make({ reason: 'TargetChanged' })])
+        expect(yield* typed()).toBe(before + 1)
+        expect((yield* Ref.get(evidence.files)).size).toBe(0)
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    /** A handoff gives the Computer back only once nothing typed is left on a page Vivid reads. */
+    it.effect(
+      'reports a doubted fill as unknown and clears a field only on a read-back proof',
+      () =>
+        Effect.gen(function* () {
+          const key = yield* fixture()
+          const machine = yield* Machine
+          const evidence = yield* Evidence
+          yield* machine.ensure(key)
+          const signIn = BrowserAction.cases.Open.make({ address: 'https://example.com/signin' })
+          yield* machine.browse({ key, egress: false, action: signIn })
+          const { page } = yield* machine.findFields({ key, labels: ['Message'] })
+          const entries = [{ label: 'Message', value: Redacted.make('private-fixture-input') }]
+          const clear = machine.clearFields({ key, page, labels: ['Message'] })
+          // The driver typed but doubts how much of it reached the field.
+          yield* Ref.set(evidence.typeEffect, 'partial')
+          expect(yield* machine.fillFields({ key, page, entries })).toEqual([
+            HandoffFieldResult.cases.OutcomeUnknown.make({}),
+          ])
+          // A clearing the driver doubts is not proof either.
+          expect(yield* clear).toEqual(['Message'])
+          yield* Ref.set(evidence.typeEffect, 'unverifiable')
+          // A clearing that does not reach the field leaves it full, and says so.
+          yield* Ref.set(evidence.text, 'private-fixture-input')
+          yield* Ref.set(evidence.noType, true)
+          expect(yield* clear).toEqual(['Message'])
+          expect(yield* Ref.get(evidence.text)).toBe('private-fixture-input')
+          yield* Ref.set(evidence.noType, false)
+          expect(yield* clear).toEqual([])
+          expect(yield* Ref.get(evidence.text)).toBe('')
+          // A driver that no longer knows the prepared ids (a new session after a restart) is
+          // bound again, and the tab still at the prepared address is emptied there.
+          yield* Ref.set(evidence.text, 'private-fixture-input')
+          yield* Ref.set(evidence.minted, [])
+          expect(yield* clear).toEqual([])
+          expect(yield* Ref.get(evidence.text)).toBe('')
+          // A tab that moved to another address holds nothing of the old page.
+          yield* machine.browse({
+            key,
+            egress: false,
+            action: BrowserAction.cases.Open.make({ address: 'https://example.com/other' }),
+          })
+          const typed = (yield* Ref.get(evidence.calls)).length
+          expect(yield* machine.clearFields({ key, page, labels: ['Message'] })).toEqual([])
+          expect((yield* Ref.get(evidence.calls)).slice(typed)).not.toContain('browser_type')
           expect((yield* Ref.get(evidence.files)).size).toBe(0)
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )

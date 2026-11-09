@@ -17,6 +17,7 @@ import { findPerson } from '../auth/access.ts'
 import { DeviceRegistry, deviceLayer } from '../computers/device.ts'
 import { ChannelReplies } from '../channels/replies.ts'
 import { Database } from '../database/client.ts'
+import { claimWithdrawalsFor } from '../inputs/handoff.ts'
 import { withdrawWaiting } from '../inputs/store.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { Notifier } from '../notifications/notifier.ts'
@@ -60,10 +61,10 @@ const previewOf = (message: DeliveryMessage) =>
 /** The runtime's classified failure stays attached through the single conditional settlement write. */
 const endingOf = (settlement: Settlement): RunEnding =>
   Settlement.match(settlement, {
-    Completed: (): RunEnding => RunEnding.cases.Completed.make({}),
-    Failed: ({ reason }) => RunEnding.cases.Failed.make({ reason }),
-    Stopped: () => RunEnding.cases.Stopped.make({}),
-    Unknown: () => RunEnding.cases.Unknown.make({}),
+    Completed: ({ responseId }): RunEnding => RunEnding.cases.Completed.make({ responseId }),
+    Failed: ({ reason }): RunEnding => RunEnding.cases.Failed.make({ reason }),
+    Stopped: (): RunEnding => RunEnding.cases.Stopped.make({}),
+    Unknown: (): RunEnding => RunEnding.cases.Unknown.make({}),
   })
 
 /** A Run being watched to its end, and the Person it acts for. */
@@ -119,9 +120,46 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
     })
   })
 
+  /** Owes the notice a settled Run earns; a completion whose origin is quiet (`automaticallyNotifies`) earns none. */
+  const owe = Effect.fn('Conversation.owe')(function* (
+    run: Followed,
+    settlement: Settlement,
+    thread: StoredThread,
+  ) {
+    const quiet =
+      Settlement.guards.Completed(settlement) &&
+      !(yield* automaticallyNotifies(run.id).pipe(Effect.provideService(Database, database)))
+    if (!quiet) yield* announce(thread, run.person.id, settlement)
+  })
+
+  /**
+   * The conditional Run ending and its notice debt commit together, so a notice is owed exactly
+   * when the Run ends. Owing runs in its own savepoint: a notice that cannot be owed rolls back to
+   * it and is logged, and the Run still ends. Without the savepoint a failed owe rolled back the
+   * ending too, and the Run stayed Working through every restart that tried again.
+   */
+  const end = Effect.fn('Conversation.end')(function* (run: Followed, settlement: Settlement) {
+    const changed = yield* runs.end(run.id, endingOf(settlement))
+    if (!changed) return false
+    const thread = yield* findThread(run.threadId).pipe(Effect.provideService(Database, database))
+    if (Option.isNone(thread)) return true
+    yield* database
+      .transaction(() => owe(run, settlement, thread.value))
+      .pipe(
+        Effect.withErrorReporting,
+        Effect.catch((error) =>
+          Effect.logError('A settled Run could not owe its notice', {
+            runId: run.id,
+            reason: error._tag,
+          }),
+        ),
+      )
+    return true
+  })
+
   return Effect.fn('Conversation.observe')(function* (run: Followed) {
     const settlement = yield* runtime.settled(run.threadId, run.id)
-    const changed = yield* runs.end(run.id, endingOf(settlement))
+    const changed = yield* database.transaction(() => end(run, settlement))
     // The conditional write owns reporting too: replay and restart observers cannot count twice.
     if (changed && Settlement.guards.Failed(settlement))
       yield* recordRunFailure({
@@ -157,10 +195,6 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
         Effect.logWarning('A channel reply could not be sent', { reason: error._tag }),
       ),
     )
-    const quiet =
-      Settlement.guards.Completed(settlement) &&
-      !(yield* automaticallyNotifies(run.id).pipe(Effect.provideService(Database, database)))
-    if (!quiet) yield* announce(thread.value, run.person.id, settlement)
   })
 })
 
@@ -319,12 +353,15 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
         Effect.onInterrupt(() => runs.end(id, RunEnding.cases.Failed.make({ reason: 'Delivery' }))),
       )
       // Replays returned above. Only a newly reserved ordinary message accepted by the runtime
-      // closes questions; refusals and every server-produced delivery leave them waiting.
-      if (movesThreadOn(delivery))
+      // closes questions and handoffs; refusals and every server-produced delivery leave them.
+      // A handoff's withdrawal is only claimed here; `sendToThread` empties its fields.
+      if (movesThreadOn(delivery)) {
         yield* withdrawWaiting(thread.id, speaker.id).pipe(
           withDatabase,
           Effect.provideService(Changes, changes),
         )
+        yield* claimWithdrawalsFor(thread.id, speaker.id).pipe(withDatabase)
+      }
       yield* runs.admitted(admission)
       yield* threads.touch(thread.id, said)
       // What a Person just sent is not unread for them. They were just shown to be able to see the

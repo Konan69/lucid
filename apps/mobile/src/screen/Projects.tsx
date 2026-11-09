@@ -1,12 +1,22 @@
-import { ThreadId, type Thread } from '@vivid/contracts'
+import { ProjectEvidence, ProjectWork, ThreadId, type Thread } from '@vivid/contracts'
 import { Effect, Option, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { useState } from 'react'
 import { ScrollView, View } from 'react-native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
-import { FolderKanban, FolderSearch, Plus, SquarePen } from 'lucide-react-native'
-import { projects } from '@vivid/state'
+import {
+  Check,
+  FolderKanban,
+  FolderSearch,
+  Plus,
+  RotateCcw,
+  SquarePen,
+  Target,
+} from 'lucide-react-native'
+import { goal, projects } from '@vivid/state'
 import { useNow } from '../data/foreground'
+import { useTheme } from '../theme'
+import { openGoal, useGoal } from '../data/goal'
 import { commit } from '../data/haptics'
 import { relativeTime } from '../data/lanes'
 import { LiveState, useLive, useLiveData, useLiveValue } from '../data/live'
@@ -19,6 +29,7 @@ import { Live } from '../ui/Live'
 import { Button, Empty, Label, Notice, Skeleton, styles } from '../ui/ui'
 import { useGo, useOpenThread, type Routes } from '../workspace'
 import { CreateProject } from './project/Create'
+import { GoalSheet } from './project/Goal'
 import { Mark } from './project/Mark'
 import { scope } from './project/scope'
 import { start } from '../data/app'
@@ -33,7 +44,11 @@ function ProjectRow({ project, needing }: { project: ProjectRecord; needing: num
     <Row
       leading={<Mark id={project.id} />}
       title={project.name}
-      detail={projects.countThreads(project.threadCount).toLowerCase()}
+      detail={
+        ProjectWork.guards.Completed(project.work)
+          ? `Done · ${projects.countThreads(project.threadCount).toLowerCase()}`
+          : projects.countThreads(project.threadCount).toLowerCase()
+      }
       trailing={
         needing > 0 ? (
           <Label
@@ -133,12 +148,11 @@ export function Projects() {
 }
 
 /**
- * One Project's page: which one it is (its colour and name), what is known about it, then its
- * Threads with their live state, the Projects inside it and, in a Company, the people in its
- * Threads. All of it is read live, so a Thread someone else files here appears without a
- * refresh. It says nothing the server does not: a Project has no purpose line, no "where it
- * stands", no next step and no files of its own yet, so none is drawn. A Project the Person can
- * no longer see says so instead of drawing an empty page under a stale name.
+ * One Project's page: which one it is (its colour and name), what is known about it, where its
+ * work stands, then its Threads with their live state, the Projects inside it and, in a Company,
+ * the people in its Threads. All of it is read live, so a Thread someone else files here appears
+ * without a refresh. A Project the Person can no longer see says so instead of
+ * drawing an empty page under a stale name.
  */
 export function Project({ route }: NativeStackScreenProps<Routes, 'Project'>) {
   const data = useLiveData()
@@ -239,6 +253,119 @@ function Filed({
   )
 }
 
+/**
+ * Where the Project's work stands: what done means, the next step and the dated progress, or that
+ * it is done and what shows it. Vivid records it from the conversation; the Person sets the goal,
+ * corrects it (pressing the goal), marks it done or reopens it here (`project/Goal.tsx`). A
+ * Project that only groups Threads offers to set a goal and invents none. Proof from a Thread
+ * opens that Thread.
+ */
+function Work({ project, now }: { project: ProjectRecord; now: number }) {
+  const data = useLiveData()
+  const { colors: c } = useTheme()
+  const openThread = useOpenThread()
+  const reading = useGoal()
+  const form = goal.formFor(reading, project.id)
+  const edit = () => openGoal(data, project.id, 'Goal')
+  const stands = ProjectWork.match(project.work, {
+    Unspecified: () => (
+      <Section title="Goal">
+        <Row
+          wrap
+          leading={<Target size={18} color={c.primary} strokeWidth={1.75} />}
+          title="Set a goal"
+          detail="Say what done looks like, and Vivid keeps track of where it stands."
+          onPress={edit}
+        />
+      </Section>
+    ),
+    Active: (work) => (
+      <View style={{ gap: 12 }}>
+        <Section title="Where it stands">
+          <Row wrap title={work.objective} detail="Goal" onPress={edit} />
+          <Row wrap title={work.nextStep} detail="Next" />
+        </Section>
+        <View style={styles.wrap}>
+          <Button
+            icon={Check}
+            label="Mark done"
+            onPress={() => openGoal(data, project.id, 'Done')}
+          />
+        </View>
+      </View>
+    ),
+    Completed: (work) => {
+      const [source] = work.proof.sources
+      const when = `Done · ${relativeTime(work.completedAt, now)}`
+      return (
+        <View style={{ gap: 12 }}>
+          <Section title="Where it stands">
+            <Row wrap title={work.objective} detail="Goal" />
+            {ProjectEvidence.match(source, {
+              ThreadMessage: ({ threadId }) => (
+                <Row
+                  wrap
+                  title={work.proof.summary}
+                  detail={`${when} · see the message`}
+                  onPress={() => openThread(threadId)}
+                />
+              ),
+              Person: () => <Row wrap title={work.proof.summary} detail={when} />,
+            })}
+          </Section>
+          <View style={styles.wrap}>
+            <Button icon={RotateCcw} label="Reopen" onPress={edit} />
+          </View>
+        </View>
+      )
+    },
+  })
+  return (
+    <>
+      {stands}
+      <Progress project={project} now={now} />
+      {Option.isSome(form) && <GoalSheet project={project} form={form.value} reading={reading} />}
+    </>
+  )
+}
+
+/** How many lines of progress the page shows before the Person asks for the rest. */
+const PROGRESS_SHOWN = 5
+
+/**
+ * The Project's dated progress, newest first: each line Vivid recorded as the work moved. The
+ * latest few show; the rest open on request, so a long-running Project does not bury its Threads.
+ */
+function Progress({ project, now }: { project: ProjectRecord; now: number }) {
+  const [all, setAll] = useState(false)
+  const lines = projects.progressOf(project)
+  if (lines.length === 0) return null
+  const shown = all ? lines : lines.slice(0, PROGRESS_SHOWN)
+  return (
+    <View style={{ gap: 4 }}>
+      <Section title="Progress">
+        {shown.map((line) => (
+          <Row
+            key={`${line.at}-${line.text}`}
+            wrap
+            title={line.text}
+            detail={relativeTime(line.at, now)}
+          />
+        ))}
+      </Section>
+      {lines.length > PROGRESS_SHOWN && (
+        <View style={styles.wrap}>
+          <Button
+            kind="ghost"
+            label={all ? 'Show fewer' : `Show all ${lines.length} updates`}
+            onPress={() => setAll(!all)}
+          />
+        </View>
+      )}
+    </View>
+  )
+}
+
 /** Everything on a Project's page under the bar. */
 function Inside({ project, all }: { project: ProjectRecord; all: ReadonlyArray<ProjectRecord> }) {
   const data = useLiveData()
@@ -303,6 +430,7 @@ function Inside({ project, all }: { project: ProjectRecord; all: ReadonlyArray<P
         <Button kind="primary" icon={SquarePen} label="New thread" onPress={() => void begin()} />
         <Button icon={Plus} label="Project inside" onPress={() => setCreating(true)} />
       </View>
+      <Work project={project} now={now} />
       <Filed threads={filed} hidden={hidden} now={now} />
       {inside.length > 0 && (
         <Section title="Inside this project">

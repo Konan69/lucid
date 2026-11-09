@@ -4,21 +4,22 @@ import {
   createNavigationContainerRef,
   NavigationContainer,
   StackActions,
+  type NavigationContainerRefWithCurrent,
 } from '@react-navigation/native'
 import {
   createNativeStackNavigator,
   type NativeStackNavigationOptions,
 } from '@react-navigation/native-stack'
+import { NotificationOpens } from '@vivid/contracts'
 import { workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
 import { useState, useSyncExternalStore, type ComponentProps } from 'react'
 import { AppState, StatusBar, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
-import type { ShowKey } from './data/connecting'
 import { door, patienceAtom, useDoor } from './data/door'
 import { navigationTelemetry } from './data/telemetry'
-import { Front, makeFront } from './data/front'
+import { Front, makeFront, type FrontStore } from './data/front'
 import {
   Entry,
   entryAtom,
@@ -30,6 +31,7 @@ import {
 } from './data/live'
 import { forgotten, pageOf, type Place } from './data/place'
 import { heardReadAtom } from './data/hearing'
+import { listenForPresses } from './data/notifying'
 import { keepPlace, placeIn, placesReadAtom } from './data/placed'
 import { leaveAtom } from './data/signing'
 import { Broken } from './screen/Broken'
@@ -38,7 +40,6 @@ import { Computer } from './screen/Computer'
 import { Door } from './screen/Door'
 import { Home } from './screen/Home'
 import { Account, NameAccount } from './screen/integration/Account'
-import { Key } from './screen/integration/Key'
 import { FlowProvider } from './screen/integration/Provider'
 import { Panel } from './screen/home/Panel'
 import { Folder, Library } from './screen/Library'
@@ -62,6 +63,7 @@ import { Button, Face, GUTTER, Label } from './ui/ui'
 import {
   FrontProvider,
   MeProvider,
+  openPage,
   standsForHome,
   useFront,
   useMe,
@@ -324,6 +326,39 @@ function Vivid({ go }: { go: StackLayout['navigation'] }) {
 const NOTHING = () => 0
 
 /**
+ * Opens where a pressed notification opens (`NotificationOpens`, `data/notifying.ts`): its Thread
+ * in Home's place, or the Feed or Notifications in front. The listener is the store's
+ * subscription, so it goes with the shell, as `useAfreshOnReturn` listens: a shell left behind by
+ * a change of workspace cannot move the new one.
+ */
+function usePressedNotifications(
+  front: FrontStore,
+  navigation: NavigationContainerRefWithCurrent<Routes>,
+) {
+  /** Puts a page in front. The stack as `keep` reads it: before there is one there is nothing to put it on. */
+  const show = (name: 'Feed' | 'Notifications') => {
+    if (!navigation.isReady()) return
+    Option.map(Option.fromUndefinedOr(navigation.getRootState()), (stack) =>
+      navigation.dispatch(openPage(stack, { name })),
+    )
+  }
+  const [listen] = useState(
+    () => () =>
+      listenForPresses(
+        NotificationOpens.match({
+          Thread: ({ threadId }) => {
+            front.open(threadId, false)
+            if (navigation.isReady()) navigation.dispatch(StackActions.popToTop())
+          },
+          Feed: () => show('Feed'),
+          Notifications: () => show('Notifications'),
+        }),
+      ),
+  )
+  useSyncExternalStore(listen, NOTHING, NOTHING)
+}
+
+/**
  * Starts afresh when the Person comes back to an app that was put away for longer than a place is
  * kept (`KEPT_FOR`, `data/place.ts`): Home shows the greeting and nothing is open over it. A
  * phone that ended the app meanwhile is answered by what is kept instead (`placeIn`); this is the
@@ -384,8 +419,7 @@ const drawerPage = (stands: boolean, own: boolean): NativeStackNavigationOptions
  *
  * The integration flow is held around the navigator (`FlowProvider`), once for the shell: the
  * Integrations page, the two bottom sheets and the card in a Thread all begin and finish an
- * account through it. It is outside the navigator, so it is handed the way to open the one
- * route it needs, the key form (`showKey`), through this container's own ref.
+ * account through it; a key is typed inside the card or account that asked for it.
  */
 function Shell() {
   const { colors: c, dark } = useTheme()
@@ -414,6 +448,7 @@ function Shell() {
   }
   // What Home shows belongs to this shell, which is built again for each workspace (`Session`).
   const [front] = useState(() => makeFront(start.thread))
+  usePressedNotifications(front, navigation)
   useAfreshOnReturn(
     // Kept again as the app is put away, so the time it was last seen is the time it went.
     () => keep(front.showing()),
@@ -422,21 +457,9 @@ function Shell() {
       if (navigation.isReady()) navigation.dispatch(StackActions.popToTop())
     },
   )
-  /**
-   * Opens the key form over whatever is in front. A press comes from a screen, so the navigator
-   * is ready; were it not, the machine is told, and the press is said to have failed where it
-   * was made. It is made once for the shell, as the navigator's ref is: it is handed to the
-   * session's machine through a view's ref, which would be taken back and handed over again on
-   * every render if this were a new function each time.
-   */
-  const [showKey] = useState((): ShowKey => (asked) => {
-    if (!navigation.isReady()) return false
-    navigation.navigate('Key', asked)
-    return true
-  })
   return (
     <FrontProvider value={front}>
-      <FlowProvider onKey={showKey}>
+      <FlowProvider>
         <NavigationContainer
           ref={navigation}
           theme={navigationTheme(c, dark)}
@@ -496,7 +519,6 @@ function Shell() {
             {/* Bottom sheets as tall as what they hold; each undoes the stack's bar and cross-fade. */}
             <Stack.Screen name="Account" component={Account} options={FITTED_SHEET} />
             <Stack.Screen name="NameAccount" component={NameAccount} options={FITTED_SHEET} />
-            <Stack.Screen name="Key" component={Key} options={FITTED_SHEET} />
             <Stack.Screen name="Add" component={Add} options={FITTED_SHEET} />
           </Stack.Navigator>
         </NavigationContainer>

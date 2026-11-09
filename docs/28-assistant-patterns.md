@@ -2,8 +2,9 @@
 
 Status: decisions and contracts from 27 October 2026. Layered memory and learning after settlement
 are implemented in the Person cell (`packages/agent/runtime/src/memory.ts`, `openMemory`;
-`packages/agent/runtime/src/learning.ts`, `learning`). Planned upkeep and the Dreamer remain
-separate from that implementation. Other sections retain their original design status.
+`packages/agent/runtime/src/learning.ts`, `learning`). The Dreamer and its nightly memory upkeep
+are implemented too (`packages/agent/runtime/src/dreaming.ts`, section 5). Other sections retain
+their original design status.
 
 Historical source material came from Grok Bot, Meta Muse, OpenAI Dots and Codex instructions,
 mined on 26 October. This page records those patterns, the owner's decisions, the Vivid shape,
@@ -178,8 +179,8 @@ the storage, read, list, and search contracts; their planned background writers 
 | ------------------------ | -------------------------------------------------------------------------- |
 | `self`, `soul`, `person` | Standing pages, writable during a reply and from Settings                  |
 | `memory`                 | Curated entries, writable during a reply, from Settings, or by the learner |
-| `days`, `bank`, `people` | Stored layer vocabulary; scheduled upkeep remains planned                  |
-| `dreams`, `research`     | Stored layer vocabulary; the Dreamer remains planned                       |
+| `days`, `bank`, `people` | Written by the Dreamer's upkeep, nightly and after a long conversation     |
+| `dreams`, `research`     | Written by the Dreamer; Settings lists `dreams` as "What Vivid found"      |
 | `attention`              | Standing page, writable during a reply and from Settings                   |
 
 Sources are `packages/contracts/src/memory.ts` (`MemoryLayer`, `StandingLayer`),
@@ -226,16 +227,21 @@ useful and new… If you have nothing like this to report, save your progress in
 stay quiet"), `:82` (nightly reflection around 3am local: gather preferences, re-orient
 priorities, update `user_state.md`).
 
-**Planned Vivid shape.** The Dreamer is unbuilt. The current learner writes curated memory only
-(`packages/agent/runtime/src/agents/learner.ts`, `learnerDefinition`). The planned Dreamer runs
-in the Person's cell using Pi tasks and the shared alarm ([runtime cells](27-runtime-cells.md)),
-after a conversation goes quiet, and once a
-night at about 03:00 in the Person's time zone. It gets read tools only: every connected Integration, reads only (**decided 27 October: "yes,
-every integration, read-only"**), the Library, the web, the memory layers, writes `research` and `dreams`, and ends with one _finding_
-to the main Run or nothing. A finding is a Signal, not a message: Vivid reads it the way it reads
-a Watch firing (`ACTING`, "A signal that is not a message is the reason you were woken") and
-decides whether it becomes an edition. The Dreamer has no `use_tool` writes, no `post`, no
-`notify_person`, no Computer.
+**Vivid today.** The Dreamer runs in the Person's cell on Pi tasks and the cell's alarm
+(`packages/agent/runtime/src/dreaming.ts`). `vivid.nights`, one task per cell, sleeps until the
+next 03:00 in the time zone the Person was last answered in and starts that night's run with the
+conversations of the day. A conversation with six or more of the Person's messages gets one quiet
+pass after it has been quiet for twenty minutes, at most one per conversation and three a day.
+Each run asks the server to open its own Background Thread (`Dream` with `Open`, a reserved `dream-` id),
+then reads in a task-owned child conversation whose tools are the shared reads (memory, every
+Integration through `use_tool`, the Library, public pages, the Person's earlier conversations through `search_threads` and `read_thread`) plus its own memory write and prune
+(`packages/agent/runtime/src/agents/dreamer.ts`). The host keeps its writes to `memory`, `days`, `bank` (exactly
+`experience.md`, `opinions.md`, `world.md`), `people`, `dreams` and `research`, and the Gate blocks
+every non-read action in a dream Thread before rules or review (`apps/server/src/approvals/gate.ts`).
+It ends with at most one `report_finding`; the run delivers it from its Thread (`Dream` with `Report`) as a
+`dream` signal with `RunOrigin.Dream`, and Vivid decides there whether it becomes one Feed card,
+whose cause is recorded as `FeedCause.Dream`. The Dreamer has no `post`, no `notify_person` and no
+Computer. A forget stops a queued Dreamer run (`packages/agent/runtime/src/forget.ts`).
 
 ## 6. Procedures and how they load
 

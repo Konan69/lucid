@@ -7,6 +7,13 @@ import { describe, expect, layer } from '@effect/vitest'
 import {
   InputAnswer,
   CompanyId,
+  Computer,
+  ComputerId,
+  ComputerState,
+  HandoffField,
+  HandoffFieldId,
+  HandoffFieldReceipt,
+  HandoffFieldResult,
   InputRequestState,
   InstallationId,
   SessionId,
@@ -27,6 +34,10 @@ import {
   RuntimeSettlement,
   SendToThreadRequest,
   ThreadId,
+  RuntimeDelivery,
+  SignalCue,
+  WatchCondition,
+  WatchId,
 } from '@vivid/contracts'
 import { eq, inArray } from 'drizzle-orm'
 import {
@@ -61,6 +72,9 @@ import * as RpcSerialization from 'effect/rpc/RpcSerialization'
 import { sendToThread } from './relay.ts'
 import { findPerson, type Actor } from '../auth/access.ts'
 import { InputStore, inputStoreLayer } from '../inputs/store.ts'
+import { Definition } from '../inputs/handoff.ts'
+import { handoffs } from '../inputs/tables.ts'
+import { ComputerStore } from '../computers/store.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
 import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database } from '../database/client.ts'
@@ -217,6 +231,8 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
       })
     }),
     stop: Effect.fn('Delivery.test.stop')(() => Effect.succeed(false)),
+    child: () => Effect.die('Delivery tests start no helpers'),
+    stopChild: () => Effect.succeed(false),
     watch: () => Stream.never,
     read: Effect.fn('Delivery.test.read')(function* () {
       yield* Ref.update(reads, (count) => count + 1)
@@ -316,6 +332,28 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
     conversationLayer.pipe(Layer.provide(silentChannelRepliesLayer), Layer.provide(services)),
   )
   const conversation = yield* Conversation.pipe(Effect.provideContext(context))
+  /** The Computer as a handoff reaches it: each clearing's labels, and each hand back. */
+  const cleared = yield* Ref.make<ReadonlyArray<ReadonlyArray<string>>>([])
+  const handedBack = yield* Ref.make(0)
+  const sending = yield* Layer.build(
+    Layer.merge(
+      services,
+      Layer.mock(ComputerStore, {
+        clearFields: (_person, _page, labels) =>
+          Ref.update(cleared, (before) => [...before, labels]).pipe(Effect.as([])),
+        hold: () =>
+          Ref.update(handedBack, (count) => count + 1).pipe(
+            Effect.as(
+              Computer.make({
+                id: ComputerId.make(NodeCrypto.randomUUID()),
+                heldByPerson: false,
+                state: ComputerState.cases.Absent.make({}),
+              }),
+            ),
+          ),
+      }),
+    ),
+  )
   const devices = yield* DeviceRegistry.pipe(Effect.provideContext(context))
   /** Completion is observed through the real conditional SQL settlement before another Person sends. */
   const finish = Effect.fn('Delivery.test.settle')(function* (id: RunId) {
@@ -335,6 +373,9 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
     devices,
     finish,
     services,
+    sending,
+    cleared,
+    handedBack,
     topics,
     notices,
     watching,
@@ -368,6 +409,7 @@ const actorOf = Effect.fn('Delivery.test.actor')(function* (test: Harness, perso
     }),
     by: 'person',
     threadId: Option.none(),
+    helper: Option.none(),
   } satisfies Actor
 })
 
@@ -379,7 +421,7 @@ const askFor = Effect.fn('Delivery.test.ask')(function* (
 ) {
   const actor = yield* actorOf(test, personId)
   return yield* test.inputs.ask(
-    { ...actor, by: 'vivid', threadId: Option.some(threadId) },
+    { ...actor, by: 'vivid', threadId: Option.some(threadId), helper: Option.none() },
     {
       questions: [
         {
@@ -414,6 +456,47 @@ const privateThread = Effect.fn('Gateway.test.private')(function* (test: Harness
   )
 })
 
+/** A filled sign-in Ben was handed in the test Thread, as its row keeps it; no value is in it. */
+const openHandoff = Effect.fn('Delivery.test.handoff')(function* (test: Harness, runId: RunId) {
+  const database = yield* Database
+  const id = NodeCrypto.randomUUID()
+  const field = HandoffFieldId.make(NodeCrypto.randomUUID())
+  yield* database.run(
+    database.insert(handoffs).values({
+      id,
+      threadId: test.threadId,
+      runId,
+      personId: test.ben,
+      summary: 'Sign in to Example.',
+      request: Definition.cases.Form.make({
+        kind: 'SignIn',
+        fields: [HandoffField.make({ id: field, label: 'Password', purpose: 'Password' })],
+      }),
+      page: { origin: 'https://example.test', address: 'https://example.test/signin' },
+      binding: { target: 'target', tab: 'tab', digest: 'digest' },
+      status: 'ready',
+      receipts: [
+        HandoffFieldReceipt.make({
+          fieldId: field,
+          result: HandoffFieldResult.cases.Filled.make({}),
+        }),
+      ],
+      createdAt: 0,
+    }),
+  )
+  return id
+})
+
+const handoffStatus = Effect.fn('Delivery.test.handoffStatus')(function* (id: string) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database.select({ status: handoffs.status }).from(handoffs).where(eq(handoffs.id, id)),
+  )
+  const [row] = rows
+  if (row === undefined) return expect.unreachable('the handoff row')
+  return row.status
+})
+
 const decodeIncoming = Schema.decodeUnknownEffect(IncomingMessage)
 const decodeSend = Schema.decodeEffect(SendToThreadRequest)
 
@@ -445,6 +528,7 @@ const post = Effect.fn('Relay.test.send')(function* (test: Harness, body: Schema
   const result = yield* sendToThread(request.success).pipe(
     Effect.provideService(AuthContext, context),
     Effect.provideService(Conversation, test.conversation),
+    Effect.provide(test.sending),
     Effect.result,
   )
   if (Result.isSuccess(result))
@@ -483,9 +567,37 @@ const said = (threadId: ThreadId, personId: PersonId): Delivery => ({
 
 /** Each producer keeps its actual origin while the common delivery seam handles contention. */
 const signals = [
-  { type: 'event', origin: StoredRunOrigin.cases.Watch.make({ watchName: 'Review' }) },
-  { type: 'approval', origin: StoredRunOrigin.cases.Decision.make({}) },
-  { type: 'answer', origin: StoredRunOrigin.cases.Decision.make({}) },
+  {
+    type: 'event',
+    origin: StoredRunOrigin.cases.Watch.make({
+      watchId: WatchId.make('watch-test'),
+      watchName: 'Review',
+      eventId: 'event-1',
+      event: 'message.received',
+      occurredAt: '2026-10-29T09:00:00Z',
+    }),
+    cue: SignalCue.cases.Watch.make({
+      name: 'Review',
+      event: 'message.received',
+      occurredAt: '2026-10-29T09:00:00Z',
+      instruction: 'Review it.',
+      condition: WatchCondition.cases.Continuous.make({}),
+      data: { said: 'event: independent server words' },
+    }),
+  },
+  {
+    type: 'approval',
+    origin: StoredRunOrigin.cases.Decision.make({}),
+    cue: SignalCue.cases.Approval.make({
+      body: 'approval: independent server words',
+      outcome: 'Succeeded',
+    }),
+  },
+  {
+    type: 'answer',
+    origin: StoredRunOrigin.cases.Decision.make({}),
+    cue: SignalCue.cases.Answer.make({ body: 'answer: independent server words' }),
+  },
 ] as const
 
 layer(
@@ -546,10 +658,16 @@ layer(
           const delivered = deliveries[0]
           if (delivered === undefined) expect.fail('Missing admitted message')
           // The Person's words reach the runtime as written: nothing is put in their mouth.
-          expect(delivered.message.body).not.toContain('unanswered')
-          expect(delivered.message.body).toBe(body.body)
-          expect(delivered.message.body).not.toContain(first.id)
-          expect(delivered.message.body).not.toContain(test.ben)
+          // A shared Thread delivers them as Ben's message; a private one as plain words.
+          const said = RuntimeDelivery.match(delivered.message, {
+            Words: ({ body }) => body,
+            Signal: ({ envelope }) =>
+              SignalCue.guards.Message(envelope.cue) ? envelope.cue.body : '',
+          })
+          expect(said).not.toContain('unanswered')
+          expect(said).toBe(body.body)
+          expect(said).not.toContain(first.id)
+          expect(said).not.toContain(test.ben)
           // A later question must survive a replay, even after rebuilding the admission service.
           const later = yield* askFor(test, test.ben, test.threadId)
           const before = yield* test.inputs.inThread(test.threadId)
@@ -592,10 +710,12 @@ layer(
           expect(yield* Ref.get(test.admitted)).toMatchObject([
             {
               message: {
-                kind: 'signal',
-                type: 'answer',
-                body: 'Question: Which day works?\nAnswer: Monday',
-                attributes: { from: 'Ben' },
+                envelope: {
+                  from: 'Ben',
+                  cue: SignalCue.cases.Answer.make({
+                    body: 'Question: Which day works?\nAnswer: Monday',
+                  }),
+                },
               },
             },
           ])
@@ -628,7 +748,7 @@ layer(
           expect(yield* Ref.get(test.admitted)).toMatchObject([
             {
               message: {
-                kind: 'user',
+                body: 'Use this instead.',
                 attachments: [png],
               },
             },
@@ -643,6 +763,28 @@ layer(
             ),
           ).toEqual([{ preview: 'Use this instead.' }])
         }).pipe(Effect.scoped),
+    )
+
+    it.effect('an accepted message withdraws an open handoff, clearing it before hand back', () =>
+      Effect.gen(function* () {
+        const test = yield* inputHarness()
+        yield* post(test, { kind: 'user', body: 'Sign me in.', idempotencyKey: 'before-step' })
+        const asked = (yield* Ref.get(test.admitted))[0]
+        if (asked === undefined) expect.fail('Missing first delivery')
+        const runId = deliveryRunId(test.threadId, asked.idempotencyKey)
+        yield* test.finish(runId)
+        const step = yield* openHandoff(test, runId)
+        const body = { kind: 'user', body: 'Never mind, do it later.', idempotencyKey: 'moved-on' }
+        expect((yield* post(test, body)).status).toBe(202)
+        expect(yield* handoffStatus(step)).toBe('withdrawn')
+        expect(yield* Ref.get(test.cleared)).toEqual([['Password']])
+        expect(yield* Ref.get(test.handedBack)).toBe(1)
+        // A replay of that message claims nothing, so a step handed over since stays open.
+        const later = yield* openHandoff(test, runId)
+        expect((yield* post(test, body)).status).toBe(202)
+        expect(yield* handoffStatus(later)).toBe('ready')
+        expect(yield* Ref.get(test.cleared)).toEqual([['Password']])
+      }).pipe(Effect.scoped),
     )
 
     it.effect('a refused admission and a Busy reservation both leave questions waiting', () =>
@@ -683,12 +825,23 @@ layer(
           },
           {
             ...said(test.threadId, test.ben),
-            origin: StoredRunOrigin.cases.Watch.make({ watchName: 'Review' }),
+            origin: StoredRunOrigin.cases.Watch.make({
+              watchId: WatchId.make('watch-test'),
+              watchName: 'Review',
+              eventId: 'event-1',
+              event: 'message.received',
+              occurredAt: '2026-10-29T09:00:00Z',
+            }),
             speaker: DeliverySpeaker.cases.Vivid.make({}),
             message: DeliveryMessage.cases.Signal.make({
-              type: 'event',
-              body: 'Review now.',
-              attributes: { name: 'Review' },
+              cue: SignalCue.cases.Watch.make({
+                name: 'Review',
+                event: 'message.received',
+                occurredAt: '2026-10-29T09:00:00Z',
+                instruction: 'Review now.',
+                condition: WatchCondition.cases.Continuous.make({}),
+                data: {},
+              }),
             }),
           },
           {
@@ -696,10 +849,7 @@ layer(
             origin: StoredRunOrigin.cases.Decision.make({}),
             speaker: DeliverySpeaker.cases.Vivid.make({}),
             message: DeliveryMessage.cases.Signal.make({
-              // Continuations have no dedicated wake type in the current signal vocabulary.
-              type: 'message',
-              body: 'Continue working.',
-              attributes: {},
+              cue: SignalCue.cases.Answer.make({ body: 'Continue working.' }),
             }),
           },
         ]
@@ -758,7 +908,7 @@ layer(
     )
 
     it.effect(
-      'a Background Thread is never quoted by a notification: follow-ups, failures and questions',
+      'a Background Thread announces no Run settling; a question waiting there is one notice',
       () =>
         Effect.scoped(
           Effect.gen(function* () {
@@ -791,15 +941,19 @@ layer(
             )
             const unknown = yield* test.conversation.admit(said(test.threadId, test.ada))
             yield* settled(unknown.runId, Settlement.cases.Unknown.make({}))
-            // A question raised there waits for the Person in the Feed, not in a notification.
+            expect(yield* Ref.get(test.notices)).toEqual([])
+            // A question raised there waits on the Person: it is shown on the Feed, and told.
             const question = yield* askFor(test, test.ada, test.threadId)
             expect(question.state._tag).toBe('Waiting')
-            expect(yield* Ref.get(test.notices)).toEqual([])
+            expect((yield* Ref.get(test.notices)).map((notice) => notice.kind)).toEqual([
+              'needs-you',
+            ])
             // The same Run in a Conversation is announced, so the silence above is the place's.
             yield* place('Conversation')
             const spoken = yield* test.conversation.admit(said(test.threadId, test.ada))
             yield* test.finish(spoken.runId)
             expect((yield* Ref.get(test.notices)).map((notice) => notice.kind)).toEqual([
+              'needs-you',
               'finished',
             ])
           }),
@@ -1008,11 +1162,22 @@ layer(
         const wake = said(test.threadId, test.ada)
         const second = yield* test.conversation.admit({
           ...wake,
-          origin: StoredRunOrigin.cases.Watch.make({ watchName: 'Review' }),
+          origin: StoredRunOrigin.cases.Watch.make({
+            watchId: WatchId.make('watch-test'),
+            watchName: 'Review',
+            eventId: 'event-1',
+            event: 'message.received',
+            occurredAt: '2026-10-29T09:00:00Z',
+          }),
           message: DeliveryMessage.cases.Signal.make({
-            type: 'event',
-            body: 'Review now.',
-            attributes: { name: 'Review' },
+            cue: SignalCue.cases.Watch.make({
+              name: 'Review',
+              event: 'message.received',
+              occurredAt: '2026-10-29T09:00:00Z',
+              instruction: 'Review now.',
+              condition: WatchCondition.cases.Continuous.make({}),
+              data: {},
+            }),
           }),
         })
         expect((yield* Ref.get(test.admitted)).map((delivery) => delivery.scope.acting)).toEqual([
@@ -1053,9 +1218,7 @@ layer(
           speaker: DeliverySpeaker.cases.Decider.make({ personId: test.ben }),
           idempotencyKey: 'decision-speaker',
           message: DeliveryMessage.cases.Signal.make({
-            type: 'answer',
-            body: 'Monday',
-            attributes: {},
+            cue: SignalCue.cases.Answer.make({ body: 'Monday' }),
           }),
           origin: StoredRunOrigin.cases.Decision.make({}),
         }
@@ -1065,10 +1228,7 @@ layer(
           {
             scope: { acting: test.ada },
             message: {
-              kind: 'signal',
-              type: 'answer',
-              body: 'Monday',
-              attributes: { from: 'Ben' },
+              envelope: { from: 'Ben', cue: SignalCue.cases.Answer.make({ body: 'Monday' }) },
             },
           },
         ])
@@ -1104,7 +1264,7 @@ layer(
       'Watch, approval and answer signals keep their words, speaker and replay key across Busy',
       () =>
         Effect.gen(function* () {
-          for (const { type, origin } of signals) {
+          for (const { type, origin, cue } of signals) {
             yield* Effect.gen(function* () {
               const test = yield* harness()
               const ada = yield* test.conversation.admit(said(test.threadId, test.ada))
@@ -1113,11 +1273,7 @@ layer(
                 threadId: test.threadId,
                 personId: test.ben,
                 idempotencyKey: `${type}-receipt`,
-                message: DeliveryMessage.cases.Signal.make({
-                  type,
-                  body: `${type}: independent server words`,
-                  attributes: {},
-                }),
+                message: DeliveryMessage.cases.Signal.make({ cue }),
                 origin,
               }
               const pending = yield* Effect.result(test.conversation.deliver(delivery)).pipe(
@@ -1138,17 +1294,14 @@ layer(
                 test.ben,
               ])
               expect((yield* Ref.get(test.requests)).map((input) => input.message)).toEqual([
-                expect.objectContaining({
-                  body: 'Please help',
-                  attributes: { from: 'Ada', turn: '1' },
+                RuntimeDelivery.cases.Signal.make({
+                  envelope: {
+                    from: 'Ada',
+                    turn: 1,
+                    cue: SignalCue.cases.Message.make({ body: 'Please help' }),
+                  },
                 }),
-                {
-                  kind: 'signal',
-                  type,
-                  tagName: type,
-                  body: `${type}: independent server words`,
-                  attributes: { from: 'Ben', turn: '2' },
-                },
+                RuntimeDelivery.cases.Signal.make({ envelope: { from: 'Ben', turn: 2, cue } }),
               ])
               const replayed = yield* test.conversation.deliver(delivery)
               expect(replayed.id).toBe(admitted.id)
@@ -1256,7 +1409,7 @@ layer(
           )
           expect(response.status).toBe(202)
           expect(yield* Ref.get(sent)).toMatchObject([
-            { body: 'Look', attributes: {}, attachments: [png] },
+            { delivery: { body: 'Look', attachments: [png] } },
           ])
         }).pipe(Effect.scoped),
     )
@@ -1273,7 +1426,7 @@ layer(
         expect(response.status).toBe(202)
         expect((yield* Ref.get(test.admitted))[0]).toMatchObject({
           clientKey: 'picture-key',
-          message: { kind: 'user', body: '', attachments: [png] },
+          message: { body: '', attachments: [png] },
         })
       }).pipe(Effect.scoped),
     )
@@ -1293,7 +1446,7 @@ layer(
         const messages = yield* Ref.get(test.admitted)
         expect(messages[0]).toMatchObject({
           message: {
-            kind: 'user',
+            body: 'Look',
             attachments: [largest, png, gif, png],
           },
         })
@@ -1339,7 +1492,7 @@ layer(
           const deliveries = yield* Ref.get(test.admitted)
           expect(deliveries).toHaveLength(1)
           expect(deliveries[0]).toMatchObject({
-            message: { kind: 'user', body: body.body, attachments: [png] },
+            message: { body: body.body, attachments: [png] },
             scope: { acting: test.ben },
           })
           expect(yield* (yield* RunStore).list(test.threadId)).toHaveLength(1)

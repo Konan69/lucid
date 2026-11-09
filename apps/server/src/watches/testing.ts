@@ -40,6 +40,7 @@ import {
 import { connections } from '../connections/tables.ts'
 import { encodeReferences } from '../connections/records.ts'
 import { watchesLayer } from './lifecycle.ts'
+import { owedStoreLayer } from '../owed/store.ts'
 import { watchStoreLayer } from './store.ts'
 
 /**
@@ -71,6 +72,7 @@ export const person = Effect.fn('WatchTest.person')(function* () {
     workspace: Workspace.cases.Personal.make({}),
     by: 'vivid',
     threadId: Option.none(),
+    helper: Option.none(),
   } satisfies Actor
 })
 
@@ -272,6 +274,7 @@ export const testLayer = watchesLayer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       watchStoreLayer,
+      owedStoreLayer,
       threadStoreLayer,
       appsLayer,
       executorLayer,

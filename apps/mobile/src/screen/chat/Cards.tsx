@@ -1,17 +1,22 @@
 import {
   ApprovalState,
+  Tool,
   type Approval,
   type PersonId,
   type ThreadDetail,
   type ThreadId,
 } from '@vivid/contracts'
 import { Option } from 'effect'
-import { changedLine } from '@vivid/state'
+import { access, changedLine, helpers } from '@vivid/state'
 import { View } from 'react-native'
 import { Card, cardOf, type ToolPart } from '../../data/message'
 import { Label } from '../../ui/ui'
+import { ArtifactCard } from '../artifact/Card'
+import { AccessCard } from '../integration/Access'
 import { IntegrationCard } from '../integration/Card'
-import { approvalOf, requestOf } from './asked'
+import { approvalOf, handoffOf, requestOf } from './asked'
+import { Children } from './Children'
+import { Handed } from './Handoff'
 import { Asked } from './Question'
 import { Words } from './Words'
 
@@ -40,11 +45,38 @@ export function Cards({
   thread: ThreadId
 }) {
   return tools.map((tool) => {
+    // A call one of the Person's accounts could not make is answered where Vivid stopped.
+    const escalation = tool.state === 'output-available' ? access.escalationOf(tool) : Option.none()
+    if (Option.isSome(escalation))
+      return (
+        <View key={tool.toolCallId} style={CARD_ROOM}>
+          <AccessCard
+            id={tool.toolCallId}
+            escalation={escalation.value}
+            current={live}
+            thread={thread}
+          />
+        </View>
+      )
+    // The helpers a step started are drawn under it, from the Thread's live detail.
+    if (tool.toolName === Tool.spawn_run && tool.state === 'output-available')
+      return (
+        <Children
+          key={tool.toolCallId}
+          runs={Option.match(detail, {
+            onNone: () => [],
+            onSome: (value) => helpers.startedIn(value.children, tools, tool.toolCallId),
+          })}
+        />
+      )
     return Option.match(cardOf(tool), {
       onNone: () => null,
       onSome: (card) => (
         // A card stands a little apart from the words round it. What Vivid asks is words itself.
-        <View key={tool.toolCallId} style={Card.$is('Connection')(card) ? CARD_ROOM : undefined}>
+        <View
+          key={tool.toolCallId}
+          style={Card.$is('Connection')(card) || Card.$is('Artifact')(card) ? CARD_ROOM : undefined}
+        >
           <Drawn
             call={tool.toolCallId}
             card={card}
@@ -95,6 +127,12 @@ function Drawn({
         onNone: () => null,
         onSome: (request) => <Asked request={request} me={me} />,
       }),
+    Handoff: ({ id }) =>
+      Option.match(handoffOf(detail, id), {
+        onNone: () => null,
+        onSome: (handoff) => <Handed handoff={handoff} me={me} />,
+      }),
+    Artifact: ({ artifact }) => <ArtifactCard delivered={artifact} />,
     Connection: ({ request, authorization, awaited }) => (
       <IntegrationCard
         id={call}

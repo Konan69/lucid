@@ -98,6 +98,31 @@ export const SignInEnding = Schema.TaggedUnion({
 })
 export type SignInEnding = typeof SignInEnding.Type
 
+/**
+ * Where a pressed notification opens, as the page's `NotificationOpens` (`@vivid/contracts`)
+ * encodes it. The Thread is plain text for the same reason as `SignInEnding`'s values; the page
+ * decodes it when the notice is pressed.
+ */
+export const DesktopNotificationOpens = Schema.TaggedUnion({
+  Thread: { threadId: NonEmptyString },
+  Feed: {},
+  Notifications: {},
+})
+export type DesktopNotificationOpens = typeof DesktopNotificationOpens.Type
+
+/**
+ * A notification the page heard on its live list, for the shell to show as the system's own while
+ * its window is not in front, with where it opens when pressed.
+ */
+export const DesktopNotification = Schema.Struct({
+  title: Schema.String,
+  body: Schema.String,
+  opens: DesktopNotificationOpens,
+  /** Shown without a sound: a Feed post Vivid made on its own (`PushSound` in the contracts). */
+  silent: Schema.Boolean,
+})
+export interface DesktopNotification extends Schema.Schema.Type<typeof DesktopNotification> {}
+
 /** Every renderer-to-main capability and argument is schema-decoded in main. */
 export const BridgeRequest = Schema.TaggedUnion({
   GetAppVersion: {},
@@ -129,6 +154,12 @@ export const BridgeRequest = Schema.TaggedUnion({
    * menus, the colour behind a page that has not loaded) matches the page inside it.
    */
   ShowColorScheme: { preference: ColorSchemePreference },
+  /**
+   * Show a notification as the system's own. The shell shows it only while its window is not in
+   * front: in front, the page says it itself. Electron has no Web Push, so this is how the
+   * desktop app tells the Person anything, and only while it runs.
+   */
+  ShowNotification: { notification: DesktopNotification },
 })
 export type BridgeRequest = typeof BridgeRequest.Type
 
@@ -147,6 +178,7 @@ export const BridgeResponse = Schema.TaggedUnion({
   GoogleSignInEnded: { value: SignInEnding },
   GoogleSignInCancelled: {},
   ColorSchemeShown: {},
+  NotificationShown: {},
 })
 export type BridgeResponse = typeof BridgeResponse.Type
 
@@ -155,6 +187,8 @@ export const BridgeEvent = Schema.TaggedUnion({
   ColorSchemeChanged: { value: ColorSchemeState },
   PagesChanged: { value: BrowserState },
   PageDownloadRefused: { value: PageDownloadRefused },
+  /** A notification the shell showed was pressed; the window is in front again. */
+  NotificationOpened: { opens: DesktopNotificationOpens },
 })
 export type BridgeEvent = typeof BridgeEvent.Type
 
@@ -247,6 +281,14 @@ export interface VividDesktopBridge {
   readonly signIn: VividSignInBridge
   /** Tells the shell the look the Person chose, so the window's own chrome is drawn to match. */
   readonly colorScheme: { readonly show: (preference: ColorSchemePreference) => Promise<void> }
+  /** The system's notifications, while the app runs (`ShowNotification`). */
+  readonly notifications: {
+    readonly show: (notification: DesktopNotification) => Promise<void>
+    /** Hears each notification pressed; answers the way to stop listening. */
+    readonly onOpened: (
+      listener: (opened: { readonly opens: DesktopNotificationOpens }) => void,
+    ) => () => void
+  }
 }
 
 export { ServerSettings, ServerChoice } from './settings.ts'
@@ -278,5 +320,5 @@ export {
 /** Selected app documents get page authority; chooser-only server settings remain separate. */
 export type VividAppBridge = Pick<
   VividDesktopBridge,
-  'getAppVersion' | 'pages' | 'device' | 'signIn' | 'reporting' | 'colorScheme'
+  'getAppVersion' | 'pages' | 'device' | 'signIn' | 'reporting' | 'colorScheme' | 'notifications'
 >

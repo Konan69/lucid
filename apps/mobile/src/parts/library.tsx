@@ -5,6 +5,10 @@ import { Table } from './table'
 import { Badge, Caption, Label, Link, List, ListItem, Text, Title } from './text'
 import { Carousel } from './carousel'
 import { Chart } from './chart'
+import { MapMarker, MapView } from './map'
+import { Page } from './page'
+import { Screen } from './screen'
+import { Week } from './week'
 import {
   Button,
   Checkbox,
@@ -47,6 +51,11 @@ export const library = createLibrary({
     Image,
     Table,
     Chart,
+    MapView,
+    MapMarker,
+    Week,
+    Page,
+    Screen,
     Button,
     Pressable,
     Input,
@@ -76,7 +85,10 @@ export const library = createLibrary({
         'Icon',
       ],
     },
-    { name: 'Data and pictures', components: ['Table', 'Chart', 'Image'] },
+    {
+      name: 'Data and pictures',
+      components: ['Table', 'Chart', 'Image', 'Map', 'MapMarker', 'Week', 'Page', 'Screen'],
+    },
     {
       name: 'Inputs',
       components: [

@@ -1,5 +1,7 @@
 import * as Schema from 'effect/Schema'
-import { ThreadId } from './identity.js'
+import { DreamPass } from './dreams.js'
+import { RunId, ThreadId } from './identity.js'
+import { WatchId } from './watches.js'
 
 /**
  * The Feed shows work in every readable Thread the Person owns, including Conversations and
@@ -37,9 +39,84 @@ const Actions = Schema.Array(FeedAction).check(Schema.isMaxLength(2))
  *   it is not drawn above the display.
  * - `Said`: there is nothing to draw, so the title, a sentence or two, and up to two buttons.
  */
+const drawn = { title: Title, display: Display }
+const said = { title: Title, words: Words, actions: Actions }
+
+/**
+ * Where a card came from, in the Person's words: a note Vivid keeps, a goal, a letter, a recent
+ * conversation, a check-in on what someone owes them. Muse's rule: "Every item says in plain words
+ * where it came from" (`muse/docs/calls-texts-notifications.md:125`). Vivid writes it; the server
+ * keeps what started the work separately, in `FeedProvenance`.
+ */
+export const FeedFrom = Schema.NonEmptyString.check(Schema.isMaxLength(120))
+export type FeedFrom = typeof FeedFrom.Type
+
+/**
+ * How soon a card may interrupt the Person. `ordinary`: it goes on the Feed silently, and at most
+ * one such card a day is announced, quietly, in the Person's waking hours and a quiet stretch
+ * (`apps/server/src/feed/pace.ts`). `urgent`: it is announced at once, with sound. Konan's
+ * decision, 27 October 2026, from Muse's proactive pacing.
+ */
+export const PostUrgency = Schema.Literals(['ordinary', 'urgent'] as const)
+export type PostUrgency = typeof PostUrgency.Type
+
+/**
+ * An absolute http or https address with a host; anything else is not a page a Person can open.
+ * Contracts run on every surface and have no `URL` global, so the shape is checked by pattern.
+ */
+const WebAddress = Schema.String.check(
+  Schema.isMaxLength(2000),
+  Schema.isPattern(/^https?:\/\/[^\s/?#@]+(?:[/?#]\S*)?$/iu),
+)
+/** A page or record Vivid read the finding from, as the model obtained its link. */
+export const FeedSource = Schema.Struct({
+  label: Schema.NonEmptyString.check(Schema.isMaxLength(120)),
+  url: WebAddress,
+})
+export interface FeedSource extends Schema.Schema.Type<typeof FeedSource> {}
+
+/**
+ * What started the work a card reports, found from the record and never from the model. `Watch`:
+ * the Run one Watch event started, with the Watch's id and name as they were then, so the cause
+ * outlives the Watch. `Dream`: the Run a Dreamer finding started, and whether the Dreamer ran
+ * overnight or after a conversation. `ThreadRun`: the Run that started the Thread, when neither did.
+ */
+export const FeedCause = Schema.TaggedUnion({
+  Watch: { run: RunId, watch: WatchId, watchName: Schema.String, eventId: Schema.NonEmptyString },
+  /** The Run a check-in's timer started, with the check-in Watch's id and name as they were. */
+  Checkin: { run: RunId, watch: WatchId, watchName: Schema.String },
+  Dream: { run: RunId, pass: DreamPass },
+  ThreadRun: { run: RunId },
+})
+export type FeedCause = typeof FeedCause.Type
+
+/** Where a Person can read what a card is based on: a Run in its Thread, or a page on the web. */
+export const FeedEvidence = Schema.TaggedUnion({
+  ThreadRun: { thread: ThreadId, run: RunId },
+  Web: { label: FeedSource.fields.label, url: FeedSource.fields.url },
+})
+export type FeedEvidence = typeof FeedEvidence.Type
+
+/**
+ * Where a card came from. `Recorded`: the Run that posted its current content (`postedBy`, which a
+ * follow-up post replaces), what started the work (`cause`, which stays), and what it rests on,
+ * the cause's Run first. `Legacy`: a card posted before 29 October 2026, which recorded none of it.
+ */
+export const FeedProvenance = Schema.TaggedUnion({
+  Recorded: {
+    postedBy: RunId,
+    cause: FeedCause,
+    evidence: Schema.NonEmptyArray(FeedEvidence),
+  },
+  Legacy: {},
+})
+export type FeedProvenance = typeof FeedProvenance.Type
+
+/** `from` is null on a card posted before cards said where they came from (8 November 2026). */
+const shown = { provenance: FeedProvenance, from: Schema.NullOr(FeedFrom) }
 export const FeedPost = Schema.TaggedUnion({
-  Drawn: { title: Title, display: Display },
-  Said: { title: Title, words: Words, actions: Actions },
+  Drawn: { ...drawn, ...shown },
+  Said: { ...said, ...shown },
 })
 export type FeedPost = typeof FeedPost.Type
 
@@ -81,8 +158,18 @@ export type FeedItem = typeof FeedItem.Type
 /** Every item, newest first; the surfaces group them by their stage. */
 export const FeedResponse = Schema.Struct({ items: Schema.Array(FeedItem) })
 
-/** Model input is the card only: the Thread and the Person come from the Run's own authority. */
-export const PostRequest = FeedPost
+/**
+ * What Vivid posts: the card, and the upstream pages or records it read the finding from, as links
+ * it actually obtained (none when the event itself is the evidence). The Thread, the Person, the
+ * posting Run and the cause come from the Run's own authority, never from the model.
+ */
+const sources = Schema.Array(FeedSource).check(Schema.isMaxLength(10))
+const posted = { sources, from: FeedFrom, urgency: PostUrgency }
+export const PostRequest = Schema.TaggedUnion({
+  Drawn: { ...drawn, ...posted },
+  Said: { ...said, ...posted },
+})
+export type PostRequest = typeof PostRequest.Type
 export const PostOutcome = Schema.TaggedUnion({
   Posted: {},
   Updated: {},

@@ -94,6 +94,7 @@ const unannounceableRecipient = Effect.fn('NotificationAnnouncements.unannouncea
       workspace: Workspace.cases.Personal.make({}),
       by: 'person',
       threadId: Option.none(),
+      helper: Option.none(),
     }
     const id = yield* seed(actor, null)
     expect((yield* (yield* NotificationStore).list(actor)).notifications).toMatchObject([

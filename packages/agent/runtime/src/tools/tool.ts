@@ -3,6 +3,7 @@ import { awaitWithContext, withAbortSignal, type Context } from '@earendil-works
 import { Type, type ToolResultMessage } from '@earendil-works/pi-ai'
 import {
   defineTool as durableTool,
+  type ToolExecutionApi,
   type ToolExecutionResult,
   type ToolRegistration,
 } from '@earendil-works/pi-durable'
@@ -49,6 +50,19 @@ function jsonOutput(value: Schema.Json) {
   )
 }
 
+/**
+ * Display metadata Pi keeps beside the model's text. Action receipts ride here, out of the model's
+ * words, so the conversation history keeps what each outward write proved.
+ */
+function detailsOf(
+  name: string,
+  output: Schema.Json,
+  receipts: ToolResult['receipts'],
+): Schema.Json {
+  if (receipts === undefined || receipts.length === 0) return { customTool: name, output }
+  return { customTool: name, output, receipts: receipts.map((receipt) => ({ ...receipt })) }
+}
+
 /** Pi's three result channels preserve model content, display receipts and response control. */
 export function toolResult(name: string, result: ToolResult | ContentResult): ToolExecutionResult {
   const normalized = jsonOutput('content' in result ? result.details : result.output)
@@ -59,7 +73,9 @@ export function toolResult(name: string, result: ToolResult | ContentResult): To
       ? { output: result.content, details: value }
       : {
           output: [{ type: 'text' as const, text: JSON.stringify(value) }],
-          details: { customTool: name, output: value },
+          details: copyJson(detailsOf(name, value, result.receipts), {
+            omitUndefinedProperties: true,
+          }),
         }
   if (result.terminate === true) return { ...mapped, control: { terminate: true } }
   return mapped
@@ -132,7 +148,9 @@ export function executeCall<A>(
 
 /** Valibot decodes once after Pi's coercion and validation. Plain JSON Schema is
  * accepted by pi-ai's Compile path; converter options match the installed reference exactly.
- * Replay is intentionally omitted, so an unfinished external action is interrupted, never rerun. */
+ * Replay is omitted unless a tool says `safe`, so an unfinished external action is interrupted,
+ * never rerun. Only a tool whose every write is keyed for idempotency may say so (`children.ts`).
+ * `api` is Pi's own call surface, for the few tools that commit to the conversation themselves. */
 export function defineTool<
   S extends v.GenericSchema,
   E extends { readonly message: string } = never,
@@ -141,10 +159,12 @@ export function defineTool<
   readonly description: string
   readonly input: S
   readonly timeoutMs?: number
+  readonly replay?: 'safe'
   readonly run: (call: {
     readonly data: v.InferOutput<S>
     readonly signal: AbortSignal
     readonly toolCallId: string
+    readonly api: ToolExecutionApi
   }) =>
     | ToolResult
     | ContentResult
@@ -157,6 +177,8 @@ export function defineTool<
     name: definition.name,
     description: definition.description,
     parameters,
+    // Pi's own default is `unsafe`; it is stated so the one exception reads beside it.
+    replay: definition.replay === 'safe' ? 'safe' : 'unsafe',
     // Vivid and the Computer tools already bound their output exactly as main did. Pi's generic
     // UTF-8/line cutoff would truncate run_code or change the reference character-count budget.
     outputLimits: { maxBytes: Number.MAX_SAFE_INTEGER, maxLines: Number.MAX_SAFE_INTEGER },
@@ -170,7 +192,12 @@ export function defineTool<
       return executionResult(
         executeCall(
           (signal) => {
-            const result = definition.run({ data: parsed.output, signal, toolCallId: api.callId })
+            const result = definition.run({
+              data: parsed.output,
+              signal,
+              toolCallId: api.callId,
+              api,
+            })
             if (!Effect.isEffect(result))
               return Promise.resolve(result).then((value) => toolResult(definition.name, value))
             // The Pi execute callback is the Promise entry point for the owned Computer programs.

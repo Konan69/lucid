@@ -1,5 +1,12 @@
 import { Schema } from 'effect'
-import { InputRequestId, PersonSummary, RunId, ThreadId } from './identity.js'
+import {
+  HandoffFieldId,
+  HandoffId,
+  InputRequestId,
+  PersonSummary,
+  RunId,
+  ThreadId,
+} from './identity.js'
 
 /** One labelled choice, with the consequence of picking it in a line. */
 export const InputOption = Schema.Struct({
@@ -108,3 +115,214 @@ export const InputRequestMessage = Schema.Struct({
   questions: Schema.NonEmptyArray(Schema.String),
 }).annotate({ identifier: 'InputRequestMessage', title: 'Input request message' })
 export interface InputRequestMessage extends Schema.Schema.Type<typeof InputRequestMessage> {}
+
+/**
+ * What only the Person can do on the Computer, so Vivid hands them that one step and carries on.
+ * `SignIn`, `Code` and `Payment` may be prepared as a form; `Captcha` and `TakeControl` are done
+ * on the Computer's live screen, as can any of the others when a field cannot be prepared.
+ *
+ * The shape follows Grok Bot's secure handoff and write-only fill
+ * (`~/ref/system-prompts-mined/mined/grok-bot-skills.md`, M10): fields are found on the page
+ * before the Person is asked, the Person's values are typed into them privately, and Vivid is told
+ * only what happened to each field. Its CAPTCHA policy is not taken: the Person completes one.
+ */
+export const HandoffKind = Schema.Literals(['SignIn', 'Code', 'Captcha', 'Payment', 'TakeControl'])
+export type HandoffKind = typeof HandoffKind.Type
+/** The kinds a form can carry: a CAPTCHA or taking control has no field to type into. */
+export const HandoffFormKind = HandoffKind.pick(['SignIn', 'Code', 'Payment'])
+export type HandoffFormKind = typeof HandoffFormKind.Type
+
+/** What a field holds, so a client can offer the right keyboard. Every value is entered unseen. */
+export const HandoffFieldPurpose = Schema.Literals([
+  'Text',
+  'Password',
+  'Code',
+  'CardNumber',
+  'CardExpiry',
+  'CardCode',
+])
+export type HandoffFieldPurpose = typeof HandoffFieldPurpose.Type
+
+/** One field Vivid found on the page: its accessible label as the page names it. */
+export const HandoffField = Schema.Struct({
+  id: HandoffFieldId,
+  label: Schema.String,
+  purpose: HandoffFieldPurpose,
+})
+export interface HandoffField extends Schema.Schema.Type<typeof HandoffField> {}
+
+/**
+ * Where the step is, as a Person reads it: the page's origin and its address without query or
+ * fragment, which may carry a session or a reset token.
+ */
+export const HandoffPage = Schema.Struct({ origin: Schema.String, address: Schema.String })
+export interface HandoffPage extends Schema.Schema.Type<typeof HandoffPage> {}
+
+/**
+ * Why a field was not typed into. `TargetChanged`: the page is no longer the one prepared (another
+ * address, another tab), even if a field there has the same label. `TargetUnavailable`: no single
+ * editable field with that label is on the page. `UnsupportedField`: the field is there but cannot
+ * be typed into privately.
+ */
+export const HandoffRefusalReason = Schema.Literals([
+  'TargetChanged',
+  'TargetUnavailable',
+  'UnsupportedField',
+])
+export type HandoffRefusalReason = typeof HandoffRefusalReason.Type
+
+/**
+ * What happened to one field's value. `Filled` is the Computer's receipt that it was typed, not
+ * that the site accepted it. `OutcomeUnknown`: the typing was sent and its answer was lost, so it
+ * may be in the field; it is never typed again by itself.
+ */
+export const HandoffFieldResult = Schema.TaggedUnion({
+  Filled: {},
+  Refused: { reason: HandoffRefusalReason },
+  OutcomeUnknown: {},
+})
+export type HandoffFieldResult = typeof HandoffFieldResult.Type
+
+/** One field's result. It never holds the value, its length or any part of it. */
+export const HandoffFieldReceipt = Schema.Struct({
+  fieldId: HandoffFieldId,
+  result: HandoffFieldResult,
+})
+export interface HandoffFieldReceipt extends Schema.Schema.Type<typeof HandoffFieldReceipt> {}
+
+/** Who finished the step and when; the step is over and Vivid has been told. */
+const completed = { completedBy: PersonSummary, completedAt: Schema.Finite }
+
+/**
+ * Where a form stands. `Applying`: a fill is being typed now, so a second one is refused.
+ * `Ready`: at least one fill was typed, and the Person finishes on the live screen. A field that
+ * was refused may be filled again from `Ready`; its latest result is the one kept.
+ */
+export const HandoffFormState = Schema.TaggedUnion({
+  Waiting: {},
+  Applying: {},
+  Ready: { fields: Schema.NonEmptyArray(HandoffFieldReceipt) },
+  Completed: { ...completed, fields: Schema.NonEmptyArray(HandoffFieldReceipt) },
+  /** The Person withdrew it, or wrote to Vivid instead, before finishing. */
+  Withdrawn: { withdrawnAt: Schema.Finite },
+})
+export type HandoffFormState = typeof HandoffFormState.Type
+
+/** Where a live-screen step stands. `Ready`: the Person has taken the screen. */
+export const HandoffScreenState = Schema.TaggedUnion({
+  Waiting: {},
+  Ready: {},
+  Completed: completed,
+  Withdrawn: { withdrawnAt: Schema.Finite },
+})
+export type HandoffScreenState = typeof HandoffScreenState.Type
+
+const handoffIdentity = {
+  id: HandoffId,
+  threadId: ThreadId,
+  /** The Run that prepared it. The work continues in the Thread, not necessarily in this Run. */
+  runId: RunId,
+  /** Only this Person may enter values or finish it, on their own Computer. */
+  askedOf: PersonSummary,
+  page: HandoffPage,
+  /** Vivid's sentence for the step, as the Person reads it. */
+  summary: Schema.String,
+  createdAt: Schema.Finite,
+}
+
+/**
+ * One step on the Computer only the Person can do. An Input request in product words, kept apart
+ * from questions because its values are secrets: an answer is stored and read back to Vivid, and a
+ * handoff's values never are. A form carries the fields found on the page; a live-screen step has
+ * none, and neither can carry the other's state.
+ */
+export const HandoffRequest = Schema.TaggedUnion({
+  Form: {
+    ...handoffIdentity,
+    kind: HandoffFormKind,
+    fields: Schema.NonEmptyArray(HandoffField),
+    state: HandoffFormState,
+  },
+  Screen: { ...handoffIdentity, kind: HandoffKind, state: HandoffScreenState },
+})
+export type HandoffRequest = typeof HandoffRequest.Type
+
+/** The most fields one form may carry: a sign-in, a code or a card fits in five. */
+export const HANDOFF_FIELDS_MOST = 6
+
+/** A field as Vivid asks for it: the label it read on the page and what it holds. */
+export const PrepareHandoffField = Schema.Struct({
+  label: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
+  purpose: HandoffFieldPurpose,
+})
+export interface PrepareHandoffField extends Schema.Schema.Type<typeof PrepareHandoffField> {}
+
+const prepareSummary = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(400))
+
+/**
+ * What Vivid supplies to hand a step over. The page is the one its Computer shows now; the
+ * Thread, Run and Person asked come from the Run.
+ */
+export const PrepareHandoffRequest = Schema.TaggedUnion({
+  Form: {
+    kind: HandoffFormKind,
+    summary: prepareSummary,
+    fields: Schema.NonEmptyArray(PrepareHandoffField).check(
+      Schema.isMaxLength(HANDOFF_FIELDS_MOST),
+    ),
+  },
+  Screen: { kind: HandoffKind, summary: prepareSummary },
+})
+export type PrepareHandoffRequest = typeof PrepareHandoffRequest.Type
+
+/** A field Vivid named that could not be prepared, with why. */
+export const HandoffFieldRefusal = Schema.Struct({
+  label: Schema.String,
+  reason: HandoffRefusalReason,
+})
+export interface HandoffFieldRefusal extends Schema.Schema.Type<typeof HandoffFieldRefusal> {}
+
+/**
+ * What Vivid hears back when it hands a step over. Every refusal is an answer it can act on:
+ * fields that cannot be prepared are handed over on the live screen instead.
+ */
+export const PrepareHandoffOutcome = Schema.TaggedUnion({
+  Prepared: { handoff: HandoffRequest },
+  FieldsRefused: { fields: Schema.NonEmptyArray(HandoffFieldRefusal) },
+  /** A step is handed over only from a Run working in its Thread. */
+  RunRequired: {},
+  /** One step at a time is handed over on a Computer; this one already waits on the Person. */
+  Busy: {},
+  Unavailable: { reason: Schema.String },
+})
+export type PrepareHandoffOutcome = typeof PrepareHandoffOutcome.Type
+
+/** Begin, finish or withdraw one handoff. */
+export const HandoffIdRequest = Schema.Struct({ id: HandoffId })
+export interface HandoffIdRequest extends Schema.Schema.Type<typeof HandoffIdRequest> {}
+
+/**
+ * One value the Person typed. Redacted in every process; encoded only on the way to the server and
+ * from there to the Computer's browser, and never stored.
+ */
+export const HandoffValue = Schema.Struct({
+  fieldId: HandoffFieldId,
+  value: Schema.RedactedFromValue(Schema.String.check(Schema.isMaxLength(4096))),
+})
+export interface HandoffValue extends Schema.Schema.Type<typeof HandoffValue> {}
+
+/** Values for some or all of a form's fields, each field at most once. */
+export const FillHandoffRequest = Schema.Struct({
+  id: HandoffId,
+  values: Schema.NonEmptyArray(HandoffValue).check(Schema.isMaxLength(HANDOFF_FIELDS_MOST)),
+})
+export interface FillHandoffRequest extends Schema.Schema.Type<typeof FillHandoffRequest> {}
+
+export const HandoffResponse = Schema.Struct({ handoff: HandoffRequest })
+
+/** What a Thread shows in place of the tool result: the step, drawn from the server's record. */
+export const HandoffMessage = Schema.Struct({
+  kind: Schema.Literal('handoff'),
+  handoffId: HandoffId,
+}).annotate({ identifier: 'HandoffMessage', title: 'Handoff message' })
+export interface HandoffMessage extends Schema.Schema.Type<typeof HandoffMessage> {}

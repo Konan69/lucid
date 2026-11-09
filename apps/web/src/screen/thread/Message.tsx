@@ -3,15 +3,20 @@ import {
   InputRequestId,
   InputRequestState,
   textOf,
+  Tool,
   type Approval,
+  type ChildRun,
   type ConversationMessage,
+  type HandoffRequest,
   type InputRequest,
   type PersonId,
   type Run,
   type ThreadId,
 } from '@vivid/contracts'
 import {
+  access,
   asking,
+  helpers,
   makeFullWhen,
   makeWhen,
   offeredReplies,
@@ -24,7 +29,7 @@ import {
   thisReader,
 } from '@vivid/state'
 import { Data, Option, Schema } from 'effect'
-import { AlarmClock, Check, Copy as CopyIcon } from 'lucide-react'
+import { AlarmClock, Check, Copy as CopyIcon, Eye } from 'lucide-react'
 import { memo, useState } from 'react'
 import { carryOn } from '../../data/threads'
 import { Display } from '../../parts/Display'
@@ -35,10 +40,22 @@ import { Face } from '../../ui/Face'
 import { Markdown } from '../../ui/Markdown'
 import { useRevealed } from '../../ui/reveal'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
-import { approvalById, AskedFirst, cardFor, ConnectionCard, requestById } from './Cards'
+import {
+  AccessCard,
+  approvalById,
+  AskedFirst,
+  cardFor,
+  type CardRequest,
+  ConnectionCard,
+  handoffById,
+  requestById,
+} from './Cards'
+import { ArtifactCard } from '../artifact/Card'
+import { Children } from './Children'
+import { Handed } from './Handoff'
 import { Asked } from './Question'
 import { Replies } from './Replies'
-import { stepIn, type ToolPart } from './Doing'
+import { stepIn, toolsOf, type ToolPart } from './Doing'
 
 /** What the Thread carries beside its messages, which the cards and attributions are drawn from. */
 export interface ThreadContext {
@@ -48,6 +65,9 @@ export interface ThreadContext {
   readonly runs: ReadonlyArray<Run>
   readonly approvals: ReadonlyArray<Approval>
   readonly requests: ReadonlyArray<InputRequest>
+  readonly handoffs: ReadonlyArray<HandoffRequest>
+  /** The helpers Vivid started in this Thread, drawn under the step that started them. */
+  readonly children: ReadonlyArray<ChildRun>
 }
 
 const reader = thisReader()
@@ -341,7 +361,9 @@ const SIGNAL_LINE = {
 /**
  * Something the server or the runtime put in front of Vivid, drawn by where it came from
  * (`sourceOf` in `@vivid/state`, the reading every surface shares). A Person speaking in a shared
- * Thread is drawn as their bubble. A follow-up is a quiet line. An answer that was
+ * Thread is drawn as their bubble. A follow-up is a quiet line. The event a Watch woke Vivid with
+ * is a quiet line and the event itself, whole, so a Person who opens a Feed card's Thread reads
+ * what Vivid saw; it scrolls inside its panel when long. An answer that was
  * not finished is said in Vivid's words, not the runtime's. Nothing else is drawn here: an
  * Approval's outcome is told under its own words (`AskedFirst`) and an answer by its own row
  * (`Replied`), and what the runtime says to itself and the model (its instructions were
@@ -378,6 +400,20 @@ function Signal({ message, context }: { message: ConversationMessage; context: T
         </div>
       )
     },
+    Saw: ({ name }) => (
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2 text-meta font-meta text-ink-3">
+          <Eye className="size-3.5" />
+          <span>
+            What Vivid saw
+            {Option.isSome(name) && ` · ${name.value}`}
+          </span>
+        </div>
+        <pre className="max-h-80 overflow-auto rounded-panel bg-surface-2 px-4 py-3 font-mono text-label wrap-break-word whitespace-pre-wrap text-ink-2">
+          {textOf(message)}
+        </pre>
+      </div>
+    ),
     // `Message` sends only `system` messages here, which are never a turn or a reply.
     Person: () => null,
     Vivid: () => null,
@@ -472,36 +508,66 @@ function ToolCards({
 }) {
   return tools.map((tool) => {
     if (tool.state !== 'output-available') return null
+    // A call one of the Person's accounts could not make is answered where Vivid stopped.
+    const escalation = access.escalationOf(tool)
+    if (Option.isSome(escalation))
+      return (
+        <AccessCard
+          key={tool.toolCallId}
+          id={tool.toolCallId}
+          escalation={escalation.value}
+          current={live}
+          onCarryOn={(words) => carryOn(context.thread, words)}
+        />
+      )
+    if (tool.toolName === Tool.spawn_run)
+      return (
+        <Children
+          key={tool.toolCallId}
+          runs={helpers.startedIn(context.children, tools, tool.toolCallId)}
+        />
+      )
     const card = cardFor(tool.output)
-    if (Option.isNone(card)) return null
-    const wanted = card.value
-    switch (wanted.kind) {
-      case 'connection':
-        return (
-          <ConnectionCard
-            key={tool.toolCallId}
-            id={tool.toolCallId}
-            request={wanted.request}
-            authorization={wanted.authorization}
-            awaited={wanted.awaited}
-            current={live}
-            onCarryOn={(words) => carryOn(context.thread, words)}
-          />
-        )
-      case 'approval': {
-        const approval = approvalById(context.approvals, wanted.id)
-        return Option.isNone(approval) ? null : (
-          <AskedFirst key={tool.toolCallId} approval={approval.value} me={context.me} />
-        )
-      }
-      case 'input': {
-        const request = requestById(context.requests, wanted.id)
-        return Option.isNone(request) ? null : (
-          <Asked key={tool.toolCallId} request={request.value} me={context.me} />
-        )
-      }
-    }
+    return Option.isNone(card) ? null : drawn(card.value, tool.toolCallId, context, live)
   })
+}
+
+/** One card a tool's output asks for, by its kind. `key` is the tool call it stands for. */
+function drawn(wanted: CardRequest, key: string, context: ThreadContext, live: boolean) {
+  switch (wanted.kind) {
+    case 'connection':
+      return (
+        <ConnectionCard
+          key={key}
+          id={key}
+          request={wanted.request}
+          authorization={wanted.authorization}
+          awaited={wanted.awaited}
+          current={live}
+          onCarryOn={(words) => carryOn(context.thread, words)}
+        />
+      )
+    case 'approval': {
+      const approval = approvalById(context.approvals, wanted.id)
+      return Option.isNone(approval) ? null : (
+        <AskedFirst key={key} approval={approval.value} me={context.me} />
+      )
+    }
+    case 'input': {
+      const request = requestById(context.requests, wanted.id)
+      return Option.isNone(request) ? null : (
+        <Asked key={key} request={request.value} me={context.me} />
+      )
+    }
+    case 'handoff': {
+      const handoff = handoffById(context.handoffs, wanted.id)
+      return Option.isNone(handoff) ? null : (
+        <Handed key={key} handoff={handoff.value} me={context.me} />
+      )
+    }
+    case 'artifact':
+      return <ArtifactCard key={key} delivered={wanted.artifact} />
+  }
 }
 
 /** Who Vivid was answering, in a shared Thread where that is not obvious. */
@@ -615,9 +681,18 @@ const segmentsOf = (message: ConversationMessage): ReadonlyArray<Segment> => {
   return segments
 }
 
-/** Whether a piece of work left the Person anything to see: a card among its tool results. */
+/**
+ * Whether a piece of work left the Person anything to see: a card among its tool results, or
+ * helpers it started (`Children.tsx`).
+ */
 const showsCard = (tools: ReadonlyArray<ToolPart>) =>
-  tools.some((tool) => tool.state === 'output-available' && Option.isSome(cardFor(tool.output)))
+  tools.some(
+    (tool) =>
+      tool.state === 'output-available' &&
+      (tool.toolName === Tool.spawn_run ||
+        Option.isSome(cardFor(tool.output)) ||
+        Option.isSome(access.escalationOf(tool))),
+  )
 
 /**
  * Whether a segment draws anything. Words always do; work does only where it left a card, since
@@ -727,9 +802,20 @@ function ReplyFace({
 }
 
 /**
- * What stands under a finished reply: when it was said, and the control that copies it. Under
- * the newest reply it fades in (`motion-fade`) as the words stop arriving, so the reply is seen
- * to settle; under older ones it is simply there.
+ * How much the reply's reads took, when one of them was partial (`access.readingOf`): "Read 25 of
+ * 1,284 messages from Gmail (Work) · as of 10:40". It is said quietly, under the time, because it
+ * qualifies the answer without being part of it.
+ */
+const readingIn = (message: ConversationMessage) =>
+  access.readingOf(
+    toolsOf(message).flatMap((tool) => (tool.state === 'output-available' ? [tool] : [])),
+    (moment) => when(moment, Date.now()),
+  )
+
+/**
+ * What stands under a finished reply: when it was said, and the control that copies it, and under
+ * them how much a partial read covered. Under the newest reply it fades in (`motion-fade`) as the
+ * words stop arriving, so the reply is seen to settle; under older ones it is simply there.
  */
 function Settled({
   message,
@@ -740,15 +826,16 @@ function Settled({
   text: string
   latest: boolean
 }) {
+  const reading = readingIn(message)
   return (
-    <div
-      className={cn(
-        'flex h-6 items-center gap-1.5 ps-10 text-meta text-ink-3',
-        latest && 'motion-fade',
+    <div className={cn('flex flex-col ps-10 text-meta text-ink-3', latest && 'motion-fade')}>
+      <div className="flex h-6 items-center gap-1.5">
+        <Stamp message={message} />
+        <CopyWords read={() => text} />
+      </div>
+      {Option.isSome(reading) && (
+        <p className="pb-1 text-pretty whitespace-pre-line tabular-nums">{reading.value}</p>
       )}
-    >
-      <Stamp message={message} />
-      <CopyWords read={() => text} />
     </div>
   )
 }

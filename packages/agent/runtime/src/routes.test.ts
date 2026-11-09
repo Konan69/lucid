@@ -13,6 +13,7 @@ import {
   PersonId,
   RuntimeSettlement,
   ThreadId,
+  SignalCue,
 } from '@vivid/contracts'
 import { Array as Arr, Deferred, Effect, Exit, Option, Schema, Scope } from 'effect'
 import { held, start, world } from '../tests/process.ts'
@@ -121,7 +122,7 @@ describe('the runtime over HTTP', () => {
         expect(model.prompt).toContain('- **deep-research** — ')
         expect(model.prompt).not.toContain(ada)
         // Main's order: the Computer's tools, the skill tools, then the product tools.
-        expect(model.tools.slice(0, 13)).toEqual([
+        expect(model.tools.slice(0, 17)).toEqual([
           'read',
           'write',
           'edit',
@@ -129,6 +130,10 @@ describe('the runtime over HTTP', () => {
           'grep',
           'glob',
           'use_desktop',
+          'start_shell',
+          'read_shell',
+          'wait_shell',
+          'stop_shell',
           'browse',
           'use_person_computer',
           'copy_signin',
@@ -340,7 +345,7 @@ describe('the runtime over HTTP', () => {
           ada,
           delivery('shared-1', 'signal-1', {
             body: 'is <this> due?',
-            attributes: { from: 'Grace "G"', turn: '4' },
+            from: 'Grace "G"',
             acting: grace,
             turn: 4,
           }),
@@ -362,9 +367,11 @@ describe('the runtime over HTTP', () => {
         const entries = yield* transcript(runtime, ada, 'shared-1')
         expect(entries.find((entry) => entry.kind === SIGNAL_ENTRY)).toMatchObject({
           data: {
-            type: 'message',
-            attributes: { from: 'Grace "G"', turn: '4' },
-            body: 'is <this> due?',
+            envelope: {
+              from: 'Grace "G"',
+              turn: 4,
+              cue: SignalCue.cases.Message.make({ body: 'is <this> due?' }),
+            },
           },
         })
         // Exactly one product client was built after the model asked for the tool, and it was

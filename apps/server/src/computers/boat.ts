@@ -12,6 +12,7 @@ import {
   type MachineKey,
   type MachineOperations,
 } from './machine.ts'
+import { machineHealth } from './boat/health.ts'
 import { bindings } from './boat/bindings.ts'
 import type { CommandFrame, ProviderId } from './boat/protocol.ts'
 import { transport, type Transport } from './boat/transport.ts'
@@ -19,6 +20,7 @@ import type { Driver } from './boat/driver.ts'
 import { guestDriver } from './boat/guest.ts'
 import { desktopStep, look } from './boat/desktop.ts'
 import { browse, signInTarget } from './boat/browser.ts'
+import { clearFields, fillFields, findFields } from './boat/fields.ts'
 import { injectSignInCookies } from './signins/inject.ts'
 import { lifecycle } from './boat/lifecycle.ts'
 import { machineLinks } from './boat/shell.ts'
@@ -53,6 +55,31 @@ const makeCookieCopy = (input: {
     },
     (effect, request) => input.permits.withPermit(request.key, effect),
   )
+
+/** A handoff's fields share the browser and its permit with every other browser step. */
+const handoffFields = (
+  native: (key: MachineKey) => Effect.Effect<Driver, MachineFailure>,
+  permits: KeyedPermits<MachineKey>,
+): Pick<MachineOperations, 'findFields' | 'fillFields' | 'clearFields'> => ({
+  findFields: Effect.fn('Machine.boat.findFields')(
+    function* (input) {
+      return yield* findFields(yield* native(input.key), input.labels)
+    },
+    (effect, input) => permits.withPermit(input.key, effect),
+  ),
+  fillFields: Effect.fn('Machine.boat.fillFields')(
+    function* (input) {
+      return yield* fillFields(yield* native(input.key), input.page, input.entries)
+    },
+    (effect, input) => permits.withPermit(input.key, effect),
+  ),
+  clearFields: Effect.fn('Machine.boat.clearFields')(
+    function* (input) {
+      return yield* clearFields(yield* native(input.key), input.page, input.labels)
+    },
+    (effect, input) => permits.withPermit(input.key, effect),
+  ),
+})
 
 /** What Boat says about a streamed command, as the machine boundary tells it. Standard error is
  * dropped: it is never part of what a caller reads. */
@@ -142,6 +169,7 @@ export const boatMachineLayer = Layer.effect(
     })
     const shell = connections.operations(accepted)
     return Machine.of({
+      ...machineHealth({ api, accepted, shell, connections, drivers, forget }),
       copySignIn: makeCookieCopy({
         native: nativeDriver,
         operations: connections.operations(accepted),
@@ -228,6 +256,7 @@ export const boatMachineLayer = Layer.effect(
         },
         (effect, input) => permits.withPermit(input.key, effect),
       ),
+      ...handoffFields(nativeDriver, permits),
     })
   }),
 )

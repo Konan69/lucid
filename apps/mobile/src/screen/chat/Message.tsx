@@ -5,12 +5,12 @@ import {
   type ThreadDetail,
   type ThreadId,
 } from '@vivid/contracts'
-import { offeredReplies } from '@vivid/state'
+import { access, offeredReplies } from '@vivid/state'
 import { Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { View } from 'react-native'
 import Animated from 'react-native-reanimated'
-import { AlarmClock } from 'lucide-react-native'
+import { AlarmClock, Eye } from 'lucide-react-native'
 import type { Say } from '../../data/delivery'
 import { useNow } from '../../data/foreground'
 import {
@@ -26,7 +26,7 @@ import {
 import { when } from '../../data/when'
 import { useTheme } from '../../theme'
 import { ANSWERED, SAID } from '../../ui/motion/morph'
-import { EDGE, Face, Label, radius } from '../../ui/ui'
+import { EDGE, Face, Label, MONO, radius } from '../../ui/ui'
 import { Cards } from './Cards'
 import { Replies } from './Replies'
 import { Said, Voice } from './Said'
@@ -105,6 +105,7 @@ export function Message({
       </Arriving>
     ),
     Wake: ({ reason, name }) => <Wake reason={reason} name={name} />,
+    Saw: ({ name }) => <Saw name={name} text={textOf(message)} />,
     Notice: ({ failed }) => <Aside text={textOf(message)} failed={failed} />,
     Silent: () => null,
   })
@@ -144,6 +145,42 @@ function Wake({ reason, name }: { reason: keyof typeof WAKE; name: Option.Option
   )
 }
 
+/**
+ * The event a Watch woke Vivid with, as Vivid saw it: a quiet line with the Watch's name, then the
+ * event whole, in the fixed-width face because it is the Integration's own data, selectable so it
+ * can be copied. The Feed card's Thread opens here, so this is where a Person reads what caused it.
+ */
+function Saw({ name, text }: { name: Option.Option<string>; text: string }) {
+  const { colors: c } = useTheme()
+  return (
+    <View style={{ gap: 8 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Eye size={14} strokeWidth={1.7} color={c['foreground-secondary']} />
+        <Label size="caption" tone="ink-2" style={{ flexShrink: 1 }}>
+          {Option.match(name, {
+            onNone: () => 'What Vivid saw',
+            onSome: (named) => `What Vivid saw · ${named}`,
+          })}
+        </Label>
+      </View>
+      <View
+        style={{
+          paddingHorizontal: 14,
+          paddingVertical: 10,
+          borderRadius: radius.control,
+          borderWidth: EDGE,
+          borderColor: c.border,
+          backgroundColor: c.subtle,
+        }}
+      >
+        <Label size="label" tone="ink-2" selectable style={{ fontFamily: MONO }}>
+          {text}
+        </Label>
+      </View>
+    </View>
+  )
+}
+
 /** Something the runtime said with nobody behind it, such as a reply that could not be finished. */
 function Aside({ text, failed }: { text: string; failed: boolean }) {
   const { colors: c } = useTheme()
@@ -175,6 +212,28 @@ function Stamp({ moment }: { moment: number }) {
   return (
     <Label size="micro" tone="foreground-tertiary" style={{ marginTop: 2 }}>
       {when(moment, now)}
+    </Label>
+  )
+}
+
+/**
+ * How much the reply's reads took, when one of them was partial (`access.readingOf`, shared with
+ * the web): "Read 25 of 1,284 messages from Gmail (Work) · as of 10:40". Said quietly under the
+ * time, because it qualifies the answer without being part of it.
+ */
+function Reading({ message, making }: { message: ConversationMessage; making: boolean }) {
+  const now = useNow()
+  const reading = access.readingOf(
+    message.parts.flatMap((part) =>
+      part.type === 'dynamic-tool' && part.state === 'output-available' ? [part] : [],
+    ),
+    (moment) => when(moment, now),
+  )
+  // Said once the reply is whole: a read still arriving says nothing yet.
+  if (making || isStreaming(message) || Option.isNone(reading)) return null
+  return (
+    <Label size="micro" tone="foreground-tertiary" style={{ fontVariant: ['tabular-nums'] }}>
+      {reading.value}
     </Label>
   )
 }
@@ -258,6 +317,7 @@ function FromVivid({
             }),
           )}
           {Option.isSome(moment) && <Stamp moment={moment.value} />}
+          <Reading message={message} making={making} />
         </View>
       </View>
       {offered.length > 0 && <Replies replies={offered} onSay={onContinue} />}

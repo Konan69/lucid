@@ -1,7 +1,17 @@
 import * as NodeCrypto from 'node:crypto'
 import { RuntimeSubmissionId } from '@vivid/contracts'
 import { describe, expect, layer } from '@effect/vitest'
-import { Person, PersonId, RunId, RunState, SessionId, ThreadId, Workspace } from '@vivid/contracts'
+import {
+  Person,
+  PersonId,
+  RunDeliveryReceipt,
+  RunId,
+  RunOutcome,
+  RunState,
+  SessionId,
+  ThreadId,
+  Workspace,
+} from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
 import { Array as Arr, Effect, Layer, Option, Order, Result } from 'effect'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
@@ -135,6 +145,7 @@ layer(testLayer)((it) => {
             workspace: Workspace.cases.Personal.make({}),
             by: 'vivid' as const,
             threadId: Option.some(threadId),
+            helper: Option.none(),
           }
           const host = RunId.make(NodeCrypto.randomUUID())
           const joined = RunId.make(NodeCrypto.randomUUID())
@@ -166,9 +177,9 @@ layer(testLayer)((it) => {
           const refusal = yield* actionOrigin(actor).pipe(Effect.flip)
           expect(refusal._tag).toBe('NotFound')
           expect(refusal.message).toBe('Action is acting for another Person')
-          yield* store.end(host, RunEnding.cases.Completed.make({}))
-          yield* store.end(joined, RunEnding.cases.Completed.make({}))
-          yield* store.end(foreign, RunEnding.cases.Completed.make({}))
+          yield* store.end(host, RunEnding.cases.Completed.make({ responseId: host }))
+          yield* store.end(joined, RunEnding.cases.Completed.make({ responseId: joined }))
+          yield* store.end(foreign, RunEnding.cases.Completed.make({ responseId: foreign }))
           expect(yield* actionOrigin(actor)).toEqual(
             ActionOrigin.cases.RuntimeThread.make({ threadId }),
           )
@@ -232,6 +243,63 @@ layer(testLayer)((it) => {
             .GetDeliveryScope({ threadId, turn })
             .pipe(Effect.provideService(AuthContext, AuthState.Runtime()))
           expect(scope).toEqual({ acting: personId })
+        }).pipe(Effect.scoped),
+    )
+  })
+
+  /** The receipt is the intended Person's own acknowledgement of the exact response, once. */
+  describe.skipIf(!testDatabaseConfigured)('Run delivery receipts', () => {
+    it.effect(
+      'records the acting Person’s acknowledgement once and refuses anyone who cannot see the Thread',
+      () =>
+        Effect.gen(function* () {
+          const { personId, threadId } = yield* fixture()
+          const stranger = yield* fixture()
+          const store = yield* RunStore
+          const id = RunId.make(NodeCrypto.randomUUID())
+          yield* reserve({ id, personId, threadId, origin: StoredRunOrigin.cases.Message.make({}) })
+          yield* store.admitted({ runId: id, submissionId: RuntimeSubmissionId.make(3) })
+          const responseId = RunId.make(`response_${personId}_3`)
+          const outcome = Effect.map(store.list(threadId), (listed) =>
+            listed.map((run) => run.outcome),
+          )
+          expect(yield* outcome).toEqual([
+            RunOutcome.cases.Accepted.make({ acceptedAt: 0, submissionId: '3' }),
+          ])
+          // A working Run has no final response yet.
+          const early = yield* store
+            .acknowledge({ runId: id, responseId, personId })
+            .pipe(Effect.flip)
+          expect(early._tag).toBe('NotFound')
+          yield* store.end(id, RunEnding.cases.Completed.make({ responseId }))
+          const completed = RunOutcome.cases.Completed.make({ completedAt: 0, responseId })
+          expect(yield* outcome).toEqual([completed])
+          const outsider = yield* store
+            .acknowledge({ runId: id, responseId, personId: stranger.personId })
+            .pipe(Effect.flip)
+          expect(outsider._tag).toBe('NotFound')
+          const otherResponse = yield* store
+            .acknowledge({ runId: id, responseId: RunId.make('response_other'), personId })
+            .pipe(Effect.flip)
+          expect(otherResponse._tag).toBe('NotFound')
+          expect(yield* outcome).toEqual([completed])
+          expect(yield* store.acknowledge({ runId: id, responseId, personId })).toEqual(
+            Option.some(threadId),
+          )
+          const delivered = RunOutcome.cases.Delivered.make({
+            completedAt: 0,
+            responseId,
+            receipt: RunDeliveryReceipt.cases.Thread.make({
+              person: { id: personId, name: 'Run test', image: null },
+              acknowledgedAt: 0,
+              responseId,
+            }),
+          })
+          expect(yield* outcome).toEqual([delivered])
+          expect(yield* store.acknowledge({ runId: id, responseId, personId })).toEqual(
+            Option.none(),
+          )
+          expect(yield* outcome).toEqual([delivered])
         }).pipe(Effect.scoped),
     )
   })

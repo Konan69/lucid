@@ -1,11 +1,20 @@
 import { defineTool } from './tool.ts'
 import * as Arr from 'effect/Array'
 import * as Effect from 'effect/Effect'
-import { Tool, INPUT_QUESTIONS_MOST } from '@vivid/contracts'
+import {
+  HANDOFF_FIELDS_MOST,
+  HandoffFieldPurpose,
+  HandoffFormKind,
+  HandoffKind,
+  PrepareHandoffRequest,
+  Tool,
+  INPUT_QUESTIONS_MOST,
+} from '@vivid/contracts'
 import * as v from 'valibot'
 import { Scope, type RunTool } from './scope.ts'
 import * as views from './views.ts'
 import { text } from './inputs.ts'
+import * as Option from 'effect/Option'
 
 /** Each question is self-contained; several picks are allowed only when the choices truly coexist. */
 const question = v.object({
@@ -22,17 +31,56 @@ const question = v.object({
       'Zero to six choices; use an empty list and allowsOwnAnswer true for written words.',
     ),
   ),
-  several: v.pipe(
-    v.boolean(),
-    v.description(
-      'True only when more than one option can truly apply together; false for alternatives.',
+  several: v.optional(
+    v.pipe(
+      v.boolean(),
+      v.description(
+        'True only when more than one option can truly apply together; omit for alternatives.',
+      ),
     ),
+    false,
   ),
   allowsOwnAnswer: v.pipe(
     v.boolean(),
     v.description('Whether the person may write their own answer instead of choosing options.'),
   ),
 })
+
+/** One field Vivid read on the page: its label exactly as the page outline names it. */
+const handoffField = v.object({
+  label: text('The field’s label exactly as the page outline shows it, such as "Password".', 200),
+  purpose: v.pipe(
+    v.picklist(HandoffFieldPurpose.literals),
+    v.description('What the field holds, so the person gets the right keyboard.'),
+  ),
+})
+
+const isFormKind = (kind: HandoffKind): kind is HandoffFormKind =>
+  HandoffFormKind.literals.some((form) => form === kind)
+
+/**
+ * The step as the server takes it: fields make a form, none a step on the live screen. A CAPTCHA
+ * or taking control has nothing to type into, so it is refused with fields rather than guessed.
+ */
+const handoffRequest = (data: {
+  readonly kind: HandoffKind
+  readonly summary: string
+  readonly fields: ReadonlyArray<{ readonly label: string; readonly purpose: HandoffFieldPurpose }>
+}): Option.Option<PrepareHandoffRequest> => {
+  const [first, ...rest] = data.fields
+  if (first === undefined)
+    return Option.some(
+      PrepareHandoffRequest.cases.Screen.make({ kind: data.kind, summary: data.summary }),
+    )
+  if (!isFormKind(data.kind)) return Option.none()
+  return Option.some(
+    PrepareHandoffRequest.cases.Form.make({
+      kind: data.kind,
+      summary: data.summary,
+      fields: [first, ...rest],
+    }),
+  )
+}
 
 /**
  * Asking does not stop Vivid. One durable Input request carries everything Vivid needs together;
@@ -87,6 +135,46 @@ export function askTools(runTool: RunTool) {
             return { output: views.inputRequest(request) }
           }),
           { signal, tool: 'ask_person' },
+        )
+      },
+    }),
+    /**
+     * Hands the Person the one step on the Computer only they can do: a sign-in, a code, a
+     * payment, a CAPTCHA, taking control. Like a question it does not stop Vivid: the server
+     * records it and answers at once, the Person fills it on a secure form and finishes on the
+     * live screen, and their finishing arrives later as a new delivery naming each field's result
+     * and never a value (`apps/server/src/inputs/handoff.ts`). Grok Bot's secure handoff is the
+     * reference (`~/ref/system-prompts-mined/mined/grok-bot-skills.md`, M10).
+     */
+    defineTool({
+      name: Tool.request_handoff,
+      description:
+        'Hand the person the one step on your computer that only they can do, instead of asking for it in chat: a sign-in, a one-time code, a card payment, a CAPTCHA, or taking control. Open the page on your computer and read it first. For a form, give each field’s label exactly as the page outline names it; the person types the values on a secure form and you never see them. With no fields the person does the step on the live screen. A CAPTCHA, a passkey or a bank check is always a screen step. Fields that cannot be found are refused by label: hand the step over on the screen instead. This returns at once; your computer is the person’s until they finish, so do nothing on it until then, and end your turn in one short line when nothing else is left. When they finish you are told, with one result per field and never the values; look at the page before going on, because a filled field is not a site’s answer.',
+      input: v.object({
+        kind: v.pipe(
+          v.picklist(HandoffKind.literals),
+          v.description('SignIn, Code, Payment, Captcha or TakeControl.'),
+        ),
+        summary: text(
+          'One sentence the person will read: the step and why, such as "Sign in to Example so I can download your invoices".',
+          400,
+        ),
+        fields: v.pipe(
+          v.array(handoffField),
+          v.maxLength(HANDOFF_FIELDS_MOST),
+          v.description('The fields to fill, in page order; empty for a step on the screen.'),
+        ),
+      }),
+      /** Pi owns decoding and cancellation; this boundary runs the attributed RPC Effect. */
+      run({ data, signal }) {
+        return runTool(
+          Effect.gen(function* () {
+            const request = handoffRequest(data)
+            if (Option.isNone(request)) return { output: views.handoffWithoutFields(data.kind) }
+            const { client } = yield* Scope
+            return { output: views.handoff(yield* client.PrepareHandoff(request.value)) }
+          }),
+          { signal, tool: 'request_handoff' },
         )
       },
     }),

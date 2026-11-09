@@ -3,8 +3,11 @@ import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Struct from 'effect/Struct'
 import {
+  DatabaseFailure,
   Notification,
+  NotificationOpens,
   NotificationListResponse,
   NotificationReadResponse,
   type PersonId,
@@ -16,8 +19,28 @@ import { Database, decodeStored, returned } from '../database/client.ts'
 import { announce, Topic } from '../live/changes.ts'
 import { notifications } from '../notifications/tables.ts'
 import { readableThread } from '../threads/access.ts'
+import { opensAt, type ThreadPlace } from '../threads/place.ts'
+import { threads } from '../threads/tables.ts'
 
-const decodeNotification = decodeStored(Notification, 'notification')
+/** A stored notice before where it opens is worked out from its Thread (`opensAt`). */
+const decodeNotification = decodeStored(
+  Notification.mapFields(Struct.omit(['opens'])),
+  'notification',
+)
+
+/**
+ * Where a listed notice opens. `shownTo` admits a notice about a Thread only while that Thread is
+ * readable, so its place is there; a missing one is a persistence fault, not a notice to guess at.
+ */
+const opensOf = Effect.fn('NotificationStore.opensOf')(function* (
+  threadId: ThreadId | null,
+  place: ThreadPlace | null,
+) {
+  if (threadId === null) return NotificationOpens.cases.Notifications.make({})
+  if (place === null)
+    return yield* new DatabaseFailure({ message: 'A listed notice has no Thread.' })
+  return opensAt({ id: threadId, place })
+})
 
 /**
  * A recipient's notice in this workspace is shown only while its quoted Thread is readable now.
@@ -43,14 +66,19 @@ const makeStore = (database: Database['Service']) => {
   const list = Effect.fn('NotificationStore.list')(function* (actor: Actor) {
     const rows = yield* database.run(
       database
-        .select()
+        .select({ notice: notifications, place: threads.place })
         .from(notifications)
+        .leftJoin(threads, eq(threads.id, notifications.conversationId))
         .where(shownTo(actor))
         .orderBy(desc(notifications.createdAt), desc(notifications.id))
         .limit(50),
     )
-    const views = yield* Effect.forEach(rows, (row) =>
-      decodeNotification({ ...row, threadId: row.conversationId }),
+    const views = yield* Effect.forEach(rows, ({ notice, place }) =>
+      Effect.gen(function* () {
+        const fields = yield* decodeNotification({ ...notice, threadId: notice.conversationId })
+        const opens = yield* opensOf(fields.threadId, place)
+        return Notification.make({ ...fields, opens })
+      }),
     )
     return NotificationListResponse.make({
       notifications: views,

@@ -25,6 +25,7 @@ import {
 } from '@vivid/contracts'
 import memoryMigration from './memory/migrations/20261028123228_memory/migration.sql'
 import searchMigration from './memory/migrations/20261028123228_memory-search/migration.sql'
+import provenanceMigration from './memory/migrations/20261029131056_memory-provenance/migration.sql'
 import { Config, ConfigProvider, Deferred, Effect, Exit, Option, Schema } from 'effect'
 import { skills } from './skills.ts'
 
@@ -152,6 +153,7 @@ export class Person extends DurableObject<CellState, Environment> {
       openMemory(new DurableObjectSqliteDatabase(this.#state.storage), [
         memoryMigration,
         searchMigration,
+        provenanceMigration,
       ]),
     )
     const bound = Memory.of({
@@ -469,7 +471,9 @@ export default {
     const authorization = request.headers.get('authorization')
     if (!isAuthorized(authorization === null ? '' : authorization, token))
       return Response.json({ error: 'Unauthorized' }, { status: 401 })
-    const match = /^\/persons\/([^/]+)\/(?:threads\/|history$|memory(?:$|\/))/u.exec(url.pathname)
+    const match = /^\/persons\/([^/]+)\/(?:threads\/|history$|search$|memory(?:$|\/))/u.exec(
+      url.pathname,
+    )
     const person = personOption(match === null ? undefined : match[1])
     if (Option.isNone(person)) return Response.json({ error: 'InvalidRequest' }, { status: 400 })
     return environment.PERSONS.getByName(person.value).fetch(request)

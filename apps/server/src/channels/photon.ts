@@ -216,6 +216,7 @@ const makePhoton = Effect.fn('Channels.makePhoton')(function* (config: PhotonCre
   })
   return ChannelProvider.of({
     channels: ['iMessage'],
+    codeAddress: () => Option.none(),
     enrol: (channel, address) => enrolment.enrol(channel, address),
     unenrol: (channel, id) => enrolment.unenrol(channel, id),
     inbound: Stream.unwrap(connect()),

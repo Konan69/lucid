@@ -92,6 +92,7 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* (
       workspace: Workspace.cases.Personal.make({}),
       by: 'person',
       threadId: Option.none(),
+      helper: Option.none(),
     },
     { id: threadId, title, projectId: null },
   )
@@ -146,6 +147,8 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* (
       ),
     settled: () => Deferred.await(settlement),
     stop: () => Effect.succeed(false),
+    child: () => Effect.die('Title tests start no helpers'),
+    stopChild: () => Effect.succeed(false),
     watch: () => Stream.never,
     read: () =>
       Ref.get(messages).pipe(

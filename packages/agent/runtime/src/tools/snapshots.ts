@@ -1,4 +1,11 @@
-import { PersonName, SkillSummary, VividName, type PersonId, type ThreadId } from '@vivid/contracts'
+import {
+  CapabilityReading,
+  PersonName,
+  SkillSummary,
+  VividName,
+  type PersonId,
+  type ThreadId,
+} from '@vivid/contracts'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import type { Acting } from '../client.ts'
@@ -39,6 +46,7 @@ export const Remembered = Schema.TaggedUnion({
 export type Remembered = typeof Remembered.Type
 
 export const VividContext = Schema.Struct({
+  capabilities: CapabilityReading,
   memory: Remembered,
   skills: Schema.Array(ContextSkill),
   timezone: Schema.String,
@@ -50,13 +58,6 @@ export const VividContext = Schema.Struct({
    * the same clock. `None` only for the empty context of a message with nobody behind it.
    */
   asOf: Schema.Option(Schema.Finite),
-  /**
-   * The services this Person has connected and that are ready to use, by the name people know
-   * them ("Gmail"). Names only: accounts and tools are still resolved through find_tools. Without
-   * this the model cannot know a named service is connected and reaches for a page or a browser
-   * first (seen on production, 4 October 2026: seven wasted calls before find_tools).
-   */
-  integrations: Schema.Array(Schema.String),
   /** What Vivid is called where this Person is working; "Vivid" until someone renames it. */
   name: VividName,
   /** The acting Person's plain name, absent when no valid name could be read through Me. */

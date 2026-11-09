@@ -14,6 +14,13 @@ export const entries = sqliteTable(
     revision: integer().notNull(),
     updatedAt: integer('updated_at').notNull(),
     authority: text().notNull(),
+    /** The encoded `MemoryScope`; an entry made before scope existed applies everywhere. */
+    scope: text().notNull().default('{"_tag":"Personal"}'),
+    /**
+     * The encoded `MemoryCitations`. The migration gives an entry made before citations existed
+     * one `Run` citation of its recorded source, read from its authority.
+     */
+    citations: text().notNull().default('[]'),
   },
   (table) => [unique('memory_entries_address').on(table.layer, table.file)],
 )

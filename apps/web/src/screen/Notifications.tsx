@@ -1,5 +1,6 @@
-import type { Notification, NotificationId } from '@vivid/contracts'
+import type { Approval, Notification, NotificationId } from '@vivid/contracts'
 import {
+  allowing,
   everyNoticeRead,
   invitationIn,
   noticeFace,
@@ -9,14 +10,16 @@ import {
   type NoticeFace,
 } from '@vivid/state'
 import { Option } from 'effect'
-import { Bell, Check, Hand, Share2, UserPlus } from 'lucide-react'
+import { Bell, Check, Hand, Newspaper, Share2, UserPlus } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
+import { useApprovalDecision } from '../data/approvals'
 import { change, live, LiveState, useLive, useLiveValue } from '../data/live'
 import { router } from '../router'
 import { Button, IconButton } from '../ui/button'
 import { cn } from '../ui/cn'
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
 import { Emblem, type Hue } from './Emblem'
+import { Decide } from './feed/Decide'
 import { PRESS } from './motion'
 
 const clock = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
@@ -48,13 +51,14 @@ function ago(at: number, now: number): string {
 /**
  * The mark each kind of notice leads with, so the panel can be read by colour before a word of
  * it is: green for done, amber-orange for "this needs you", blue for something shared, violet
- * for an invitation. A new kind of notice fails to compile here.
+ * for an invitation, cyan for something on the Feed. A new kind of notice fails to compile here.
  */
 const KIND = {
   finished: { hue: 'green', icon: <Check /> },
   'needs-you': { hue: 'orange', icon: <Hand /> },
   shared: { hue: 'blue', icon: <Share2 /> },
   invited: { hue: 'violet', icon: <UserPlus /> },
+  posted: { hue: 'cyan', icon: <Newspaper /> },
 } as const satisfies Record<Notification['kind'], { hue: Hue; icon: ReactNode }>
 
 /**
@@ -156,6 +160,23 @@ function Panel({ onClose }: { onClose: () => void }) {
     Option.match(threads, { onNone: () => [], onSome: (list) => list.threads }),
   )
   const unread = notices.filter((notice) => notice.readAt === null).length
+  // What waits on the Person's yes, decided here (#129). One decided here never waits again, so it
+  // leaves at once rather than when the inbox next answers.
+  const inbox = useLiveValue(live.inbox)
+  const deciding = useApprovalDecision()
+  const asks = Option.match(inbox, {
+    onNone: () => [],
+    onSome: (held) => held.approvals.filter((approval) => !allowing.sentOn(deciding, approval.id)),
+  })
+  const titleOf = (approval: Approval) =>
+    Option.match(threads, {
+      onNone: () => Option.none<string>(),
+      onSome: (list) =>
+        Option.fromUndefinedOr(list.threads.find((thread) => thread.id === approval.threadId)).pipe(
+          Option.map((thread) => thread.title.trim()),
+          Option.filter((title) => title !== ''),
+        ),
+    })
 
   return (
     <>
@@ -173,7 +194,7 @@ function Panel({ onClose }: { onClose: () => void }) {
           </Button>
         )}
       </header>
-      {rows.length === 0 ? (
+      {rows.length === 0 && asks.length === 0 ? (
         <div className="flex flex-col items-center gap-3 px-6 py-10 text-center">
           <Emblem hue="gray" size={36}>
             <Bell />
@@ -183,24 +204,78 @@ function Panel({ onClose }: { onClose: () => void }) {
           </p>
         </div>
       ) : (
-        <ul className="min-h-0 flex-1 overflow-y-auto p-1">
-          {rows.map((row) => {
-            const face = noticeFace(row)
-            return (
-              <li key={face.key}>
-                <Row
-                  face={face}
-                  now={opened}
-                  onOpen={() => {
-                    onClose()
-                    visit(row)
-                  }}
-                />
-              </li>
-            )
-          })}
-        </ul>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {asks.length > 0 && (
+            <section aria-labelledby="waiting-on-you" className="px-3 pt-2.5 pb-1 hairline-b">
+              <h3 id="waiting-on-you" className="text-meta font-title text-ink-3">
+                Waiting on you
+              </h3>
+              <ul className="flex flex-col">
+                {asks.map((approval) => (
+                  <li key={approval.id} className="py-2.5 not-first:hairline-t">
+                    <Asked
+                      approval={approval}
+                      title={titleOf(approval)}
+                      onOpen={() => {
+                        onClose()
+                        void router.navigate({ to: '/t/$id', params: { id: approval.threadId } })
+                      }}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          <ul className="p-1">
+            {rows.map((row) => {
+              const face = noticeFace(row)
+              return (
+                <li key={face.key}>
+                  <Row
+                    face={face}
+                    now={opened}
+                    onOpen={() => {
+                      onClose()
+                      visit(row)
+                    }}
+                  />
+                </li>
+              )
+            })}
+          </ul>
+        </div>
       )}
+    </>
+  )
+}
+
+/**
+ * One Approval waiting on the Person, decided in the panel: where it was asked (its Thread's
+ * title, which opens the Thread), then the Approval itself (`Decide`), a send as its draft.
+ */
+function Asked({
+  approval,
+  title,
+  onOpen,
+}: {
+  approval: Approval
+  /** The Thread's title; absent until the Thread list answers, or while it has none. */
+  title: Option.Option<string>
+  onOpen: () => void
+}) {
+  return (
+    <>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex max-w-full cursor-pointer items-center gap-1.5 rounded-row text-meta font-meta text-ink-3 hover:text-ink-2 hover:underline"
+      >
+        <Hand aria-hidden className="size-3.5 shrink-0 text-attention" />
+        <span className="min-w-0 truncate">
+          <bdi>{Option.getOrElse(title, () => 'Open its Thread')}</bdi>
+        </span>
+      </button>
+      <Decide approval={approval} room="panel" />
     </>
   )
 }

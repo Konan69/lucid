@@ -6,7 +6,7 @@ import { boot } from './process.mjs'
 import { recoverPrevious, recover, dependenciesCleanup } from './recovery.mjs'
 import { doctor } from './doctor.mjs'
 import { control } from './socket.mjs'
-import { host, provider, selection } from './settings.mjs'
+import { host, provider, selection, boatKey } from './settings.mjs'
 import * as NodeChildProcess from 'node:child_process'
 import {
   root,
@@ -42,6 +42,7 @@ async function launch() {
   await recoverPrevious(cache)
   await capacity()
   const modelConfig = await provider()
+  const boat = await boatKey()
   const snapshot = await checkout()
   const head = await command(['git', 'rev-parse', 'HEAD'])
   const branch = await command(['git', 'branch', '--show-current'])
@@ -77,6 +78,9 @@ async function launch() {
     model: modelConfig.model,
     modelKind: modelConfig.model.startsWith('rehearsal/') ? 'rehearsal' : 'real',
     keySource: modelConfig.source,
+    // With a Boat key the server creates the synthetic Person's own Computer on first need;
+    // cleanup deletes exactly the machines the disposable database bound (computers.mjs).
+    computer: boat === null ? 'unconfigured' : 'disposable',
     hostname: NodeOS.hostname(),
     boot,
     executorExporter: 'vivid-verify-exporter-' + run,
@@ -101,9 +105,23 @@ async function launch() {
   let child
   // A failed spawn, identity capture or readiness step must not retain the provider handoff.
   try {
-    await NodeFSP.writeFile(scratch + '/provider.json', JSON.stringify(modelConfig.env), {
+    const handoff =
+      boat === null ? modelConfig.env : { ...modelConfig.env, VIVID_BOAT_API_KEY: boat }
+    await NodeFSP.writeFile(scratch + '/provider.json', JSON.stringify(handoff), {
       mode: 0o600,
     })
+    const env = {
+      PATH: process.env.PATH,
+      HOME: scratch,
+      COREPACK_HOME:
+        process.env.COREPACK_HOME ?? NodePath.join(NodeOS.homedir(), '.cache/node/corepack'),
+      COREPACK_ENABLE_NETWORK: '0',
+    }
+    // Only the path crosses; the supervisor reads the bot token into the server env.
+    if (process.env.VIVID_VERIFY_DISCORD_TOKEN_FILE)
+      env.VIVID_VERIFY_DISCORD_TOKEN_FILE = NodePath.resolve(
+        process.env.VIVID_VERIFY_DISCORD_TOKEN_FILE,
+      )
     child = NodeChildProcess.spawn(
       process.execPath,
       ['--import', loader, skill + '/scripts/supervisor.mjs', evidence + '/state.json'],
@@ -111,14 +129,7 @@ async function launch() {
         cwd: root,
         detached: true,
         stdio: ['ignore', log.fd, log.fd, 'ipc'],
-        env: {
-          PATH: process.env.PATH,
-          HOME: scratch,
-          COREPACK_HOME:
-            process.env.COREPACK_HOME ?? NodePath.join(NodeOS.homedir(), '.cache/node/corepack'),
-          COREPACK_ENABLE_NETWORK: '0',
-          VIVID_VERIFY_WORLD: process.env.VIVID_VERIFY_WORLD,
-        },
+        env: { ...env, VIVID_VERIFY_WORLD: process.env.VIVID_VERIFY_WORLD },
       },
     )
     state.processes.supervisor = await identity(child.pid)
@@ -168,7 +179,7 @@ try {
     )
   } else if (action === 'help')
     console.log(
-      'verify launch | apk | doctor | behaviour <run> [--trials N] [--scenarios file] | cell state|list|start|stop|restart|move|owner-loss|evict [runtime|runtime-peer] | feature all|first|reload|tool|question|approve|deny|changed|stop|picture|code|document|watch|library|feed|devices|discord|github|learning|name | browser <feature> | desktop | phone all|thread|name|send|tool|replies|question|approve|deny|stop|picture|document|memory|settings-memory|learning|feed|owed|move | android provision|stop|status <devbox> | android attach|status pc | cleanup | sign-in | create-thread | chat | history | stop\nOptional pi-… run ID selects retained run manifest. Evidence: .cache/verify/pi-…/',
+      'verify launch | apk | doctor | behaviour <run> [--trials N] [--scenarios file] | cell state|list|start|stop|restart|move|owner-loss|evict [runtime|runtime-peer] | feature all|first|reload|tool|question|approve|deny|changed|outcome|stop|picture|code|document|watch|library|feed|projects|devices|discord|texting-discord|github|learning|name|helpers|helperstop | browser <feature> | desktop | phone all|thread|name|send|tool|replies|question|approve|deny|stop|picture|document|memory|settings-memory|learning|feed|owed|move | android provision|stop|status <devbox> | android attach|status pc | cleanup | sign-in | create-thread | chat | history | stop\nOptional pi-… run ID selects retained run manifest. Evidence: .cache/verify/pi-…/',
     )
   else {
     const state = await selected()

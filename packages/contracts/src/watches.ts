@@ -1,4 +1,5 @@
 import { Schema } from 'effect'
+import { ConnectionId, RunId, OwedId, ThreadId, ProjectId, PersonId } from './identity.js'
 
 /**
  * Watches: something that happens in an Integration wakes Vivid.
@@ -45,6 +46,94 @@ export const WatchInstruction = Schema.String.check(
 export const WatchStopReason = Schema.Literals(['removed', 'refused', 'changed'])
 export type WatchStopReason = typeof WatchStopReason.Type
 
+/** Continuous work ends only on cancellation; Until needs a real read proving this condition. */
+export const WatchCondition = Schema.TaggedUnion({
+  Continuous: {},
+  Until: { condition: Schema.NonEmptyString },
+})
+export type WatchCondition = typeof WatchCondition.Type
+
+/** One timer operation is persisted before dispatch and reused after an uncertain call. */
+export const TimerOperationKey = Schema.NonEmptyString.pipe(Schema.brand('TimerOperationKey'))
+export type TimerOperationKey = typeof TimerOperationKey.Type
+
+/** Project is a typed extension point, awaiting its owning unit's actual state model. */
+export const CheckinFocus = Schema.TaggedUnion({
+  OpenWork: {},
+  Owed: { owedId: OwedId },
+  Thread: { threadId: ThreadId },
+  Project: { projectId: ProjectId },
+})
+export type CheckinFocus = typeof CheckinFocus.Type
+/** No public command can schedule a Project check-in before its state is available. */
+export const AvailableCheckinFocus = Schema.Union([
+  CheckinFocus.cases.OpenWork,
+  CheckinFocus.cases.Owed,
+  CheckinFocus.cases.Thread,
+]).pipe(Schema.toTaggedUnion('_tag'))
+
+/** The timer Integration owns execution and recurrence; this records who chose the check. */
+export const CheckinTiming = Schema.TaggedUnion({
+  Chosen: { nextAt: Schema.Finite, why: Schema.NonEmptyString },
+  Requested: { request: Schema.NonEmptyString, timezone: Schema.NonEmptyString },
+})
+export type CheckinTiming = typeof CheckinTiming.Type
+
+/** Only the actual timer call's decoded receipt may confirm its persisted operation key. */
+export const CheckinArming = Schema.TaggedUnion({
+  Awaiting: { operationKey: TimerOperationKey },
+  Confirmed: { operationKey: TimerOperationKey, nextAt: Schema.Finite },
+})
+export type CheckinArming = typeof CheckinArming.Type
+/** This is decoded from the timer Integration’s actual tool response, not supplied through a confirmation RPC. */
+export const TimerReceipt = Schema.Struct({
+  operationKey: TimerOperationKey,
+  nextAt: Schema.Finite,
+})
+export interface TimerReceipt extends Schema.Schema.Type<typeof TimerReceipt> {}
+
+const checkin = { focus: AvailableCheckinFocus, timing: CheckinTiming }
+/** Callers choose intent; the server creates arming authority. */
+export const WatchIntent = Schema.TaggedUnion({ Event: {}, Checkin: checkin })
+export type WatchIntent = typeof WatchIntent.Type
+/**
+ * What the server read of a check-in's open work when its timer fired: the open records, in names
+ * and product facts only, or the persisted evidence that the work has ended.
+ */
+export const CheckinRead = Schema.TaggedUnion({
+  Open: { context: Schema.NonEmptyString },
+  Closed: { evidence: Schema.NonEmptyString },
+})
+export type CheckinRead = typeof CheckinRead.Type
+
+/** A timer subscription and a confirmed timer are distinct persisted facts. */
+export const WatchPurpose = Schema.TaggedUnion({
+  Event: {},
+  Checkin: { ...checkin, arming: CheckinArming },
+})
+export type WatchPurpose = typeof WatchPurpose.Type
+
+/** An Event Watch with the same name is not a live check-in. */
+export class CheckinNotFound extends Schema.TaggedError<CheckinNotFound>()(
+  'CheckinNotFound',
+  {
+    personId: PersonId,
+    name: WatchName,
+    message: Schema.Literal('There is no check-in by that name.'),
+  },
+  { title: 'Check-in not found' },
+) {}
+/** The product retains Awaiting when dispatch supplied no matching scheduling receipt. */
+export class CheckinNotScheduled extends Schema.TaggedError<CheckinNotScheduled>()(
+  'CheckinNotScheduled',
+  {
+    watchId: WatchId,
+    operationKey: TimerOperationKey,
+    message: Schema.Literal('The check-in was not scheduled; nothing will wake Vivid for it yet.'),
+  },
+  { title: 'Check-in not scheduled' },
+) {}
+
 /**
  * Where a Watch is in its life. `Pending`: subscribed but not yet confirmed (Executor is verifying
  * the callback, or its answer was lost); the renewal pass finishes it with the same subscription. `Active` holds the time its subscription must be renewed before,
@@ -53,6 +142,8 @@ export type WatchStopReason = typeof WatchStopReason.Type
 export const WatchState = Schema.TaggedUnion({
   Pending: {},
   Active: { refreshBefore: Schema.Finite },
+  Paused: { at: Schema.Finite, connectionId: ConnectionId },
+  Completed: { at: Schema.Finite, runId: RunId, evidence: Schema.NonEmptyString },
   Stopped: { reason: WatchStopReason },
 })
 export type WatchState = typeof WatchState.Type
@@ -67,6 +158,8 @@ export const Watch = Schema.Struct({
   event: Schema.String,
   arguments: WatchArguments,
   instruction: WatchInstruction,
+  condition: WatchCondition,
+  purpose: WatchPurpose,
   state: WatchState,
   createdAt: Schema.Finite,
 }).annotate({ identifier: 'Watch', title: 'Watch' })
@@ -97,16 +190,60 @@ export const CreateWatchRequest = Schema.Struct({
   event: Schema.String,
   arguments: WatchArguments,
   instruction: WatchInstruction,
+  condition: WatchCondition,
+  purpose: WatchIntent,
 })
 export interface CreateWatchRequest extends Schema.Schema.Type<typeof CreateWatchRequest> {}
 
-/** Stopping a Watch by the name it was given; names are unique among a Person's live Watches. */
-export const StopWatchRequest = Schema.Struct({ name: WatchName })
-export interface StopWatchRequest extends Schema.Schema.Type<typeof StopWatchRequest> {}
+/**
+ * Ending a Watch by the name it was given; names are unique among a Person's live Watches.
+ * `Removed`: the Person or Vivid stops it. `Finished`: the Run the Watch started saw its end
+ * condition met and gives the evidence; the admitted Run, not the model, is the authority.
+ */
+export const StopWatchRequest = Schema.TaggedUnion({
+  Removed: { name: WatchName },
+  Finished: { name: WatchName, evidence: Schema.NonEmptyString },
+})
+export type StopWatchRequest = typeof StopWatchRequest.Type
+
+/** Only server admission establishes which Watch the current Run may finish. */
+export class WatchRunRequired extends Schema.TaggedError<WatchRunRequired>()(
+  'WatchRunRequired',
+  {
+    watchId: WatchId,
+    message: Schema.Literal('Only the run this watch started can finish it.'),
+  },
+  { title: 'Watch Run required' },
+) {}
+
+/** A continuous Watch has no condition whose evidence could complete it. */
+export class WatchEndConditionRequired extends Schema.TaggedError<WatchEndConditionRequired>()(
+  'WatchEndConditionRequired',
+  {
+    watchId: WatchId,
+    message: Schema.Literal(
+      'This watch has no end condition, so it keeps watching until it is stopped.',
+    ),
+  },
+  { title: 'Watch end condition required' },
+) {}
 
 export const WatchResponse = Schema.Struct({ watch: Watch })
 export interface WatchResponse extends Schema.Schema.Type<typeof WatchResponse> {}
 
-/** A Person's live Watches: Pending and Active. Stopped Watches are history and are not listed. */
+/** Pending, Active and Paused Watches; Stopped and Completed records remain terminal history. */
 export const WatchListResponse = Schema.Struct({ watches: Schema.Array(Watch) })
 export interface WatchListResponse extends Schema.Schema.Type<typeof WatchListResponse> {}
+
+/**
+ * Revise a live Watch in place, keeping its identity. `Filters`: replace its complete filters and
+ * instruction. `Timing`: choose a check-in's next time, keeping what it follows; the old timer is
+ * disarmed until a fresh receipt confirms the new one (`watches/checkins.ts`).
+ */
+export const ReviseWatchRequest = Schema.TaggedUnion({
+  Filters: { name: WatchName, arguments: WatchArguments, instruction: WatchInstruction },
+  Timing: { name: WatchName, timing: CheckinTiming },
+})
+export type ReviseWatchRequest = typeof ReviseWatchRequest.Type
+export type ReviseWatchFilters = typeof ReviseWatchRequest.cases.Filters.Type
+export type ReviseCheckinTiming = typeof ReviseWatchRequest.cases.Timing.Type

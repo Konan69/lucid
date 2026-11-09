@@ -2,13 +2,18 @@ import { NodeHttpClient, NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import {
   AuditEvent,
+  MemoryCitation,
   MemoryConflict,
+  MemoryScope,
   MemorySource,
+  MessageId,
+  ThreadId,
   MemoryAddress,
   MemoryEntry,
   MemoryFile,
   MemoryRevision,
   SavedMemory,
+  SessionId,
   Workspace,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
@@ -45,6 +50,8 @@ const fixture = Effect.fn('CellMemory.test.fixture')(function* () {
     readonly body: Schema.Json
   }>()
   const response = yield* Ref.make(HttpServerResponse.empty({ status: 204 }))
+  // A path given its own answer is answered with it; every other path with `response`.
+  const routes = yield* Ref.make(new Map<string, HttpServerResponse.HttpServerResponse>())
   const platform = yield* Layer.build(NodeHttpServer.layerTest)
   const server = yield* HttpServer.HttpServer.pipe(Effect.provideContext(platform))
   yield* server.serve(
@@ -56,7 +63,13 @@ const fixture = Effect.fn('CellMemory.test.fixture')(function* () {
         authorization: Option.fromUndefinedOr(request.headers.authorization),
         body,
       })
-      return yield* Ref.get(response)
+      return yield* Option.match(
+        Option.fromUndefinedOr((yield* Ref.get(routes)).get(request.url)),
+        {
+          onNone: () => Ref.get(response),
+          onSome: Effect.succeed,
+        },
+      )
     }),
   )
   const url = new URL(HttpServer.formatAddress(server.address))
@@ -80,9 +93,12 @@ const fixture = Effect.fn('CellMemory.test.fixture')(function* () {
   )
   return {
     personId: actor.personId,
+    person: found.value,
     database,
     requests,
     response,
+    routes,
+    services,
     context: Context.add(services, AuthContext, auth),
   }
 })
@@ -91,7 +107,7 @@ const fixture = Effect.fn('CellMemory.test.fixture')(function* () {
 describe.skipIf(!testDatabaseConfigured)('Settings cell memory', () => {
   layer(Layer.mergeAll(productLayer, testConfigLayer))((it) => {
     it.effect(
-      'addresses the acting Person, preserves conflicts and audits only a successful forget',
+      'addresses the acting Person, keeps citations on a correction and preserves conflicts',
       () =>
         Effect.gen(function* () {
           const test = yield* fixture()
@@ -102,6 +118,7 @@ describe.skipIf(!testDatabaseConfigured)('Settings cell memory', () => {
             description: 'Coffee preference',
             body: 'I prefer coffee.',
             basis: 'said',
+            scope: MemoryScope.cases.Personal.make({}),
           })
           const expected = MemoryRevision.make(1)
           const address = MemoryAddress.make({ layer: entry.layer, file: entry.file })
@@ -113,6 +130,12 @@ describe.skipIf(!testDatabaseConfigured)('Settings cell memory', () => {
               actor: test.personId,
               source: MemorySource.cases.Settings.make({ at: 0 }),
             },
+            citations: [
+              MemoryCitation.cases.ThreadMessage.make({
+                threadId: ThreadId.make('coffee-thread'),
+                messageId: MessageId.make('entry-4'),
+              }),
+            ],
           })
           const base = `/persons/${test.personId}/memory`
           yield* Effect.gen(function* () {
@@ -147,7 +170,9 @@ describe.skipIf(!testDatabaseConfigured)('Settings cell memory', () => {
               body: address,
             })
             expect(yield* memoryHandlers.CorrectMemory({ entry, expected })).toEqual(saved)
+            expect(yield* Queue.take(test.requests)).toMatchObject({ url: base + '/read' })
             const correction = yield* Queue.take(test.requests)
+            // A correction keeps what the entry rested on and adds the Person's say-so.
             expect(correction).toMatchObject({
               url: base + '/write',
               body: {
@@ -157,6 +182,12 @@ describe.skipIf(!testDatabaseConfigured)('Settings cell memory', () => {
                   actor: test.personId,
                   source: MemorySource.cases.Settings.make({ at: 0 }),
                 },
+                citations: [
+                  ...saved.citations,
+                  MemoryCitation.cases.Run.make({
+                    source: MemorySource.cases.Settings.make({ at: 0 }),
+                  }),
+                ],
               },
             })
             yield* Ref.set(
@@ -167,7 +198,7 @@ describe.skipIf(!testDatabaseConfigured)('Settings cell memory', () => {
               ),
             )
             const conflict = yield* memoryHandlers
-              .ForgetMemory({ address, expected })
+              .CorrectMemory({ entry, expected })
               .pipe(Effect.flip)
             expect(conflict._tag).toBe('Conflict')
             yield* Queue.take(test.requests)
@@ -195,38 +226,64 @@ describe.skipIf(!testDatabaseConfigured)('Settings cell memory', () => {
                   .where(eq(auditEntries.personId, test.personId)),
               ),
             ).toMatchObject([{ event: AuditEvent.cases.MemorySaved.make({ scope: 'Person' }) }])
-            yield* Ref.set(test.response, HttpServerResponse.empty({ status: 204 }))
-            yield* memoryHandlers.ForgetMemory({ address, expected })
-            expect(yield* Queue.take(test.requests)).toMatchObject({
-              url: base + '/delete',
-              body: {
-                address,
-                expected,
-                authority: {
-                  actor: test.personId,
-                  source: MemorySource.cases.Settings.make({ at: 0 }),
-                },
-              },
-            })
-            const audits = yield* test.database.run(
-              test.database
-                .select()
-                .from(auditEntries)
-                .where(eq(auditEntries.personId, test.personId)),
-            )
-            expect(audits).toHaveLength(2)
-            expect(audits).toEqual(
-              expect.arrayContaining([
-                expect.objectContaining({
-                  event: AuditEvent.cases.MemorySaved.make({ scope: 'Person' }),
-                }),
-                expect.objectContaining({
-                  event: AuditEvent.cases.MemoryForgotten.make({ scope: 'Person' }),
-                }),
-              ]),
-            )
           }).pipe(Effect.provideContext(test.context))
         }).pipe(Effect.scoped),
+    )
+
+    it.effect('exports every entry whole, for the signed-in Person only', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const base = `/persons/${test.personId}/memory`
+        const saved = SavedMemory.make({
+          layer: 'memory',
+          file: MemoryFile.make('tea.md'),
+          kind: 'preference',
+          description: 'Tea preference',
+          body: 'I take my tea without sugar.',
+          basis: 'said',
+          scope: MemoryScope.cases.Personal.make({}),
+          revision: MemoryRevision.make(3),
+          updatedAt: 5,
+          authority: { actor: test.personId, source: MemorySource.cases.Settings.make({ at: 5 }) },
+          citations: [
+            MemoryCitation.cases.ThreadMessage.make({
+              threadId: ThreadId.make('tea-thread'),
+              messageId: MessageId.make('entry-9'),
+            }),
+          ],
+        })
+        const { body: _body, authority: _authority, citations: _citations, ...line } = saved
+        yield* Ref.set(
+          test.routes,
+          new Map([
+            [base + '/list', HttpServerResponse.jsonUnsafe({ entries: [line], next: null })],
+            [base + '/read', HttpServerResponse.jsonUnsafe(saved)],
+          ]),
+        )
+        const person = Context.add(
+          test.services,
+          AuthContext,
+          AuthState.Person({
+            person: test.person,
+            sessionId: SessionId.make('memory-export-session'),
+            workspace: Workspace.cases.Personal.make({}),
+          }),
+        )
+        const exported = yield* memoryHandlers.ExportMemory().pipe(Effect.provideContext(person))
+        expect(exported.entries).toEqual([saved])
+        expect(yield* Queue.take(test.requests)).toMatchObject({
+          url: base + '/list',
+          body: { layer: null, after: null, limit: 100 },
+        })
+        expect(yield* Queue.take(test.requests)).toMatchObject({
+          url: base + '/read',
+          body: { layer: 'memory', file: 'tea.md' },
+        })
+        const refused = yield* memoryHandlers
+          .ExportMemory()
+          .pipe(Effect.flip, Effect.provideContext(test.context))
+        expect(refused._tag).toBe('Forbidden')
+      }).pipe(Effect.scoped),
     )
   })
 })

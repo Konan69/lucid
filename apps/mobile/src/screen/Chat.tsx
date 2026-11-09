@@ -20,6 +20,7 @@ import {
   attaching,
   conversationIn,
   draftPlace,
+  handing,
   isTooLong,
   lasting,
   QUIET_MS,
@@ -62,6 +63,7 @@ import { inFront, onCatchUp } from '../data/foreground'
 import { drawnFrom } from '../data/heard'
 import { heardIn } from '../data/hearing'
 import { LiveState, useLiveData, useLiveValue, useLiveWhen } from '../data/live'
+import { offerNotifications } from '../data/notifying'
 import {
   doingOf,
   isShown,
@@ -108,6 +110,7 @@ import {
   type Scrolled,
 } from './chat/away'
 import { Choices } from './chat/Choices'
+import { Handing, useOpenScreen } from './chat/Handoff'
 import { Message } from './chat/Message'
 import { Replied, spokenOf } from './chat/Question'
 import { Opening } from './home/First'
@@ -402,6 +405,8 @@ function useSend(
    * are a new message with a key of their own.
    */
   function say(words: string, pictures: ReadonlyArray<attaching.Picture>) {
+    // Once only, while the Person was never asked (`data/notifying.ts`).
+    offerNotifications(data)
     name(words)
     const delivery = deliveryOf(unsent, words, pictures, randomUUID)
     const retried = drawn.unsent.some((failed) => failed.delivery.key === delivery.key)
@@ -693,6 +698,39 @@ function Raised({
   )
 }
 
+/**
+ * What stands over the composer. A step on the Computer holds it, so its banner (`Handing`)
+ * comes before a question's or an Approval's (`Raised`); those keep waiting and rise once the
+ * step is over.
+ */
+function Over({
+  id,
+  detail,
+  waiting: { asking, allowing },
+  dock,
+  covered,
+}: {
+  id: ThreadId
+  detail: Option.Option<ThreadDetail>
+  waiting: ReturnType<typeof useWaiting>
+  dock: Option.Option<number>
+  covered: SharedValue<number>
+}) {
+  const handoff = handing.handoffUp(handoffsOf(detail), useMe().person.id)
+  const openScreen = useOpenScreen(id)
+  if (Option.isNone(handoff) || Option.isNone(dock))
+    return <Raised asking={asking} allowing={allowing} dock={dock} covered={covered} />
+  return (
+    <Handing
+      key={handoff.value.id}
+      handoff={handoff.value}
+      dock={dock.value}
+      covered={covered}
+      onOpenScreen={openScreen}
+    />
+  )
+}
+
 /** The Approval's banner, for what it holds: the one that is up, or the one sliding away. */
 function RaisedApproval({
   allowing,
@@ -746,6 +784,13 @@ const NO_APPROVALS: ReadonlyArray<Approval> = []
 /** The Thread's Approvals, oldest first, once its live detail carries them. */
 const approvalsOf = (detail: Option.Option<ThreadDetail>): ReadonlyArray<Approval> =>
   Option.match(detail, { onNone: () => NO_APPROVALS, onSome: (value) => value.approvals })
+
+/** No handoffs: a Thread whose detail has not arrived. One value, not a new list each render. */
+const NO_HANDOFFS: ThreadDetail['handoffs'] = []
+
+/** The Thread's handoffs, oldest first, once its live detail carries them. */
+const handoffsOf = (detail: Option.Option<ThreadDetail>): ThreadDetail['handoffs'] =>
+  Option.match(detail, { onNone: () => NO_HANDOFFS, onSome: (value) => value.handoffs })
 
 /** The Thread's Input requests, oldest first, once its live detail carries them. */
 const requestsOf = (detail: Option.Option<ThreadDetail>): ReadonlyArray<InputRequest> =>
@@ -820,7 +865,8 @@ function Conversation({
   const sending = useSend(id, place, { detail, reading })
   const { shared, working, ready } = sending
   // What waits on this Person, which rises from behind the composer as a banner (`Raised`).
-  const { allowing, asking } = useWaiting(detail, me.person.id)
+  const waiting = useWaiting(detail, me.person.id)
+  const { allowing, asking } = waiting
   // How far the choices stand over the foot of the conversation, which keeps that much clear.
   const covered = useSharedValue(0)
   const [dock, onDock] = useDock()
@@ -907,7 +953,7 @@ function Conversation({
             onContinue={speak}
           />
         </View>
-        <Raised asking={asking} allowing={allowing} dock={dock} covered={covered} />
+        <Over id={id} detail={detail} waiting={waiting} dock={dock} covered={covered} />
         <Foot
           typed={typed}
           writing={writing}

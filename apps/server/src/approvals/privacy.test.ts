@@ -86,6 +86,7 @@ layer(testDatabaseLayer)((it) => {
               ...test.owner,
               by: 'vivid',
               threadId: Option.some(test.companyId),
+              helper: Option.none(),
             } satisfies Actor
             const approval = yield* (yield* ApprovalStore).raise(
               addressed,
@@ -95,7 +96,7 @@ layer(testDatabaseLayer)((it) => {
             const request = yield* (yield* InputStore).ask(addressed, question)
             const before = yield* records(test.companyId)
             const load = inbox(test.owner)
-            const expected = { approvals: [approval], requests: [request] }
+            const expected = { approvals: [approval], requests: [request], handoffs: [] }
             const observation = yield* observing(topicsOf(test.owner), load)
             expect(observation.initial).toEqual(expected)
             yield* threadStore.share(
@@ -104,9 +105,13 @@ layer(testDatabaseLayer)((it) => {
               ShareThreadRequest.cases.Private.make({}),
             )
             // Baseline watch suppresses the unchanged leaked result: assert absence before waiting.
-            expect(yield* load).toEqual({ approvals: [], requests: [] })
+            expect(yield* load).toEqual({ approvals: [], requests: [], handoffs: [] })
             expect(yield* records(test.companyId)).toEqual(before)
-            expect(yield* nextValue(observation)).toEqual({ approvals: [], requests: [] })
+            expect(yield* nextValue(observation)).toEqual({
+              approvals: [],
+              requests: [],
+              handoffs: [],
+            })
             yield* threadStore.share(
               test.member.person.id,
               test.companyId,
@@ -134,7 +139,11 @@ layer(testDatabaseLayer)((it) => {
             )
             const request = yield* (yield* InputStore).ask(test.companyVivid, question)
             const load = inbox(test.member)
-            expect(yield* load).toEqual({ approvals: [approval], requests: [request] })
+            expect(yield* load).toEqual({
+              approvals: [approval],
+              requests: [request],
+              handoffs: [],
+            })
             const before = yield* records(test.companyId)
             const database = yield* Database
             yield* database.run(
@@ -143,7 +152,7 @@ layer(testDatabaseLayer)((it) => {
                 .set({ audience: 'everyone' })
                 .where(eq(threads.id, test.companyId)),
             )
-            expect(yield* load).toEqual({ approvals: [], requests: [] })
+            expect(yield* load).toEqual({ approvals: [], requests: [], handoffs: [] })
             expect(yield* records(test.companyId)).toEqual(before)
           }).pipe(Effect.scoped, Effect.provide(context))
         }),

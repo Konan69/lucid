@@ -41,7 +41,7 @@ const definitions = [
     displayName: 'Work in a signed-in browser',
     about: 'Works through signed-in pages with you and checks that each step succeeded.',
     starter: false,
-    needs: ['browse', 'use_desktop', 'ask_person', 'find_tools', 'connect'],
+    needs: ['browse', 'use_desktop', 'ask_person', 'request_handoff', 'find_tools', 'connect'],
     connections: [],
   },
   {
@@ -133,7 +133,8 @@ const definitions = [
   {
     runtimeName: 'learn-how-we-do-this',
     displayName: 'Learn how we do this',
-    about: 'Turns work you have verified into a reusable procedure for you to review and keep.',
+    about:
+      'Learns a task from work you verified or a walkthrough you give, and does it your way next time.',
     starter: true,
     needs: ['save_skill', 'read_skill', 'search_memory', 'ask_person', 'find_tools', 'connect'],
     connections: [],
@@ -162,7 +163,15 @@ const definitions = [
     about:
       'Runs the same lookup across a long list and returns one table, with what was and was not found.',
     starter: false,
-    needs: ['run_code', 'find_tools', 'use_tool', 'read_page', 'connect', 'ask_person'],
+    needs: [
+      'spawn_run',
+      'run_code',
+      'find_tools',
+      'use_tool',
+      'read_page',
+      'connect',
+      'ask_person',
+    ],
     connections: [['Search', 'Web Search', 'Brave Search', 'Tavily', 'Exa']],
   },
   {
@@ -234,11 +243,10 @@ const definitions = [
     starter: false,
     needs: [
       'list_watches',
-      'stop_watching',
       'search_memory',
       'read_memory',
-      'write_memory',
-      'delete_memory',
+      'plan_forget',
+      'forget_memory',
       'read_document',
       'write_document',
       'ask_person',
@@ -285,6 +293,23 @@ const definitions = [
     starter: false,
     needs: ['find_tools', 'use_tool', 'connect', 'read_page', 'ask_person'],
     connections: [['Search', 'Web Search', 'Brave Search', 'Tavily', 'Exa']],
+  },
+  {
+    runtimeName: 'put-work-in-the-calendar',
+    displayName: 'Put my work in the calendar',
+    about:
+      'Sets aside time in your calendar for a project’s next step and your to-dos, and checks the slots with you first.',
+    starter: false,
+    needs: [
+      'read_project',
+      'list_todos',
+      'find_tools',
+      'use_tool',
+      'connect',
+      'search_memory',
+      'ask_person',
+    ],
+    connections: [['Google Calendar', 'Outlook', 'Microsoft Outlook']],
   },
 ] as const satisfies ReadonlyArray<{
   readonly runtimeName: string

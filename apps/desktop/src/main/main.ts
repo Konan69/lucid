@@ -22,6 +22,7 @@ import { connectDevice, deviceLink, sessionChanges } from './device.ts'
 import { controlledBrowser } from './driver.ts'
 import { locateComputer } from './computer.ts'
 import { createNotice } from './notice.ts'
+import { createNotifications } from './notifications.ts'
 import { turns } from './turn.ts'
 import { installationIdentity } from './installation.ts'
 import { resolveHost, vividMayOpen } from './reach.ts'
@@ -507,6 +508,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
       getAppVersion: () => information.appVersion,
       device: computer,
       showColorScheme: (preference) => colorScheme.show(preference),
+      showNotification: createNotifications(() => mainWindow),
       settings,
       openExternal: openExternalUrl,
       signIn,

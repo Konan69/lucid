@@ -4,6 +4,7 @@ import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Stream from 'effect/Stream'
 import {
+  type AcknowledgeRunDeliveryRequest,
   Forbidden,
   InvalidRequest,
   type DeliveryScopeRequest,
@@ -17,11 +18,14 @@ import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { ApprovalStore } from '../approvals/store.ts'
 import { requireActor, requirePerson, summaryOf, type Actor } from '../auth/access.ts'
 import { InputStore } from '../inputs/store.ts'
-import { Topic } from '../live/changes.ts'
+import { handoffsInThread } from '../inputs/handoff.ts'
+import { Changes, Topic } from '../live/changes.ts'
 import { live } from '../live/query.ts'
+import { Database } from '../database/client.ts'
 import { Notifier } from '../notifications/notifier.ts'
-import { requireThread } from './access.ts'
+import { audienceTopics, requireThread } from './access.ts'
 import { Presence } from './presence.ts'
+import { ChildRuns } from '../runs/store.ts'
 import { RunStore } from './runs.ts'
 import { LiveLink } from '../rpc/link.ts'
 import { ThreadStore, type Shared } from './store.ts'
@@ -38,6 +42,8 @@ const detail = Effect.fn('Threads.detail')(function* (actor: Actor, id: ThreadId
     present: yield* (yield* Presence).here(id),
     approvals: yield* (yield* ApprovalStore).inThread(id),
     requests: yield* (yield* InputStore).inThread(id),
+    handoffs: yield* handoffsInThread(id),
+    children: yield* (yield* ChildRuns).inThread(id),
   })
 })
 
@@ -46,8 +52,7 @@ const listThreads = Effect.fn('Threads.list')(function* (actor: Actor) {
 })
 
 /**
- * Notify newly named People after the share commits, using only its saved id, title and Company.
- * Notification delivery remains outside the metadata transaction and belongs to the Notifier.
+ * Owe notices for newly named People inside the share transaction; workers deliver after commit.
  */
 const announceShare = Effect.fn('Threads.announceShare')(function* (
   thread: Pick<Shared['thread'], 'id' | 'title'> & Pick<Shared, 'companyId'>,
@@ -125,7 +130,7 @@ export const threadHandlers = {
     const stored = yield* requireThread(thread, actor.person.id)
     return { title: yield* (yield* ThreadTitles).regenerate(stored, actor.person.id) }
   }),
-  /** Sharing and audit commit in the store; newly named People are notified from its saved result. */
+  /** Sharing, audit and notice obligations commit together from the saved share result. */
   ShareThread: Effect.fn('Rpc.ShareThread')(function* ({
     id,
     audience,
@@ -134,19 +139,44 @@ export const threadHandlers = {
     readonly audience: ShareThreadRequest
   }) {
     const auth = yield* requirePerson()
-    const shared = yield* (yield* ThreadStore).share(auth.person.id, id, audience)
-    // The committed Shared result owns every notification field; no late reread can fail the share.
-    yield* announceShare(
-      { id: shared.thread.id, title: shared.thread.title, companyId: shared.companyId },
-      summaryOf(auth.person).name,
-      shared.added,
+    return yield* (yield* Database).transaction(() =>
+      Effect.gen(function* () {
+        const shared = yield* (yield* ThreadStore).share(auth.person.id, id, audience)
+        // The committed Shared result owns every notification field; no late reread can fail the share.
+        yield* announceShare(
+          { id: shared.thread.id, title: shared.thread.title, companyId: shared.companyId },
+          summaryOf(auth.person).name,
+          shared.added,
+        )
+        return { thread: shared.thread }
+      }),
     )
-    return { thread: shared.thread }
   }),
   /** The store captures and announces the deleted audience while holding its Thread lock. */
   DeleteThread: Effect.fn('Rpc.DeleteThread')(function* ({ id }: { readonly id: ThreadId }) {
     const auth = yield* requirePerson()
     yield* (yield* ThreadStore).remove(auth.person.id, id)
+  }),
+  /**
+   * The Person a completed Run acted for, in a Thread they can still see, says their app drew its
+   * final response. The first acknowledgement moves the Thread's activity, as settlement does.
+   */
+  AcknowledgeRunDelivery: Effect.fn('Rpc.AcknowledgeRunDelivery')(function* (
+    request: AcknowledgeRunDeliveryRequest,
+  ) {
+    const auth = yield* requirePerson()
+    const runs = yield* RunStore
+    const acknowledged = yield* runs.acknowledge({
+      runId: request.runId,
+      responseId: request.responseId,
+      personId: auth.person.id,
+    })
+    if (Option.isNone(acknowledged)) return
+    const thread = yield* requireThread(acknowledged.value, auth.person.id)
+    const participants = yield* (yield* ThreadStore).participants(thread.id)
+    yield* (yield* Changes).publish(
+      audienceTopics(thread, participants).map(Topic.part('activity')),
+    )
   }),
   /** The store announces the Person alongside their read receipt under its key-share lock. */
   MarkThreadRead: Effect.fn('Rpc.MarkThreadRead')(function* ({ id }: { readonly id: ThreadId }) {
@@ -159,6 +189,9 @@ export const threadHandlers = {
   StopThread: Effect.fn('Rpc.StopThread')(function* ({ id }: { readonly id: ThreadId }) {
     const auth = yield* requirePerson()
     yield* requireThread(id, auth.person.id)
+    // Helpers first: their results are dropped and their work ends before the Thread's own
+    // abort, so no late result starts the Thread again after this Stop.
+    yield* (yield* ChildRuns).stopThread(id)
     yield* abortThread(id)
   }),
   /**

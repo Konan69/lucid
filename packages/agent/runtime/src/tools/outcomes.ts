@@ -1,7 +1,10 @@
 import {
+  ActionApplied,
+  type ActionReceipt,
   BrowseOutcome,
   DesktopOutcome,
   ToolOutcome,
+  type IntegrationResult,
   WindowOutcome,
   WindowResult,
   type WindowView,
@@ -56,19 +59,76 @@ function outcomeUnknown(): ToolResult {
   }
 }
 
+/**
+ * A journaled write whose answer was lost. Its receipt stays in metadata for reconciliation; the
+ * model is told what that means and the action path ends, as an unknown program call ends its
+ * program. Sending it again is refused by the server until the operation is reconciled.
+ */
+function writeUnknown(receipt: ActionReceipt): ToolResult {
+  return {
+    output: {
+      ok: false,
+      message:
+        'The action was sent and its answer was lost, so it may or may not have happened. Do not send it again; tell the Person its result is not known yet.',
+    },
+    terminate: true,
+    receipts: [receipt],
+  }
+}
+
+/** What each applied receipt proves, in the words the model reports to the Person. */
+const appliedWords = (receipt: ActionApplied) =>
+  ActionApplied.match(receipt, {
+    Accepted: () => 'The service accepted the action; it has not finished it yet.',
+    Completed: () => 'The service answered that the action is done.',
+    Delivered: () => 'The service answered that the action is done and confirmed it arrived.',
+  })
+
 /** Provider records pass through untouched; settle bounds them without removing provider authority.
  * Each service outcome gives one truthful next step; an unknown side effect must never be retried blindly. */
-export function toolOutcome(outcome: ToolOutcome): ToolResult {
-  return ToolOutcome.match(outcome, {
-    Completed: ({ output }) => ({
-      output: { ok: true, output, message: 'The action completed.' },
+export function toolOutcome(result: IntegrationResult): ToolResult {
+  const projected = ToolOutcome.match<ToolResult>(result.outcome, {
+    Completed: ({ output, receipt }) =>
+      receipt === null
+        ? { output: { ok: true, output, message: 'The action completed.' } }
+        : { output: { ok: true, output, message: appliedWords(receipt) }, receipts: [receipt] },
+    Repeated: ({ receipt }) => ({
+      output: {
+        ok: true,
+        message: `This exact action was already done, so it was not sent again. ${appliedWords(receipt)} Its earlier answer is not available here.`,
+      },
+      receipts: [receipt],
     }),
     ApprovalRequired: approval,
     Blocked: blocked,
-    ConnectionNotReady: ({ serviceName }) => ({
+    ScopeRequired: ({ required, granted }) => ({
+      output: {
+        ok: false,
+        required,
+        granted,
+        message: 'This operation requires additional access. Do not substitute another account.',
+      },
+    }),
+    PermissionDeclined: ({ classes }) => ({
+      output: {
+        ok: false,
+        classes,
+        message:
+          'The person has not allowed access to these data classes. Do not try another tool to bypass this decision.',
+      },
+    }),
+    Unsupported: ({ capability }) => ({
+      output: {
+        ok: false,
+        capability,
+        message: 'This Integration does not support this capability.',
+      },
+    }),
+    ConnectionNotReady: ({ serviceName, grant }) => ({
       output: {
         ok: false,
         serviceName: views.modelText(serviceName),
+        grant,
         message: views.modelText(
           `${serviceName} needs connecting; offer it to the person with connect.`,
         ),
@@ -81,8 +141,9 @@ export function toolOutcome(outcome: ToolOutcome): ToolResult {
         problems: problems.map(views.modelText),
       },
     }),
-    OutcomeUnknown: outcomeUnknown,
+    OutcomeUnknown: ({ receipt }) => (receipt === null ? outcomeUnknown() : writeUnknown(receipt)),
   })
+  return { ...projected, integration: result }
 }
 
 /** Browser results keep the page outline and authorization decisions supplied by the server. */

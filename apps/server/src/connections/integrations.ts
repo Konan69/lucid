@@ -20,9 +20,9 @@ import { requireAdmin, type Actor } from '../auth/access.ts'
 import { ConnectionAddress, type ConnectionAddressInvalid, publicAddress } from './address.ts'
 import { IMPORTED } from './logo.ts'
 import { ConnectionStore, ToolDiscovery } from './store.ts'
-import { useTool } from './tools.ts'
+import { useUnkeyedTool } from './tools.ts'
 import { namedAccounts } from './names.ts'
-import { stateOf, type ConnectionRecord } from './records.ts'
+import { stateOf, grantOf, type ConnectionRecord } from './records.ts'
 import { testInput } from './probe.ts'
 import { madeService } from './made.ts'
 
@@ -153,6 +153,7 @@ export const findIntegrations = Effect.fn('Connections.findIntegrations')(functi
         connected: ConnectionState.guards.Ready(state),
         shared: row.companyId !== null,
         state,
+        grant: grantOf(row),
       })
     }),
   )
@@ -422,19 +423,43 @@ export const testIntegration = Effect.fn('Connections.testIntegration')(
         reason: 'no read-only tool can be tested without extra input',
       })
     const { tool, input } = selectedProbe
-    const outcome = yield* useTool(actor, {
+    const outcome = yield* useUnkeyedTool(actor, {
       connectionId: row.id,
       tool: tool.name,
       input,
       summary: `Test the ${account} integration`,
       rationale: 'Confirm the integration works with one read-only call.',
     })
-    return ToolOutcome.match<TestIntegrationOutcome>(outcome, {
+    return ToolOutcome.match<TestIntegrationOutcome>(outcome.outcome, {
       Completed: () =>
+        TestIntegrationOutcome.cases.Tested.make({ account, tools: names, tool: tool.name }),
+      // The test call is a read, which the journal never answers in place of sending.
+      Repeated: () =>
         TestIntegrationOutcome.cases.Tested.make({ account, tools: names, tool: tool.name }),
       ApprovalRequired: ({ approvalId, summary }) =>
         TestIntegrationOutcome.cases.ApprovalRequired.make({ approvalId, summary }),
       Blocked: ({ rule }) => TestIntegrationOutcome.cases.Blocked.make({ rule }),
+      ScopeRequired: () =>
+        TestIntegrationOutcome.cases.Refused.make({
+          account,
+          tools: names,
+          tool: tool.name,
+          message: 'additional access required',
+        }),
+      PermissionDeclined: () =>
+        TestIntegrationOutcome.cases.Refused.make({
+          account,
+          tools: names,
+          tool: tool.name,
+          message: 'data permission declined',
+        }),
+      Unsupported: () =>
+        TestIntegrationOutcome.cases.Refused.make({
+          account,
+          tools: names,
+          tool: tool.name,
+          message: 'capability unsupported',
+        }),
       ConnectionNotReady: () =>
         TestIntegrationOutcome.cases.NotTested.make({
           account,
@@ -458,8 +483,12 @@ export const testIntegration = Effect.fn('Connections.testIntegration')(
   },
   (effect) =>
     effect.pipe(
-      Effect.catchTag('ServiceUnavailable', () =>
-        Effect.succeed(TestIntegrationOutcome.cases.Unreachable.make({})),
-      ),
+      Effect.catchTags({
+        ServiceUnavailable: () => Effect.succeed(TestIntegrationOutcome.cases.Unreachable.make({})),
+        // The test call is a read and reads are never journaled, so this refusal cannot be met
+        // here; it is still answered as a call that did not run rather than left to the caller.
+        ActionReconciliationRequired: () =>
+          Effect.succeed(TestIntegrationOutcome.cases.Unreachable.make({})),
+      }),
     ),
 )

@@ -1,4 +1,5 @@
 import {
+  Activity,
   Blocks,
   Brain,
   FolderKanban,
@@ -38,6 +39,7 @@ export const PLACES = {
   record: { hue: 'brown', icon: ScrollText },
   general: { hue: 'gray', icon: SlidersHorizontal },
   sidebar: { hue: 'gray', icon: PanelLeft },
+  work: { hue: 'orange', icon: Activity },
 } satisfies Record<string, { readonly hue: Hue; readonly icon: LucideIcon }>
 export type Place = keyof typeof PLACES
 

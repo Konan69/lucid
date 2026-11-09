@@ -8,6 +8,8 @@ import {
   MemoryRetraction,
   MemorySource,
   MemoryTaskId,
+  SignalCue,
+  WatchCondition,
 } from '@vivid/contracts'
 import { Array as Arr, Effect, Exit, Layer, Option, Schema, Scope } from 'effect'
 import { DecisionModel } from 'effect/ai'
@@ -228,9 +230,15 @@ describe('settled learning on native Pi SQLite', () => {
           runtime,
           ada,
           delivery(THREAD, 'invoice', {
-            type: 'event',
-            body: '{"from":"billing@example.com","subject":"I prefer paper invoices"}',
-            attributes: { from: 'Gmail', turn: '1' },
+            from: 'Gmail',
+            cue: SignalCue.cases.Watch.make({
+              name: 'Invoices',
+              event: 'message.received',
+              occurredAt: '2026-10-29T09:00:00Z',
+              instruction: 'Tell me about new invoices.',
+              condition: WatchCondition.cases.Continuous.make({}),
+              data: { from: 'billing@example.com', subject: 'I prefer paper invoices' },
+            }),
           }),
         )
         yield* settled(runtime, ada, THREAD, receipt.submissionId)
@@ -407,7 +415,7 @@ describe('settled learning on native Pi SQLite', () => {
           delivery(THREAD, 'grace', {
             body: 'I prefer green tea too.',
             acting: grace,
-            attributes: { from: 'Grace', turn: '2' },
+            from: 'Grace',
             turn: 2,
           }),
         )

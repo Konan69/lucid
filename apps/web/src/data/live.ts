@@ -12,6 +12,7 @@ import { Option, Stream } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
 import { change, changing, start } from './app'
+import { showOnDesktop } from './notifying'
 import { router, threadOnScreen } from '../router'
 import { engine } from './runtime'
 import { said, sayWith } from './said'
@@ -68,6 +69,8 @@ export const live = {
   todos: one((client) => client.WatchTodos()),
   /** What the Person has typed and not sent, on any device, where they are working. */
   drafts: kept((client) => client.WatchDrafts()),
+  /** What Vivid has going in the background, to see and stop (`screen/settings/Work.tsx`). */
+  work: one((client) => client.WatchWork()),
 }
 
 /**
@@ -87,6 +90,20 @@ export const serviceSearch = Atom.make('')
  * download after a start (`connections/catalog.ts` `retainCatalog`).
  */
 export const services = engine.ask(serviceSearch, (client, query) => client.FindServices({ query }))
+
+/**
+ * How deeply Settings checks Vivid's Computer: every part, each time the panel asks. A check
+ * never wakes a sleeping Computer (`GetComputerHealth`), so opening Settings costs it nothing.
+ */
+const healthDepth = Atom.make<'Deep'>('Deep')
+
+/** How Vivid's Computer is doing, part by part (`screen/settings/Computers.tsx`). */
+export const computerHealth = engine.ask(healthDepth, (client, depth) =>
+  client.GetComputerHealth({ depth }),
+)
+
+/** The newest step Vivid took to fix its Computer, read beside its health. */
+export const computerRecovery = engine.ask(healthDepth, (client) => client.GetComputerRecovery())
 
 /** What the Person has typed into "find anything". */
 export const findQuery = Atom.make('')
@@ -162,6 +179,8 @@ engine.registry.subscribe(live.notifications.answers, (result) => {
   }
   const here = threadOnScreen()
   for (const notice of fresh) {
+    // The desktop app also shows it as the system's own, while its window is not in front.
+    showOnDesktop(notice)
     const threadId = notice.threadId
     if (threadId === null) {
       sayWith(notice.title, Option.none(), notice.id)
@@ -224,6 +243,11 @@ export const presentIn = Atom.family((id: ThreadId) =>
  * and the query does it each time the Thread moves while someone has it open (`@vivid/state`
  * `seen.ts`, shared with the phone). Being present is `presentIn`.
  */
-export const seenThread = makeSeenThread({ engine, threads: live.thread, launch: start })
+export const seenThread = makeSeenThread({
+  engine,
+  threads: live.thread,
+  me: live.me,
+  launch: start,
+})
 
 export { LiveState }

@@ -5,12 +5,14 @@ WORKDIR /app
 ENV COREPACK_HOME=/opt/corepack
 COPY package.json ./
 RUN corepack enable && corepack install
-# The server publishes the matching Worker in its pre-deploy step, using celld's release installer.
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gzip \
-  && curl -fsSL https://celld.dev/install.sh -o /tmp/celld-install.sh \
-  && CELLD_VERSION=v0.6.2 CELLD_INSTALL_ROOT=/usr/local sh /tmp/celld-install.sh \
-  && celld --version \
-  && rm -rf /var/lib/apt/lists/* /tmp/celld-install.sh
+# The server publishes the matching Worker in its pre-deploy step with celld. The binary comes from
+# celld's published image, pinned by digest (v0.6.2), rather than its curl installer, which fetched an
+# unverified release asset from GitHub on every build and failed the 8 Nov 2026 deploy when GitHub's
+# release downloads timed out. celld calls Cloudflare over TLS, so the system CA bundle stays.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+COPY --from=ghcr.io/denoland/celld:v0.6.2@sha256:b85983dcf410bcf710bbc30f400d8654123cb2b541ca4d84d7e299009a6ee97a /usr/local/bin/celld /usr/local/bin/celld
+RUN celld --version
 
 FROM base AS build
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -86,8 +88,6 @@ COPY --chown=node:node infra/cli.mjs infra/cli.mjs
 # under a name the host does not set at run time, so the image's own value is the one read.
 ARG RAILWAY_GIT_COMMIT_SHA=""
 ENV VIVID_BUILD_COMMIT=$RAILWAY_GIT_COMMIT_SHA
-# The installer preserves mktemp's private release directory; node must traverse it at pre-deploy.
-RUN chmod -R a+rX /usr/local/lib/celld
 USER node
 EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

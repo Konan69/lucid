@@ -10,6 +10,8 @@ import {
   ConversationState,
   Conflict,
   MemoryAddress,
+  MemoryClosed,
+  MemoryClosure,
   MemoryConflict,
   MemoryIndex,
   MemoryListing,
@@ -28,11 +30,11 @@ import {
   RuntimeSettlement,
   RuntimeStopped,
   RuntimeUnavailable,
+  RuntimeChildAnswer,
   type ConversationFrame,
   type DeliveryScope,
-  type MessageAttachment,
+  type RuntimeDelivery,
   type PersonId,
-  type RuntimeRunRequest,
   type ThreadOrigin,
 } from '@vivid/contracts'
 import { ServerConfig } from '../config.ts'
@@ -90,25 +92,10 @@ export interface ConversationRead {
   readonly suffix: string
 }
 
-/** Only the two server-built deliveries can cross this boundary; signal kinds stay contract-typed. */
-export type RuntimeMessage =
-  | {
-      readonly kind: 'user'
-      readonly body: string
-      readonly attachments?: ReadonlyArray<MessageAttachment>
-    }
-  | {
-      readonly kind: 'signal'
-      readonly body: string
-      readonly type: RuntimeRunRequest['type']
-      readonly tagName: RuntimeRunRequest['type']
-      readonly attributes: RuntimeRunRequest['attributes']
-    }
-
 /** One delivery for the runtime to accept, in the server's terms. */
 export interface AdmissionInput {
   readonly threadId: ThreadId
-  readonly message: RuntimeMessage
+  readonly message: RuntimeDelivery
   readonly origin: ThreadOrigin
   readonly clientKey?: string
   readonly idempotencyKey: string
@@ -121,27 +108,13 @@ const admissionBody = (input: AdmissionInput): RuntimeAdmissionBody => {
   const addressed = {
     threadId: input.threadId,
     idempotencyKey: input.idempotencyKey,
-    body: input.message.body,
+    delivery: input.message,
     turn: input.turn,
     scope: input.scope,
     initialData: input.origin,
   }
   // Only a client's send has a key of the client's; a delivery the server made sends none.
-  const shared =
-    input.clientKey === undefined ? addressed : { ...addressed, clientKey: input.clientKey }
-  if (input.message.kind === 'signal')
-    return {
-      ...shared,
-      type: input.message.type,
-      attachments: [],
-      attributes: input.message.attributes,
-    }
-  return {
-    ...shared,
-    type: 'message',
-    attachments: input.message.attachments === undefined ? [] : input.message.attachments,
-    attributes: {},
-  }
+  return input.clientKey === undefined ? addressed : { ...addressed, clientKey: input.clientKey }
 }
 
 /** Transport errors cannot prove whether an idempotent delivery reached durable storage. */
@@ -169,6 +142,16 @@ export interface RuntimeService {
     runId: RunId,
   ) => Effect.Effect<Settlement, DatabaseInfrastructureError>
   readonly stop: (threadId: ThreadId) => Effect.Effect<boolean, RuntimeUnavailable>
+  /** How one helper's work stands in the runtime, with its answer once it ended. */
+  readonly child: (
+    threadId: ThreadId,
+    runId: RunId,
+  ) => Effect.Effect<RuntimeChildAnswer, RuntimeUnavailable>
+  /** Aborts one helper's work and answers once it ended; false when there was none to abort. */
+  readonly stopChild: (
+    threadId: ThreadId,
+    runId: RunId,
+  ) => Effect.Effect<boolean, RuntimeUnavailable>
   readonly read: (
     read: ConversationRead,
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse, RuntimeUnavailable, Scope.Scope>
@@ -236,6 +219,42 @@ const makeAdmit = ({ http, request }: Transport): RuntimeService['admit'] =>
         ),
       ),
   )
+
+/**
+ * Reading and stopping one helper. A helper lives in its Thread's conversation store, under the
+ * Thread creator's address, so both calls go to that address.
+ */
+const makeChildCalls = (input: {
+  readonly http: Transport['http']
+  readonly request: Transport['request']
+  readonly addressOf: (threadId: ThreadId) => Effect.Effect<Address, RuntimeUnavailable>
+}) => {
+  const { http, request, addressOf } = input
+  const child: RuntimeService['child'] = Effect.fn('Runtime.child')(function* (threadId, runId) {
+    const address = yield* addressOf(threadId)
+    const suffix = `/children/${encodeURIComponent(runId)}`
+    const response = yield* requestRuntime(http, request(address, suffix, 'GET'), address).pipe(
+      Effect.mapError(unavailable),
+    )
+    return yield* HttpClientResponse.schemaBodyJson(RuntimeChildAnswer)(response).pipe(
+      Effect.mapError(unavailable),
+    )
+  }, Effect.scoped)
+  const stopChild: RuntimeService['stopChild'] = Effect.fn('Runtime.stopChild')(function* (
+    threadId,
+    runId,
+  ) {
+    const address = yield* addressOf(threadId)
+    const suffix = `/children/${encodeURIComponent(runId)}/abort`
+    const response = yield* requestRuntime(http, request(address, suffix, 'POST'), address).pipe(
+      Effect.mapError(unavailable),
+    )
+    return (yield* HttpClientResponse.schemaBodyJson(RuntimeStopped)(response).pipe(
+      Effect.mapError(unavailable),
+    )).aborted
+  }, Effect.scoped)
+  return { child, stopChild }
+}
 
 /** Capture transport once. Product ownership supplies every address; the runtime owns settlement. */
 const makeRuntime = Effect.fn('Runtime.make')(function* () {
@@ -338,7 +357,14 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
         )
       }),
     )
-  return Runtime.of({ admit: makeAdmit({ http, request }), settled, stop, read, watch })
+  return Runtime.of({
+    admit: makeAdmit({ http, request }),
+    settled,
+    stop,
+    ...makeChildCalls({ http, request, addressOf }),
+    read,
+    watch,
+  })
 })
 
 export const runtimeLayer = Layer.effect(Runtime, makeRuntime())
@@ -363,6 +389,11 @@ export interface CellMemoryService {
     person: PersonId,
     input: MemoryRetraction,
   ) => Effect.Effect<void, CellMemoryFailure>
+  /** A forget's cell half: stop learning, change the entries, read them back (`runtime/forget.ts`). */
+  readonly close: (
+    person: PersonId,
+    input: MemoryClosure,
+  ) => Effect.Effect<MemoryClosed, CellMemoryFailure>
 }
 
 /** Settings addresses the acting Person's cell without a Thread ownership lookup. */
@@ -376,6 +407,7 @@ const decodeMemoryIndex = HttpClientResponse.schemaBodyJson(MemoryIndex)
 const decodeMemoryPage = HttpClientResponse.schemaBodyJson(MemoryPage)
 const decodeSavedMemory = HttpClientResponse.schemaBodyJson(SavedMemory)
 const decodeMemoryConflict = HttpClientResponse.schemaBodyJson(MemoryConflict)
+const decodeMemoryClosed = HttpClientResponse.schemaBodyJson(MemoryClosed)
 
 /** Reuse the cell ingress failover, keeping revision conflicts and missing entries actionable. */
 export const cellMemoryLayer = Layer.effect(
@@ -443,6 +475,14 @@ export const cellMemoryLayer = Layer.effect(
         ).pipe(Effect.mapError(memoryUnavailable))
         yield* receive(encoded)
       }, Effect.scoped),
+      close: Effect.fn('CellMemory.close')(function* (person, input) {
+        const encoded = yield* HttpClientRequest.schemaBodyJson(MemoryClosure)(
+          request(person, '/forget', 'POST'),
+          input,
+        ).pipe(Effect.mapError(memoryUnavailable))
+        const response = yield* receive(encoded)
+        return yield* decodeMemoryClosed(response).pipe(Effect.mapError(memoryUnavailable))
+      }, Effect.scoped),
     })
   }),
 )
@@ -451,6 +491,7 @@ export const cellMemoryLayer = Layer.effect(
 export const documentRun = Effect.fn('Runtime.documentRun')(function* (
   threadId: ThreadId,
   toolCallId: DocumentToolCallId,
+  toolName: 'write_document' | 'inspect_file' | 'publish_file',
 ) {
   const runtime = yield* Runtime
   const response = yield* runtime.read({
@@ -467,7 +508,7 @@ export const documentRun = Effect.fn('Runtime.documentRun')(function* (
       message.parts.some(
         (part) =>
           part.type === 'dynamic-tool' &&
-          part.toolName === 'write_document' &&
+          part.toolName === toolName &&
           part.toolCallId === toolCallId,
       ),
   )

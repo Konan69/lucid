@@ -15,6 +15,26 @@
     "symbols": ["<module>", "gate", "starter"]
   },
   {
+    "file": "packages/agent/runtime/src/dreaming.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["<module>", "open", "wait", "start", "follow"]
+  },
+  {
+    "file": "packages/agent/runtime/src/agents/dreamer.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["execute"]
+  },
+  {
+    "file": "packages/agent/runtime/src/children.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["<module>", "open", "claimWake", "start", "claimWait"]
+  },
+  {
+    "file": "packages/agent/runtime/src/agents/worker.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["execute"]
+  },
+  {
     "file": "packages/agent/runtime/src/providers/witness.ts",
     "classification": "third-party-adapter",
     "symbols": ["describeRequest", "bodyOf", "fetchResponse", "witness"]
@@ -103,6 +123,11 @@
     "file": "apps/server/src/channels/photon.ts",
     "classification": "third-party-adapter",
     "symbols": ["connectPhoton", "closePhoton", "makePhoton"]
+  },
+  {
+    "file": "apps/server/src/channels/discord.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["handleGatewayMessage", "makeDiscord", "discordStream", "discordSend"]
   },
   {
     "file": "apps/cells/src/main.ts",

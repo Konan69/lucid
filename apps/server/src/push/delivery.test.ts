@@ -1,12 +1,19 @@
 import * as NodeCrypto from 'node:crypto'
-import { RuntimeSubmissionId } from '@vivid/contracts'
+import {
+  ResolveOwedRequest,
+  RuntimeSubmissionId,
+  TrackOwedRequest,
+  WatchId,
+} from '@vivid/contracts'
 import { describe, expect, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
 import { Effect, Option, Ref, Result, Schema, Layer } from 'effect'
 import { Clock } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import {
+  PostRequest,
   NotificationId,
+  NotificationOpens,
   NotifyPersonOutcome,
   PushOutcome,
   RunId,
@@ -18,7 +25,13 @@ import {
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { sessionTable } from '../auth/tables.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
+import { feedHandlers } from '../feed/handlers.ts'
+import { feedStoreLayer } from '../feed/store.ts'
+import { paceOnce } from '../feed/pace.ts'
+import { owedHandlers } from '../owed/handlers.ts'
+import { owedStoreLayer } from '../owed/store.ts'
 import { recordNotice } from '../notifications/notifier.ts'
+import { NotificationStore, notificationStoreLayer } from '../notifications/store.ts'
 import { notifications } from '../notifications/tables.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
 import { Link } from '../rpc/link.ts'
@@ -26,7 +39,7 @@ import { Presence } from '../threads/presence.ts'
 import { automaticallyNotifies, RunStore, TurnReservation } from '../threads/runs.ts'
 import { threads } from '../threads/tables.ts'
 import { PushConfig } from './config.ts'
-import { Push, pushLayer } from './delivery.ts'
+import { deliverTarget, Push, pushLayer } from './delivery.ts'
 import { pushHandlers } from './handlers.ts'
 import { PushReceipt } from './receipts.ts'
 import { pushDeliveries } from './tables.ts'
@@ -39,6 +52,78 @@ const withPush = <A, E, R>(program: Effect.Effect<A, E, R>) =>
     const context = yield* Layer.build(pushTestLayer)
     return yield* program.pipe(Effect.provide(context))
   }).pipe(Effect.scoped)
+
+/** The Feed and the notice list over the same per-case push Layer, for a post that tells the Person. */
+const withFeed = <A, E, R>(program: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const context = yield* Layer.build(
+      Layer.mergeAll(feedStoreLayer, notificationStoreLayer, owedStoreLayer).pipe(
+        Layer.provideMerge(pushTestLayer),
+      ),
+    )
+    return yield* program.pipe(Effect.provide(context))
+  }).pipe(Effect.scoped)
+
+/**
+ * A Person with a phone, whose Thread is Background and has a Watch Run acting in it, and Vivid's
+ * authority in that Run: what posting to the Feed and closing owed work from the background need.
+ */
+const backgroundRun = Effect.fn('Test.backgroundRun')(function* () {
+  const owner = yield* fixture()
+  const target = yield* (yield* PushTargets).register({
+    personId: owner.person.id,
+    sessionId: owner.sessionId,
+    destination: owner.destination,
+  })
+  yield* owner.database.run(
+    owner.database
+      .update(threads)
+      .set({ place: 'Background' })
+      .where(eq(threads.id, owner.threadId)),
+  )
+  const runs = yield* RunStore
+  const id = RunId.make(NodeCrypto.randomUUID())
+  const reserved = yield* runs.start({
+    id,
+    threadId: owner.threadId,
+    personId: owner.person.id,
+    origin: StoredRunOrigin.cases.Watch.make({
+      watchId: WatchId.make('watch-mail'),
+      watchName: 'New mail',
+      eventId: 'event-1',
+      event: 'message.received',
+      occurredAt: '2026-10-29T09:00:00Z',
+    }),
+  })
+  if (!TurnReservation.guards.Reserved(reserved)) expect.fail('Expected a fresh Run reservation')
+  yield* runs.admitted({ runId: id, submissionId: RuntimeSubmissionId.make(1) })
+  const auth = AuthState.Vivid({
+    person: owner.person,
+    workspace: owner.auth.workspace,
+    threadId: owner.threadId,
+  })
+  /**
+   * Repays every notice this Person is owed on their phone, as the durable delivery job does
+   * (`notifications/delivery.ts`): one `deliverTarget` per notice, whose claim ledger sends each
+   * notice at most once however often it is called.
+   */
+  const deliverOwed = Effect.fn('Test.deliverOwed')(function* () {
+    const rows = yield* owner.database.run(
+      owner.database
+        .select({ id: notifications.id })
+        .from(notifications)
+        .where(eq(notifications.personId, owner.person.id))
+        .orderBy(notifications.createdAt),
+    )
+    for (const row of rows)
+      yield* deliverTarget({
+        personId: owner.person.id,
+        notificationId: NotificationId.make(row.id),
+        targetId: target.id,
+      })
+  })
+  return { owner, auth, deliverOwed }
+})
 
 const encodePayload = Schema.encodeSync(Schema.fromJsonString(PushPayload))
 const encodeReceipt = Schema.encodeSync(PushReceipt)
@@ -120,6 +205,26 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
           }),
         ),
     )
+    it.effect('takes a Chrome subscription at Google push and refuses any other host', () =>
+      withPush(
+        Effect.gen(function* () {
+          const owner = yield* fixture()
+          const keys = { p256dh: 'B'.repeat(87), auth: 'A'.repeat(22) }
+          const register = (endpoint: string) =>
+            pushHandlers
+              .RegisterPushTarget({
+                destination: PushDestination.cases.Browser.make({ endpoint, keys }),
+              })
+              .pipe(Effect.provideService(AuthContext, owner.auth), Effect.result)
+          const chrome = yield* register(
+            `https://jmt17.google.com/fcm/send/${NodeCrypto.randomUUID()}`,
+          )
+          expect(Result.isSuccess(chrome)).toBe(true)
+          const elsewhere = yield* register(`https://push.example.test/${NodeCrypto.randomUUID()}`)
+          expect(Result.isFailure(elsewhere) && elsewhere.failure._tag).toBe('InvalidRequest')
+        }),
+      ),
+    )
     it.effect(
       'sends once per target across concurrent retry and rebuilding the delivery Layer',
       () =>
@@ -166,7 +271,7 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
             expect(sent[0]).toMatchObject({
               title: input.notice.title,
               body: 'Please review the draft.',
-              threadId: owner.threadId,
+              opens: NotificationOpens.cases.Thread.make({ threadId: owner.threadId }),
             })
             expect(JSON.stringify(sent)).not.toContain(owner.person.id)
             const rows = yield* owner.database.run(
@@ -261,7 +366,13 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
               id,
               threadId: owner.threadId,
               personId: owner.person.id,
-              origin: StoredRunOrigin.cases.Watch.make({ watchName: 'Calendar clashes' }),
+              origin: StoredRunOrigin.cases.Watch.make({
+                watchId: WatchId.make('watch-test'),
+                watchName: 'Calendar clashes',
+                eventId: 'event-1',
+                event: 'message.received',
+                occurredAt: '2026-10-29T09:00:00Z',
+              }),
             })
             if (!TurnReservation.guards.Reserved(reserved))
               expect.fail('Expected a fresh Run reservation')
@@ -309,7 +420,13 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
             id,
             threadId: owner.threadId,
             personId: owner.person.id,
-            origin: StoredRunOrigin.cases.Watch.make({ watchName: 'New mail' }),
+            origin: StoredRunOrigin.cases.Watch.make({
+              watchId: WatchId.make('watch-test'),
+              watchName: 'New mail',
+              eventId: 'event-1',
+              event: 'message.received',
+              occurredAt: '2026-10-29T09:00:00Z',
+            }),
           })
           if (!TurnReservation.guards.Reserved(reserved))
             expect.fail('Expected a fresh Run reservation')
@@ -333,6 +450,118 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
                 .where(eq(notifications.personId, owner.person.id)),
             ),
           ).toEqual([])
+        }),
+      ),
+    )
+    it.effect(
+      'a Feed post is silent until a quiet waking moment; an urgent one sounds at once',
+      () =>
+        withFeed(
+          Effect.gen(function* () {
+            const { owner, auth, deliverOwed } = yield* backgroundRun()
+            const post = PostRequest.cases.Said.make({
+              title: 'Ada wrote about the contract',
+              words: 'She asks whether Friday still holds.',
+              actions: [],
+              sources: [],
+              from: 'your mail',
+              urgency: 'ordinary',
+            })
+            const feed = NotificationOpens.cases.Feed.make({})
+            const probe = yield* PushProbe
+            const listedKinds = Effect.fn('Test.listedKinds')(function* () {
+              const { notifications: listed } = yield* (yield* NotificationStore).list({
+                person: owner.person,
+                workspace: owner.auth.workspace,
+                by: 'person',
+                threadId: Option.none(),
+                helper: Option.none(),
+              })
+              return listed.map(({ kind, opens }) => ({ kind, opens }))
+            })
+            // An ordinary post goes on the Feed silently: no notice and no push yet.
+            yield* feedHandlers.Post(post).pipe(Effect.provideService(AuthContext, auth))
+            yield* deliverOwed()
+            expect(yield* Ref.get(probe.sent)).toEqual([])
+            expect(yield* listedKinds()).toEqual([])
+            // Outside waking hours (the test clock starts at midnight UTC) the pacing pass holds it.
+            yield* paceOnce()
+            yield* deliverOwed()
+            expect(yield* Ref.get(probe.sent)).toEqual([])
+            // At ten in the morning, with nobody looking and no conversation going, it is told once,
+            // quietly; a second pass the same day tells nothing more.
+            yield* TestClock.adjust('10 hours')
+            yield* paceOnce()
+            yield* paceOnce()
+            yield* deliverOwed()
+            const quiet = yield* Ref.get(probe.sent)
+            expect(quiet).toHaveLength(1)
+            expect(quiet[0]).toMatchObject({
+              title: post.title,
+              body: post.words,
+              opens: feed,
+              sound: 'Quiet',
+            })
+            // An urgent post is told at once with sound, and the same post retried is that notice.
+            const urgent = PostRequest.cases.Said.make({
+              ...post,
+              words: 'The signing moved to today at noon.',
+              urgency: 'urgent',
+            })
+            // A minute later, so the two notices are ordered by time.
+            yield* TestClock.adjust('1 minute')
+            const posting = feedHandlers.Post(urgent).pipe(Effect.provideService(AuthContext, auth))
+            yield* posting
+            yield* posting
+            yield* deliverOwed()
+            const all = yield* Ref.get(probe.sent)
+            expect(all).toHaveLength(2)
+            expect(all[1]).toMatchObject({ body: urgent.words, opens: feed, sound: 'Audible' })
+            expect(yield* listedKinds()).toEqual([
+              { kind: 'needs-you', opens: feed },
+              { kind: 'posted', opens: feed },
+            ])
+          }),
+        ),
+    )
+    it.effect('work nobody is watching closes what is owed only after posting it to the Feed', () =>
+      withFeed(
+        Effect.gen(function* () {
+          const { owner, auth } = yield* backgroundRun()
+          const asVivid = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+            effect.pipe(Effect.provideService(AuthContext, auth))
+          const owed = yield* asVivid(
+            owedHandlers.TrackOwed(
+              TrackOwedRequest.make({
+                threadId: owner.threadId,
+                what: 'the signed contract',
+                from: 'Ada',
+                since: 0,
+                due: null,
+                nextStep: 'Check her reply',
+              }),
+            ),
+          )
+          const resolve = asVivid(
+            owedHandlers.ResolveOwed(
+              ResolveOwedRequest.make({ id: owed.id, how: 'Ada sent the signed contract.' }),
+            ),
+          )
+          // Resolving before the Person was told is refused and leaves it open.
+          expect((yield* Effect.flip(resolve))._tag).toBe('OwedResultUndelivered')
+          yield* asVivid(
+            feedHandlers.Post(
+              PostRequest.cases.Said.make({
+                title: 'Ada sent the signed contract',
+                words: 'It is in your mail.',
+                actions: [],
+                sources: [],
+                from: 'what Ada owed you',
+                urgency: 'ordinary',
+              }),
+            ),
+          )
+          expect((yield* resolve).state._tag).toBe('Resolved')
         }),
       ),
     )

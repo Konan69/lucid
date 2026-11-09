@@ -95,7 +95,7 @@ export async function githubProof(state, id, directory) {
       (error) => cleanup.errors.push('RemoveConnection: ' + error.message),
     )
   await json(directory + '/cleanup.json', cleanup)
-  await redact(state.evidence, token, directory)
+  await redact(state.evidence, [token], directory)
   if (failure) throw failure
   NodeAssert.deepEqual(cleanup.errors, [], 'GitHub cleanup failed')
 }

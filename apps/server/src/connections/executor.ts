@@ -5,6 +5,7 @@ import {
   ServiceAuthorization,
   ServiceId,
   ServiceUnavailable,
+  MakeIntegrationRequest,
   type MadeFile,
 } from '@vivid/contracts'
 import * as Config from 'effect/Config'
@@ -578,6 +579,14 @@ export interface ExecutorService {
   readonly make: (
     input: typeof BeginInput.Type & { readonly files: ReadonlyArray<MadeFile> },
   ) => Effect.Effect<typeof ExecutorStep.Type, ExecutorFailure | ExecutorBuildFailed>
+  /** Source access is restricted to owned authored apps by the product store. */
+  readonly readMade: (
+    app: typeof ExecutorAppId.Type,
+  ) => Effect.Effect<ReadonlyArray<MadeFile>, ExecutorFailure>
+  readonly reviseMade: (
+    app: typeof ExecutorAppId.Type,
+    files: ReadonlyArray<MadeFile>,
+  ) => Effect.Effect<void, ExecutorFailure | ExecutorBuildFailed>
   /** Renew authorization without allocating another app or account. */
   readonly reauthorize: (
     input: typeof BeginInput.Type & { readonly references: ExecutorReferences },
@@ -1106,6 +1115,8 @@ function referenceIdentity(references: ExecutorActiveReferences) {
   }
 }
 
+const decodeMadeFiles = Schema.decodeEffect(MakeIntegrationRequest.fields.files)
+
 const decodeBuildFailure = Schema.decodeUnknownOption(
   Schema.TaggedStruct('VersionBuildFailed', {
     message: Schema.String,
@@ -1150,6 +1161,11 @@ function makeHttp(client: HttpClient.HttpClient, google: GoogleClient) {
   return {
     google,
     readDeploy: deployReader(client),
+    readSource: read(
+      Schema.Struct({
+        files: Schema.Array(Schema.Struct({ path: Schema.String, content: Schema.String })),
+      }),
+    ),
     readSchedules: read(
       Schema.Array(
         Schema.Struct({
@@ -3116,6 +3132,19 @@ const makeToolCache = Effect.fn('Executor.toolCache')(function* (http: ExecutorH
   return { snapshots, discover }
 })
 
+/** Read the active build, not the editor workspace, before and after a deployment. */
+function makeReadMade(http: ExecutorHttp) {
+  return Effect.fn('Executor.readMade')(function* (app: typeof ExecutorAppId.Type) {
+    const source = yield* http.readSource(
+      Effect.succeed(HttpClientRequest.get(`/apps/${query(app)}/source`)),
+      null,
+    )
+    return yield* decodeMadeFiles(source.files.filter((file) => file.path !== 'package.json')).pipe(
+      Effect.mapError(() => ExecutorResponseInvalid.make({ service: 'connections', tool: null })),
+    )
+  })
+}
+
 function makeAppSlug(http: ExecutorHttp) {
   return Effect.fn('Executor.appSlug')(function* (app: typeof ExecutorAppId.Type) {
     const record = yield* http.readApp(
@@ -3210,6 +3239,11 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
       publicOnly ? registration.add(input) : Effect.fail(ExecutorPublicAddressRequired.make({})),
     ),
     make: registration.make,
+    readMade: makeReadMade(http),
+    /** Deploy by ID preserves app data, schedules, event names, and every existing Watch. */
+    reviseMade: Effect.fn('Executor.reviseMade')(function* (app, files) {
+      yield* http.readDeploy(post('/apps/deploy', { app, files }))
+    }),
     reauthorize: makeReauthorize(http, availability),
     inventory: http.readInventory(Effect.succeed(HttpClientRequest.get('/inventory')), null),
     reconcile: makeLegacyReconciliation(http),

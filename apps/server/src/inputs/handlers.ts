@@ -1,8 +1,33 @@
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
-import type { AnswerInputRequest, AskInputRequest } from '@vivid/contracts'
-import { requirePerson, requireVivid, type Actor } from '../auth/access.ts'
+import type {
+  AnswerInputRequest,
+  AskInputRequest,
+  FillHandoffRequest,
+  HandoffIdRequest,
+  PrepareHandoffRequest,
+} from '@vivid/contracts'
+import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/access.ts'
+import {
+  beginHandoff,
+  completeHandoff,
+  fillHandoff,
+  prepareHandoff,
+  withdrawHandoff,
+} from './handoff.ts'
 import { InputStore } from './store.ts'
+
+/** A Person's own call: their identity, their workspace, never a Thread from a Run. */
+const personActor = Effect.fn('Inputs.person')(function* () {
+  const auth = yield* requirePerson()
+  return {
+    person: auth.person,
+    workspace: auth.workspace,
+    by: 'person',
+    threadId: Option.none(),
+    helper: Option.none(),
+  } satisfies Actor
+})
 
 export const inputHandlers = {
   /** Vivid supplies all questions together; authenticated Run context supplies identity and Thread. */
@@ -13,6 +38,7 @@ export const inputHandlers = {
       workspace: auth.workspace,
       by: 'vivid',
       threadId: Option.some(auth.threadId),
+      helper: Option.none(),
     }
     return { request: yield* (yield* InputStore).ask(actor, request) }
   }),
@@ -24,7 +50,27 @@ export const inputHandlers = {
       workspace: auth.workspace,
       by: 'person',
       threadId: Option.none(),
+      helper: Option.none(),
     }
     return { request: yield* (yield* InputStore).answer(actor, request) }
+  }),
+  /** Only a Run hands a step over; the acting Run supplies the Thread, the Run and the Person. */
+  PrepareHandoff: Effect.fn('Rpc.PrepareHandoff')(function* (request: PrepareHandoffRequest) {
+    yield* requireVivid()
+    return yield* prepareHandoff(yield* requireActor(), request)
+  }),
+  /** The Person calls below act only on a handoff addressed to them (`handoff.ts` `addressed`). */
+  BeginHandoff: Effect.fn('Rpc.BeginHandoff')(function* ({ id }: HandoffIdRequest) {
+    return { handoff: yield* beginHandoff(yield* personActor(), id) }
+  }),
+  /** Values go from this request to the Computer's browser; the response holds receipts only. */
+  FillHandoff: Effect.fn('Rpc.FillHandoff')(function* (request: FillHandoffRequest) {
+    return { handoff: yield* fillHandoff(yield* personActor(), request) }
+  }),
+  CompleteHandoff: Effect.fn('Rpc.CompleteHandoff')(function* ({ id }: HandoffIdRequest) {
+    return { handoff: yield* completeHandoff(yield* personActor(), id) }
+  }),
+  WithdrawHandoff: Effect.fn('Rpc.WithdrawHandoff')(function* ({ id }: HandoffIdRequest) {
+    return { handoff: yield* withdrawHandoff(yield* personActor(), id) }
   }),
 }

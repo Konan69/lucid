@@ -1,6 +1,23 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { ThreadId } from '@vivid/contracts'
+import { Option, Schema } from 'effect'
+import { pages } from '../data/pages'
+import { panel } from '../data/panel'
 import { warm } from '../data/warm'
+
+/**
+ * `?screen`: open the Thread with Vivid's computer beside it. The phone opens this when a step
+ * Vivid handed over is finished on a screen the app cannot draw (a relayed one): the same
+ * Thread, signed in on the same server, with the screen in front.
+ *
+ * `?at`: open the Thread on one message, by the id its conversation gives it
+ * (`ConversationMessage.id`). Search opens a found message this way (`screen/Palette.tsx`).
+ */
+const Search = Schema.Struct({
+  screen: Schema.optionalKey(Schema.Literal(true)),
+  at: Schema.optionalKey(Schema.String),
+})
+const decodeSearch = Schema.decodeUnknownOption(Search)
 
 /**
  * `/t/$id`: one Thread. `main.tsx` gives it its screen (`place/Thread`).
@@ -16,5 +33,15 @@ export const Route = createFileRoute('/t/$id')({
     parse: ({ id }) => ({ id: ThreadId.make(id) }),
     stringify: ({ id }) => ({ id }),
   },
-  loader: ({ params }) => warm.thread(params.id),
+  // Anything but `screen` and `at` is dropped; a malformed one is as if it were not there.
+  validateSearch: (search): typeof Search.Type =>
+    Option.getOrElse(decodeSearch(search), () => ({})),
+  loaderDeps: ({ search }) => ({ screen: search.screen === true }),
+  loader: ({ params, deps }) => {
+    if (deps.screen) {
+      pages.toComputer()
+      panel.show()
+    }
+    return warm.thread(params.id)
+  },
 })

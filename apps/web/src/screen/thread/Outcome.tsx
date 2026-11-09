@@ -1,4 +1,4 @@
-import { RunState, type Run, type RunFailure } from '@vivid/contracts'
+import { RunOutcome, RunState, RunUncertainty, type Run, type RunFailure } from '@vivid/contracts'
 import { Option } from 'effect'
 
 /**
@@ -23,6 +23,15 @@ const LOST = {
   again: true,
 }
 
+/**
+ * A Run sent something to a service and never heard back. Asking again could do it twice, so
+ * there is nothing to press: the server holds the same action until its result is known.
+ */
+const UNHEARD = {
+  words: 'Vivid didn’t hear back, so the result of that action isn’t known yet.',
+  again: false,
+}
+
 /** The newest Run in a Thread, which is the one whose ending the Person is waiting on. */
 export const newestRun = (runs: ReadonlyArray<Run>) =>
   runs.reduce<Option.Option<Run>>(
@@ -31,8 +40,17 @@ export const newestRun = (runs: ReadonlyArray<Run>) =>
     Option.none(),
   )
 
+/** Whether a Run's outcome is an outward action whose result is not known. */
+const unheard = (run: Run) =>
+  run.outcome !== null &&
+  RunOutcome.guards.Unknown(run.outcome) &&
+  RunUncertainty.guards.Action(run.outcome.uncertainty)
+
 /** What a Run's ending needs said, when it needs anything said at all. */
-const sayingOf = (state: RunState) =>
+const sayingOf = (run: Run) => (unheard(run) ? Option.some(UNHEARD) : endingOf(run.state))
+
+/** How execution ended, which says nothing when it ended with an answer or was stopped. */
+const endingOf = (state: RunState) =>
   RunState.match(state, {
     Working: () => Option.none(),
     Completed: () => Option.none(),
@@ -47,7 +65,7 @@ const sayingOf = (state: RunState) =>
  * watched by someone else, says the same thing.
  */
 export function Outcome({ run, onAgain }: { run: Run; onAgain: Option.Option<() => void> }) {
-  const saying = sayingOf(run.state)
+  const saying = sayingOf(run)
   if (Option.isNone(saying)) return null
   return (
     <li className="flex animate-fade-in items-baseline gap-3 pl-9 text-label text-ink-3">

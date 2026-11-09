@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect'
-import { ApprovalId, ComputerId, RunId, ThreadId } from './identity.js'
+import { ApprovalId, ComputerId, RunId, ThreadId, ShellHandle } from './identity.js'
 import { DeviceAbility, WindowAction, WindowRefusal, WindowResult } from './windows.js'
 import { CopySignInRequest, SignInRead } from './signins.js'
 
@@ -41,6 +41,180 @@ export const ComputerState = Schema.TaggedUnion({
   Failed: { since: Schema.Finite, reason: Schema.String },
 })
 export type ComputerState = typeof ComputerState.Type
+
+/** Lifecycle facts never issue a viewer permission or expose a provider identity. */
+export const ComputerLifecycle = Schema.TaggedUnion({
+  Absent: ComputerState.cases.Absent.fields,
+  Starting: ComputerState.cases.Starting.fields,
+  Running: { since: ComputerState.cases.Running.fields.since },
+  Stopped: ComputerState.cases.Stopped.fields,
+  Failed: ComputerState.cases.Failed.fields,
+} satisfies Record<keyof typeof ComputerState.cases, Schema.Struct.Fields>)
+export type ComputerLifecycle = typeof ComputerLifecycle.Type
+
+/** Closed failures let recovery select a component without parsing a diagnostic sentence. */
+export const ComputerProbeFailure = Schema.TaggedUnion({
+  ProviderUnreachable: {},
+  ProviderAuthentication: {},
+  ProviderCapacity: {},
+  ProviderStartLimit: {},
+  ProviderOutgrown: { upgrade: Schema.Boolean },
+  ProviderStalled: {},
+  ProviderRefused: {},
+  /** A persisted lifecycle failure whose original typed receipt is no longer available. */
+  RecordedFailure: {},
+  BindingUnresolved: {},
+  SshUnreachable: {},
+  SshAuthentication: {},
+  SshHostMismatch: {},
+  ReceiptLost: {},
+  DiskFull: {},
+  InodesFull: {},
+  DesktopSession: {},
+  DriverUnresponsive: {},
+  BrowserUnresponsive: {},
+  BrowserAmbiguous: {},
+  BrowserPermission: {},
+  Network: {},
+  InvalidObservation: {},
+})
+export type ComputerProbeFailure = typeof ComputerProbeFailure.Type
+
+/** Probe observations contain quantities and component facts, never private pages or environment. */
+export const ComputerProbeObservation = Schema.TaggedUnion({
+  Responsive: {},
+  Disk: {
+    volumes: Schema.Array(
+      Schema.Struct({
+        path: Schema.Literals(['/', 'home']),
+        availableBytes: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+        availableInodes: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+      }),
+    ),
+  },
+  Network: { clockOffsetMillis: Schema.Finite, uncertaintyMillis: Schema.Finite },
+})
+export const ComputerProbeResult = Schema.TaggedUnion({
+  Passed: { observed: ComputerProbeObservation },
+  Failed: { failure: ComputerProbeFailure },
+  NotRun: {
+    reason: Schema.Literals(['Shallow', 'UpstreamUnavailable', 'BrowserNotStarted', 'Unsupported']),
+  },
+})
+export const ComputerProbe = Schema.Struct({
+  component: Schema.Literals([
+    'Provider',
+    'Ssh',
+    'Disk',
+    'Desktop',
+    'Driver',
+    'Browser',
+    'Network',
+  ]),
+  result: ComputerProbeResult,
+})
+export type ComputerProbe = typeof ComputerProbe.Type
+export const ComputerHealthDepth = Schema.Literals(['Shallow', 'Deep'])
+export type ComputerHealthDepth = typeof ComputerHealthDepth.Type
+const checkedAt = Schema.Finite
+const Probes = Schema.Array(ComputerProbe)
+/** Ready certifies the requested depth only. Deep Ready requires every component, with an
+ * unopened browser the only permissible NotRun. Degraded always has an observed failure. */
+const Health = Schema.TaggedUnion({
+  Absent: { checkedAt },
+  Sleeping: { checkedAt },
+  Starting: { checkedAt, since: Schema.Finite },
+  Held: { checkedAt },
+  Ready: { checkedAt, depth: ComputerHealthDepth, probes: Probes },
+  Degraded: { checkedAt, probes: Probes },
+  Unavailable: { checkedAt, cause: ComputerProbeFailure },
+})
+export const ComputerHealth = Health.check(
+  Schema.makeFilter((health) =>
+    Health.match(health, {
+      Absent: () => true,
+      Sleeping: () => true,
+      Starting: () => true,
+      Held: () => true,
+      Unavailable: () => true,
+      Degraded: ({ probes }) =>
+        probes.some((probe) => ComputerProbeResult.guards.Failed(probe.result)),
+      Ready: ({ depth, probes }) => {
+        const required =
+          depth === 'Shallow' ? ['Provider'] : ComputerProbe.fields.component.literals
+        return (
+          probes.length === required.length &&
+          required.every((component) =>
+            probes.some(
+              (probe) =>
+                probe.component === component &&
+                (ComputerProbeResult.guards.Passed(probe.result) ||
+                  (component === 'Browser' &&
+                    ComputerProbeResult.guards.NotRun(probe.result) &&
+                    probe.result.reason === 'BrowserNotStarted')),
+            ),
+          )
+        )
+      },
+    }),
+  ),
+)
+export type ComputerHealth = typeof ComputerHealth.Type
+
+/** One explicit recovery request takes one step. Restore has no supported provider contract. */
+export const ComputerRecoveryStep = Schema.Literals([
+  'Wake',
+  'Reconnect',
+  'RestartBrowser',
+  'RestartDriver',
+  'RestartDesktop',
+  'Reboot',
+  'Restore',
+])
+export type ComputerRecoveryStep = typeof ComputerRecoveryStep.Type
+export const ComputerRecoveryId = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('ComputerRecoveryId'),
+)
+export type ComputerRecoveryId = typeof ComputerRecoveryId.Type
+export const ComputerRecoveryRefusal = Schema.TaggedUnion({
+  Held: {},
+  RunRequired: {},
+  Busy: {},
+  WrongStep: {},
+  KeyReused: {},
+  Unavailable: { cause: ComputerProbeFailure },
+})
+/** A persisted dispatch with no completion receipt is never replayed. */
+export const ComputerRecoveryOutcome = Schema.TaggedUnion({
+  Completed: { receipt: ComputerRecoveryId, health: ComputerHealth },
+  Refused: { cause: ComputerRecoveryRefusal },
+  PersonRequired: { step: ComputerRecoveryStep, consequence: Schema.String },
+  Unsupported: { step: ComputerRecoveryStep, reason: Schema.String },
+  OutcomeUnknown: { receipt: ComputerRecoveryId },
+})
+export type ComputerRecoveryOutcome = typeof ComputerRecoveryOutcome.Type
+/**
+ * The newest recovery step taken on a Person's Computer, as its receipt row holds it.
+ *
+ * - `None`: no step was ever taken.
+ * - `Unsettled`: the step was claimed and has no outcome. It may still be running, or the server
+ *   stopped while it ran; the row cannot tell which and is never replayed (`recovery.ts`), so a
+ *   screen says when it began, not that it is still going.
+ * - `Settled`: the step ended, with its outcome.
+ */
+export const ComputerRecoveryRecord = Schema.TaggedUnion({
+  None: {},
+  Unsettled: { step: ComputerRecoveryStep, since: Schema.Finite },
+  Settled: { step: ComputerRecoveryStep, since: Schema.Finite, outcome: ComputerRecoveryOutcome },
+})
+export type ComputerRecoveryRecord = typeof ComputerRecoveryRecord.Type
+export const GetComputerHealthRequest = Schema.Struct({ depth: ComputerHealthDepth })
+export type GetComputerHealthRequest = typeof GetComputerHealthRequest.Type
+export const RecoverComputerRequest = Schema.Struct({
+  id: ComputerRecoveryId,
+  step: ComputerRecoveryStep,
+})
+export type RecoverComputerRequest = typeof RecoverComputerRequest.Type
 
 export const Computer = Schema.Struct({
   id: Schema.NullOr(ComputerId),
@@ -467,3 +641,34 @@ export const ReportDeviceStopRequest = Schema.Struct({
 export interface ReportDeviceStopRequest extends Schema.Schema.Type<
   typeof ReportDeviceStopRequest
 > {}
+
+export const StartShellRequest = Schema.Struct({
+  command: ComputerShellRequest.fields.command,
+  directory: ComputerPath,
+})
+export type StartShellRequest = typeof StartShellRequest.Type
+export const ReadShellRequest = Schema.Struct({ handle: ShellHandle })
+export type ReadShellRequest = typeof ReadShellRequest.Type
+export const WaitShellRequest = Schema.Struct({
+  handle: ShellHandle,
+  seconds: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 600 })),
+})
+export type WaitShellRequest = typeof WaitShellRequest.Type
+const shellOutput = {
+  handle: ShellHandle,
+  stdout: Schema.String,
+  stderr: Schema.String,
+  truncated: Schema.Boolean,
+  outputDirectory: ComputerPath,
+}
+/** Running snapshots remain readable; terminal states never invent an exit status. */
+export const ShellSnapshot = Schema.TaggedUnion({
+  Queued: { handle: ShellHandle },
+  Running: shellOutput,
+  Completed: { ...shellOutput, exitCode: Schema.Int },
+  Stopped: shellOutput,
+  Unknown: shellOutput,
+  Missing: {},
+  Unavailable: { reason: Schema.String },
+})
+export type ShellSnapshot = typeof ShellSnapshot.Type

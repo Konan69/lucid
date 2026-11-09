@@ -5,6 +5,7 @@ import {
   type LibraryFolderId,
   type LibraryShelf,
   type MeResponse,
+  type ProjectListResponse,
   type Settings,
   type ThreadId,
 } from '@vivid/contracts'
@@ -31,8 +32,13 @@ import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
 import { createContext, useContext } from 'react'
 import { followThemeAtom, themeAtom } from './appearance'
-import { makeDeviceDecisions } from './devices'
+import { makeDecisions } from './approvals'
+import { makeHandoffCalls } from './handing'
+import { makeArtifacts } from './artifact'
 import { makeNaming } from './name'
+import { makeGoal } from './goal'
+import { makeNotifying } from './notifying'
+import { makeHelpers } from './children'
 import { makeConnecting } from './connecting'
 import { makeSending } from './sending'
 import { door } from './door'
@@ -162,18 +168,17 @@ function keepOnDevice(
 }
 
 /**
- * Builds a session's reading of the catalog of services, for the Integrations page: what is
- * typed into its search, and the part of the catalog that answers to it.
+ * Builds a session's searches that are asked on the server: the catalog of services, for the
+ * Integrations page, and "find anything", for the drawer. Each is what is typed into its field
+ * and the answer to it.
  *
- * Ported from the web (`serviceSearch`, `catalogFor` and `services` in
+ * Ported from the web (`serviceSearch`, `catalogFor`, `services`, `findQuery` and `findings` in
  * `apps/web/src/data/live.ts`). There they are the page's own; here they are made per session,
- * on the session's engine, like every query the phone has.
+ * on the session's engine, like every query the phone has, so nothing typed by one Person is
+ * still there for the next.
  */
-function makeCatalog(engine: ReturnType<typeof makeLive>) {
-  /**
-   * What the Person has typed into the catalog search. Empty asks for the most-used services.
-   * Nothing typed by one Person is still there for the next: it goes with the session.
-   */
+function makeSearches(engine: ReturnType<typeof makeLive>) {
+  /** What the Person has typed into the catalog search. Empty asks for the most-used services. */
   const serviceSearch = Atom.make('')
 
   /**
@@ -187,7 +192,32 @@ function makeCatalog(engine: ReturnType<typeof makeLive>) {
     client.FindServices({ query: asked }),
   )
 
-  return { serviceSearch, services }
+  /** What the Person has typed into the drawer's search. */
+  const findQuery = Atom.make('')
+
+  /**
+   * What the drawer's search found: Threads, Library items and the words of the Person's
+   * conversations, asked on the server so the answer is exactly what this Person may see.
+   */
+  const findings = engine.ask(findQuery, (client, query) => client.Search({ query }))
+
+  return { serviceSearch, services, findQuery, findings }
+}
+
+/**
+ * Builds a session's reading of how Vivid's Computer is doing, for the Computer screen: every
+ * part checked each time the screen asks, and the newest step Vivid took to fix it. A check never
+ * wakes a sleeping Computer (`GetComputerHealth`). Ported from the web (`computerHealth` and
+ * `computerRecovery` in `apps/web/src/data/live.ts`), made per session like every phone query.
+ */
+function makeHealth(engine: ReturnType<typeof makeLive>) {
+  const depth = Atom.make<'Deep'>('Deep')
+  return {
+    computerHealth: engine.ask(depth, (client, asked) =>
+      client.GetComputerHealth({ depth: asked }),
+    ),
+    computerRecovery: engine.ask(depth, (client) => client.GetComputerRecovery()),
+  }
 }
 
 /**
@@ -221,6 +251,24 @@ function followLook(
     },
     { immediate: true },
   )
+}
+
+/**
+ * A query that ended because it was not the Person's to see ("people", in their own space) was
+ * answered for where they were, and an ended query asks nothing more. The web asks them again
+ * when the Person moves (`whereabouts` in `apps/web/src/data/live.ts`); the phone did not, so
+ * People opened in a Company still said what it had said in the Person's own space. When they
+ * move, every ended query is asked again; nothing else would ask it.
+ */
+function askAgainWhenMoved(engine: ReturnType<typeof makeLive>, me: LiveQuery<MeResponse>) {
+  // Where the Person was working when a query was last asked.
+  let whereabouts = Option.none<string>()
+  engine.registry.subscribe(me.atom, (result) => {
+    const now = whereaboutsOf(result)
+    if (Equal.equals(now, whereabouts)) return
+    whereabouts = now
+    engine.reopen()
+  })
 }
 
 /**
@@ -311,23 +359,11 @@ function makeLiveData(session: SignedIn) {
     todos: one((client) => client.WatchTodos()),
     /** What the Person has typed and not sent, on any device, where they are working. */
     drafts: kept((client) => client.WatchDrafts()),
+    /** What Vivid has going in the background, to see and stop (`screen/settings/Work.tsx`). */
+    work: one((client) => client.WatchWork()),
   }
 
-  const catalog = makeCatalog(engine)
-  // Where the Person was working when a query was last asked, for the subscription below.
-  let whereabouts = Option.none<string>()
-
-  // A query that ended because it was not the Person's to see ("people", in their own space) was
-  // answered for where they were, and an ended query asks nothing more. The web asks them again
-  // when the Person moves (`whereabouts` in `apps/web/src/data/live.ts`); the phone did not, so
-  // People opened in a Company still said what it had said in the Person's own space. When they
-  // move, every ended query is asked again; nothing else would ask it.
-  engine.registry.subscribe(live.me.atom, (result) => {
-    const now = whereaboutsOf(result)
-    if (Equal.equals(now, whereabouts)) return
-    whereabouts = now
-    engine.reopen()
-  })
+  askAgainWhenMoved(engine, live.me)
 
   const onDevice = keepOnDevice(engine, session, {
     me: live.me,
@@ -365,14 +401,12 @@ function makeLiveData(session: SignedIn) {
   // Looking at a Thread marks it read (`@vivid/state` `seen.ts`, shared with the browser). The
   // screen reads this only while it is the one on top and the app is in front
   // (`screen/Chat.tsx`), and the Thread's own query the rest of the time.
-  const seenThread = makeSeenThread({ engine, threads: live.thread, launch })
+  const seenThread = makeSeenThread({ engine, threads: live.thread, me: live.me, launch })
 
   // Connecting an Integration is one machine for the session, made here because this is where
   // the session's registry and socket are made: every screen, sheet and card of the session
   // presses and draws from it, and an attempt outlives whichever of them began it.
   const connecting = makeConnecting({ engine, connections: live.connections.atom })
-  const devices = makeDeviceDecisions(engine)
-  const naming = makeNaming(engine, live.me)
 
   followLook(engine, live)
 
@@ -423,12 +457,16 @@ function makeLiveData(session: SignedIn) {
       ...expectations: ReadonlyArray<() => Settle>
     ) => start(engine.change(program, ...expectations)),
     link: link.atom,
-    ...catalog,
+    ...makeSearches(engine),
     /** Connecting an Integration: the session's one machine (`data/connecting.ts`). */
     connecting,
-    devices,
-    /** The Person changing their own name in Settings (`data/name.ts`). */
-    naming,
+    ...makeDecisions(engine), // A computer's access, and an Approval away from its Thread.
+    /** A step's calls, like a device decision, outlive the banner that pressed them. */
+    handing: makeHandoffCalls(engine),
+    ...makeForms(engine, live),
+    helpers: makeHelpers(engine), // Stopping a helper and reading its result (`data/children.ts`).
+    /** What Vivid made: its live queries, the editor and the share sheet (`data/artifact.ts`). */
+    artifacts: makeArtifacts(engine, session),
     /**
      * What Vivid remembers about the Person, read from their cell. There is no watch on it: the
      * Memory screen begins a new reading each time it is opened (`screen/settings/Memory.tsx`).
@@ -439,6 +477,7 @@ function makeLiveData(session: SignedIn) {
      * here for the reason `connecting` is: a delivery on its way outlives the screen that sent it.
      */
     sending: makeSending(engine),
+    notifying: makeNotifying(engine), // Notifications while the app is closed.
     gone,
     seenThread,
     typingIn,
@@ -447,6 +486,21 @@ function makeLiveData(session: SignedIn) {
 }
 
 export type LiveData = ReturnType<typeof makeLiveData>
+
+/**
+ * What a screen of the session saves or asks for itself. The forms are each one machine for the
+ * session so a refusal outlives the sheet that showed it: their own name in Settings
+ * (`data/name.ts`), and a Project's goal and done from its page (`data/goal.ts`). The Computer
+ * screen's health reading is asked when the screen asks (`makeHealth`).
+ */
+const makeForms = (
+  engine: ReturnType<typeof makeLive>,
+  live: { readonly me: LiveQuery<MeResponse>; readonly projects: LiveQuery<ProjectListResponse> },
+) => ({
+  naming: makeNaming(engine, live.me),
+  goal: makeGoal(engine, live.projects),
+  ...makeHealth(engine),
+})
 
 /**
  * What the app is showing at its root.

@@ -20,6 +20,7 @@ import {
   ArtifactId,
   ConnectionState,
   ProposedAction,
+  SignalCue,
   type Approval,
   type ApprovalId,
   type ThreadId,
@@ -33,7 +34,7 @@ import {
 } from '../artifacts/store.ts'
 import { contentDigest } from './action.ts'
 import { artifacts, artifactVersions } from '../artifacts/tables.ts'
-import { decodeRow, saveState } from '../connections/records.ts'
+import { decodeRow, grantOf, saveState } from '../connections/records.ts'
 import { connections } from '../connections/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
@@ -55,6 +56,8 @@ const runtime = Layer.succeed(
   Runtime.of({
     admit: () => Effect.die('Stale approval tests do not admit deliveries'),
     settled: () => Effect.never,
+    child: () => Effect.die('Stale approval tests start no helpers'),
+    stopChild: () => Effect.succeed(false),
     stop: () => Effect.succeed(true),
     watch: () => Stream.never,
     read: () => Effect.die('Stale approval tests do not read history'),
@@ -195,7 +198,9 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
             const signal = yield* signalOf(approval.id)
             expect(Signal.guards.Owed(signal)).toBe(true)
-            expect(Signal.guards.Owed(signal) && signal.message.body).toContain('went stale')
+            if (!Signal.guards.Owed(signal) || !SignalCue.guards.Approval(signal.message.cue))
+              expect.fail('Expected an owed Approval signal')
+            expect(signal.message.cue.body).toContain('went stale')
             // The fresh ask, prepared again from the revised document, is a new Approval.
             const fresh = yield* askToSend(test, 'Letter to Dami')
             expect(fresh.id).not.toEqual(approval.id)
@@ -283,6 +288,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
               row,
               ConnectionState.cases.Ready.make({}),
               row.references,
+              grantOf(row),
             )
             expect(saved.authorizationGeneration).toBe(1)
             const after = yield* current(approval)

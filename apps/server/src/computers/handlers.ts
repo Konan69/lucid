@@ -1,6 +1,9 @@
+import { startShell, observeCommand, shellRefusals } from './commands.ts'
 import { Effect, Exit, Scope, Stream } from 'effect'
 import {
   ComputerResponse,
+  type GetComputerHealthRequest,
+  type RecoverComputerRequest,
   DeviceAccess,
   type ReportDeviceStopRequest,
   type UseWindowRequest,
@@ -13,12 +16,21 @@ import {
   type DeviceId,
   type EnrolDeviceRequest,
   type UseDesktopRequest,
+  type StartShellRequest,
+  type ReadShellRequest,
+  type WaitShellRequest,
   type ComputerShellRequest,
   type ComputerFileReadRequest,
   type ComputerFileWriteRequest,
   type WatchDeviceRequestsRequest,
 } from '@vivid/contracts'
-import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/access.ts'
+import {
+  requireActor,
+  requirePerson,
+  requireVivid,
+  type Actor,
+  requireRun,
+} from '../auth/access.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { live, sessionEnded } from '../live/query.ts'
 import { computerWindow } from './windows.ts'
@@ -33,6 +45,8 @@ import {
   computerFileRead,
   computerFileWrite,
 } from './store.ts'
+import { getCapabilities } from './capabilities.ts'
+import { latestRecovery } from './recovery.ts'
 import { computerInventory } from './inventory.ts'
 export { computerRunner } from './store.ts'
 
@@ -96,6 +110,25 @@ const egressStatus = Effect.fn('Computers.egressStatus')(function* (actor: Pick<
 })
 
 export const computerHandlers = {
+  GetCapabilities: Effect.fn('Rpc.GetCapabilities')(function* () {
+    return yield* getCapabilities(yield* requireActor())
+  }),
+  GetComputerHealth: Effect.fn('Rpc.GetComputerHealth')(function* (
+    request: GetComputerHealthRequest,
+  ) {
+    const actor = yield* requireActor()
+    return yield* (yield* ComputerStore).health(actor.person.id, request.depth)
+  }),
+  /** Runtime identity alone is insufficient for recovery; its Run must still be active. */
+  RecoverComputer: Effect.fn('Rpc.RecoverComputer')(function* (request: RecoverComputerRequest) {
+    const actor = yield* requireActor()
+    return yield* (yield* ComputerStore).recover(actor, request)
+  }),
+  /** The Person's own panel reads it; Vivid learns a step's outcome from the step it took. */
+  GetComputerRecovery: Effect.fn('Rpc.GetComputerRecovery')(function* () {
+    const auth = yield* requirePerson()
+    return yield* latestRecovery(auth.person.id)
+  }),
   /** Public receipt contains only the outcome and count; cookies never cross the runtime RPC. */
   CopySignIn: Effect.fn('Rpc.CopySignIn')(function* (request: CopySignInRequest) {
     yield* requireVivid()
@@ -199,26 +232,51 @@ export const computerHandlers = {
     const store = yield* ComputerStore
     return ComputerResponse.make({ computer: yield* store.hold(auth.person.id, held) })
   }),
-  ComputerShell: Effect.fn('Rpc.ComputerShell')(function* (request: ComputerShellRequest) {
+  StartShell: Effect.fn('Rpc.StartShell')(function* (request: StartShellRequest) {
     yield* requireVivid()
+    return yield* startShell(yield* requireActor(), request)
+  }),
+  ReadShell: Effect.fn('Rpc.ReadShell')(function* (request: ReadShellRequest) {
+    yield* requireVivid()
+    const actor = yield* requireActor()
+    return yield* observeCommand(actor.person.id, 'read', { ...request, seconds: 0 }).pipe(
+      Effect.catchTags(shellRefusals),
+    )
+  }),
+  WaitShell: Effect.fn('Rpc.WaitShell')(function* (request: WaitShellRequest) {
+    yield* requireVivid()
+    const actor = yield* requireActor()
+    return yield* observeCommand(actor.person.id, 'wait', request).pipe(
+      Effect.catchTags(shellRefusals),
+    )
+  }),
+  StopShell: Effect.fn('Rpc.StopShell')(function* (request: ReadShellRequest) {
+    yield* requireVivid()
+    const actor = yield* requireActor()
+    return yield* observeCommand(actor.person.id, 'stop', { ...request, seconds: 30 }).pipe(
+      Effect.catchTags(shellRefusals),
+    )
+  }),
+  ComputerShell: Effect.fn('Rpc.ComputerShell')(function* (request: ComputerShellRequest) {
+    yield* requireRun()
     return yield* computerShell(yield* requireActor(), request)
   }),
   ComputerFileRead: Effect.fn('Rpc.ComputerFileRead')(function* (request: ComputerFileReadRequest) {
-    yield* requireVivid()
+    yield* requireRun()
     return yield* computerFileRead(yield* requireActor(), request)
   }),
   ComputerFileWrite: Effect.fn('Rpc.ComputerFileWrite')(function* (
     request: ComputerFileWriteRequest,
   ) {
-    yield* requireVivid()
+    yield* requireRun()
     return yield* computerFileWrite(yield* requireActor(), request)
   }),
   Browse: Effect.fn('Rpc.Browse')(function* (request: BrowseRequest) {
-    yield* requireVivid()
+    yield* requireRun()
     return yield* computerBrowse(yield* requireActor(), request)
   }),
   UseDesktop: Effect.fn('Rpc.UseDesktop')(function* (request: UseDesktopRequest) {
-    yield* requireVivid()
+    yield* requireRun()
     return yield* computerDesktop(yield* requireActor(), request)
   }),
 }

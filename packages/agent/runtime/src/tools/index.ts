@@ -1,25 +1,14 @@
 import * as NodeAsyncHooks from 'node:async_hooks'
 import { Effect, type Layer } from 'effect'
-import type { MemoryAuthority } from '@vivid/contracts'
-import type { Memory } from '../memory.ts'
+import type { Memory, MemoryWriter } from '../memory.ts'
 import type { ToolFailure } from './result.ts'
 import { defineTool as durableTool, type ToolRegistration } from '@earendil-works/pi-durable'
 import { NobodyToActFor } from '../client.ts'
 import { ToolScopeMissing } from './failure.ts'
-import { askTools } from './ask.ts'
-import { codeTools } from './code.ts'
-import { computerTools } from './computer.ts'
-import { connectionTools } from './connections.ts'
-import { documentTools } from './documents.ts'
-import { libraryTools } from './library.ts'
-import { memoryTools } from './memory.ts'
-import { notifyTools } from './notify.ts'
-import { feedTools } from './feed.ts'
-import { followTools } from './follow.ts'
-import { projectTools } from './projects.ts'
-import { owedTools } from './owed.ts'
-import { todoTools } from './todos.ts'
-import { watchTools } from './watches.ts'
+import { capabilityRegistry } from './capabilities.ts'
+import { projectNamed } from './projects.ts'
+import { dreamerMemoryTools, type ProjectOf } from './memory.ts'
+import type { Transcripts } from './recall.ts'
 import {
   scopeLayer,
   scopedRunner,
@@ -28,16 +17,29 @@ import {
   Scope,
   type ResolveScope,
 } from './scope.ts'
-import { skillTools } from './skills.ts'
+
+/** What the Person's cell holds locally that tools read: their Memory and their conversations. */
+export interface CellStores {
+  readonly memory: Memory['Service']
+  readonly transcripts: Transcripts
+}
 
 /** Preserve main's registration order. Resolve authority separately for every invocation, inside
  * execute, so queued submissions cannot retain another Person's RPC client or Library folder.
  * The core supplies its configured entry directory; constructing tools does no I/O. */
 export function tools(
   resolve: ResolveScope,
-  resolvePerson: (call: Parameters<ResolveScope>[0]) => Effect.Effect<MemoryAuthority, ToolFailure>,
-  memory: Memory['Service'],
-): ToolRegistration[] {
+  resolvePerson: (call: Parameters<ResolveScope>[0]) => Effect.Effect<MemoryWriter, ToolFailure>,
+  { memory, transcripts }: CellStores,
+  /** Tools made outside the catalogue that it mounts as they are: built-in skills and helpers. */
+  {
+    skills,
+    children,
+  }: {
+    readonly skills: ReadonlyArray<ToolRegistration>
+    readonly children: ReadonlyArray<ToolRegistration>
+  },
+) {
   const authority = new NodeAsyncHooks.AsyncLocalStorage<Layer.Layer<Scope, ToolFailure>>()
   /** Node's invocation-local storage keeps concurrent calls isolated while sharing warm tools. */
   const current = () => {
@@ -59,7 +61,21 @@ export function tools(
       )
     return resolvePerson(call)
   }, memory)
-  return catalogue(runTool, run, runMemory).map((definition) =>
+  /** A Project-scoped memory names its Project; the name resolves through the call's own scope. */
+  const project: ProjectOf = (name) =>
+    // @effect-diagnostics-next-line strictEffectProvide:off -- The per-call authority Layer, as in toolRunner.
+    projectNamed(name).pipe(Effect.provide(current()))
+  const registry = capabilityRegistry({
+    runTool,
+    run,
+    runMemory,
+    project,
+    memory,
+    skills,
+    transcripts,
+    children,
+  })
+  const mount = (definition: ToolRegistration) =>
     durableTool({
       ...definition,
       execute(args, api, context) {
@@ -67,31 +83,11 @@ export function tools(
           authority.run(scopeLayer(resolve, api), () => definition.execute(args, api, context)),
         )
       },
-    }),
-  )
-}
-
-/** A single catalogue owns registration order for discovery and invocation. */
-function catalogue(
-  runTool: ReturnType<typeof toolRunner>,
-  run: ReturnType<typeof scopedRunner>,
-  runMemory: ReturnType<typeof memoryRunner>,
-): ToolRegistration[] {
-  return [
-    ...computerTools(runTool, run),
-    ...libraryTools(runTool),
-    ...connectionTools(runTool),
-    ...askTools(runTool),
-    ...followTools(),
-    ...memoryTools(runMemory),
-    ...notifyTools(runTool),
-    ...skillTools(runTool),
-    ...watchTools(runTool),
-    ...feedTools(runTool),
-    ...projectTools(runTool),
-    ...owedTools(runTool),
-    ...todoTools(runTool),
-    ...codeTools(runTool),
-    ...documentTools(runTool),
-  ]
+    })
+  return {
+    tools: registry.tools.map(mount),
+    reading: registry.reading,
+    // Offered only to the Dreamer (`agents/dreamer.ts`), never to a reply.
+    dreaming: dreamerMemoryTools(runMemory, project).map(mount),
+  }
 }

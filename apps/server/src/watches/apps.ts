@@ -1,4 +1,4 @@
-import { and, eq, ne } from 'drizzle-orm'
+import { and, eq, notInArray } from 'drizzle-orm'
 import { ConnectionId, WatchArguments } from '@vivid/contracts'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
@@ -94,6 +94,11 @@ export interface WatchedAppsService {
   readonly accountsOf: (
     actor: Actor,
   ) => Effect.Effect<ReadonlyArray<string>, DatabaseInfrastructureError>
+  /** Read persisted authorization, without treating a provider outage as expired sign-in. */
+  readonly needsAuthorization: (
+    id: ConnectionId,
+  ) => Effect.Effect<boolean, DatabaseInfrastructureError>
+  readonly isReady: (id: ConnectionId) => Effect.Effect<boolean, DatabaseInfrastructureError>
 }
 
 export class WatchedApps extends Context.Service<WatchedApps, WatchedAppsService>()(
@@ -155,6 +160,24 @@ export const makeWatchedApps = (database: Database['Service'], executor: Executo
     )
 
   return WatchedApps.of({
+    needsAuthorization: (id) =>
+      database
+        .run(
+          database
+            .select({ status: connections.status })
+            .from(connections)
+            .where(eq(connections.id, id)),
+        )
+        .pipe(Effect.map((rows) => rows.some((row) => row.status === 'needs-authorization'))),
+    isReady: (id) =>
+      database
+        .run(
+          database
+            .select({ status: connections.status })
+            .from(connections)
+            .where(eq(connections.id, id)),
+        )
+        .pipe(Effect.map((rows) => rows.some((row) => row.status === 'ready'))),
     /** Account names compare as the Connection tools compare them: trimmed, case-insensitive. */
     appOf: Effect.fn('WatchedApps.appOf')(function* (actor, account) {
       const wanted = account.trim().toLowerCase()
@@ -189,11 +212,13 @@ export const holdConnection = Effect.fn('WatchedApps.holdConnection')(function* 
   id: ConnectionId,
 ) {
   const rows = yield* tx
-    .select({ id: connections.id })
+    .select({ id: connections.id, status: connections.status })
     .from(connections)
     .where(eq(connections.id, id))
     .for('update')
-  if (rows.length === 0) return yield* new WatchConnectionRemoved({ connectionId: id })
+  const [connection] = rows
+  if (connection === undefined) return yield* new WatchConnectionRemoved({ connectionId: id })
+  return connection.status
 })
 
 /** Display names depend on the whole inventory, so name it once per owner-facing read. */
@@ -213,7 +238,7 @@ export const disconnectWatches = Effect.fn('WatchedApps.disconnectWatches')(func
   const live = yield* tx
     .select()
     .from(watches)
-    .where(and(eq(watches.connectionId, id), ne(watches.state, 'Stopped')))
+    .where(and(eq(watches.connectionId, id), notInArray(watches.state, ['Stopped', 'Completed'])))
   const subscriptions = yield* Effect.forEach(
     live,
     Effect.fnUntraced(function* (watch) {

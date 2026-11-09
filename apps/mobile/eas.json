@@ -4,6 +4,20 @@
     "appVersionSource": "remote"
   },
   "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "environment": "production",
+      "node": "24.14.1",
+      "pnpm": "12.4.2",
+      "env": {
+        "VIVID_APP_VARIANT": "development",
+        "SENTRY_DISABLE_AUTO_UPLOAD": "true"
+      },
+      "ios": {
+        "image": "latest"
+      }
+    },
     "testflight": {
       "distribution": "store",
       "environment": "production",

@@ -1,5 +1,7 @@
 import { Effect, Match, Option, Schema } from 'effect'
+import { ActionApplied, ActionReceipt, ToolCallId } from './actions.js'
 import { ActionEffect } from './approvals.js'
+import { RuleDecision } from './rules.js'
 import { ApprovalId, ConnectionId, PersonSummary, ServiceId } from './identity.js'
 
 /**
@@ -24,6 +26,61 @@ export const ConnectionState = Schema.TaggedUnion({
   Failed: { reason: Schema.String },
 })
 export type ConnectionState = typeof ConnectionState.Type
+
+/** OAuth scope evidence is observed authority, never the list requested at sign-in. */
+export const OAuthScope = Schema.NonEmptyString.pipe(Schema.brand('OAuthScope'))
+export type OAuthScope = typeof OAuthScope.Type
+export const ScopeEvidence = Schema.TaggedUnion({
+  Known: { values: Schema.Array(OAuthScope) },
+  Unreported: {},
+  NotApplicable: {},
+})
+export type ScopeEvidence = typeof ScopeEvidence.Type
+
+/** Operational readiness and the certainty of its authorization observation are separate facts. */
+export const ConnectionGrant = Schema.TaggedUnion({
+  Unverified: {},
+  NotRequired: {},
+  Pending: {},
+  Granted: { scopes: ScopeEvidence },
+  Partial: { granted: Schema.Array(OAuthScope), missing: Schema.NonEmptyArray(OAuthScope) },
+  Expired: {},
+  Revoked: {},
+  ReauthorizationRequired: {},
+})
+export type ConnectionGrant = typeof ConnectionGrant.Type
+export const ObservationTime = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)).pipe(
+  Schema.brand('ObservationTime'),
+)
+export type ObservationTime = typeof ObservationTime.Type
+export const GrantObservation = Schema.Struct({
+  grant: ConnectionGrant,
+  checkedAt: ObservationTime,
+})
+
+/** Only these reviewed Google classes have deterministic admission controls. */
+export const ConnectionDataClass = Schema.Literals(['GmailDrafts', 'CalendarEventSchedules'])
+export type ConnectionDataClass = typeof ConnectionDataClass.Type
+/**
+ * The service whose accounts each data class belongs to. The server's admission policy
+ * (`apps/server/src/connections/permissions.ts`) and every screen that offers the class read this
+ * one table, so a class is offered exactly on the accounts it can be withheld from.
+ */
+export const connectionDataClassService = {
+  GmailDrafts: ServiceId.make('google/gmail'),
+  CalendarEventSchedules: ServiceId.make('google/calendar'),
+} as const satisfies Record<ConnectionDataClass, ServiceId>
+export const ConnectionPermission = Schema.Struct({
+  dataClass: ConnectionDataClass,
+  decision: RuleDecision,
+})
+export type ConnectionPermission = typeof ConnectionPermission.Type
+export const SetConnectionPermissionRequest = Schema.Struct({
+  id: ConnectionId,
+  dataClass: ConnectionDataClass,
+  decision: RuleDecision,
+})
+export type SetConnectionPermissionRequest = typeof SetConnectionPermissionRequest.Type
 
 /** The most characters a Person's name for an account may have. */
 export const ACCOUNT_NAME_MAX = 40
@@ -99,6 +156,8 @@ export const Connection = Schema.Struct({
   origin: Schema.Literals(['Catalogue', 'Address', 'Made']),
   ownership: ConnectionOwnership,
   state: ConnectionState,
+  grant: ConnectionGrant,
+  permissions: Schema.Array(ConnectionPermission),
   createdAt: Schema.Finite,
 }).annotate({ identifier: 'Connection', title: 'Integration' })
 /** Decoded Connection. */
@@ -333,6 +392,8 @@ export interface FindToolsResponse extends Schema.Schema.Type<typeof FindToolsRe
 
 /** Vivid asking to do one thing. The server, not the runtime, decides whether it happens. */
 export const UseToolRequest = Schema.Struct({
+  /** The runtime's identity for this call. A write is journaled under it, so a retry is answered once. */
+  toolCallId: ToolCallId,
   connectionId: ConnectionId,
   tool: Schema.String,
   input: Schema.Json,
@@ -406,23 +467,91 @@ export class DisplayApprovalUnsupported extends Schema.TaggedError<DisplayApprov
  * output, wait for a decision, offer the Connection, or tell the Person it may not.
  */
 export const ToolOutcome = Schema.TaggedUnion({
-  Completed: { output: Schema.Json },
+  /**
+   * `receipt` is what the journal recorded for an outward write Vivid sent. It is null where no
+   * operation was journaled: a read, which changes nothing outside Vivid, and a Person's own press
+   * on a display.
+   */
+  Completed: { output: Schema.Json, receipt: Schema.NullOr(ActionApplied) },
+  /**
+   * This exact operation was already done: the runtime retried a call that had been answered, or
+   * the same act was reconciled as applied. Its receipt is what is known; it was not sent again,
+   * and the provider's answer is not kept.
+   */
+  Repeated: { receipt: ActionApplied },
   /** A Person must decide. The turn ends; the decision returns to the Thread. */
   ApprovalRequired: { approvalId: ApprovalId, summary: Schema.String },
   /** A rule forbids it. */
   Blocked: { rule: Schema.String },
   /** The Connection is not ready and must be authorized again. */
-  ConnectionNotReady: { service: ServiceId, serviceName: Schema.String },
+  ConnectionNotReady: { service: ServiceId, serviceName: Schema.String, grant: ConnectionGrant },
+  ScopeRequired: { required: Schema.NonEmptyArray(OAuthScope), granted: ScopeEvidence },
+  PermissionDeclined: { classes: Schema.NonEmptyArray(ConnectionPermission) },
+  Unsupported: { capability: Schema.NonEmptyString },
   /** The service answered with an error Vivid can read and correct. */
   Rejected: {
     message: Schema.String,
     /** Empty means no validation detail was supplied; provider identities never enter this list. */
     problems: Schema.Array(Schema.String).pipe(Schema.withConstructorDefault(Effect.succeed([]))),
   },
-  /** The request was sent and no answer came back. It may or may not have happened. */
-  OutcomeUnknown: {},
+  /**
+   * The request was sent and no answer came back. It may or may not have happened. `receipt` names
+   * the journaled operation to reconcile; null on the same calls `Completed` leaves unjournaled.
+   */
+  OutcomeUnknown: { receipt: Schema.NullOr(ActionReceipt.cases.Unknown) },
 })
 export type ToolOutcome = typeof ToolOutcome.Type
+
+/** Counts state their unit; provider estimates are not exact totals. */
+export const ResultCount = Schema.TaggedUnion({
+  Known: { value: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)), unit: Schema.NonEmptyString },
+  Unknown: {},
+})
+export const ResultContinuation = Schema.TaggedUnion({
+  Next: { input: Schema.Json },
+  End: {},
+  Unknown: {},
+})
+export const ResultQuery = Schema.Struct({
+  account: Schema.NonEmptyString,
+  operation: Schema.NonEmptyString,
+  input: Schema.Json,
+  fetched: ResultCount,
+  total: ResultCount,
+  continuation: ResultContinuation,
+})
+export type ResultQuery = typeof ResultQuery.Type
+export const CoverageReason = Schema.TaggedUnion({
+  Pagination: {},
+  ProviderTruncation: {},
+  UnsyncedRange: {},
+  PermissionWithheld: { classes: Schema.NonEmptyArray(ConnectionPermission) },
+  OutputClipped: {},
+})
+/** Null query in Partial describes clipped non-retrieval output, never an invented read. */
+export const ResultCoverage = Schema.TaggedUnion({
+  Complete: { query: ResultQuery },
+  Partial: { query: Schema.NullOr(ResultQuery), reasons: Schema.NonEmptyArray(CoverageReason) },
+  Unknown: { query: ResultQuery },
+  NotRead: {},
+  NotApplicable: {},
+})
+export type ResultCoverage = typeof ResultCoverage.Type
+export const ResultAsOf = Schema.TaggedUnion({
+  Source: { at: ObservationTime, meaning: Schema.NonEmptyString },
+  Unknown: {},
+  NotApplicable: {},
+})
+export type ResultAsOf = typeof ResultAsOf.Type
+
+/** Every Integration receipt retains evidence outside the provider's unchanged output. */
+export const IntegrationResult = Schema.Struct({
+  outcome: ToolOutcome,
+  coverage: ResultCoverage,
+  asOf: ResultAsOf,
+  observedAt: ObservationTime,
+})
+export type IntegrationResult = typeof IntegrationResult.Type
 
 /** Runtime message offering a Connection in the Thread. */
 export const ConnectionRequestMessage = Schema.Struct({
@@ -496,6 +625,7 @@ export const ConnectionMatch = Schema.TaggedUnion({
     connected: Schema.Boolean,
     shared: Schema.Boolean,
     state: ConnectionState,
+    grant: ConnectionGrant,
   },
   Catalog: {
     name: Schema.String,
@@ -609,3 +739,16 @@ export const ConnectionAuthorizationMessage = Schema.Struct({
   ready: Schema.Literal(false),
   authorization: ConnectionAuthorization,
 })
+
+/** Only personally authored Integrations expose source for an in-place revision. */
+export const ReadMadeIntegrationRequest = Schema.Struct({ account: Schema.NonEmptyString })
+export interface ReadMadeIntegrationRequest extends Schema.Schema.Type<
+  typeof ReadMadeIntegrationRequest
+> {}
+export const MadeIntegrationSource = Schema.Struct({
+  account: Schema.String,
+  files: MakeIntegrationRequest.fields.files,
+})
+export interface MadeIntegrationSource extends Schema.Schema.Type<typeof MadeIntegrationSource> {}
+export const ReviseMadeIntegrationRequest = MadeIntegrationSource
+export type ReviseMadeIntegrationRequest = MadeIntegrationSource

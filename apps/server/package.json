@@ -17,6 +17,8 @@
     "runs:adopt": "tsx src/threads/adoption/main.ts"
   },
   "dependencies": {
+    "@chat-adapter/discord": "~4.43.0",
+    "@chat-adapter/state-memory": "~4.43.0",
     "@earendil-works/pi-codemode": "1.0.0",
     "@effect/ai-openrouter": "catalog:",
     "@effect/ai-typesafe": "catalog:",
@@ -28,6 +30,7 @@
     "@vivid/skills": "workspace:*",
     "alchemy": "catalog:",
     "better-auth": "catalog:",
+    "chat": "~4.43.0",
     "croner": "^10.0.1",
     "drizzle-orm": "catalog:",
     "effect": "catalog:",

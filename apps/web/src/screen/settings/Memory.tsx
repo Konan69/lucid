@@ -1,14 +1,24 @@
 import { useAtomSet, useAtomValue } from '@effect/atom-react'
-import type { MemoryLine, SavedMemory } from '@vivid/contracts'
+import { VividRpcClient } from '@vivid/client-runtime'
+import {
+  MemoryExport,
+  type MemoryForgetId,
+  type MemoryLine,
+  type SavedMemory,
+} from '@vivid/contracts'
 import { LiveState, makeWhen, remembering, thisReader } from '@vivid/state'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, Download as DownloadIcon } from 'lucide-react'
+import { Effect, Option, Result, Schema } from 'effect'
 import { useState } from 'react'
-import { memory } from '../../data/live'
+import { act, running } from '../../data/app'
+import { memory, useLive } from '../../data/live'
+import { orSay } from '../../data/said'
+import { router } from '../../router'
 import { Button } from '../../ui/button'
 import { cn } from '../../ui/cn'
 import { Markdown } from '../../ui/Markdown'
 import { Textarea } from '../../ui/textarea'
-import { Awaiting, Empty, Refusal, Section } from './Parts'
+import { Awaiting, Empty, Refusal, Row, Section } from './Parts'
 
 const when = makeWhen(thisReader())
 
@@ -17,6 +27,8 @@ const SENTENCE_LIMIT = 200
 
 /** Whether Vivid was told or worked it out, in the Person's words. */
 const BASIS = { said: 'You said', guessed: 'Vivid’s guess' } as const
+/** What a Dreamer note says in place of who said it: Vivid looked into it on its own. */
+const FOUND = 'Vivid looked into it'
 
 /**
  * What Vivid remembers about the Person: the pages it keeps standing (about them, how to reach
@@ -33,7 +45,61 @@ export function Memory() {
   const reading = useAtomValue(visit.reading)
   const send = useAtomSet(visit.send)
   const [opened] = useState(() => Date.now())
-  return <Remembered reading={reading} send={send} now={opened} />
+  return (
+    <>
+      <Remembered reading={reading} send={send} now={opened} />
+      <Download />
+    </>
+  )
+}
+
+/**
+ * Everything the Person's memory holds, read whole on the server (`ExportMemory`) and written out
+ * as the contract encodes it, so the file is the same JSON the server keeps and can be read
+ * without Vivid.
+ */
+const encodeExport = Schema.encodeEffect(MemoryExport)
+const exported = Effect.fn('Memory.exported')(function* () {
+  const client = yield* VividRpcClient
+  return yield* encodeExport(yield* client.ExportMemory())
+})
+
+/** Hands the browser one file to save, named for the day it was taken. */
+const save = (file: typeof MemoryExport.Encoded) => {
+  const day = new Date(file.exportedAt).toISOString().slice(0, 10)
+  const address = URL.createObjectURL(
+    new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' }),
+  )
+  const link = document.createElement('a')
+  link.href = address
+  link.download = `vivid-memory-${day}.json`
+  link.click()
+  URL.revokeObjectURL(address)
+}
+
+const download = () =>
+  void act(
+    orSay(
+      Effect.map(running(exported()), Result.map(save)),
+      'Your memory could not be downloaded. Try again.',
+    ),
+  )
+
+/** The way to take a copy of everything Vivid remembers about the Person. */
+function Download() {
+  return (
+    <Section title="Your copy">
+      <Row
+        label="Download everything Vivid remembers"
+        detail="Every page and line, whole, as one file you can keep."
+      >
+        <Button size="sm" variant="outline" onClick={download}>
+          <DownloadIcon />
+          Download
+        </Button>
+      </Row>
+    </Section>
+  )
 }
 
 /**
@@ -87,17 +153,34 @@ function Shown({
   const lines = remembering.Entry.guards.Forgetting(shown.entry)
     ? shown.lines.filter((line) => !remembering.isAt(line, open))
     : shown.lines
+  // What the Dreamer found is listed on its own, above what Vivid remembers.
+  const dreams = remembering.found(lines)
+  const others = remembering.kept(lines)
   return (
     <>
       <Pages title="About you" pages={page('person')} />
       <Pages title="How Vivid reaches you" pages={page('attention')} />
       <Pages title="Vivid" pages={vivid} />
       <Notice entry={shown.entry} />
+      {remembering.Entry.guards.Handed(shown.entry) && <Forgotten id={shown.entry.forget} />}
+      {dreams.length > 0 && (
+        <Section title="What Vivid found">
+          {dreams.map((line) => (
+            <Line
+              key={`${line.layer}/${line.file}`}
+              line={line}
+              entry={remembering.isAt(line, open) ? shown.entry : CLOSED}
+              send={send}
+              now={now}
+            />
+          ))}
+        </Section>
+      )}
       <Section title="What Vivid remembers">
-        {lines.length === 0 && (
+        {others.length === 0 && (
           <Empty>When you tell Vivid something that matters later, it shows up here.</Empty>
         )}
-        {lines.map((line) => (
+        {others.map((line) => (
           <Line
             key={`${line.layer}/${line.file}`}
             line={line}
@@ -147,8 +230,37 @@ function Notice({ entry }: { entry: remembering.Entry }) {
     Unsaved: () => null,
     Rereading: () => null,
     Forgetting: () => null,
+    Handed: () => null,
   })
   return <Refusal message={said} />
+}
+
+/**
+ * Where a forget the Person pressed stands. Vivid carries it out in the background across what
+ * it remembers, its Watches and the work queued with it, so this reads the forget's receipt live
+ * and says Forgotten only once nothing that can bring it back remains.
+ */
+function Forgotten({ id }: { id: MemoryForgetId }) {
+  const receipt = useLive(memory.forgets.get(id))
+  const words = LiveState.$match(receipt, {
+    Loading: () => remembering.forgetWords(remembering.pendingForget(id)),
+    Ready: ({ value }) => remembering.forgetWords(value),
+    Failed: () => ({ headline: 'Unable to tell how forgetting it went right now.', lines: [] }),
+  })
+  return (
+    <div role="status" className="mb-3 rounded-control bg-surface-2 px-3 py-2 edge">
+      <p className="text-label text-ink">{words.headline}</p>
+      {words.lines.length > 0 && (
+        <ul className="mt-1 flex flex-col gap-0.5">
+          {words.lines.map((line) => (
+            <li key={line} className="text-label text-ink-3">
+              {line}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
 }
 
 /**
@@ -171,6 +283,7 @@ function Line({
     Closed: () => false,
     Vanished: () => false,
     Forgetting: () => false,
+    Handed: () => false,
     Unforgotten: () => false,
     Opening: () => true,
     Unopened: () => true,
@@ -198,7 +311,8 @@ function Line({
             {line.description}
           </span>
           <span className="block text-label text-ink-3">
-            {BASIS[line.basis]} · <span className="tabular-nums">{when(line.updatedAt, now)}</span>
+            {line.layer === 'dreams' ? FOUND : BASIS[line.basis]} ·{' '}
+            <span className="tabular-nums">{when(line.updatedAt, now)}</span>
           </span>
         </span>
         <ChevronDown
@@ -227,6 +341,7 @@ function Opened({
     Closed: () => null,
     Vanished: () => null,
     Forgetting: () => null,
+    Handed: () => null,
     Unforgotten: () => null,
     Opening: () => <Waiting />,
     Rereading: () => <Waiting />,
@@ -279,6 +394,7 @@ function Whole({
       <div className="rounded-control bg-surface-2 px-3 py-2.5 wrap-break-word *:text-label">
         <Markdown content={entry.body} />
       </div>
+      <Sources entry={entry} />
       <div className="flex gap-2">
         <Button size="sm" variant="outline" onClick={() => send(remembering.events.Edit())}>
           Correct
@@ -287,6 +403,36 @@ function Whole({
           Forget
         </Button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Where an entry came from: the Person's message or the conversation it was written in, each a
+ * way into that Thread, or what else wrote it. Its words come from `@vivid/state`, as the phone's.
+ */
+function Sources({ entry }: { entry: SavedMemory }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-label text-ink-3">Where this came from</span>
+      <ul className="flex flex-wrap gap-x-3 gap-y-1">
+        {remembering.sourcesOf(entry).map((source, index) => (
+          <li key={index} className="text-label text-ink-2">
+            {Option.match(source.thread, {
+              onNone: () => source.words,
+              onSome: (id) => (
+                <Button
+                  variant="link"
+                  size="xs"
+                  onClick={() => void router.navigate({ to: '/t/$id', params: { id } })}
+                >
+                  {source.words}
+                </Button>
+              ),
+            })}
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
@@ -329,6 +475,7 @@ function Correcting({
               description: said,
               body,
               basis: 'said',
+              scope: entry.scope,
             },
           }),
         )

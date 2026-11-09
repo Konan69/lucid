@@ -1,4 +1,5 @@
 import { approve, changed, deny } from './approval.mjs'
+import { outcome } from './outcome.mjs'
 import { question } from './question.mjs'
 import * as fs from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -7,8 +8,9 @@ import { command, json, identity, alive } from './process.mjs'
 import { stopCaptured } from './recovery.mjs'
 import { control } from './socket.mjs'
 import { rpc, settled, history, chat, conversation } from './wire.mjs'
-import { features, stop, png } from './drive.mjs'
+import { features, stop, png, program, ranProgram } from './drive.mjs'
 import { watchBrowser } from './watchbrowser.mjs'
+import { procedureBrowser } from './procedurebrowser.mjs'
 import { deviceBrowser } from './devicebrowser.mjs'
 import { readBrowser } from './readbrowser.mjs'
 import { settingsBrowser } from './settingsbrowser.mjs'
@@ -17,8 +19,12 @@ import { nameBrowser } from './namebrowser.mjs'
 import { feedBrowser } from './feedbrowser.mjs'
 import { owedBrowser } from './owedbrowser.mjs'
 import { todosBrowser } from './todosbrowser.mjs'
+import { projectsBrowser } from './projectsbrowser.mjs'
 import { offerBrowser } from './offer.mjs'
 import { libraryBrowser } from './librarybrowser.mjs'
+import { pushBrowser } from './push.mjs'
+import { computerBrowser, integrationsBrowser } from './accessbrowser.mjs'
+import { helpersBrowser, helperstopBrowser } from './helpers.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { createElement } = web('react')
@@ -49,13 +55,16 @@ function normaliseReply(text) {
 }
 
 const missing = {
-  code: 'No disposable Person Computer authority',
+  handoff: 'No proof-owned Computer',
   discord: 'No browser recipe for the Discord Key form and Allow card yet',
   github: 'No browser recipe for the GitHub Key form yet',
+  'texting-discord': 'No browser recipe for Text Vivid Discord connect yet',
 }
 const recipes = {
+  code: { check: 'code' },
   approve: { check: 'approve' },
   deny: { check: 'deny' },
+  outcome: { check: 'outcome' },
   changed: { check: 'changed' },
   question: { check: 'question' },
   stop: { check: 'stop' },
@@ -64,13 +73,21 @@ const recipes = {
   name: { check: 'name' },
   memory: { check: 'memory' },
   learning: { check: 'learning' },
+  push: { check: 'push' },
+  procedure: { check: 'procedure' },
   devices: { check: 'devices' },
   watch: { check: 'watch' },
   feed: { check: 'feed' },
   owed: { check: 'owed' },
   todos: { check: 'todos' },
+  projects: { check: 'projects' },
   replies: { check: 'replies' },
   library: { check: 'library' },
+  integrations: { check: 'integrations' },
+  capabilities: { check: 'capabilities' },
+  computer: { check: 'computer' },
+  helpers: { check: 'helpers' },
+  helperstop: { check: 'helperstop' },
   first: {
     phrase:
       'Write a detailed 1000-word guide to planning a community garden. Write directly in this reply as plain paragraphs. Do not create a document or ask questions.',
@@ -105,6 +122,11 @@ const specialRecipes = {
     scope:
       'File-picker upload, worker readiness, original-file tab, search, real model citation and reload',
   },
+  code: {
+    drive: codeBrowser,
+    scope:
+      "Composer Send, one run_code program on the synthetic Person's new Boat Computer, its file read back through Boat, the reply bubble before and after reload",
+  },
   approve: {
     drive: approve,
     scope: 'Real Verify Pulse approval card, Allow, one provider event and reload',
@@ -112,6 +134,11 @@ const specialRecipes = {
   deny: {
     drive: deny,
     scope: 'Real Verify Pulse approval card, denial, no provider event and reload',
+  },
+  outcome: {
+    drive: outcome,
+    scope:
+      'Real Verify Pulse write allowed by rule, journaled Completed receipt, read-only reconciliation, and Delivered after the open Thread screen drew the reply',
   },
   changed: {
     drive: changed,
@@ -127,9 +154,15 @@ const specialRecipes = {
     scope:
       'Actual Stop control during a real streamed reply, Stopped Run and interrupted reply after reload',
   },
+  procedure: {
+    drive: procedureBrowser,
+    scope:
+      'A walkthrough with a correction taught through the composer, learned once without being done, and applied in a second Thread after reload; see scope.json.',
+  },
   watch: {
     drive: watchBrowser,
-    scope: 'browser Connect, model Watch, real Executor delivery, Feed reload and Disconnect',
+    scope:
+      'browser Connect, model Watch, real Executor delivery of an event past 4,000 characters, the posted notice shown by the worker and routed to the Feed (the press itself is not driven), Feed reload, the event shown whole in its Thread after reload, and Disconnect',
   },
   replies: {
     drive: offerBrowser,
@@ -151,6 +184,11 @@ const specialRecipes = {
     scope:
       'Waiting-on row tracked from the composer, shown on the web Feed, resolved by its check and absent after reload; see scope.json.',
   },
+  projects: {
+    drive: projectsBrowser,
+    scope:
+      'Project objective and dated progress recorded from the composer, shown on the web Project page under Where it stands and unchanged after reload; see scope.json.',
+  },
   feed: {
     drive: feedBrowser,
     scope:
@@ -166,6 +204,36 @@ const specialRecipes = {
     scope:
       'Web Settings name form, the name after reload, and Vivid answering with it in a Thread. See scope.json for phone and shared-Thread subcases.',
   },
+  push: {
+    drive: pushBrowser,
+    scope:
+      'Settings row on and off, the server holding this browser once, and a real notify_person reaching the service worker; see scope.json.',
+  },
+  integrations: {
+    drive: integrationsBrowser,
+    scope:
+      'Verify Pulse key typed in its Settings card, its access panel saying the server grant, and a real model read whose partial coverage is said under the reply, each before and after reload; see scope.json.',
+  },
+  computer: {
+    drive: computerBrowser,
+    scope:
+      'Settings Vivid’s computer panel: server health title, recovery ladder shown and never offered, after Check again and reload, without waking a Computer; see scope.json.',
+  },
+  capabilities: {
+    drive: computerBrowser,
+    scope:
+      'What Vivid can do on its Computer is drawn in the same panel from its health; for this run’s absent Computer that is the panel’s title and ladder only. See scope.json.',
+  },
+  helpers: {
+    drive: helpersBrowser,
+    scope:
+      'Two Researcher helpers started from the composer, their rows Done under the step, one opened to its answer, unchanged after reload; see helpers/scope.json for blocked kinds.',
+  },
+  helperstop: {
+    drive: helperstopBrowser,
+    scope:
+      "A working helper stopped with its own row's Stop, Stopped by a Person after reload, and the Thread heard it once.",
+  },
   settings: {
     drive: settingsBrowser,
     scope:
@@ -174,6 +242,29 @@ const specialRecipes = {
 }
 for (const name of features)
   assert.ok(recipes[name] || missing[name], 'Unmapped browser feature ' + name)
+
+/** The program is asked through the composer; since 26 October 2026 a Thread draws no step
+ * rows, so the browser proves the reply bubble and the HTTP history proves the receipt. */
+async function codeBrowser(state, id, directory, client) {
+  const asked = program(state)
+  await client.capture('before')
+  await client.run(['find', 'label', 'Message Vivid', 'fill', asked.phrase])
+  await client.run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
+  await settled(state, id, 1, 'Completed', directory)
+  const page = await history(state, id, directory)
+  await ranProgram(state, page, asked, directory)
+  for (const stage of ['after', 'reloaded']) {
+    if (stage === 'reloaded') await client.run(['reload'])
+    await client.run([
+      'wait',
+      '--fn',
+      `document.querySelectorAll('[data-vivid-bubble]').length > 0`,
+    ])
+    await client.capture(stage)
+  }
+  const reloaded = await history(state, id, directory, 'reloaded-history')
+  assert.deepEqual(reloaded.messages, page.messages)
+}
 
 /** Read semantic DOM through the owned browser, with the serialized result retained as evidence. */
 async function dom(run, expression) {
@@ -384,11 +475,26 @@ async function journey(state, feature) {
     evidence: directory,
   }
   const reason =
-    ['memory', 'question', 'approve', 'deny', 'changed', 'owed', 'todos', 'name'].includes(
-      feature,
-    ) && state.modelKind !== 'real'
+    [
+      'memory',
+      'procedure',
+      'question',
+      'approve',
+      'deny',
+      'changed',
+      'outcome',
+      'owed',
+      'todos',
+      'name',
+      'code',
+      'projects',
+      'helpers',
+      'helperstop',
+    ].includes(feature) && state.modelKind !== 'real'
       ? feature + ' requires a real model.'
-      : missing[feature]
+      : feature === 'code' && state.computer !== 'disposable'
+        ? 'Needs a disposable Person Computer. Launch had no VIVID_BOAT_API_KEY.'
+        : missing[feature]
   const stopBlocked = feature === 'stop' && state.modelKind !== 'real'
   if (reason || stopBlocked) {
     const verdict = {

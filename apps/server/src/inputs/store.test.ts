@@ -53,7 +53,12 @@ layer(testDatabaseLayer)((it) => {
             )
             const store = yield* InputStore
             const request = yield* store.ask(
-              { ...test.owner, by: 'vivid', threadId: Option.some(test.companyId) },
+              {
+                ...test.owner,
+                by: 'vivid',
+                threadId: Option.some(test.companyId),
+                helper: Option.none(),
+              },
               question,
             )
             expect(yield* store.inbox(test.owner)).toEqual([request])
@@ -107,7 +112,12 @@ layer(testDatabaseLayer)((it) => {
           )
           const store = yield* InputStore
           const request = yield* store.ask(
-            { ...test.owner, by: 'vivid', threadId: Option.some(test.companyId) },
+            {
+              ...test.owner,
+              by: 'vivid',
+              threadId: Option.some(test.companyId),
+              helper: Option.none(),
+            },
             question,
           )
           expect(yield* store.inbox(test.owner)).toEqual([request])
@@ -168,7 +178,7 @@ layer(testDatabaseLayer)((it) => {
           expect(deliveries[0]).toMatchObject({
             personId: test.personal.person.id,
             idempotencyKey: `answer-${request.id}`,
-            message: { type: 'answer', attributes: { request: request.id } },
+            message: { cue: { body: expect.stringContaining('\nAnswer: ') } },
           })
           expect(yield* store.inbox(test.personal)).toEqual([])
           const records = yield* store.inThread(test.personalId)
@@ -184,7 +194,7 @@ layer(testDatabaseLayer)((it) => {
           if (firstAnswer === undefined) expect.fail('Expected both answer receipts')
           const winnerWords = Result.isSuccess(firstAnswer) ? 'Monday' : 'Tuesday'
           expect(deliveries[0]).toMatchObject({
-            message: { body: `Question: Which day works?\nAnswer: ${winnerWords}` },
+            message: { cue: { body: `Question: Which day works?\nAnswer: ${winnerWords}` } },
           })
         }).pipe(Effect.scoped, Effect.provide(context))
       }),

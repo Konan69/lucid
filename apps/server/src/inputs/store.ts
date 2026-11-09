@@ -18,6 +18,7 @@ import {
   NotFound,
   PersonId,
   RunId,
+  SignalCue,
   ThreadId,
   type AnswerInputRequest,
   type AskInputRequest,
@@ -36,12 +37,12 @@ import { changed, Changes, Topic } from '../live/changes.ts'
 import { announceFeed } from '../feed/changes.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { readableBy, requireThread } from '../threads/access.ts'
-import { notifiesFrom } from '../threads/place.ts'
 import { threads } from '../threads/tables.ts'
 import { Conversation, DeliveryMessage } from '../threads/conversation.ts'
 import { Signal, encodeSignal } from '../approvals/signal.ts'
 import { replaySignals, type SignalWriter } from '../approvals/replay.ts'
 import { answerKey } from './answers.ts'
+import { handoffSignals } from './handoff.ts'
 import { inputRequests } from './tables.ts'
 import { answerText } from './validation.ts'
 
@@ -171,6 +172,19 @@ const view = Effect.fn('Inputs.view')(function* (
   )
 })
 
+/** Read the Thread history without capturing the execution services used to settle it. */
+export const inThread = Effect.fn('InputStore.inThread')(function* (threadId: ThreadId) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .select()
+      .from(inputRequests)
+      .where(eq(inputRequests.threadId, threadId))
+      .orderBy(asc(inputRequests.createdAt), asc(inputRequests.id)),
+  )
+  return yield* view(rows)
+})
+
 export interface InputStoreService {
   readonly replay: Effect.Effect<void, DatabaseInfrastructureError>
   readonly inThread: (
@@ -240,8 +254,8 @@ const ask = Effect.fn('Inputs.ask')(function* (actor: Actor, request: AskInputRe
   )
   const input = yield* returned(yield* view(rows), 'Input request')
   yield* changed(actor, Topic.thread(threadId))
-  // A question asked in a Background Thread is shown by the Feed, never as a notification.
-  if (!notifiesFrom(thread.place)) return input
+  // A question waits on the Person wherever it was asked. One asked in a Background Thread is
+  // shown on the Feed, and its notice opens the Feed (`opensAt`, `threads/place.ts`).
   yield* (yield* Notifier).notify({
     personId: actor.person.id,
     companyId: thread.companyId,
@@ -274,11 +288,7 @@ const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: Answ
   const signal = Signal.cases.Owed.make({
     idempotencyKey: answerKey(request.id),
     deciderId: actor.person.id,
-    message: DeliveryMessage.cases.Signal.make({
-      type: 'answer',
-      body,
-      attributes: { request: request.id },
-    }),
+    message: DeliveryMessage.cases.Signal.make({ cue: SignalCue.cases.Answer.make({ body }) }),
   })
   const updated = yield* database.transaction((tx) =>
     Effect.gen(function* () {
@@ -352,16 +362,7 @@ export const inputStoreLayer = Layer.effect(
       Effect.provide(effect, context)
     return InputStore.of({
       /** ThreadStore already checked access before loading complete oldest-first request history. */
-      inThread: Effect.fn('InputStore.inThread')(function* (threadId) {
-        const rows = yield* database.run(
-          database
-            .select()
-            .from(inputRequests)
-            .where(eq(inputRequests.threadId, threadId))
-            .orderBy(asc(inputRequests.createdAt), asc(inputRequests.id)),
-        )
-        return yield* run(view(rows))
-      }),
+      inThread: (threadId) => run(inThread(threadId)),
       /**
        * Workspace scope comes from the joined Thread; roles never broaden the addressee.
        * Filter current reach before projection, including corrupt audiences; keep waiting rows.
@@ -386,7 +387,12 @@ export const inputStoreLayer = Layer.effect(
       }),
       ask: (actor, request) => run(ask(actor, request)),
       answer: (actor, request) => run(answer(actor, request)),
-      replay: run(replaySignals(signalWriter, Option.none())),
+      // A finished handoff owes its signal the way an answer does; both are retried together.
+      replay: run(
+        replaySignals(signalWriter, Option.none()).pipe(
+          Effect.andThen(replaySignals(handoffSignals, Option.none())),
+        ),
+      ),
     })
   }),
 )

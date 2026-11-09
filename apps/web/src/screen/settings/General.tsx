@@ -1,5 +1,6 @@
 import { useAtomValue } from '@effect/atom-react'
 import { PatchSettingsRequest, Settings, type MeResponse, type Theme } from '@vivid/contracts'
+import { notifying } from '@vivid/state'
 import { Effect, Option, Result } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import type * as Atom from 'effect/reactivity/Atom'
@@ -12,6 +13,7 @@ import { desktopVersion, pageWords, serverWords } from '../../data/build'
 import { sessionEnded } from '../../data/ending'
 import { theme } from '../../data/theme'
 import { mayCustomise, useAppearance } from '../../data/vivid'
+import { turnNotificationsOff, turnNotificationsOn, useNotifying } from '../../data/notifying'
 import { PersonAvatar } from '../../ui/Person'
 import { Button } from '../../ui/button'
 import { Face } from '../../ui/Face'
@@ -257,6 +259,7 @@ function Preferences({ settings }: { settings: Settings }) {
             onChange={(next) => void act(save(new PatchSettingsRequest({ notify: next === 'on' })))}
           />
         </Row>
+        {Option.isNone(desktopVersion) && <Away />}
         <Egress
           enabled={settings.egress}
           status={egress}
@@ -264,5 +267,69 @@ function Preferences({ settings }: { settings: Settings }) {
         />
       </Section>
     </>
+  )
+}
+
+/** What this browser's row says, and the one thing it offers to do, when it offers one. */
+interface AwayWords {
+  readonly detail: string
+  readonly action: Option.Option<{ readonly label: string; readonly press: () => void }>
+}
+
+const HERE = 'In this browser, even when Vivid is closed.'
+const turnOn = Option.some({ label: 'Turn on', press: turnNotificationsOn })
+const turnOff = Option.some({ label: 'Turn off', press: turnNotificationsOff })
+
+/** The row's words for each reading of the machine (`@vivid/state` `notifying.ts`). */
+const awayWords = (reading: notifying.Reading): AwayWords =>
+  notifying.Reading.match<AwayWords>(reading, {
+    Starting: () => ({ detail: HERE, action: Option.none() }),
+    Unsupported: () => ({
+      detail: 'This browser cannot notify you while Vivid is closed.',
+      action: Option.none(),
+    }),
+    Blocked: () => ({
+      detail: 'This browser blocks notifications from Vivid. Allow them in its site settings.',
+      action: turnOn,
+    }),
+    Off: () => ({ detail: HERE, action: turnOn }),
+    TurningOn: () => ({ detail: HERE, action: turnOff }),
+    On: () => ({ detail: HERE, action: turnOff }),
+    TurningOff: () => ({ detail: HERE, action: turnOn }),
+    Kept: () => ({
+      detail: 'Still on: Vivid could not be reached to turn it off. Try again.',
+      action: turnOff,
+    }),
+    Refused: ({ reason }) => ({
+      detail: {
+        Dismissed: 'The question was closed without an answer. Turn it on to be asked again.',
+        Unavailable: 'This browser could not be set up for notifications. Try again.',
+        Unreachable: 'Vivid could not be reached. Try again.',
+      }[reason],
+      action: turnOn,
+    }),
+  })
+
+/**
+ * Whether this browser is notified while Vivid is closed (`data/notifying.ts`). It belongs to
+ * this browser: another browser or the phone is turned on there. The desktop app has no such
+ * notifications and does not show the row. The button is held while the browser or the server is
+ * being waited on, and the machine refuses a press then as well.
+ */
+function Away() {
+  const reading = useNotifying()
+  const { detail, action } = awayWords(reading)
+  return (
+    <Row label="Notify me when something needs me" detail={detail}>
+      {Option.isSome(action) && (
+        <Button
+          variant="outline"
+          disabled={notifying.isWaiting(reading)}
+          onClick={action.value.press}
+        >
+          {action.value.label}
+        </Button>
+      )}
+    </Row>
   )
 }

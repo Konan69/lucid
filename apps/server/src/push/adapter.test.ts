@@ -10,7 +10,13 @@ import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpServer from 'effect/http/HttpServer'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
-import { NotificationId, PushDestination, PushPayload, ThreadId } from '@vivid/contracts'
+import {
+  NotificationId,
+  NotificationOpens,
+  PushDestination,
+  PushPayload,
+  ThreadId,
+} from '@vivid/contracts'
 import { PushAdapter, pushAdapterLayer } from './adapter.ts'
 import { PushConfig } from './config.ts'
 import { testPushConfig } from './testing.ts'
@@ -19,7 +25,8 @@ const payload = PushPayload.make({
   notificationId: NotificationId.make('notification'),
   title: 'Meeting clash',
   body: 'Choose which meeting to move.',
-  threadId: ThreadId.make('thread'),
+  opens: NotificationOpens.cases.Thread.make({ threadId: ThreadId.make('thread') }),
+  sound: 'Audible',
 })
 const phone = PushDestination.cases.Phone.make({ token: 'ExpoPushToken[test-device]' })
 

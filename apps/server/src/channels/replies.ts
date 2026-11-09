@@ -6,6 +6,7 @@ import { ThreadStore } from '../threads/store.ts'
 import { findThread } from '../threads/access.ts'
 import { ChannelLedger, type ChannelRoute } from './ledger.ts'
 import { ChannelProvider, ChannelSendTimedOut } from './provider.ts'
+import { channelCards } from './cards.ts'
 import { ChannelStore } from './store.ts'
 import { ChannelTextLimit, channelText, splitChannelText } from './text.ts'
 
@@ -19,6 +20,7 @@ export type ChannelEnding = typeof ChannelEnding.Type
 
 /** Vivid's conservative chunk budget; Spectrum declares no text-size limit. */
 const replyLimit = ChannelTextLimit.make(4000)
+const discordReplyLimit = ChannelTextLimit.make(2000)
 
 /** Bounds one provider send acceptance, so every completed chunk renews reply progress.
  * Source: unmeasured. Spectrum exposes no send-progress/cancellation signal; expiry preserves
@@ -40,7 +42,10 @@ const makeReplies = Effect.fn('Channels.makeReplies')(function* () {
     reply: string,
   ) {
     const notSent = () => ledger.record(route.runId, 'not-sent')
-    const parts = splitChannelText(channelText(reply), replyLimit)
+    const parts = splitChannelText(
+      channelText(reply),
+      route.channel === 'Discord' ? discordReplyLimit : replyLimit,
+    )
     if (parts.length === 0) {
       yield* notSent()
       return
@@ -49,12 +54,19 @@ const makeReplies = Effect.fn('Channels.makeReplies')(function* () {
     yield* Effect.forEach(
       parts,
       Effect.fn('Channels.sendPart')(function* (text) {
-        yield* provider.send({ channel: route.channel, address, text }).pipe(
-          Effect.timeoutOrElse({
-            duration: CHUNK_ACCEPTANCE_LIMIT,
-            orElse: () => Effect.fail(new ChannelSendTimedOut({ channel: route.channel })),
-          }),
-        )
+        yield* provider
+          .send({
+            channel: route.channel,
+            address,
+            text,
+            place: route.place === null ? undefined : route.place,
+          })
+          .pipe(
+            Effect.timeoutOrElse({
+              duration: CHUNK_ACCEPTANCE_LIMIT,
+              orElse: () => Effect.fail(new ChannelSendTimedOut({ channel: route.channel })),
+            }),
+          )
         sent++
       }),
       { discard: true },
@@ -111,7 +123,16 @@ const makeReplies = Effect.fn('Channels.makeReplies')(function* () {
     const address = link.value.address
     const notSent = () => ledger.record(event.runId, 'not-sent')
     yield* Settlement.match(event.settlement, {
-      Completed: ({ reply }) => sendReply(route, address, reply),
+      Completed: ({ reply }) =>
+        Effect.gen(function* () {
+          const cards =
+            route.channel === 'Discord'
+              ? yield* channelCards(route.threadId, route.personId).pipe(
+                  Effect.provideService(Database, database),
+                )
+              : ''
+          return yield* sendReply(route, address, `${reply}\n\n${cards}`)
+        }),
       Failed: notSent,
       Stopped: notSent,
       Unknown: notSent,

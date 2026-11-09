@@ -5,6 +5,7 @@ import {
   ToolOutcome,
   TestIntegrationOutcome,
   type ConnectionId,
+  ToolCallId,
 } from '@vivid/contracts'
 import { Effect, Layer, Option, Redacted, Ref, Result } from 'effect'
 import { testDatabaseConfigured } from '../database/testdb.ts'
@@ -46,7 +47,12 @@ describe.skipIf(!testDatabaseConfigured)('An Integration added by address with s
       () =>
         Effect.gen(function* () {
           const { personalActor } = yield* fixture()
-          const person = { ...personalActor, by: 'person' as const, threadId: Option.none() }
+          const person = {
+            ...personalActor,
+            by: 'person' as const,
+            threadId: Option.none(),
+            helper: Option.none(),
+          }
           const config = yield* ServerConfig
           const remote = yield* hostedExecutorFixture()
           yield* Ref.set(
@@ -144,7 +150,8 @@ describe.skipIf(!testDatabaseConfigured)('An Integration added by address with s
             )
 
             const before = (yield* Ref.get(remote.requests)).length
-            const outcome = yield* useTool(personalActor, {
+            const { outcome } = yield* useTool(personalActor, {
+              toolCallId: ToolCallId.make(crypto.randomUUID()),
               connectionId: added.step.connection.id,
               tool: 'read',
               input: {},
@@ -159,7 +166,8 @@ describe.skipIf(!testDatabaseConfigured)('An Integration added by address with s
               expect.objectContaining({ tool: 'read', input: { accountId: 'account', input: {} } }),
             ])
 
-            const otherOutcome = yield* useTool(personalActor, {
+            const { outcome: otherOutcome } = yield* useTool(personalActor, {
+              toolCallId: ToolCallId.make(crypto.randomUUID()),
               connectionId: other.connection.id,
               tool: 'read',
               input: {},

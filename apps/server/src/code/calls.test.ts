@@ -18,7 +18,6 @@ import {
   DisplayProgramRefused,
   NotFound,
   FeedCardId,
-  FeedPost,
   type RunDisplayCodeRequest,
   type DisplayCodeOutcome,
   type PersonId,
@@ -58,6 +57,7 @@ import {
   history,
   textPart,
   recordRuns,
+  testRunId,
   Observation,
   trustTestLayer,
 } from '../approvals/testing.ts'
@@ -65,7 +65,11 @@ import { Runtime } from '../runtime/client.ts'
 import { FeedStore, feedStoreLayer } from '../feed/store.ts'
 import { feedHandlers } from '../feed/handlers.ts'
 import { cardIdOf } from '../feed/read.ts'
-import { RunOrigin } from '@vivid/contracts'
+import { workLayer } from '../database/work.ts'
+import { pushTargetsLayer } from '../push/targets.ts'
+import { silentPushLayer } from '../push/testing.ts'
+import { PostRequest, WatchId } from '@vivid/contracts'
+import { StoredRunOrigin } from '../threads/conversation.ts'
 import { CodeComputer } from './computer.ts'
 import { RuleStore } from '../rules/store.ts'
 import { CodeAuthority, CodeAuthorityRevoked, codeAuthorityLayer } from './authority.ts'
@@ -93,6 +97,10 @@ const dependencies = Layer.mergeAll(codeAuthorityLayer, publicPageLayer).pipe(
 const testLayer = codeCallsLayer.pipe(
   Layer.provideMerge(dependencies),
   Layer.provideMerge(feedStoreLayer),
+  // A post now tells the Person; this suite's claim is the post, not its delivery.
+  Layer.provideMerge(silentPushLayer),
+  Layer.provideMerge(pushTargetsLayer.pipe(Layer.provide(silentChangesLayer))),
+  Layer.provideMerge(workLayer),
   Layer.provideMerge(codeSourceLayer),
   Layer.provideMerge(Layer.mock(Runtime, history([]))),
 )
@@ -730,16 +738,27 @@ describe.skipIf(!testDatabaseConfigured)(
                   id: 'posting',
                   personId: test.personal.person.id,
                   working: true,
-                  origin: RunOrigin.cases.Watch.make({
-                    person: test.summary,
+                  origin: StoredRunOrigin.cases.Watch.make({
+                    watchId: WatchId.make('watch-records'),
                     watchName: 'Records',
+                    eventId: 'event-1',
+                    event: 'record.changed',
+                    occurredAt: '2026-10-29T09:00:00Z',
                   }),
                 },
               ])
               const code = 'return "A stored Feed program";'
               const display = `root = Text(data)\ndata = Query("run_code", {code: ${JSON.stringify(code)}, summary: "Read"})`
               yield* feedHandlers
-                .Post(FeedPost.cases.Drawn.make({ title: 'Records', display }))
+                .Post(
+                  PostRequest.cases.Drawn.make({
+                    title: 'Records',
+                    display,
+                    sources: [],
+                    from: 'your records',
+                    urgency: 'ordinary',
+                  }),
+                )
                 .pipe(
                   Effect.provideService(
                     AuthContext,
@@ -778,7 +797,15 @@ describe.skipIf(!testDatabaseConfigured)(
               yield* (yield* FeedStore).post({
                 person: test.personal.person.id,
                 thread: test.personalId,
-                request: FeedPost.cases.Said.make({ title: 'New', words: 'Changed', actions: [] }),
+                postedBy: testRunId(test.personalId, 'posting'),
+                request: PostRequest.cases.Said.make({
+                  title: 'New',
+                  words: 'Changed',
+                  actions: [],
+                  sources: [],
+                  from: 'your records',
+                  urgency: 'ordinary',
+                }),
               })
               expect(yield* storedDisplay(test.personal, request).pipe(Effect.flip)).toHaveProperty(
                 '_tag',
@@ -1044,10 +1071,12 @@ describe.skipIf(!testDatabaseConfigured)(
                 Layer.fresh(codeCallsLayer),
               ).pipe(Effect.provideService(ConnectionStore, changing))
               expect(CodeOutcome.guards.Completed(outcome)).toBe(true)
-              expect(outcome).toHaveProperty('result', {
-                ok: false,
-                reason: 'This display runs automatically. Use a button to make changes.',
-                problems: [],
+              expect(outcome).toMatchObject({
+                result: {
+                  ok: false,
+                  reason: 'This display runs automatically. Use a button to make changes.',
+                  problems: [],
+                },
               })
               expect(yield* Ref.get((yield* ConnectionProbe).calls)).toBe(0)
               expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toEqual([])
@@ -1309,13 +1338,15 @@ describe.skipIf(!testDatabaseConfigured)(
                 ),
                 Layer.fresh(codeCallsLayer),
               ).pipe(Effect.provideService(Executor, provider))
-              expect(outcome).toHaveProperty('result', {
-                first: {
-                  ok: false,
-                  reason: 'Correct the input',
-                  problems: ['repoName: required'],
+              expect(outcome).toMatchObject({
+                result: {
+                  first: {
+                    ok: false,
+                    reason: 'Correct the input',
+                    problems: ['repoName: required'],
+                  },
+                  next: { ok: true, output: { corrected: true } },
                 },
-                next: { ok: true, output: { corrected: true } },
               })
               expect(outcome.calls.map((call) => call.end)).toEqual(['refused', 'completed'])
             }),

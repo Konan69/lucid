@@ -6,9 +6,12 @@ import {
   CompanyId,
   NotFound,
   NotificationId,
+  NotificationKind,
+  NotificationOpens,
   PersonId,
   PushOutcome,
   PushPayload,
+  type PushSound,
   ThreadId,
   type PushTarget,
 } from '@vivid/contracts'
@@ -16,6 +19,7 @@ import { Database, decodeStored, encodeStored, returned } from '../database/clie
 import { notifications } from '../notifications/tables.ts'
 import { observeFailures } from '../observability/failure.ts'
 import { canSee, findThread } from '../threads/access.ts'
+import { opensAt } from '../threads/place.ts'
 import { Presence } from '../threads/presence.ts'
 import { PushAdapter } from './adapter.ts'
 import { PushAcceptance, PushReceipt } from './receipts.ts'
@@ -25,6 +29,7 @@ import { untraced } from '../observability/quiet.ts'
 
 const NoticeRow = createSelectSchema(notifications, {
   id: NotificationId,
+  kind: NotificationKind,
   personId: PersonId,
   companyId: Schema.NullOr(CompanyId),
   conversationId: Schema.NullOr(ThreadId),
@@ -34,6 +39,21 @@ const decodeReceipt = decodeStored(PushReceipt, 'push receipt')
 const encodeReceipt = encodeStored(PushReceipt, 'push receipt')
 /** The body as it is sent: the claim row stores its hash and length, so one that will not encode cannot be claimed. */
 const encodePayload = encodeStored(Schema.fromJsonString(PushPayload), 'push payload')
+
+/**
+ * Which notices sound. Only what the Person is waiting on and what is urgent: Vivid finishing
+ * work they asked for, a question or Approval it is stopped on, and an urgent Feed finding (told
+ * as `needs-you`, `notifications/attention.ts`); a Thread shared with them and an invitation are
+ * people waiting on them too. A Feed post Vivid made on its own is quiet (Konan, 27 October 2026:
+ * "Feed posts appear silently"). A new kind fails to compile here until it is decided.
+ */
+const SOUND = {
+  finished: 'Audible',
+  'needs-you': 'Audible',
+  shared: 'Audible',
+  invited: 'Audible',
+  posted: 'Quiet',
+} as const satisfies Record<typeof NotificationKind.Type, PushSound>
 
 /** Expo recommends waiting 15 minutes before reading asynchronous delivery receipts.
  * Source: https://docs.expo.dev/push-notifications/sending-notifications/ . */
@@ -45,11 +65,17 @@ const RECEIPT_RETENTION_MS = 24 * 60 * 60_000
  * tickets owed; the cadence adds up to one minute to provider confirmation visibility. */
 const RECEIPT_CADENCE = '1 minute'
 
-/** Push quotes only an existing Notification, with the recipient's current Thread access checked. */
-const readable = Effect.fn('Push.readable')(function* (notice: typeof NoticeRow.Type) {
-  if (notice.conversationId === null) return true
+/**
+ * Push quotes only an existing Notification, with the recipient's current Thread access checked:
+ * where the notice opens (`opensAt`), or none while its Thread is gone or out of their reach.
+ */
+const opensOf = Effect.fn('Push.opensOf')(function* (notice: typeof NoticeRow.Type) {
+  if (notice.conversationId === null)
+    return Option.some(NotificationOpens.cases.Notifications.make({}))
   const thread = yield* findThread(notice.conversationId)
-  return Option.isSome(thread) && (yield* canSee(thread.value.id, notice.personId))
+  if (Option.isNone(thread) || !(yield* canSee(thread.value.id, notice.personId)))
+    return Option.none<NotificationOpens>()
+  return Option.some(opensAt(thread.value))
 })
 
 interface DeliveryServices {
@@ -102,8 +128,8 @@ const makeAttempt = (services: DeliveryServices) =>
     if (active === undefined) return PushReceipt.cases.Failed.make({ reason: 'SessionEnded' })
     if (yield* services.presence.present(notice.personId))
       return PushReceipt.cases.Failed.make({ reason: 'Present' })
-    if (!(yield* readable(notice).pipe(Effect.provideService(Database, services.database))))
-      return PushReceipt.cases.Failed.make({ reason: 'AccessLost' })
+    const opens = yield* opensOf(notice).pipe(Effect.provideService(Database, services.database))
+    if (Option.isNone(opens)) return PushReceipt.cases.Failed.make({ reason: 'AccessLost' })
     return yield* services.adapter.send(active.destination, payload).pipe(
       Effect.map((acceptance) => PushReceipt.cases.Sent.make({ acceptance })),
       Effect.catchTags({
@@ -183,19 +209,57 @@ const makePush = Effect.fn('Push.make')(function* () {
     if (row === undefined) return yield* new NotFound({ message: 'Notification not found.' })
     const notice = yield* decodeNotice(row)
     if (yield* presence.present(personId)) return PushOutcome.cases.Present.make({})
-    if (!(yield* readable(notice).pipe(Effect.provideService(Database, database))))
-      return PushOutcome.cases.NoTargets.make({})
+    const opens = yield* opensOf(notice).pipe(Effect.provideService(Database, database))
+    if (Option.isNone(opens)) return PushOutcome.cases.NoTargets.make({})
     const active = yield* targets.active(personId)
     if (active.length === 0) return PushOutcome.cases.NoTargets.make({})
     const payload = PushPayload.make({
       notificationId,
       title: notice.title.slice(0, 180),
       body: notice.body.replace(/\s+/gu, ' ').trim().slice(0, 280),
-      threadId: notice.conversationId,
+      opens: opens.value,
+      sound: SOUND[notice.kind],
     })
     return summarize(yield* Effect.forEach(active, (target) => send(notice, payload, target)))
   })
   return Push.of({ deliver, reconcile })
+})
+
+/** A durable device obligation can settle independently of every other target. */
+export const deliverTarget = Effect.fn('Push.deliverTarget')(function* (input: {
+  readonly personId: PersonId
+  readonly notificationId: NotificationId
+  readonly targetId: PushTarget['id']
+}) {
+  const database = yield* Database
+  const adapter = yield* PushAdapter
+  const targets = yield* PushTargets
+  const presence = yield* Presence
+  const rows = yield* database.run(
+    database
+      .select()
+      .from(notifications)
+      .where(
+        and(eq(notifications.id, input.notificationId), eq(notifications.personId, input.personId)),
+      ),
+  )
+  const row = rows[0]
+  // Deletion cancels delivery. Revalidation below preserves current access and session policy.
+  if (row === undefined) return
+  const notice = yield* decodeNotice(row)
+  const opens = yield* opensOf(notice)
+  if (Option.isNone(opens)) return
+  const target = (yield* targets.active(input.personId)).find(({ id }) => id === input.targetId)
+  if (target === undefined) return
+  const payload = PushPayload.make({
+    notificationId: input.notificationId,
+    title: notice.title.slice(0, 180),
+    body: notice.body.replace(/\s+/gu, ' ').trim().slice(0, 280),
+    opens: opens.value,
+    // The owed job sounds exactly as a direct delivery would: by the notice's kind.
+    sound: SOUND[notice.kind],
+  })
+  yield* makeSend({ database, adapter, targets, presence })(notice, payload, target)
 })
 
 export interface PushService {

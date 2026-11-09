@@ -127,7 +127,8 @@ export const Standing = Data.taggedEnum<Standing>()
 /**
  * A way a sign-in ended without a session, as it is reported (`Desk.report`):
  * - `SignInSheetClosed`: the sheet closed with no link (the Person closed it, or the system did).
- * - `SignInReturnUnread`: the sheet's link is not this attempt's return.
+ * - `SignInReturnUnread`: the sheet's link does not read as a return at all.
+ * - `SignInReturnForeign`: it reads as a return, but for another attempt.
  * - `SignInReturnLate`: the sheet's own return came back after the attempt had left `Away`
  *   (the front door's listener stopped, or another press). It is still finished.
  * - `SignInGoogleRefused`: the server said the sign-in did not finish.
@@ -137,6 +138,7 @@ export const Standing = Data.taggedEnum<Standing>()
 export type SignInLoss =
   | 'SignInSheetClosed'
   | 'SignInReturnUnread'
+  | 'SignInReturnForeign'
   | 'SignInReturnLate'
   | 'SignInGoogleRefused'
   | 'SignInTradeRefused'
@@ -146,8 +148,11 @@ export type SignInLoss =
 
 /** What a sign-in needs from whoever runs it: where it stands, kept and shown, and the way in. */
 export interface Desk<Refusal> {
-  /** Reports a sign-in that ended without a session, so it is seen beyond the first screen. */
-  readonly report: (loss: SignInLoss) => void
+  /**
+   * Reports a sign-in that ended without a session, so it is seen beyond the first screen. A
+   * loss about a link carries the link's form: its place and field names, never their values.
+   */
+  readonly report: (loss: SignInLoss, form?: string) => void
   /** Where the sign-in stands now. */
   readonly standing: () => Standing
   /** Puts where it stands on the screen, and keeps it. */
@@ -250,6 +255,9 @@ const beginning = Effect.fn('Google.beginning')(function* (phone: Phone, server:
  * be opened by anything on the phone, and an earlier attempt's browser tab can still finish; a
  * return that names another attempt is neither an answer nor a failure of this one.
  */
+/** A link with every value taken out, so a report can say what came back without the code. */
+export const formOf = (link: string): string => link.replace(/=[^&#]*/gu, '=')
+
 export const returnFor = (attempt: Attempt, link: string): Option.Option<SignInReturn> =>
   Option.filter(readPhoneSignInReturn(link), (back) => back.state === attempt.state)
 
@@ -326,9 +334,10 @@ export function makeGoogle<Refusal>(phone: Phone, desk: Desk<Refusal>) {
     if (Standing.$is('Trading')(now)) return
     if (Standing.$is('Away')(now) && now.attempt.state !== attempt.state) return
     if (!Standing.$is('Away')(now)) desk.report('SignInReturnLate')
+    const read = readPhoneSignInReturn(link)
     const back = returnFor(attempt, link)
     if (Option.isNone(back)) {
-      desk.report('SignInReturnUnread')
+      desk.report(Option.isNone(read) ? 'SignInReturnUnread' : 'SignInReturnForeign', formOf(link))
       return desk.show(Standing.Failed())
     }
     yield* SignInReturn.match(back.value, {

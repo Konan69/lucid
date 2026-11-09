@@ -1,6 +1,8 @@
 import type {
   Approval,
   ApprovalId,
+  HandoffId,
+  HandoffRequest,
   InputRequest,
   InputRequestId,
   ThreadDetail,
@@ -26,6 +28,15 @@ export const requestOf = (
 ): Option.Option<InputRequest> =>
   Option.flatMap(detail, (value) =>
     Option.fromUndefinedOr(value.requests.find((request) => request.id === id)),
+  )
+
+/** The step a tool call in the conversation stands for, once the Thread's detail has it. */
+export const handoffOf = (
+  detail: Option.Option<ThreadDetail>,
+  id: HandoffId,
+): Option.Option<HandoffRequest> =>
+  Option.flatMap(detail, (value) =>
+    Option.fromUndefinedOr(value.handoffs.find((handoff) => handoff.id === id)),
   )
 
 /** The Approval a tool call in the conversation stands for, once the Thread's detail has it. */

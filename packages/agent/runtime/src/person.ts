@@ -16,14 +16,17 @@ import type { ContextSources } from './context.ts'
 import { opening } from './deliveries.ts'
 import { Memory } from './memory.ts'
 import { learning } from './learning.ts'
+import { dreaming } from './dreaming.ts'
 import type { DecisionModel } from 'effect/ai'
 import { Models } from './models.ts'
 import { correctionHooks } from './correction.ts'
 import { continuityHooks } from './continuity.ts'
 import { joinHooks } from './response.ts'
 import { followSettlements } from './settled.ts'
+import { helpers, type Helpers } from './children.ts'
 import { BuiltinSkills } from './skills.ts'
 import { PiRejected } from './threads.ts'
+import { childTools } from './tools/children.ts'
 import { tools } from './tools/index.ts'
 
 /** One Person's conversations on the native storage supplied by its host. */
@@ -107,12 +110,28 @@ export const openPerson = Effect.fn('Person.open')(function* (
   const opened = Deferred.await(ready)
 
   const memory = yield* Memory
-  const all = tools(
+  // Helper tools are mounted in the registry with the rest; the helpers they start take fixed
+  // subsets of that registry, so they are made once it exists and these tools wait for them.
+  const helpersReady = yield* Deferred.make<Helpers>()
+  const registered = tools(
     scopeResolver(opened, product),
     (call) => resolveMemoryCall(opened, product, call),
-    memory,
+    { memory, transcripts: { person: personId, harness: opened } },
+    {
+      skills: skills.tools === undefined ? [] : skills.tools,
+      children: childTools({ harness: opened, product, helpers: Deferred.await(helpersReady) }),
+    },
   )
+  const all = registered.tools
   const registry = createRegistry()
+  const dream = dreaming(
+    (program, signal) => run(program, { signal }),
+    { host: personId, product, opened, model: models.selected },
+    all,
+    registered.dreaming,
+  )
+  registry.install(dream.extension)
+  registry.install(dream.dreamer)
   const learn = yield* learning(
     personId,
     (program, signal) => run(program, { signal }),
@@ -121,6 +140,15 @@ export const openPerson = Effect.fn('Person.open')(function* (
   )
   registry.install(learn.extension)
   registry.install(learn.learner)
+  // Helpers get fixed subsets of Vivid's own tools; only Vivid's own conversation can start one.
+  const helping = helpers({
+    harness: opened,
+    product,
+    run: (program, signal) => run(program, { signal }),
+    tools: all,
+  })
+  for (const extension of helping.extensions) registry.install(extension)
+  yield* Deferred.succeed(helpersReady, helping)
   registry.install(
     definition({
       tools: all,
@@ -159,13 +187,17 @@ export const openPerson = Effect.fn('Person.open')(function* (
     }).pipe(Effect.onError(() => Effect.promise(() => storage.close(BACKGROUND_CONTEXT)))),
     closeHarness,
   )
-  const { quiet } = yield* followSettlements(harness, learn.start)
+  const { quiet } = yield* followSettlements(harness, learn.start, dream.settled)
   yield* Deferred.succeed(ready, harness)
   return {
     personId,
     harness,
-    agent: { model: models.selected, thinkingLevel: THINKING, tools: offered(all, skills) },
-    sources: { product, memory },
+    agent: {
+      model: models.selected,
+      thinkingLevel: THINKING,
+      tools: offered(all, skills),
+    },
+    sources: { product, memory, capabilities: registered.reading },
     quiet,
   } satisfies PersonConversations
 })

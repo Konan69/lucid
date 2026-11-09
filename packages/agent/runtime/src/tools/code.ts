@@ -34,13 +34,26 @@ function failureView(failure: CodeFailure): Schema.Json {
   })
 }
 
-/** Parent receipts expose completed/uncertain work; the existing Approval card remains top-level. */
+/**
+ * Parent receipts expose completed/uncertain work; the existing Approval card remains top-level.
+ * The model reads each call's purpose and ending; the journal's receipts for the writes the
+ * program sent stay in the result's metadata, where a reconciliation can find them.
+ */
 export function codeOutcome(outcome: CodeOutcome): ToolResult {
   const calls = outcome.calls.map(({ kind, summary: purpose, end }) => ({
     kind,
     summary: views.modelText(purpose),
     end,
   }))
+  const receipts = outcome.calls.flatMap(({ receipt }) => (receipt === null ? [] : [receipt]))
+  return { ...codeResult(outcome, calls), receipts }
+}
+
+/** The model-visible half of a program's result. */
+function codeResult(
+  outcome: CodeOutcome,
+  calls: ReadonlyArray<{ readonly kind: string; readonly summary: string; readonly end: string }>,
+): ToolResult {
   return CodeOutcome.match<ToolResult>(outcome, {
     Completed: ({ result, truncated, logs, logsTruncated }) => ({
       output: { ok: true, result, calls, truncated, logs, logsTruncated },

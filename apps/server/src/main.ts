@@ -1,3 +1,4 @@
+import { commandWorkerLayer } from './computers/commands.ts'
 import * as NodeHttp from 'node:http'
 import { migrationLayer } from './connections/migration.ts'
 import * as Effect from 'effect/Effect'
@@ -11,7 +12,7 @@ import {
   NodePath,
   NodeRuntime,
 } from '@effect/platform-node'
-import { photonLayer } from './channels/photon.ts'
+import { channelProviderLayer } from './channels/combined.ts'
 import { channelStoreLayer } from './channels/store.ts'
 import { channelLedgerLayer } from './channels/ledger.ts'
 import { channelReceiverLayer } from './channels/inbound.ts'
@@ -54,6 +55,7 @@ import { changesLayer } from './live/changes.ts'
 import { tallyLayer } from './live/tally.ts'
 import { titleModelLayer } from './threads/model.ts'
 import { threadTitlesLayer } from './threads/generation.ts'
+import { notificationDeliveryLayer } from './notifications/delivery.ts'
 import { notifierLayer } from './notifications/notifier.ts'
 import { observabilityLayer } from './observability/export.ts'
 import { issuesLayer } from './observability/issues.ts'
@@ -61,6 +63,7 @@ import { notificationStoreLayer } from './notifications/store.ts'
 import { projectStoreLayer } from './projects/store.ts'
 import { owedStoreLayer } from './owed/store.ts'
 import { todoStoreLayer } from './todos/store.ts'
+import { forgetStoreLayer } from './forget/store.ts'
 import { pushConfigLayer } from './push/config.ts'
 import { pushAdapterLayer } from './push/adapter.ts'
 import { pushLayer, pushReceiptsLayer } from './push/delivery.ts'
@@ -72,6 +75,7 @@ import { requestLimit } from './rpc/requests.ts'
 import { cellMemoryLayer, runtimeLayer } from './runtime/client.ts'
 import { settingsStoreLayer } from './settings/store.ts'
 import { skillStoreLayer } from './skills/store.ts'
+import { childRunsLayer } from './runs/store.ts'
 import { conversationLayer } from './threads/delivery.ts'
 import { presenceLayer } from './threads/presence.ts'
 import { runStoreLayer } from './threads/runs.ts'
@@ -80,6 +84,7 @@ import { updateRoutes } from './updates/routes.ts'
 import { watchedAppsLayer } from './watches/apps.ts'
 import { executorEventsLayer } from './watches/events.ts'
 import { watchesLayer, watchRenewalLayer } from './watches/lifecycle.ts'
+import { feedPacingLayer } from './feed/pace.ts'
 import { watchStoreLayer } from './watches/store.ts'
 
 /** The process entry point only selects implementations and owns their scoped lifetime. */
@@ -107,7 +112,7 @@ const serverProgram = Effect.gen(function* () {
   const foundation = Layer.mergeAll(
     changesLayer,
     tallyLayer,
-    photonLayer,
+    channelProviderLayer,
     runtimeLayer,
     cellMemoryLayer,
     companyStoreLayer,
@@ -115,6 +120,7 @@ const serverProgram = Effect.gen(function* () {
     projectStoreLayer,
     owedStoreLayer,
     todoStoreLayer,
+    forgetStoreLayer,
     threadStoreLayer,
     runStoreLayer,
     notificationStoreLayer,
@@ -122,6 +128,7 @@ const serverProgram = Effect.gen(function* () {
     skillStoreLayer,
     libraryStoreLayer,
     executorLayer,
+    executorEventsLayer,
     boatMachineLayer,
     publicPageLayer,
     codeAuthorityLayer,
@@ -146,12 +153,13 @@ const serverProgram = Effect.gen(function* () {
   const replying = channelRepliesLayer.pipe(Layer.provideMerge(channels))
   const named = threadTitlesLayer.pipe(Layer.provide(titleModelLayer), Layer.provideMerge(replying))
   const conversation = conversationLayer.pipe(Layer.provideMerge(named))
+  const helpers = childRunsLayer.pipe(Layer.provideMerge(conversation))
   const accounts = Layer.mergeAll(
     connectionStoreLayer,
     toolEffectsLayer,
     computerStoreLayer,
     egressLayer,
-  ).pipe(Layer.provideMerge(conversation))
+  ).pipe(Layer.provideMerge(helpers))
   const trust = Layer.mergeAll(approvalStoreLayer, inputStoreLayer).pipe(
     Layer.provideMerge(actionRunnerLayer),
     Layer.provideMerge(accounts),
@@ -160,7 +168,6 @@ const serverProgram = Effect.gen(function* () {
   // A program runs on the Person's Computer, so its supervisor sits above the Computer store.
   const work = Layer.mergeAll(
     watchStoreLayer,
-    executorEventsLayer,
     watchedAppsLayer,
     codeCallsLayer,
     codeSourceLayer,
@@ -171,10 +178,13 @@ const serverProgram = Effect.gen(function* () {
   )
   const background = Layer.mergeAll(
     migrationLayer,
+    commandWorkerLayer,
     watchRenewalLayer,
+    feedPacingLayer,
     channelWorkerLayer,
     approvalSweeperLayer,
     pushReceiptsLayer,
+    notificationDeliveryLayer,
     libraryIngestionLayer(ingestionBackoff, extractPdf),
     PersistedQueue.layerCleanup(),
   )

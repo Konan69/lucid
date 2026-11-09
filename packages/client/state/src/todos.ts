@@ -3,7 +3,7 @@ import { AtomMachine } from '@typeonce/effect-machine/reactivity'
 import { Todo, TodoId, TodoState } from '@vivid/contracts'
 import { Context, Effect, type Layer, Option, Schema } from 'effect'
 import { Atom } from 'effect/reactivity'
-import { dayOf, type Reader } from './when.js'
+import { dayOf, thisReader, type Reader } from './when.js'
 
 /**
  * The Person's own to-do list, as every surface draws it on the Feed: the to-dos Vivid adds and
@@ -161,10 +161,12 @@ export const makeClose = (services: Layer.Layer<Closer>) =>
 export type CloseAtoms = ReturnType<typeof makeClose>
 
 /**
- * When a row says a to-do is due, against the moment the page was opened and the reader's own
- * calendar (`when.ts`), in the waiting-on list's words (`owed.makeOwedWords`): today, tomorrow, a
- * weekday this week, a date, or how many days late. `None` for a to-do with no date, whose slot
- * stays empty rather than inventing one.
+ * When a row says a to-do is due, against the moment the page was opened, in the waiting-on
+ * list's words (`owed.makeOwedWords`): today, tomorrow, a weekday this week, a date, or how many
+ * days late. `None` for a to-do with no date, whose slot stays empty rather than inventing one.
+ *
+ * The reader's zone is the Person's, as for a deadline they wait on: `add_todo` resolves "Friday"
+ * with the zone in their settings, so the row reads it on that calendar (`todoWordsIn`).
  */
 export function makeTodoWords(reader: Reader) {
   const weekday = new Intl.DateTimeFormat(reader.locale, {
@@ -189,4 +191,17 @@ export function makeTodoWords(reader: Reader) {
       return { words: dated.format(moment), late: false }
     })
   return { due }
+}
+export type TodoWords = ReturnType<typeof makeTodoWords>
+
+/** One sayer per Person zone: building `Intl` formatters is the expensive part of a row. */
+const sayers = new Map<string, TodoWords>()
+
+/** The words for a Person whose settings name `timeZone`, in this device's language. */
+export const todoWordsIn = (timeZone: string): TodoWords => {
+  const known = sayers.get(timeZone)
+  if (known !== undefined) return known
+  const made = makeTodoWords({ locale: thisReader().locale, timeZone })
+  sayers.set(timeZone, made)
+  return made
 }

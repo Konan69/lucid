@@ -1,7 +1,9 @@
 import * as Schema from 'effect/Schema'
-import { PersonId, ThreadId } from './identity.js'
-import { RunFailure, ThreadOrigin } from './threads.js'
+import { PersonId, RunId, ThreadId } from './identity.js'
+import { RunFailure } from './runs.js'
+import { ThreadOrigin } from './threads.js'
 import { MemoryEntry } from './memory.js'
+import { MessageHit } from './search.js'
 
 /**
  * The HTTP surface of the conversation runtime (Pi Durable), which only the application server
@@ -21,6 +23,10 @@ import { MemoryEntry } from './memory.js'
  * - `GET /persons/:personId/threads/:threadId/attachments/:attachmentId` answers the bytes of
  *   one picture a Person sent, under its own media type. The id is the last segment of the
  *   `url` a `file` part of the state carries (`attachments/<id>`, relative to the Thread).
+ * - `GET /persons/:personId/threads/:threadId/children/:runId` answers `RuntimeChildAnswer`:
+ *   whether one helper's work is still running, or how it ended, with its answer and usage.
+ * - `POST /persons/:personId/threads/:threadId/children/:runId/abort` aborts one helper's work
+ *   and answers `RuntimeStopped` once it has ended.
  *
  * The Person is the Thread's creator. The runtime keeps each Person's conversations in a
  * directory of their own, named by this id, so the id is also a file name and its alphabet is
@@ -43,6 +49,13 @@ export const RuntimeAttachmentPath = Schema.Struct({
   attachmentId: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(64)),
 })
 export interface RuntimeAttachmentPath extends Schema.Schema.Type<typeof RuntimeAttachmentPath> {}
+
+/** The path of one helper's routes. */
+export const RuntimeChildPath = Schema.Struct({
+  ...RuntimeThreadPath.fields,
+  runId: RunId.check(Schema.isNonEmpty()),
+})
+export interface RuntimeChildPath extends Schema.Schema.Type<typeof RuntimeChildPath> {}
 
 /**
  * The runtime's own name for one admitted delivery: the conversation library's submission
@@ -240,11 +253,15 @@ export const RuntimeHistoryThread = Schema.Struct({
 export type RuntimeHistoryThread = typeof RuntimeHistoryThread.Type
 export const RuntimeHistoryBody = Schema.Struct({
   threads: Schema.Array(RuntimeHistoryThread),
-  // The entry's address check remains valid when only its source timestamp is added.
+  // The entry's address check remains valid when only its source timestamp is added. Carried-over
+  // entries predate scope, so the body has none and the cell files them as Personal.
   memory: Schema.Array(
-    MemoryEntry.mapFields((fields) => ({ ...fields, updatedAt: Schema.Finite }), {
-      unsafePreserveChecks: true,
-    }),
+    MemoryEntry.mapFields(
+      ({ scope: _scope, ...fields }) => ({ ...fields, updatedAt: Schema.Finite }),
+      {
+        unsafePreserveChecks: true,
+      },
+    ),
   ),
 })
 export type RuntimeHistoryBody = typeof RuntimeHistoryBody.Type
@@ -274,3 +291,21 @@ export const RuntimeHistoryMap = Schema.Array(
   Schema.Struct({ personId: RuntimePersonId, ...RuntimeHistoryResult.cases.Loaded.fields }),
 )
 export type RuntimeHistoryMap = typeof RuntimeHistoryMap.Type
+
+/**
+ * `POST /persons/:personId/search`: find words in the Person's own conversations. The server
+ * names the Threads to look in, which are the ones it lets the Person see and that live in this
+ * Person's store (they created them), so deleted and foreign Threads are never read. Matching
+ * follows Muse's chat search (`muse/docs/client-surfaces.md:133`): case-insensitive whole words,
+ * the last word also as a prefix, newest first.
+ */
+export const RuntimeSearchBody = Schema.Struct({
+  query: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
+  threadIds: Schema.Array(ThreadId).check(Schema.isMaxLength(500)),
+  limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 })),
+})
+export interface RuntimeSearchBody extends Schema.Schema.Type<typeof RuntimeSearchBody> {}
+
+/** The matching messages, newest first, at most the asked limit. */
+export const RuntimeSearchAnswer = Schema.Struct({ hits: Schema.Array(MessageHit) })
+export interface RuntimeSearchAnswer extends Schema.Schema.Type<typeof RuntimeSearchAnswer> {}

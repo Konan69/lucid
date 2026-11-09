@@ -13,6 +13,7 @@ import {
   FeedItem,
   ProposedAction,
   RuleScope,
+  WatchId,
 } from '@vivid/contracts'
 import { refusalLogs } from '../observability/testlogger.ts'
 import { loadAudit } from '../audit/store.ts'
@@ -40,7 +41,13 @@ import {
 layer(testDatabaseLayer)((it) => {
   describe.skipIf(!testDatabaseConfigured)('Trust gate precedence and defaults', () => {
     const reviewed = Review.cases.Reviewed.make({ asked: 0.95, beyond: 0.1, contained: 0.1 })
-    const watch = StoredRunOrigin.cases.Watch.make({ watchName: 'New mail' })
+    const watch = StoredRunOrigin.cases.Watch.make({
+      watchId: WatchId.make('watch-test'),
+      watchName: 'New mail',
+      eventId: 'event-1',
+      event: 'message.received',
+      occurredAt: '2026-10-29T09:00:00Z',
+    })
     const message = StoredRunOrigin.cases.Message.make({})
     const decision = StoredRunOrigin.cases.Decision.make({})
     const unreviewed = Review.cases.Unreviewed.make({})
@@ -141,7 +148,10 @@ layer(testDatabaseLayer)((it) => {
                 [['approval']],
               )
             }
-            expect(yield* Ref.get(observed.notices)).toEqual([])
+            // An Approval waits on the Person wherever it was raised, so it is one notice.
+            expect((yield* Ref.get(observed.notices)).map((notice) => notice.kind)).toEqual(
+              expected === 'ApprovalRequired' ? ['needs-you'] : [],
+            )
           }).pipe(Effect.scoped, Effect.provide(context))
         }),
       )

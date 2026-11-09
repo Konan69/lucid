@@ -1,4 +1,6 @@
-import * as WebPush from 'web-push'
+// web-push is CommonJS whose exports Node's loader cannot name, so under `tsx` (how the server
+// runs) a namespace import has no `generateRequestDetails`; the default import is its exports.
+import WebPush from 'web-push'
 import { Context, Effect, Layer, Option, Redacted, Schema } from 'effect'
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
@@ -52,7 +54,10 @@ const ExpoMessage = Schema.Struct({
   to: PushDestination.cases.Phone.fields.token,
   title: Schema.String,
   body: Schema.String,
-  sound: Schema.Literal('default'),
+  // Expo plays the system sound for 'default' and none for null; on Android the channel decides,
+  // so a quiet notice also names the phone's quiet channel (`apps/mobile/src/data/notifying.ts`).
+  sound: Schema.NullOr(Schema.Literal('default')),
+  channelId: Schema.Literals(['default', 'quiet'] as const),
   data: PushPayload,
 })
 const ReceiptRequest = Schema.Struct({ ids: Schema.Array(Schema.String) })
@@ -118,7 +123,8 @@ const sendPhone = Effect.fn('PushAdapter.phone')(function* (
       to: destination.token,
       title: payload.title,
       body: payload.body,
-      sound: 'default',
+      sound: payload.sound === 'Audible' ? 'default' : null,
+      channelId: payload.sound === 'Audible' ? 'default' : 'quiet',
       data: payload,
     },
   ).pipe(Effect.mapError(() => new PushRejected({})))

@@ -1,56 +1,82 @@
 import { approve, changed, deny } from './approval.mjs'
+import { outcome } from './outcome.mjs'
 import { question as realQuestion } from './question.mjs'
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeAssert from 'node:assert/strict'
+import * as NodeCrypto from 'node:crypto'
+import { ArtifactInspectionId } from '@vivid/contracts'
+import { Schema } from 'effect'
+import { Account, decodeText } from './receipts.mjs'
 import { admit, chat, conversation, history, rpc, settled, json } from './wire.mjs'
 import { command } from './process.mjs'
 import { createRequire } from 'node:module'
 import { assertTable } from './table.mjs'
+import { capabilities, computer } from './capabilities.mjs'
 import { devices } from './devices.mjs'
 import { reading } from './reading.mjs'
+import { helpers, helperstop } from './helpers.mjs'
 import { settingsProof } from './settingsproof.mjs'
 import { nameProof } from './nameproof.mjs'
 import { watch } from './watch.mjs'
+import { integrations } from './integrations.mjs'
+import { checkin } from './checkin.mjs'
 import { memory } from './memory.mjs'
 import { learningFact } from './phonememory.mjs'
+import { procedure } from './procedure.mjs'
 import { feed } from './feed.mjs'
 import { owed } from './owed.mjs'
 import { todos } from './todos.mjs'
+import { projects } from './projects.mjs'
 import { offer } from './offer.mjs'
 import { discordProof, discordBlocked } from './discord.mjs'
 import { githubProof, githubBlocked } from './github.mjs'
 import { library } from './library.mjs'
 import { monitoring } from './monitoring.mjs'
+import { capture, computerFile } from './computers.mjs'
+import { pushProof } from './push.mjs'
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { pictureAddress } = await import(web.resolve('@vivid/state'))
 
+import { textingDiscordProof, textingDiscordBlocked } from './textingdiscord.mjs'
 export const features = [
+  'capabilities',
+  'computer',
   'first',
   'reload',
   'tool',
   'replies',
   'question',
+  'handoff',
   'approve',
   'deny',
   'changed',
+  'outcome',
   'stop',
   'picture',
   'code',
   'document',
   'watch',
+  'integrations',
+  'checkin',
   'library',
   'feed',
   'owed',
   'todos',
+  'projects',
   'devices',
   'reading',
   'settings',
   'name',
   'memory',
   'learning',
+  'procedure',
   'discord',
   'github',
   'monitoring',
+  'push',
+  'texting-discord',
+  'helpers',
+  'helperstop',
 ]
 export const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
@@ -315,11 +341,13 @@ async function document(state, id, directory) {
         part.type === 'dynamic-tool' &&
         part.toolName === 'write_document' &&
         part.state === 'output-available' &&
-        part.output.changed === true,
+        part.output.kind === 'artifact',
     )
   NodeAssert.ok(latest >= 2, 'The revision made no new version')
   NodeAssert.deepEqual(
-    writes.map((part) => part.output.version),
+    Array.from(new Set(writes.map((part) => part.output.artifact.version))).filter(
+      (version) => version > 1,
+    ),
     Array.from({ length: latest - 1 }, (_, index) => index + 2),
     'Each new version must be a write_document receipt of the revision Run',
   )
@@ -365,8 +393,98 @@ async function document(state, id, directory) {
   )
   NodeAssert.equal(v1.shown.number, 1)
   NodeAssert.equal(v2.shown.number, latest)
-  NodeAssert.notEqual(v1.body, v2.body)
-  NodeAssert.match(v2.body, /Ready for review/)
+  NodeAssert.equal(v1.content._tag, 'Document')
+  NodeAssert.equal(v2.content._tag, 'Document')
+  NodeAssert.notEqual(v1.content.body, v2.content.body)
+  NodeAssert.match(v2.content.body, /Ready for review/)
+  if (state.modelKind === 'real') await documentFile(state, id, directory)
+}
+const InspectionReceipt = Schema.Struct({ inspection: ArtifactInspectionId })
+
+/** The model receives the render image before delivering a PDF with its retained Word source. */
+async function documentFile(state, id, directory) {
+  await chat(
+    state,
+    id,
+    'Make a short one-page Word document titled File verification with the paragraph Exact bytes, retained source, reviewed render. Use python3 and the Computer document tools. Keep it as verification.docx, export verification.pdf, inspect_file on the PDF with its separate DOCX source, look at the returned image, then publish_file titled File verification with your visual review. Do not use write_document for this file.',
+    directory,
+    'file-write',
+  )
+  const { page, detail } = await completed(state, id, directory, 4)
+  const steps = page.messages
+    .filter(
+      (message) =>
+        message.role === 'assistant' && message.submissionId === detail.runs[3].submissionId,
+    )
+    .flatMap((message) => message.parts)
+    .filter((part) => part.type === 'dynamic-tool' && part.state === 'output-available')
+  const published = steps.find(
+    (part) => part.toolName === 'publish_file' && part.output.kind === 'artifact',
+  )
+  NodeAssert.ok(published, 'No file publication receipt; a proof-owned Computer is required')
+  const inspected = steps.find(
+    (part) =>
+      part.toolName === 'inspect_file' &&
+      Array.isArray(part.output) &&
+      part.output.some((block) => block.type === 'image' && block.mimeType === 'image/png'),
+  )
+  NodeAssert.ok(inspected, 'inspect_file did not return native image content to the model')
+  NodeAssert.ok(
+    steps.indexOf(inspected) < steps.indexOf(published),
+    'Publication preceded the inspection image',
+  )
+  const inspectionText = inspected.output.find((block) => block.type === 'text')
+  NodeAssert.ok(inspectionText, 'Inspection receipt text is missing')
+  const inspection = decodeText(InspectionReceipt, inspectionText.text)
+  NodeAssert.equal(published.input.inspection, inspection.inspection)
+  const reference = published.output.artifact
+  const artifact = await rpc(
+    state,
+    'GetArtifact',
+    { id: reference.id, version: reference.version },
+    directory,
+    'file-artifact',
+  )
+  NodeAssert.equal(artifact.content._tag, 'File')
+  NodeAssert.equal(artifact.content.output.mimeType, 'application/pdf')
+  NodeAssert.equal(artifact.content.source._tag, 'Separate')
+  NodeAssert.match(artifact.content.source.file.name, /\.docx$/u)
+  NodeAssert.equal(artifact.content.preview._tag, 'Separate')
+  NodeAssert.equal(artifact.content.review.toolCallId, inspected.toolCallId)
+  NodeAssert.equal(artifact.content.review.outputDigest, artifact.content.output.sha256)
+  const account = decodeText(
+    Account,
+    await NodeFSP.readFile(state.scratch + '/account.json', 'utf8'),
+  )
+  const downloads = []
+  for (const [role, file] of [
+    ['output', artifact.content.output],
+    ['source', artifact.content.source.file],
+    ['preview', artifact.content.preview.file],
+  ]) {
+    const response = await fetch(
+      `${state.web}/api/artifacts/${reference.id}/versions/${reference.version}/files/${role}`,
+      { headers: { cookie: account.cookie } },
+    )
+    NodeAssert.equal(response.status, 200)
+    const bytes = Buffer.from(await response.arrayBuffer())
+    const sha256 = NodeCrypto.createHash('sha256').update(bytes).digest('hex')
+    NodeAssert.equal(sha256, file.sha256)
+    NodeAssert.equal(bytes.length, file.byteLength)
+    await NodeFSP.writeFile(`${directory}/file-${role}`, bytes)
+    downloads.push({
+      role,
+      sha256,
+      byteLength: bytes.length,
+      mimeType: response.headers.get('content-type'),
+    })
+  }
+  await json(directory + '/file-proof.json', {
+    artifact: reference,
+    inspectionToolCall: inspected.toolCallId,
+    nativeImage: true,
+    downloads,
+  })
 }
 /** Send a picture through the public contract and compare exact reloaded private bytes. */
 async function picture(state, id, directory) {
@@ -425,9 +543,45 @@ async function learning(state, id, directory) {
   )
 }
 
+/** The words that ask Vivid for one program that writes a file this run owns. */
+export function program(state) {
+  const name = `vivid-verify-${state.run.slice(-8)}-${crypto.randomUUID().slice(0, 8)}.txt`
+  const marker = crypto.randomUUID()
+  return {
+    name,
+    marker,
+    phrase: `Do this with one run_code program and nothing else. In the program, use node:fs/promises to write a file named ${name} in the current directory holding exactly the text ${marker}, then return that text. Afterwards tell me what the program wrote.`,
+  }
+}
+
+/** One finished run_code receipt in the Thread, then the file read back through Boat, not Vivid.
+ * Shared by the HTTP and browser recipes once the Person's message has settled. */
+export async function ranProgram(state, page, asked, directory) {
+  const programs = page.messages
+    .flatMap((message) => message.parts)
+    .filter((part) => part.type === 'dynamic-tool' && part.toolName === 'run_code')
+  NodeAssert.equal(programs.length, 1, 'Expected exactly one run_code program')
+  NodeAssert.equal(programs[0].state, 'output-available', 'The program did not finish')
+  NodeAssert.equal(programs[0].output.ok, true, 'The program did not run to its end')
+  await capture(state)
+  const written = await computerFile(state, asked.name)
+  await json(directory + '/computer-file.json', { ...asked, ...written })
+  NodeAssert.equal(written.text.trim(), asked.marker, 'The Computer holds other text')
+}
+
+/** Vivid runs a program on the synthetic Person's own new Computer. */
+async function code(state, id, directory) {
+  const asked = program(state)
+  await chat(state, id, asked.phrase, directory)
+  const { page } = await completed(state, id, directory)
+  await ranProgram(state, page, asked, directory)
+}
 const recipes = {
   monitoring,
+  capabilities,
+  computer,
   first,
+  code,
   reload,
   stop,
   tool,
@@ -436,45 +590,66 @@ const recipes = {
   approve,
   deny,
   changed,
+  outcome,
   picture,
   document,
   devices,
   feed,
   memory,
   learning,
+  procedure,
   owed,
   todos,
+  projects,
   watch,
+  integrations,
+  checkin,
   reading,
   settings: settingsProof,
   name: nameProof,
   discord: discordProof,
   github: githubProof,
   library,
+  push: pushProof,
+  'texting-discord': textingDiscordProof,
+  helpers,
+  helperstop,
 }
 const blocked = {
-  code: 'Needs a disposable Person Computer. No disposable Computer authority is configured.',
+  handoff: 'No proof-owned Computer: a handoff is prepared and filled on a disposable Person Computer.',
   ...discordBlocked(),
   ...githubBlocked(),
+  ...textingDiscordBlocked(),
 }
 /** Every feature gets an independent Thread and retained verdict; failure never skips the rest. */
 export async function drive(state, feature) {
   const chosen = feature === 'all' ? features : [feature]
   if (chosen.some((name) => !features.includes(name))) throw new Error('Unknown feature ' + feature)
+  const computer =
+    state.computer === 'disposable'
+      ? {}
+      : { code: 'Needs a disposable Person Computer. Launch had no VIVID_BOAT_API_KEY.' }
   const unavailable =
     state.modelKind === 'real'
-      ? blocked
+      ? { ...blocked, ...computer }
       : {
           ...blocked,
           name: 'Name requires a real model; rehearsal cannot answer what the Person is called.',
+          ...computer,
+          code: 'A program requires a real model; rehearsal cannot write it.',
           approve: 'Approval requires a real model.',
           deny: 'Denial requires a real model.',
           changed: 'A stale ask requires a real model.',
+          outcome: 'Action receipts require a real model to make the write.',
           stop: 'Stop requires a real model; rehearsal cannot prove interruption.',
           memory: 'Memory requires a real model; rehearsal cannot prove the memory tools.',
+          procedure: 'Teaching requires a real model; rehearsal cannot prove it.',
           owed: 'Tracking requires a real model; rehearsal cannot prove it.',
           todos: 'The list requires a real model; rehearsal cannot prove it.',
           library: 'Library requires a real model; rehearsal cannot prove retrieval and citation.',
+          projects: 'Project state requires a real model; rehearsal cannot prove it.',
+          helpers: 'Helpers require a real model; rehearsal cannot start one.',
+          helperstop: 'Helpers require a real model; rehearsal cannot start one.',
         }
   let failed = false
   for (const name of chosen) {
@@ -501,6 +676,8 @@ export async function drive(state, feature) {
           json(directory + '/sql-failure.json', { error: error.message }),
         )
     }
+    // Any feature may have woken the Computer; its id is recorded before the next one starts.
+    await capture(state)
     verdict = {
       ...verdict,
       head: state.head,

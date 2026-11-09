@@ -1,6 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, getTableColumns, inArray, sql } from 'drizzle-orm'
 import {
+  Array as Arr,
   Clock,
   Context,
   Duration,
@@ -10,13 +11,23 @@ import {
   Layer,
   Match,
   Option,
+  Order,
   Result,
   Schedule,
   Schema,
   Scope,
 } from 'effect'
 import {
+  ComputerLifecycle,
+  ComputerHealth,
+  ComputerRecoveryOutcome,
+  type ComputerHealthDepth,
+  type RecoverComputerRequest,
   ActionTarget,
+  ApprovalContentDigest,
+  ApprovalPageAddress,
+  ApprovalPrecondition,
+  InvalidRequest,
   BrowserAction,
   DesktopAction,
   DeviceAccess,
@@ -41,12 +52,14 @@ import {
   type CommandResult,
   BrowseResult,
   BrowserPicture,
+  type HandoffFieldResult,
+  type HandoffRefusalReason,
 } from '@vivid/contracts'
 import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
 import { egressChosen } from './egress/setting.ts'
 import { type Actor } from '../auth/access.ts'
 import { Gate, GateDecision, ActionOutcome, ActionOrigin, actionOrigin } from '../approvals/gate.ts'
-import { unbound } from '../approvals/action.ts'
+import { canonical, contentDigest, unbound } from '../approvals/action.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import {
   isOutage,
@@ -62,9 +75,14 @@ import {
   type MachineRun,
   type MachineFileReason,
   MachineFileRefused,
+  type HandoffEntry,
+  type HandoffPageBinding,
 } from './machine.ts'
+import { handoffs, openHandoffStatuses } from '../inputs/tables.ts'
 import { BrowseAuthority, DeviceRegistry } from './device.ts'
 import { requireThread } from '../threads/access.ts'
+import { healthOperations } from './health.ts'
+import { computerRecovery } from './recovery.ts'
 import { computers } from './tables.ts'
 import { keyedPermits, type KeyedPermits } from '../runtime/keyed.ts'
 
@@ -240,9 +258,22 @@ const persistence = Effect.fn('ComputerStore.persistence')(function* (
 ) {
   const database = yield* Database
   const changes = yield* Changes
+  /**
+   * Read with the hold as every caller must see it: the Person took over, or a step Vivid handed
+   * them is still open (`inputs/handoff.ts`). While a handoff is open, the fields may hold what the
+   * Person typed, so Vivid's own actions are refused, the idle stop waits, and a Hand back from
+   * the Computer panel cannot end it; only finishing or withdrawing the handoff does.
+   */
   const load = Effect.fn('ComputerStore.load')(function* (person: PersonId) {
     const rows = yield* database.run(
-      database.select().from(computers).where(eq(computers.personId, person)).limit(1),
+      database
+        .select({
+          ...getTableColumns(computers),
+          held: sql<boolean>`${computers.held} or exists (select 1 from ${handoffs} where ${handoffs.personId} = ${computers.personId} and ${inArray(handoffs.status, openHandoffStatuses)})`,
+        })
+        .from(computers)
+        .where(eq(computers.personId, person))
+        .limit(1),
     )
     const row = rows[0]
     return row === undefined ? Option.none<Stored>() : Option.some(yield* decode(row))
@@ -456,8 +487,25 @@ const startMachine = Effect.fn('ComputerStore.boot')(function* (
       isStanding(started.failure),
   }
 })
+/** The existing lifecycle authority shared by passive diagnosis and targeted recovery. */
+export type ComputerAuthority = Effect.Success<ReturnType<typeof lifecycle>>
 type StoreError = DatabaseInfrastructureError
 export interface ComputerStoreService {
+  readonly inspect: (
+    person: PersonId,
+  ) => Effect.Effect<
+    { readonly state: ComputerLifecycle; readonly heldByPerson: boolean },
+    StoreError | MachineFailure
+  >
+  readonly health: (
+    person: PersonId,
+    depth: ComputerHealthDepth,
+  ) => Effect.Effect<ComputerHealth, StoreError>
+  readonly recover: (
+    actor: Actor,
+    request: RecoverComputerRequest,
+  ) => Effect.Effect<ComputerRecoveryOutcome, StoreError>
+
   /** The takeover and idle-stop permit is held until the private cookie import ends. */
   readonly copySignIn: (
     person: PersonId,
@@ -484,6 +532,36 @@ export interface ComputerStoreService {
     person: PersonId,
     action: BrowserAction,
   ) => Effect.Effect<BrowseResult, StoreError | MachineFailure | ReadinessFailure>
+  /** Vivid's preflight of a handoff, run as any of its browser steps is. */
+  readonly findFields: (
+    person: PersonId,
+    labels: ReadonlyArray<string>,
+  ) => Effect.Effect<
+    {
+      readonly page: HandoffPageBinding
+      readonly address: string
+      readonly fields: ReadonlyArray<Option.Option<HandoffRefusalReason>>
+    },
+    StoreError | MachineFailure | ReadinessFailure
+  >
+  /**
+   * The Person's own typing into a handoff's fields, and clearing them after. These run while the
+   * Computer is held for that handoff, which is what refuses Vivid; they take the action permit, so
+   * a step of Vivid's already under way ends first, and they never wake a Computer.
+   */
+  readonly fillFields: (
+    person: PersonId,
+    page: HandoffPageBinding,
+    entries: ReadonlyArray<HandoffEntry>,
+  ) => Effect.Effect<
+    ReadonlyArray<HandoffFieldResult>,
+    StoreError | MachineFailure | ComputerNotReady
+  >
+  readonly clearFields: (
+    person: PersonId,
+    page: HandoffPageBinding,
+    labels: ReadonlyArray<string>,
+  ) => Effect.Effect<ReadonlyArray<string>, StoreError | MachineFailure | ComputerNotReady>
   /**
    * The Computer's own shell and files, used as a person uses their machine: woken if asleep,
    * refused while the Person holds it, and counted as activity. No Approval is asked and no rule
@@ -608,6 +686,7 @@ const observations = (
       return {
         computer: withoutRow(ComputerState.cases.Absent.make({})),
         outage: Option.none<MachineFailure>(),
+        failure: Option.none<MachineFailure>(),
       }
     const observed = yield* observe(row.value.machine).pipe(Effect.result)
     // By the failure's name only; the read itself answers the caller with a state, not a failure.
@@ -620,6 +699,7 @@ const observations = (
       return {
         computer: wire(row.value, unanswered(row.value.since)),
         outage: Option.some(observed.failure),
+        failure: Option.some(observed.failure),
       }
     const reported = Result.isSuccess(observed)
       ? observed.success
@@ -630,6 +710,10 @@ const observations = (
     return {
       computer: yield* reconcile(person, row.value, reported),
       outage: Option.none<MachineFailure>(),
+      // Health needs the typed observation even when the Person’s lifecycle keeps its sentence.
+      failure: Result.isFailure(observed)
+        ? Option.some(observed.failure)
+        : Option.none<MachineFailure>(),
     }
   })
   /** The lifecycle facts with the outage, for callers that must refuse rather than report. */
@@ -1014,6 +1098,7 @@ const attached = Effect.fn('ComputerStore.attach')(function* (
 })
 
 const decodeBrowserPicture = Schema.decodeUnknownEffect(BrowserPicture)
+const decodeApprovalPageAddress = Schema.decodeEffect(ApprovalPageAddress)
 
 /** The provider’s browser operation returns an outline only. Cloud Screenshot therefore captures
  * Vivid’s whole desktop through the public Look API; it is not a browser-page crop. Both reads
@@ -1071,6 +1156,54 @@ const ownMachine = (
       execute(person, (key) => machine.put({ key, ...input })),
   ),
 })
+
+/** Health and receipt-backed recovery form the diagnostic part of the Computer authority. */
+function diagnostics(state: ComputerAuthority, database: Database['Service']) {
+  const { inspect, health } = healthOperations({ state, database })
+  const recover = computerRecovery({
+    state,
+    database,
+    health,
+    wake: (person) => prepare(state, person),
+  })
+  return { inspect, health, recover }
+}
+
+/**
+ * A handoff's fields (`inputs/handoff.ts`). Vivid's preflight runs as any of its browser steps
+ * does (`execute`). The Person's typing and clearing run while the Computer is held for the
+ * handoff, which is what refuses Vivid: they take the same action permit, so a step of Vivid's
+ * under way ends first, need a running Computer, and never wake one.
+ */
+const handoffFields = (
+  state: Effect.Success<ReturnType<typeof lifecycle>>,
+  execute: <A>(
+    person: PersonId,
+    action: (key: MachineKey) => Effect.Effect<A, MachineFailure>,
+  ) => Effect.Effect<A, StoreError | MachineFailure | ReadinessFailure>,
+) => {
+  const personal = Effect.fn('ComputerStore.personal')(
+    function* <A>(person: PersonId, action: (key: MachineKey) => Effect.Effect<A, MachineFailure>) {
+      const row = yield* state.rows.load(person)
+      if (Option.isNone(row) || !Stored.guards.running(row.value))
+        return yield* new ComputerNotReady({ reason: 'The Computer is not running.' })
+      yield* state.rows.inactivity.activity(person)
+      return yield* action(row.value.machine)
+    },
+    (effect, person) => state.lock.withPermit(person, effect),
+  )
+  return {
+    findFields: (person: PersonId, labels: ReadonlyArray<string>) =>
+      execute(person, (key) => state.machine.findFields({ key, labels })),
+    fillFields: (
+      person: PersonId,
+      page: HandoffPageBinding,
+      entries: ReadonlyArray<HandoffEntry>,
+    ) => personal(person, (key) => state.machine.fillFields({ key, page, entries })),
+    clearFields: (person: PersonId, page: HandoffPageBinding, labels: ReadonlyArray<string>) =>
+      personal(person, (key) => state.machine.clearFields({ key, page, labels })),
+  }
+}
 
 /** Capture provider and database dependencies once; callers need only the Computer authority. */
 export const computerStoreLayer = Layer.effect(
@@ -1195,6 +1328,7 @@ export const computerStoreLayer = Layer.effect(
       return yield* state.stop(person)
     })
     return ComputerStore.of({
+      ...diagnostics(state, database),
       // A sign-in can start Chrome too; it must choose the same way out as a browse action.
       copySignIn: Effect.fn('ComputerStore.copySignIn')(function* (person, cookies) {
         const egress = yield* egressChosen(person).pipe(Effect.provideService(Database, database))
@@ -1211,6 +1345,7 @@ export const computerStoreLayer = Layer.effect(
       browse,
       desktop,
       attach,
+      ...handoffFields(state, execute),
       ...ownMachine(state.machine, execute),
     })
   }),
@@ -1425,6 +1560,74 @@ const personBrowse = Effect.fn('Computer.personBrowse')(function* (input: {
     )
 })
 
+// Match actual ISO currency codes (upper case only, so words such as "all 3" or "top 10" are not
+// read as money) or Unicode currency symbols on either side of an amount.
+// Keep decimal/grouping punctuation: interpreting a comma without the page's locale can merge
+// different prices. Whitespace, currency-code case and prefix/suffix placement are normalized.
+const currency = `(?:\\p{Sc}|(?<![A-Za-z])(?:${Intl.supportedValuesOf('currency').join('|')})(?![A-Za-z]))`
+const moneyAmounts = new RegExp(
+  `${currency}\\s*[+-]?\\d+(?:[.,]\\d+)*|[+-]?\\d+(?:[.,]\\d+)*\\s*${currency}`,
+  'gu',
+)
+
+/** Read without acting, binding only address, observed money and the gesture's own target label.
+ * Unrelated page text may change freely. Truncated outlines bind the amounts they do expose;
+ * the same rule applies at capture and claim without inventing terms beyond the snapshot. */
+export const inspectBrowser = Effect.fn('Computer.inspectApproval')(function* (input: {
+  readonly person: Person
+  readonly origin: ActionOrigin
+  readonly target: typeof ActionTarget.cases.Browser.Type
+  readonly authority: BrowseAuthority
+}) {
+  const read = BrowserAction.cases.Read.make({})
+  const result = BrowseTarget.guards.Vivid(input.target.target)
+    ? yield* (yield* ComputerStore)
+        .browse(input.person.id, read)
+        .pipe(
+          Effect.mapError(
+            () => new InvalidRequest({ message: 'The browser page could not be verified.' }),
+          ),
+        )
+    : yield* personBrowse({
+        person: input.person,
+        origin: input.origin,
+        action: read,
+        authority: input.authority,
+      }).pipe(
+        Effect.flatMap((outcome) =>
+          BrowseOutcome.guards.Completed(outcome)
+            ? Effect.succeed(outcome.result)
+            : Effect.fail(
+                new InvalidRequest({ message: 'The browser page could not be verified.' }),
+              ),
+        ),
+      )
+  const address = yield* decodeApprovalPageAddress(result.address).pipe(
+    Effect.mapError(() => new InvalidRequest({ message: 'The browser page has no address.' })),
+  )
+  const amounts = Arr.sort(
+    Arr.dedupe(
+      (result.outline.match(moneyAmounts) ?? []).map((amount) =>
+        amount
+          .replace(/\s+/gu, '')
+          .toUpperCase()
+          .replace(/^([+-]?\d[\d.,]*)(.+)$/u, '$2$1'),
+      ),
+    ),
+    Order.String,
+  )
+  const action = input.target.action
+  const target = BrowserAction.isAnyOf(['Click', 'Type'])(action) ? action.target : null
+  return [
+    ApprovalPrecondition.cases.BrowserPage.make({
+      address,
+      outlineDigest: ApprovalContentDigest.make(
+        contentDigest(canonical({ address, amounts, target })),
+      ),
+    }),
+  ]
+})
+
 /** Personal page contents enter durable history; only the Thread’s real private audience avoids
  * a disclosure Approval. Cloud results retain the existing ordinary exposure policy. */
 const browserExposure = Effect.fn('Computer.browserExposure')(function* (
@@ -1456,7 +1659,7 @@ export const computerBrowse = Effect.fn('Computer.browse')(function* (
   const origin = yield* actionOrigin(actor)
   if (BrowseTarget.guards.Person(request.target) && !ActionOrigin.guards.Run(origin))
     return BrowseOutcome.cases.RunRequired.make({})
-  // A browser step is not bound to the page it acts on: no page here has a revision to compare.
+  // Gate captures the page address and outline before raising an Approval, then refreshes them on claim.
   const decision = yield* gate.check(
     actor,
     action,

@@ -49,6 +49,7 @@ export interface InfrastructureEnvironment {
   /** Who sees the Discord Integration (`VIVID_DISCORD_PEOPLE` in
    * `apps/server/src/connections/discord.ts`). Absent hides it from everyone. */
   readonly discordPeople: Option.Option<string>
+  readonly discordBotToken: Option.Option<Redacted.Redacted>
   /**
    * Where the server exports traces and logs (`apps/server/src/observability/export.ts`). Without
    * it the server runs exactly as before and exports nothing.
@@ -169,6 +170,7 @@ export const loadInfrastructureEnvironment = Effect.gen(function* () {
 
   const decisions = yield* optionalString('VIVID_DECISIONS')
   const discordPeople = yield* optionalString('VIVID_DISCORD_PEOPLE')
+  const discordBotToken = yield* optionalSecret('VIVID_DISCORD_BOT_TOKEN')
 
   const otlpUrl = yield* optionalString('VIVID_OTLP_URL')
   const otlpHeaders = yield* optionalSecret('VIVID_OTLP_HEADERS')
@@ -212,6 +214,7 @@ export const loadInfrastructureEnvironment = Effect.gen(function* () {
     push,
     decisions,
     discordPeople,
+    discordBotToken,
     observability: monitoring,
     computer,
   } satisfies InfrastructureEnvironment

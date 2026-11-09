@@ -12,11 +12,24 @@ import type { LiveQuery, ProductFailure } from './live.js'
 /**
  * Texting Vivid from a messaging app, as every client says and does it.
  *
- * A Person gives their own number, texts a short code from that phone to the number they are
- * shown, and from then on messages from that phone are theirs. The web app and the phone app draw
- * this differently, but what each standing is called, what a refusal says and what link opens the
- * messaging app already addressed are the same everywhere, so they are decided here once.
+ * On a phone channel a Person gives their own number, texts a short code from that phone to the
+ * number they are shown, and from then on messages from that phone are theirs. On Discord there
+ * is no number to give: they press Connect and send the code to the Vivid bot, and the account it
+ * came from is theirs. The web app and the phone app draw this differently, but what each standing
+ * is called, what a refusal says and what link opens the messaging app already addressed are the
+ * same everywhere, so they are decided here once.
  */
+
+/**
+ * How a Person is known on each channel: by the phone number they give, or by the account the
+ * code is sent from (Discord), which they never type. It decides whether there is a number to ask
+ * for, and whether there is a number to show once connected.
+ */
+export const KNOWN_BY = {
+  iMessage: 'number',
+  WhatsApp: 'number',
+  Discord: 'account',
+} satisfies Record<Channel, 'number' | 'account'>
 
 /**
  * A number as it is sent: without the spaces, brackets, dots and hyphens people write a phone
@@ -26,16 +39,22 @@ import type { LiveQuery, ProductFailure } from './live.js'
 export const typedAddress = (written: string) => written.replaceAll(/[\s().-]/gu, '')
 
 /**
- * Gives the Person's own number to a channel. The answer is where the channel now stands:
- * `Confirming`, with the code to text. Asking again with the same number while it is still
- * `Confirming` is how a new code is asked for.
+ * Gives the Person's own number to a channel, or nothing on a channel that learns the account from
+ * the code (`KNOWN_BY`). The answer is where the channel now stands: `Confirming` or `Awaiting`,
+ * with the code to send. Asking again the same way while the code is out is how a new one is
+ * asked for.
  */
 export const connectChannel = Effect.fn('Texting.connect')(function* (
   channel: Channel,
-  written: string,
+  written: Option.Option<string>,
 ) {
   const client = yield* VividRpcClient
-  const { link } = yield* client.ConnectChannel({ channel, address: typedAddress(written) })
+  const { link } = yield* client.ConnectChannel(
+    Option.match(written, {
+      onNone: () => ({ channel }),
+      onSome: (number) => ({ channel, address: typedAddress(number) }),
+    }),
+  )
   return link
 })
 
@@ -61,18 +80,25 @@ export const channelWords = (standing: ChannelStanding): string =>
     Unavailable: () => 'Not available yet',
     NotConnected: () => 'Not connected',
     Confirming: () => 'Waiting for your text',
+    Awaiting: () => 'Waiting for your message',
     Connected: () => 'Connected',
   })
 
 /**
  * What each refusal is in plain words. Keyed by the contract's own failures, so a failure added
- * there without a sentence here does not typecheck.
+ * there without a sentence here does not typecheck. A channel where no number is typed (Discord)
+ * is never told about one.
  */
 const SAID = {
   ChannelUnavailable: (channel) => `Vivid cannot text on ${channel} yet.`,
   ChannelAddressInvalid: (channel) =>
-    `That is not a phone number ${channel} can reach. Write it with its country code, like +234 801 234 5678.`,
-  ChannelAddressTaken: () => 'That number is already connected to someone. Use a different number.',
+    KNOWN_BY[channel] === 'number'
+      ? `That is not a phone number ${channel} can reach. Write it with its country code, like +234 801 234 5678.`
+      : `Vivid could not start connecting ${channel}. Try again.`,
+  ChannelAddressTaken: (channel) =>
+    KNOWN_BY[channel] === 'number'
+      ? 'That number is already connected to someone. Use a different number.'
+      : `That ${channel} account is already connected to someone.`,
   ChannelLimitReached: (channel) => `No more people can be connected to ${channel} right now.`,
   ChannelProviderFailed: (channel) =>
     `${channel} could not be reached, so nothing was changed. Try again.`,
@@ -115,6 +141,7 @@ export const textingSettled =
 export const MESSENGER = {
   iMessage: 'Messages',
   WhatsApp: 'WhatsApp',
+  Discord: 'Discord',
 } satisfies Record<Channel, string>
 
 /**
@@ -157,6 +184,9 @@ export const FIRST_TEXT = 'Hi Vivid'
  * written when there is one. A code is sent as the body so confirming is one press and "Send";
  * a connected channel is opened on `FIRST_TEXT` (`textLink`). With no body the link only opens
  * the conversation.
+ *
+ * Discord's link cannot carry a body: it opens the Vivid bot's profile, where "Message" starts the
+ * conversation, and the code is pasted from the screen.
  */
 export const messageLink = (
   channel: Channel,
@@ -165,6 +195,7 @@ export const messageLink = (
   body: Option.Option<string>,
 ): string => {
   const written = Option.map(body, encodeURIComponent)
+  if (channel === 'Discord') return `https://discord.com/users/${textTo.replace(/^discord:/u, '')}`
   if (channel === 'WhatsApp') {
     // WhatsApp's own link form takes the number as bare digits, without the plus.
     const number = textTo.replaceAll(/\D/gu, '')
@@ -184,8 +215,9 @@ export const messageLink = (
  * be expected to open it; nothing when it cannot, so the screen shows the number to carry to the
  * phone and no button that would do nothing.
  *
- * WhatsApp's link is a web page that every browser opens (and that hands over to the app where
- * there is one), so it is always there. An `sms:` link needs a device that reads one (`composerOf`).
+ * WhatsApp's and Discord's links are web pages that every browser opens (and that hand over to the
+ * app where there is one), so they are always there. An `sms:` link needs a device that reads one
+ * (`composerOf`).
  */
 export const textLink = (
   channel: Channel,
@@ -193,7 +225,7 @@ export const textLink = (
   textTo: string,
 ): Option.Option<string> => {
   const body = Option.some(FIRST_TEXT)
-  if (channel === 'WhatsApp') return Option.some(messageLink(channel, 'standard', textTo, body))
+  if (channel !== 'iMessage') return Option.some(messageLink(channel, 'standard', textTo, body))
   return Option.map(device, (composer) => messageLink(channel, composer, textTo, body))
 }
 

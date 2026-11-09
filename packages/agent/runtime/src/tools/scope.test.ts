@@ -1,4 +1,4 @@
-import { unusedMemory } from './tests/harness.ts'
+import { unusedMemory, unusedTranscripts } from './tests/harness.ts'
 import * as NodeHttp from 'node:http'
 import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer'
 import * as NodeHttpClient from '@effect/platform-node/NodeHttpClient'
@@ -100,8 +100,9 @@ it.live('keeps the resolver’s Person and Thread attribution on the HTTP RPC ca
             }),
           ).pipe(Layer.provide(product.as(acting))),
         () => Effect.die('Unexpected memory authority'),
-        unusedMemory,
-      )
+        { memory: unusedMemory, transcripts: unusedTranscripts },
+        { skills: [], children: [] },
+      ).tools
       const page = definitions.find((tool) => tool.name === 'read_page')
       if (page === undefined) expect.fail('Missing read_page tool.')
       const receipt = yield* Effect.promise(() =>

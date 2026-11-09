@@ -14,7 +14,15 @@ import {
   type Task,
   type Cursor,
 } from '@earendil-works/pi-durable'
-import { MemoryAuthority, MemorySource, MemoryTaskId, PersonId } from '@vivid/contracts'
+import {
+  MemoryAuthority,
+  MemoryCitation,
+  MemorySource,
+  MemoryTaskId,
+  MessageId,
+  PersonId,
+  ThreadId,
+} from '@vivid/contracts'
 import { Effect, Layer, Option, Schema } from 'effect'
 import { Decision, DecisionModel } from 'effect/ai'
 import { INSTRUCTIONS, learnerDefinition } from './agents/learner.ts'
@@ -25,10 +33,11 @@ import {
   isDeliveryEntry,
   resolveAuthority,
   recoverAuthority,
-  SignalData,
+  PlacedSignal,
+  signalShown,
   SIGNAL_ENTRY,
 } from './delivery.ts'
-import { Memory } from './memory.ts'
+import { Memory, type MemoryWriter } from './memory.ts'
 import { pi, threadOf, type PiRejected } from './threads.ts'
 import type { ToolFailure } from './tools/result.ts'
 
@@ -82,7 +91,7 @@ export const consider = Effect.fn('Learning.consider')(function* (exchange: Exch
 })
 
 /** A learning failure is deliberately content-free at the host logging boundary. */
-class LearningFailed extends Schema.TaggedError<LearningFailed>()(
+export class LearningFailed extends Schema.TaggedError<LearningFailed>()(
   'LearningFailed',
   {},
   { title: 'Learning failed' },
@@ -104,11 +113,27 @@ const LearnerAuthority = defineDocFamily<
 })
 const LEARNER_KEY = 'authority'
 
-const Group = Schema.Struct({ personId: PersonId, exchange: Exchange })
+/** The messages of one Thread a learner read: what a memory it writes cites. */
+const LearnedFrom = Schema.Struct({ threadId: ThreadId, messages: Schema.Array(MessageId) })
+
+/**
+ * One Person's exchange to learn from. `source` is absent on learning queued before sources were
+ * recorded (29 October 2026); such a learner cites its Run alone, because no message was kept.
+ * It never reaches Jev or the learner: only `exchange` does.
+ */
+const Group = Schema.Struct({
+  personId: PersonId,
+  exchange: Exchange,
+  source: Schema.optionalKey(LearnedFrom),
+})
 type Group = typeof Group.Type
+/** The learning task's input, as Pi keeps it; a forget reads it to find this Person's learning. */
+export const LearningInput = Schema.Struct({ groups: Schema.Array(Group) })
 interface Input {
   readonly groups: ReadonlyArray<Group>
 }
+/** The learning task's definition name in Pi's registry. */
+export const LEARNING_TASK = 'vivid.learning'
 type Step =
   | { readonly phase: 'gate'; readonly position: number }
   | { readonly phase: 'learn'; readonly position: number; readonly child: ConversationId }
@@ -127,7 +152,7 @@ const LearnedRun = defineDocFamily<{ taskId: number | null }, null>({
 })
 
 /** Read only user/assistant prose. Tool results and private authority never become learning evidence. */
-function prose(entry: EntryRecord, role: 'user' | 'assistant') {
+export function prose(entry: EntryRecord, role: 'user' | 'assistant') {
   if (entry.model === undefined) return ''
   return entry.model
     .flatMap((message) => {
@@ -157,31 +182,33 @@ function earlierTurns(entries: ReadonlyArray<EntryRecord>) {
 }
 
 /** Page native history instead of assuming a run fits in Pi's first page. */
-const history = Effect.fn('Learning.history')(function* (
+export const history: (
   harness: Harness,
   conversationId: ConversationId,
-) {
-  const conversation = yield* pi(() => harness.conversation(conversationId, BACKGROUND_CONTEXT))
-  if (conversation === undefined) return yield* new LearningFailed()
-  const entries: EntryRecord[] = []
-  let cursor = Option.none<Cursor>()
-  for (;;) {
-    const page = yield* pi(() =>
-      conversation.entries(
-        { order: 'ascending' },
-        256,
-        Option.getOrUndefined(cursor),
-        BACKGROUND_CONTEXT,
-      ),
-    )
-    entries.push(...page.items)
-    if (page.next === undefined) return entries
-    cursor = Option.some(page.next)
-  }
-})
+) => Effect.Effect<Array<EntryRecord>, LearningFailed | PiRejected> = Effect.fn('Learning.history')(
+  function* (harness: Harness, conversationId: ConversationId) {
+    const conversation = yield* pi(() => harness.conversation(conversationId, BACKGROUND_CONTEXT))
+    if (conversation === undefined) return yield* new LearningFailed()
+    const entries: EntryRecord[] = []
+    let cursor = Option.none<Cursor>()
+    for (;;) {
+      const page = yield* pi(() =>
+        conversation.entries(
+          { order: 'ascending' },
+          256,
+          Option.getOrUndefined(cursor),
+          BACKGROUND_CONTEXT,
+        ),
+      )
+      entries.push(...page.items)
+      if (page.next === undefined) return entries
+      cursor = Option.some(page.next)
+    }
+  },
+)
 
 const decodeKept = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.toCodecJson(Kept)))
-const decodeSignal = Schema.decodeUnknownEffect(SignalData)
+const decodeSignal = Schema.decodeUnknownEffect(PlacedSignal)
 /** Signal types that carry a Person's own words: a message in a shared Thread, an answer. */
 const SPOKEN: ReadonlySet<string> = new Set(['message', 'answer'])
 
@@ -202,8 +229,9 @@ const recover = Effect.fn('Learning.recover')(function* (
  */
 const spokenSignal = Effect.fn('Learning.spokenSignal')(function* (entry: EntryRecord) {
   if (entry.kind !== SIGNAL_ENTRY) return Option.some(null)
-  const signal = yield* decodeSignal(entry.data).pipe(Effect.mapError(() => new LearningFailed()))
-  return SPOKEN.has(signal.type) ? Option.some(signal) : Option.none()
+  const placed = yield* decodeSignal(entry.data).pipe(Effect.mapError(() => new LearningFailed()))
+  const signal = signalShown(placed)
+  return SPOKEN.has(signal.tagName) ? Option.some(signal) : Option.none()
 })
 
 /** A delivery keeps its own Person even when another speaker steered the same run. */
@@ -233,6 +261,7 @@ const delivered = Effect.fn('Learning.delivered')(function* (
   const name = signal.value === null ? thread.value.creatorName : signal.value.attributes.from
   return Option.some({
     personId: authority.acting.personId,
+    entry: entryId,
     name: name === undefined ? null : name,
     message: signal.value === null ? prose(entry, 'user') : signal.value.body,
     timezone: frozen.context.timezone.length === 0 ? null : frozen.context.timezone,
@@ -276,13 +305,22 @@ const capture = Effect.fn('Learning.capture')(function* (
   for (const input of inputs) {
     const delivery = yield* delivered(harness, input, thread)
     if (Option.isNone(delivery)) continue
-    const { personId, name, message, timezone } = delivery.value
+    const { personId, entry, name, message, timezone } = delivery.value
     const prior = groups.get(personId)
     const messages = prior === undefined ? [message] : [...prior.exchange.messages, message]
+    const cited = MessageId.make(`entry-${entry}`)
+    const source = {
+      threadId: thread.value.threadId,
+      messages:
+        prior === undefined || prior.source === undefined
+          ? [cited]
+          : [...prior.source.messages, cited],
+    }
     groups.set(
       personId,
       Group.make({
         personId,
+        source,
         exchange: Exchange.make({
           person: name,
           messages,
@@ -448,7 +486,7 @@ export const learning: (
   const product = yield* Product
   const learner = learnerDefinition(tools)
   const task = defineTask<Input, Step, null>({
-    name: 'vivid.learning',
+    name: LEARNING_TASK,
     version: 1,
     initial: () => ({ phase: 'gate', position: 0 }),
     phases: {
@@ -503,25 +541,52 @@ const failed =
 const decodePerson = Schema.decodeEffect(PersonId)
 const decodeTask = Schema.decodeEffect(MemoryTaskId)
 
+/**
+ * The messages the learning task captured for this Person, read from the task's own input in
+ * this cell's Harness; the task is live while its learner writes. Learning queued before sources
+ * were recorded has none.
+ */
+const learnedFrom = Effect.fn('Learning.learnedFrom')(function* (
+  harness: Harness,
+  taskId: typeof MemoryTaskId.Type,
+  person: PersonId,
+) {
+  const inspection = yield* pi(() => harness.inspect(BACKGROUND_CONTEXT))
+  // Pi's TaskId and the contract's MemoryTaskId brand the same native number.
+  const task = inspection.tasks.find((item) => sameTask(item.record.id, taskId))
+  const input = task === undefined ? Option.none() : decodeLearningInput(task.record.input)
+  const group = Option.flatMap(input, (value) =>
+    Option.fromUndefinedOr(value.groups.find((item) => item.personId === person)),
+  )
+  return Option.flatMap(group, (value) => Option.fromUndefinedOr(value.source))
+})
+const decodeLearningInput = Schema.decodeUnknownOption(LearningInput)
+const sameTask = (native: number, recorded: number) => native === recorded
+
 export const learnerAuthority: (
   harness: Harness,
   conversationId: ConversationId,
-) => Effect.Effect<Option.Option<MemoryAuthority>, PiRejected | LearningFailed> = Effect.fn(
+) => Effect.Effect<Option.Option<MemoryWriter>, PiRejected | LearningFailed> = Effect.fn(
   'Learning.authority',
 )(function* (harness: Harness, conversationId: ConversationId) {
   const scope = yield* pi(() =>
     harness.snapshot(LearnerAuthority, conversationId, LEARNER_KEY, BACKGROUND_CONTEXT),
   )
-  if (scope === undefined) return Option.none<MemoryAuthority>()
+  if (scope === undefined) return Option.none<MemoryWriter>()
   const actor = yield* decodePerson(scope.personId).pipe(
     Effect.mapError(() => new LearningFailed()),
   )
   const host = yield* decodePerson(scope.host).pipe(Effect.mapError(() => new LearningFailed()))
   const taskId = yield* decodeTask(scope.taskId).pipe(Effect.mapError(() => new LearningFailed()))
-  return Option.some(
-    MemoryAuthority.make({
-      actor,
-      source: MemorySource.cases.CellRun.make({ personId: host, taskId }),
-    }),
-  )
+  const source = MemorySource.cases.CellRun.make({ personId: host, taskId })
+  const from = yield* learnedFrom(harness, taskId, actor)
+  const messages = Option.match(from, {
+    onNone: () => [],
+    onSome: ({ threadId, messages: cited }) =>
+      cited.map((messageId) => MemoryCitation.cases.ThreadMessage.make({ threadId, messageId })),
+  })
+  return Option.some({
+    authority: MemoryAuthority.make({ actor, source }),
+    citations: [MemoryCitation.cases.Run.make({ source }), ...messages],
+  })
 })

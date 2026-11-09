@@ -3,11 +3,13 @@ import * as Clock from 'effect/Clock'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import {
+  ChildRunState,
   Company,
   Forbidden,
   NotFound,
   PersonId,
   Role,
+  RunId,
   SessionId,
   ThreadId,
   Unauthenticated,
@@ -16,7 +18,9 @@ import {
 import { AuthState } from '@vivid/contracts/auth'
 import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database, decodeStored } from '../database/client.ts'
+import { childRuns } from '../runs/tables.ts'
 import { canSee, findThread } from '../threads/access.ts'
+import { runs } from '../threads/tables.ts'
 import { findPerson } from './access.ts'
 import { Auth } from './provider.ts'
 import { sessionTable } from './tables.ts'
@@ -25,6 +29,8 @@ const decodeCompany = decodeStored(Company, 'Company')
 const decodeRole = decodeStored(Role, 'Membership role')
 const decodePersonId = decodeStored(PersonId, 'Person id')
 const decodeThreadId = decodeStored(ThreadId, 'Thread id')
+const decodeRunId = decodeStored(RunId, 'helper id')
+const decodeChildState = decodeStored(ChildRunState, 'helper state')
 
 /**
  * The workspace a Person is in when their session names a Company.
@@ -152,4 +158,34 @@ export const authenticateVivid = Effect.fn('Auth.authenticateVivid')(function* (
   }
   const workspace = yield* workspaceIn(person.value.id, Option.fromNullOr(thread.value.companyId))
   return AuthState.Vivid({ person: person.value, workspace, threadId })
+})
+
+/**
+ * Resolves a helper Run from the runtime's three headers. Everything `authenticateVivid` checks is
+ * checked first; then the helper must belong to that Thread, act for that Person (its parent Run's
+ * Person) and still be working. A helper that was asked to stop, or ended, can do nothing more.
+ */
+export const authenticateHelper = Effect.fn('Auth.authenticateHelper')(function* (input: {
+  readonly thread: string
+  readonly actor: string
+  readonly helper: string
+}) {
+  const vivid = yield* authenticateVivid(input)
+  const runId = yield* decodeRunId(input.helper)
+  const database = yield* Database
+  const [row] = yield* database.run(
+    database
+      .select({ threadId: childRuns.threadId, personId: runs.personId, state: childRuns.state })
+      .from(childRuns)
+      .innerJoin(runs, eq(runs.id, childRuns.parentRunId))
+      .where(eq(childRuns.id, runId)),
+  )
+  if (
+    row === undefined ||
+    row.threadId !== vivid.threadId ||
+    row.personId !== vivid.person.id ||
+    !ChildRunState.guards.Working(yield* decodeChildState(row.state))
+  )
+    return yield* new Forbidden({ message: 'This helper is not working any more' })
+  return AuthState.Helper({ ...vivid, runId })
 })

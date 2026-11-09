@@ -1,5 +1,12 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { CreateWatchRequest, WatchId, WatchState } from '@vivid/contracts'
+import {
+  CreateWatchRequest,
+  WatchCondition,
+  WatchIntent,
+  WatchId,
+  WatchState,
+  ReviseWatchRequest,
+} from '@vivid/contracts'
 import { Clock, Effect, Fiber, Option, Queue, Ref } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { testDatabaseConfigured } from '../database/testdb.ts'
@@ -26,6 +33,8 @@ const request = CreateWatchRequest.make({
   event: 'message.received',
   arguments: { folder: 'inbox' },
   instruction: 'Tell me when a client writes.',
+  condition: WatchCondition.cases.Continuous.make({}),
+  purpose: WatchIntent.cases.Event.make({}),
 })
 
 /** The Watch id is the last segment of the callback Executor was asked to deliver to. */
@@ -102,6 +111,51 @@ describe.skipIf(!testDatabaseConfigured)('Watches', () => {
         if (!(unknown instanceof WatchEventUnknown))
           return expect.fail(`Refused as ${unknown._tag}`)
         expect(unknown.known).toEqual(['message.received'])
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('revises the condition and complete instruction under the same Watch identity', () =>
+      Effect.gen(function* () {
+        const { actor, watch } = yield* granted(TTL_MS, 'Revise me')
+        const executor = yield* Executor
+        yield* Queue.offer(executor.answers, { id: 'revised', refreshBefore: new Date(TTL_MS) })
+        const revised = yield* (yield* Watches).revise(
+          actor,
+          ReviseWatchRequest.cases.Filters.make({
+            name: watch.name,
+            arguments: { folder: 'important' },
+            instruction: 'Summarize client mail; keep the original privacy instructions.',
+          }),
+        )
+        const subscribed = yield* Queue.take(executor.subscribed)
+        expect(subscribed.arguments).toEqual({ folder: 'important' })
+        expect(subscribed.url).toContain(`/api/watches/${watch.id}?revision=`)
+        expect(revised.id).toBe(watch.id)
+        expect(revised.createdAt).toBe(watch.createdAt)
+        expect(revised.instruction).toBe(
+          'Summarize client mail; keep the original privacy instructions.',
+        )
+        expect(
+          (yield* (yield* Watches).list(actor)).filter((entry) => entry.id === watch.id),
+        ).toEqual([revised])
+        yield* Queue.offer(executor.answers, new ExecutorEventRefused({}))
+        expect(
+          (yield* Effect.flip(
+            (yield* Watches).revise(
+              actor,
+              ReviseWatchRequest.cases.Filters.make({
+                name: watch.name,
+                arguments: {},
+                instruction: 'Rejected revision',
+              }),
+            ),
+          ))._tag,
+        ).toBe('ExecutorEventRefused')
+        const saved = yield* (yield* WatchStore).find(watch.id)
+        expect(Option.map(saved, (entry) => entry.watch.instruction)).toEqual(
+          Option.some(revised.instruction),
+        )
+        yield* (yield* Watches).stop(actor, watch.name)
       }).pipe(Effect.scoped),
     )
 
