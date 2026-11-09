@@ -50,6 +50,11 @@ const GROUPS = [
     takes: BackgroundWork.guards.Helper,
   },
   {
+    title: 'On its computer',
+    detail: 'Commands Vivid left running on its own computer.',
+    takes: BackgroundWork.guards.Command,
+  },
+  {
     title: 'Watching',
     detail: 'Each one wakes Vivid when something happens in an Integration.',
     takes: BackgroundWork.guards.Watch,
@@ -106,7 +111,7 @@ function Pieces({ data, pieces }: { data: LiveData; pieces: ReadonlyArray<Backgr
         <Empty
           icon={Activity}
           title="Nothing in the background"
-          line="When Vivid keeps working after you leave, watches for something, or makes an Integration for itself, it shows here with a way to stop it."
+          line="When Vivid keeps working after you leave, runs something on its computer, watches for something, or makes an Integration for itself, it shows here with a way to stop it."
           room="page"
         />
       )}

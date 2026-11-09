@@ -18,6 +18,7 @@ import {
   LegacyExecutorReferences,
   migrationPending,
   reconnectRequired,
+  installationCaller,
 } from './executor.ts'
 import { migrateConnections, migrationLayer, removeConnection } from './migration.ts'
 import { decodeRow, encodeReferences, listRecords } from './records.ts'
@@ -200,12 +201,15 @@ describe.skipIf(!testDatabaseConfigured)('scheduled legacy reconciliation', () =
         const release = yield* Deferred.make<void>()
         const delayed = Executor.of({
           ...executor,
-          prepareRetirement: (resources) =>
-            Deferred.succeed(entered, undefined).pipe(
-              Effect.andThen(Deferred.await(release)),
-              Effect.as(resources),
-            ),
           reconcile: () => Effect.succeed(migrationPending(legacy, 'CopyPending')),
+          as: (caller) => ({
+            ...executor.as(caller),
+            prepareRetirement: (resources) =>
+              Deferred.succeed(entered, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.as(resources),
+              ),
+          }),
         })
         const removing = yield* removeConnection(yield* decodeRow(before)).pipe(
           Effect.provideService(Executor, delayed),
@@ -612,10 +616,9 @@ describe.skipIf(!testDatabaseConfigured)('scheduled legacy reconciliation', () =
             account,
             binding: ExecutorBinding.cases.Account.make({ requirement: 'service', scope: 'user' }),
           })
-          yield* Effect.flatMap(Executor, (executor) => executor.remove(references)).pipe(
-            Effect.provide(context),
-            Effect.flip,
-          )
+          yield* Effect.flatMap(Executor, (executor) =>
+            executor.as(installationCaller).remove(references),
+          ).pipe(Effect.provide(context), Effect.flip)
           expect(
             (yield* Ref.get(remote.requests)).filter((request) =>
               request.path.startsWith('DELETE'),
@@ -788,8 +791,11 @@ describe.skipIf(!testDatabaseConfigured)('scheduled legacy reconciliation', () =
         const revoked = yield* Ref.make(false)
         const recording = Executor.of({
           ...executor,
-          prepareRetirement: (resources) => Effect.succeed(resources),
-          retire: () => Ref.set(revoked, true),
+          as: (caller) => ({
+            ...executor.as(caller),
+            prepareRetirement: (resources) => Effect.succeed(resources),
+            retire: () => Ref.set(revoked, true),
+          }),
         })
         const failure = yield* removeConnection(yield* decodeRow(yield* retired.read)).pipe(
           Effect.provideService(Executor, recording),

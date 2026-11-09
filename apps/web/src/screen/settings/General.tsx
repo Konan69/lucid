@@ -1,6 +1,12 @@
 import { useAtomValue } from '@effect/atom-react'
-import { PatchSettingsRequest, Settings, type MeResponse, type Theme } from '@vivid/contracts'
-import { notifying } from '@vivid/state'
+import {
+  LocationSharing,
+  PatchSettingsRequest,
+  Settings,
+  type MeResponse,
+  type Theme,
+} from '@vivid/contracts'
+import { locating, notifying } from '@vivid/state'
 import { Effect, Option, Result } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import type * as Atom from 'effect/reactivity/Atom'
@@ -14,6 +20,7 @@ import { sessionEnded } from '../../data/ending'
 import { theme } from '../../data/theme'
 import { mayCustomise, useAppearance } from '../../data/vivid'
 import { turnNotificationsOff, turnNotificationsOn, useNotifying } from '../../data/notifying'
+import { turnLocationOff, turnLocationOn, useLocating } from '../../data/locating'
 import { PersonAvatar } from '../../ui/Person'
 import { Button } from '../../ui/button'
 import { Face } from '../../ui/Face'
@@ -195,6 +202,7 @@ function Preferences({ settings }: { settings: Settings }) {
                 timezone: edit.timezone === undefined ? current.timezone : edit.timezone,
                 notify: edit.notify === undefined ? current.notify : edit.notify,
                 egress: edit.egress === undefined ? current.egress : edit.egress,
+                location: current.location,
               }),
           ),
       )
@@ -260,6 +268,7 @@ function Preferences({ settings }: { settings: Settings }) {
           />
         </Row>
         {Option.isNone(desktopVersion) && <Away />}
+        {Option.isNone(desktopVersion) && <Whereabouts location={settings.location} />}
         <Egress
           enabled={settings.egress}
           status={egress}
@@ -325,6 +334,59 @@ function Away() {
         <Button
           variant="outline"
           disabled={notifying.isWaiting(reading)}
+          onClick={action.value.press}
+        >
+          {action.value.label}
+        </Button>
+      )}
+    </Row>
+  )
+}
+
+const OPEN_ONLY = 'Read only while Vivid is open.'
+const shareOn = Option.some({ label: 'Turn on', press: turnLocationOn })
+const shareOff = Option.some({ label: 'Turn off', press: turnLocationOff })
+
+/**
+ * The row's words for the machine (`@vivid/state` `locating.ts`) and what the Person shares now,
+ * and the press it offers: the one that changes what the switch shows.
+ */
+const whereaboutsWords = (reading: locating.Reading, location: LocationSharing): AwayWords => {
+  const on = locating.shows(reading, !LocationSharing.guards.Off(location))
+  const action = on ? shareOff : shareOn
+  return Option.match(locating.refusalOf(reading), {
+    onSome: (reason) => ({
+      detail: {
+        Blocked: 'This browser blocks location for Vivid. Allow it in its site settings.',
+        Dismissed: 'The question was closed without an answer. Turn it on to be asked again.',
+        Unavailable: 'This browser could not say where it is. Try again.',
+        Unreachable: 'Vivid could not be reached. Try again.',
+      }[reason],
+      action,
+    }),
+    onNone: () => ({
+      detail: on
+        ? `On. ${OPEN_ONLY}`
+        : `For things near you, travel times and bookings. ${OPEN_ONLY}`,
+      action,
+    }),
+  })
+}
+
+/**
+ * Whether Vivid is told where the Person is (`data/locating.ts`). Off until they turn it on, and
+ * the browser's own question is asked only then. The desktop app cannot read where it is and does
+ * not show the row. The button is held while the browser or the server is being waited on.
+ */
+function Whereabouts({ location }: { location: LocationSharing }) {
+  const reading = useLocating()
+  const { detail, action } = whereaboutsWords(reading, location)
+  return (
+    <Row label="Share my location" detail={detail}>
+      {Option.isSome(action) && (
+        <Button
+          variant="outline"
+          disabled={locating.isWaiting(reading)}
           onClick={action.value.press}
         >
           {action.value.label}

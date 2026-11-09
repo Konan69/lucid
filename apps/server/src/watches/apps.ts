@@ -3,6 +3,7 @@ import { ConnectionId, WatchArguments } from '@vivid/contracts'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Match from 'effect/Match'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 import type { Actor } from '../auth/access.ts'
@@ -11,7 +12,9 @@ import {
   ExecutorAppOwnership,
   ExecutorReferences,
   type ExecutorAppId,
+  type ExecutorCaller,
 } from '../connections/executor.ts'
+import { ExecutorMembers, type MemberFailure } from '../connections/members.ts'
 import { listRecords, type ConnectionRecord } from '../connections/records.ts'
 import { namedAccounts } from '../connections/names.ts'
 import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
@@ -23,8 +26,9 @@ import { watches } from './tables.ts'
  * Which Executor app an Integration account runs on, by the name the Person was shown, and
  * whether that app is the account's alone.
  *
- * A Watch subscribes to `<app slug>.<event>` with Vivid's one Executor key, and Executor's
- * delivery names no account, so the app is the only thing that says whose an event is. An account
+ * A Watch subscribes to `<app slug>.<event>` as the caller that owns the app (the installation
+ * owner, or the Person's own Executor member: `connections/members.ts`), and Executor's delivery
+ * names no account, so the app is the only thing that says whose an event is. An account
  * is watchable only when its app is dedicated to its Connection. Since Executor beta.23 every
  * live Connection installs an app of its own (`makeBegin` in `connections/executor.ts`) and
  * claims it in `executor_app`, which a unique index holds to one Connection
@@ -71,10 +75,11 @@ export class WatchConnectionRemoved extends Schema.TaggedError<WatchConnectionRe
   { title: 'Watch Integration removed' },
 ) {}
 
-/** An account and the slug of the app dedicated to it. */
+/** An account, the slug of the app dedicated to it, and the caller its events are reached as. */
 export interface WatchedApp {
   readonly connectionId: ConnectionId
   readonly appSlug: string
+  readonly caller: ExecutorCaller
 }
 
 export interface WatchedAppsService {
@@ -99,6 +104,13 @@ export interface WatchedAppsService {
     id: ConnectionId,
   ) => Effect.Effect<boolean, DatabaseInfrastructureError>
   readonly isReady: (id: ConnectionId) => Effect.Effect<boolean, DatabaseInfrastructureError>
+  /** The caller a Connection's Watches subscribe and unsubscribe as. */
+  readonly callerOf: (
+    id: ConnectionId,
+  ) => Effect.Effect<
+    ExecutorCaller,
+    ExecutorEventsUnreachable | WatchConnectionRemoved | DatabaseInfrastructureError
+  >
 }
 
 export class WatchedApps extends Context.Service<WatchedApps, WatchedAppsService>()(
@@ -143,7 +155,31 @@ const dedicatedApp = (row: ConnectionRecord): Dedicated =>
     GoogleSigningIn: notReady,
   })
 
-export const makeWatchedApps = (database: Database['Service'], executor: Executor['Service']) => {
+/**
+ * A member that cannot be read or made right now is Executor out of reach for this Watch, tried
+ * again by the next pass; a database fault stays one.
+ */
+const unreachable = (error: MemberFailure) =>
+  Match.valueTags(error, {
+    ExecutorTransportFailure: () => new ExecutorEventsUnreachable({}),
+    ExecutorRateLimited: () => new ExecutorEventsUnreachable({}),
+    ExecutorAccessDenied: () => new ExecutorEventsUnreachable({}),
+    ExecutorResponseInvalid: () => new ExecutorEventsUnreachable({}),
+    DatabaseUnavailable: (database) => database,
+    DatabaseConstraintViolation: (database) => database,
+    DatabaseFailure: (database) => database,
+  })
+
+export const makeWatchedApps = (
+  database: Database['Service'],
+  executor: Executor['Service'],
+  members: ExecutorMembers['Service'],
+) => {
+  const callerOfRow = (row: Pick<ConnectionRecord, 'executorPrincipal' | 'personId'>) =>
+    members
+      .caller({ principal: row.executorPrincipal, personId: row.personId })
+      .pipe(Effect.mapError(unreachable))
+
   /**
    * The Actor's OWN Integration accounts, under the names the Integration list shows them by. The
    * whole inventory is named first, a Company's shared Connections included, because each name's
@@ -184,10 +220,26 @@ export const makeWatchedApps = (database: Database['Service'], executor: Executo
       const found = (yield* accounts(actor)).find((item) => item.account.toLowerCase() === wanted)
       if (found === undefined) return yield* new WatchAccountUnknown({})
       const app = yield* Effect.fromResult(dedicatedApp(found.row))
+      const caller = yield* callerOfRow(found.row)
       const appSlug = yield* executor
+        .as(caller)
         .appSlug(app)
         .pipe(Effect.mapError(() => new ExecutorEventsUnreachable({})))
-      return { connectionId: found.row.id, appSlug }
+      return { connectionId: found.row.id, appSlug, caller }
+    }),
+    callerOf: Effect.fn('WatchedApps.callerOf')(function* (id) {
+      const rows = yield* database.run(
+        database
+          .select({
+            executorPrincipal: connections.executorPrincipal,
+            personId: connections.personId,
+          })
+          .from(connections)
+          .where(eq(connections.id, id)),
+      )
+      const [row] = rows
+      if (row === undefined) return yield* new WatchConnectionRemoved({ connectionId: id })
+      return yield* callerOfRow(row)
     }),
     accountsOf: Effect.fn('WatchedApps.accountsOf')(function* (actor) {
       return (yield* accounts(actor)).flatMap((item) =>
@@ -200,7 +252,7 @@ export const makeWatchedApps = (database: Database['Service'], executor: Executo
 export const watchedAppsLayer = Layer.effect(
   WatchedApps,
   Effect.gen(function* () {
-    return makeWatchedApps(yield* Database, yield* Executor)
+    return makeWatchedApps(yield* Database, yield* Executor, yield* ExecutorMembers)
   }),
 )
 
@@ -254,6 +306,7 @@ export const disconnectWatches = Effect.fn('WatchedApps.disconnectWatches')(func
 
 /** Local removal is authoritative even when unsubscribe fails; signed deliveries now answer 410. */
 export const unsubscribeWatches = Effect.fn('WatchedApps.unsubscribeWatches')(function* (
+  caller: ExecutorCaller,
   subscriptions: ReadonlyArray<Subscription>,
 ) {
   if (subscriptions.length === 0) return
@@ -261,7 +314,7 @@ export const unsubscribeWatches = Effect.fn('WatchedApps.unsubscribeWatches')(fu
   yield* Effect.forEach(
     subscriptions,
     (subscription) =>
-      events.unsubscribe(subscription).pipe(
+      events.unsubscribe(caller, subscription).pipe(
         Effect.tapError((failure) =>
           Effect.logWarning('Watch unsubscribe did not reach Executor', failure._tag),
         ),

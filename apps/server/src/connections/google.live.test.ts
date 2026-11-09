@@ -9,6 +9,7 @@ import {
   ExecutorReferences,
   ExecutorStep,
   executorLayer,
+  installationCaller,
 } from './executor.ts'
 import { googleReturnPath, googleServices, type GoogleService } from './google.ts'
 
@@ -60,6 +61,7 @@ const begun = Effect.fn('GoogleProof.begin')(function* <A>(
   const executor = yield* Executor
   return yield* Effect.acquireUseRelease(
     executor
+      .as(installationCaller)
       .begin({
         connectionId: ConnectionId.make(crypto.randomUUID()),
         owner: ExecutorOwnerId.make(`google-proof-${crypto.randomUUID()}`),
@@ -71,9 +73,15 @@ const begun = Effect.fn('GoogleProof.begin')(function* <A>(
       .pipe(
         Effect.catchTags({
           ExecutorSignInRequired: (error) =>
-            executor.remove(error.references).pipe(Effect.andThen(Effect.fail(error))),
+            executor
+              .as(installationCaller)
+              .remove(error.references)
+              .pipe(Effect.andThen(Effect.fail(error))),
           ExecutorAuthorizationUnavailable: (error) =>
-            executor.remove(error.references).pipe(Effect.andThen(Effect.fail(error))),
+            executor
+              .as(installationCaller)
+              .remove(error.references)
+              .pipe(Effect.andThen(Effect.fail(error))),
         }),
       ),
     (step) => {
@@ -84,6 +92,7 @@ const begun = Effect.fn('GoogleProof.begin')(function* <A>(
     },
     (step) =>
       executor
+        .as(installationCaller)
         .remove(step.references)
         .pipe(
           Effect.catch(() =>

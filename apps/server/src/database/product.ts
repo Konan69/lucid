@@ -15,13 +15,19 @@ export { approvals } from '../approvals/tables.ts'
 export { channelCodes, channelLinks, channelMessages, channelReplies } from '../channels/tables.ts'
 export { auditEntries } from '../audit/tables.ts'
 export {
+  computerCommands,
   computerRecoveries,
   computers,
   machineBindings,
   devices,
   deviceRequests,
 } from '../computers/tables.ts'
-export { connections, connectionPermissions, credentials } from '../connections/tables.ts'
+export {
+  connections,
+  connectionPermissions,
+  credentials,
+  executorMembers,
+} from '../connections/tables.ts'
 export { draftGenerations, drafts } from '../drafts/tables.ts'
 export { feedCards } from '../feed/tables.ts'
 export { memoryForgets } from '../forget/tables.ts'

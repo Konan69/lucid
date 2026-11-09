@@ -1,6 +1,6 @@
 import { useAtomValue } from '@effect/atom-react'
 import { ApprovalDecision, type DecideApprovalRequest } from '@vivid/contracts'
-import { allowing, type makeLive } from '@vivid/state'
+import { allowing, responding, type makeLive } from '@vivid/state'
 import { Effect, Layer, Option, Result } from 'effect'
 import { makeDeviceDecisions } from './devices'
 import { confirm, warn } from './haptics'
@@ -19,7 +19,7 @@ export const makeApprovalDecisions = (engine: ReturnType<typeof makeLive>) => {
         if (Result.isFailure(result))
           return yield* new allowing.Refused({
             id: request.id,
-            refusal: allowing.refusalOf(result.failure),
+            refusal: responding.refusalOf(result.failure),
           })
       }),
     }),

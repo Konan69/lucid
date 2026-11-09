@@ -55,6 +55,7 @@ const answer = Effect.fn('Channels.answer')(function* (
       Conflict: rejected,
       ApprovalChanged: rejected,
       ApprovalExpired: rejected,
+      ApprovalDecided: rejected,
       InputAnswerCountMismatch: rejected,
       InputAnswerEmptyWords: rejected,
       InputAnswerRepeatedLabel: rejected,

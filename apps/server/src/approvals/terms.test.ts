@@ -1,3 +1,4 @@
+import { testMembersLayer, unansweredOperations } from '../connections/testing.ts'
 import * as NodeBuffer from 'node:buffer'
 import { describe, expect, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
@@ -64,26 +65,30 @@ const external = Layer.effectContext(
     })
     const ports = yield* Layer.build(
       Layer.mergeAll(
+        testMembersLayer,
         Layer.mock(Executor, {
-          call: Effect.fn('TermsTest.executor')(function* ({ tool, input }) {
-            yield* Ref.update(source.reads, (reads) => [...reads, tool])
-            if (tool === 'gmailApi.gmailUsersDraftsGet') {
+          as: () => ({
+            ...unansweredOperations,
+            call: Effect.fn('TermsTest.executor')(function* ({ tool, input }) {
+              yield* Ref.update(source.reads, (reads) => [...reads, tool])
+              if (tool === 'gmailApi.gmailUsersDraftsGet') {
+                expect(input).toEqual({
+                  path: { userId: 'me', id: 'draft-1' },
+                  query: { format: 'raw' },
+                })
+                return ExecutorCallOutcome.cases.Completed.make({
+                  value: { message: { raw: yield* Ref.get(source.raw), threadId: 'thread-1' } },
+                })
+              }
+              expect(tool).toBe('gmailApi.gmailUsersThreadsGet')
               expect(input).toEqual({
-                path: { userId: 'me', id: 'draft-1' },
-                query: { format: 'raw' },
+                path: { userId: 'me', id: 'thread-1' },
+                query: { format: 'full' },
               })
               return ExecutorCallOutcome.cases.Completed.make({
-                value: { message: { raw: yield* Ref.get(source.raw), threadId: 'thread-1' } },
+                value: yield* Ref.get(source.replies),
               })
-            }
-            expect(tool).toBe('gmailApi.gmailUsersThreadsGet')
-            expect(input).toEqual({
-              path: { userId: 'me', id: 'thread-1' },
-              query: { format: 'full' },
-            })
-            return ExecutorCallOutcome.cases.Completed.make({
-              value: yield* Ref.get(source.replies),
-            })
+            }),
           }),
         }),
         Layer.mock(ComputerStore, {

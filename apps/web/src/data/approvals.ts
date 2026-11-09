@@ -1,6 +1,6 @@
 import { useAtomValue } from '@effect/atom-react'
 import type { DecideApprovalRequest } from '@vivid/contracts'
-import { allowing } from '@vivid/state'
+import { allowing, responding } from '@vivid/state'
 import { Effect, Layer, Result } from 'effect'
 import { changing } from './app'
 import { engine } from './runtime'
@@ -16,7 +16,7 @@ const decisions = allowing.make(
       if (Result.isFailure(result))
         return yield* new allowing.Refused({
           id: request.id,
-          refusal: allowing.refusalOf(result.failure),
+          refusal: responding.refusalOf(result.failure),
         })
     }),
   }),

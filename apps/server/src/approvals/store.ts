@@ -14,6 +14,7 @@ import {
   Approval,
   ApprovalBinding,
   ApprovalChanged,
+  ApprovalDecided,
   ApprovalDecision,
   ApprovalExpired,
   ApprovalId,
@@ -310,6 +311,7 @@ export interface ApprovalStoreService {
     | InvalidRequest
     | ApprovalChanged
     | ApprovalExpired
+    | ApprovalDecided
     | DatabaseInfrastructureError
   >
   readonly withdraw: (
@@ -562,8 +564,7 @@ const claim = Effect.fn('Approvals.claim')(function* (
     yield* deliver(row.id)
     return yield* new ApprovalChanged({ id: row.id })
   }
-  if (ClaimEnd.$is('Taken')(end))
-    return yield* new Conflict({ message: 'Approval already decided' })
+  if (ClaimEnd.$is('Taken')(end)) return yield* new ApprovalDecided({ id: row.id })
   const result = yield* decodeRow(end.row)
   if (Row.guards.denied(result)) {
     // Only the winning SQL claim decides Denied; reads, delivery and repeat decisions do not.
@@ -800,6 +801,8 @@ const raise = Effect.fn('Approvals.raise')(function* (
     title: 'Vivid needs your approval',
     body: action.summary,
     threadId,
+    // Its push carries Allow and Decline for this Approval (`push/delivery.ts`).
+    approvalId: approval.id,
   })
   return approval
 })

@@ -12,6 +12,7 @@ import {
   type WatchFiring,
 } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
+import { runningCommands } from '../computers/background.ts'
 import { namedAccounts } from '../connections/names.ts'
 import { connectionOrigin, listRecords, stateOf } from '../connections/records.ts'
 import { liveHelpers } from '../runs/store.ts'
@@ -91,13 +92,15 @@ const helperWork = ({ run, title }: Effect.Success<ReturnType<typeof liveHelpers
 
 /**
  * Everything Vivid has going for this Actor besides the reply in front of them: Runs still
- * working (newest first), their helpers that have not ended, live Watches with their Integration's state and last firing (newest
+ * working (newest first), their helpers that have not ended, the commands Vivid left running on
+ * their Computer as the server last read them (newest first; the Computer is not asked), live Watches with their Integration's state and last firing (newest
  * first), and the Integrations Vivid made for itself with how many Watches listen to each. One
  * read per kind; each reader works out standing from these facts (`standingOf`).
  */
 export const listWork = Effect.fn('Work.list')(function* (actor: Actor) {
   const runs = yield* workingRuns(actor)
   const helpers = yield* Effect.forEach(yield* liveHelpers(actor), helperWork)
+  const commands = yield* runningCommands(actor)
   const watches = yield* (yield* WatchStore).list(actor)
   const accounts = yield* integrations(actor)
   const firings = yield* lastWatchFirings(
@@ -130,6 +133,7 @@ export const listWork = Effect.fn('Work.list')(function* (actor: Actor) {
   return [
     ...runs.map((run) => BackgroundWork.cases.Run.make(run)),
     ...helpers,
+    ...commands,
     ...watching,
     ...made,
   ]

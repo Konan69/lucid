@@ -2,7 +2,7 @@ import * as NodeFS from 'node:fs'
 import { describe, expect, layer } from '@effect/vitest'
 import { ApprovalState } from '@vivid/contracts'
 import { Config, Effect, Option, Schema } from 'effect'
-import { ExecutorCallOutcome } from '../connections/executor.ts'
+import { ExecutorCallOutcome, installationCaller } from '../connections/executor.ts'
 import { ProofRecords, proofConnection } from '../connections/proof.ts'
 import { chainFixture, chainLayer, completeRun, toolParts } from '../runtime/chains.ts'
 
@@ -30,7 +30,7 @@ layer(chainLayer, { excludeTestServices: true })((it) => {
           const evidence = yield* Config.NonEmptyString('VIVID_PROOF_EVIDENCE')
           const fixture = yield* chainFixture('Unasked write proof')
           const connection = yield* proofConnection(fixture)
-          const seed = yield* connection.executor.call({
+          const seed = yield* connection.executor.as(installationCaller).call({
             references: connection.references,
             tool: 'mutations.save',
             input: { subject: injected },

@@ -17,6 +17,7 @@ import {
   ExecutorOwnerId,
   ExecutorReferences,
   LegacyExecutorReferences,
+  installationCaller,
 } from './executor.ts'
 import {
   connectionTestLayer,
@@ -168,8 +169,10 @@ it.effect('requires reconnection when the exact legacy account cannot be mapped'
       const executor = yield* Executor
       const references = yield* reconcile(executor, legacy)
       expect(ExecutorReferences.guards.ReconnectRequired(references)).toBe(true)
-      expect((yield* executor.tools(references).pipe(Effect.flip))._tag).toBe('ExecutorNotReady')
-      yield* executor.remove(references)
+      expect(
+        (yield* executor.as(installationCaller).tools(references).pipe(Effect.flip))._tag,
+      ).toBe('ExecutorNotReady')
+      yield* executor.as(installationCaller).remove(references)
     }).pipe(Effect.provide(context))
     expect(
       (yield* Ref.get(remote.requests)).some((request) => request.path.startsWith('DELETE')),
@@ -347,7 +350,7 @@ it.effect('keeps an empty shared original unowned when a pending request migrate
       if (!ExecutorReferences.guards.EnteringKey(pending))
         expect.fail('Pending request must migrate')
       expect(pending.appOwnership).toEqual(ExecutorAppOwnership.cases.Unproven.make({}))
-      yield* executor.remove(pending)
+      yield* executor.as(installationCaller).remove(pending)
     }).pipe(Effect.provide(context))
     expect(
       (yield* Ref.get(remote.requests)).filter((request) => request.path.startsWith('DELETE')),
@@ -756,7 +759,7 @@ it.effect(
       const context = yield* Layer.build(remote.configured)
       const refused = reconnectRequired(legacy, 'AmbiguousMigration', [copied])
       yield* Effect.flatMap(Executor, (executor) =>
-        executor.retire({
+        executor.as(installationCaller).retire({
           resources: refused.retired,
           retainedApps: [original],
           retainedAccounts: [account],
@@ -789,7 +792,7 @@ it.effect(
       const context = yield* Layer.build(remote.configured)
       const refused = reconnectRequired(legacy, 'AmbiguousMigration', [copied])
       yield* Effect.flatMap(Executor, (executor) =>
-        executor.retire({
+        executor.as(installationCaller).retire({
           resources: refused.retired,
           retainedApps: [original, copied],
           retainedAccounts: [other],

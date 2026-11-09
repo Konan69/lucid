@@ -1,5 +1,5 @@
 import { Schema } from 'effect'
-import { ApprovalChanged, ApprovalExpired } from './approvals.js'
+import { ApprovalChanged, ApprovalDecided, ApprovalExpired } from './approvals.js'
 import { ArtifactChanged } from './artifacts.js'
 import { NoDeviceConnected } from './computers.js'
 import { DisplayApprovalUnsupported } from './connections.js'
@@ -30,6 +30,7 @@ export const isRoutineRefusal = Schema.is(
       MailboxUnconfirmed.fields._tag,
       ApprovalChanged.fields._tag,
       ApprovalExpired.fields._tag,
+      ApprovalDecided.fields._tag,
       ArtifactChanged.fields._tag,
       SkillReadOnly.fields._tag,
       NoDeviceConnected.fields._tag,

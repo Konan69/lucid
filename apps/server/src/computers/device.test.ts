@@ -1,5 +1,6 @@
 import { scopedCase } from '../../tests/case.ts'
 import { Runtime } from '../runtime/client.ts'
+import { ChildRuns } from '../runs/store.ts'
 import * as NodeCrypto from 'node:crypto'
 import { PgClient } from '@effect/sql-pg/PgClient'
 import { describe, expect, layer } from '@effect/vitest'
@@ -113,7 +114,9 @@ const runtimeTestLayer = Layer.effectContext(
         Queue.offer(calls, thread).pipe(Effect.as(true)),
       ),
     })
-    return (yield* Layer.build(runtime)).pipe(Context.add(Stops, { calls }))
+    // These Threads start no helpers, so a Stop has none to stop.
+    const helpers = Layer.mock(ChildRuns, { stopThread: () => Effect.void })
+    return (yield* Layer.build(Layer.merge(runtime, helpers))).pipe(Context.add(Stops, { calls }))
   }),
 )
 const testLayer = deviceLayer.pipe(

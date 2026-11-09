@@ -7,7 +7,17 @@ import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import * as NetAddress from 'effect/net/NetAddress'
 import { eq, inArray } from 'drizzle-orm'
-import { Clock, ConfigProvider, Context, Effect, Layer, Option, Ref, Schema } from 'effect'
+import {
+  Clock,
+  ConfigProvider,
+  Context,
+  Effect,
+  Layer,
+  Option,
+  Redacted,
+  Ref,
+  Schema,
+} from 'effect'
 import {
   Approval,
   ApprovalId,
@@ -39,7 +49,9 @@ import {
   executorLayer,
   type AccountIdentity,
   type ExecutorService,
+  type ExecutorConnectionOperations,
   type ExecutorActiveReferences,
+  ExecutorCaller,
   Executor,
   ExecutorAppId,
   ExecutorAuthorizationId,
@@ -51,7 +63,9 @@ import {
   ExecutorStep,
   ExecutorTool,
   ExecutorCallOutcome,
+  installationCaller,
 } from './executor.ts'
+import { ExecutorMembers } from './members.ts'
 import { unconfiguredDecisionLayer } from '../decisions/model.ts'
 import { googleService } from './google.ts'
 import { keyedService } from './curation.ts'
@@ -77,7 +91,9 @@ const fixtureRouteMissing = Schema.TaggedStruct('FixtureRouteMissing', {})
 interface ConnectionProbeService {
   readonly tools: Ref.Ref<readonly (typeof ExecutorTool.Type)[]>
   readonly calls: Ref.Ref<number>
-  readonly inputs: Ref.Ref<ReadonlyArray<Parameters<ExecutorService['call']>[0]>>
+  readonly inputs: Ref.Ref<ReadonlyArray<Parameters<ExecutorConnectionOperations['call']>[0]>>
+  /** The caller each Begin was sent as: a Person's own member, or the installation owner. */
+  readonly callers: Ref.Ref<readonly ExecutorCaller[]>
   readonly signIns: Ref.Ref<number>
   readonly step: Ref.Ref<'Done' | 'OpenSignIn' | 'EnterKey'>
   readonly begins: Ref.Ref<number>
@@ -123,16 +139,12 @@ const authorized = (input: ExecutorReferences) => {
 /** Source effects and recorded calls belong to the external adapter test boundary. */
 const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
   return Executor.of({
-    appSlug: (app) => Effect.succeed(`slug-${app}`),
     inventory: Effect.succeed({ apps: [], accounts: [], links: [] }),
     reconcile: () => Effect.die('Legacy rows require the real reconciliation adapter'),
-    prepareRetirement: Effect.fn('Executor.Test.prepareRetirement')((resources) =>
-      Effect.succeed(resources),
-    ),
-    retire: Effect.fn('Executor.Test.retire')(() => Effect.void),
     authorization: Effect.fn('Executor.Test.authorization')(() =>
       Effect.succeed(ServiceAuthorization.cases.None.make({})),
     ),
+    as: (caller) => makeOperations(probe, caller),
     catalog: Effect.gen(function* () {
       yield* Ref.update(probe.catalogs, (count) => count + 1)
       return [
@@ -145,12 +157,27 @@ const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
         }),
       ]
     }).pipe(Effect.withSpan('Executor.Test.catalog')),
-    add: Effect.fn('Executor.Test.add')((input) => makeExecutor(probe).begin(input)),
-    make: Effect.fn('Executor.Test.make')((input) => makeExecutor(probe).begin(input)),
+  })
+}
+
+/** One caller's operations; every caller is answered alike, and each Begin records its caller. */
+const makeOperations = (
+  probe: ConnectionProbeService,
+  caller: ExecutorCaller,
+): ExecutorConnectionOperations => {
+  return {
+    appSlug: (app) => Effect.succeed(`slug-${app}`),
+    prepareRetirement: Effect.fn('Executor.Test.prepareRetirement')((resources) =>
+      Effect.succeed(resources),
+    ),
+    retire: Effect.fn('Executor.Test.retire')(() => Effect.void),
+    add: Effect.fn('Executor.Test.add')((input) => makeOperations(probe, caller).begin(input)),
+    make: Effect.fn('Executor.Test.make')((input) => makeOperations(probe, caller).begin(input)),
     readMade: () => Effect.die('Source revision requires the real HTTP adapter'),
     reviseMade: () => Effect.die('Source revision requires the real HTTP adapter'),
     begin: Effect.fn('Executor.Test.begin')(function* (input) {
       yield* Ref.update(probe.begins, (count) => count + 1)
+      yield* Ref.update(probe.callers, (callers) => [...callers, caller])
       const identity = {
         appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
         service: input.service,
@@ -242,7 +269,7 @@ const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
       yield* Ref.update(probe.calls, (count) => count + 1)
       return yield* Ref.get(probe.outcome)
     }),
-  })
+  }
 }
 
 /** A bounded Executor test Layer records dispatch and returns source-owned effects. */
@@ -251,7 +278,10 @@ const probeLayer = Layer.effectContext(
     const probe = ConnectionProbe.of({
       tools: yield* Ref.make<readonly (typeof ExecutorTool.Type)[]>([readTool, writeTool]),
       calls: yield* Ref.make(0),
-      inputs: yield* Ref.make<ReadonlyArray<Parameters<ExecutorService['call']>[0]>>([]),
+      inputs: yield* Ref.make<ReadonlyArray<Parameters<ExecutorConnectionOperations['call']>[0]>>(
+        [],
+      ),
+      callers: yield* Ref.make<readonly ExecutorCaller[]>([]),
       signIns: yield* Ref.make(0),
       step: yield* Ref.make<'Done' | 'OpenSignIn' | 'EnterKey'>('Done'),
       begins: yield* Ref.make(0),
@@ -304,8 +334,46 @@ const probeLayer = Layer.effectContext(
   }),
 )
 
+/** Operations a suite did not expect to reach Executor; each one fails the test it is called in. */
+const unanswered = () => Effect.die('This Executor operation is not answered by the test')
+export const unansweredOperations: ExecutorConnectionOperations = {
+  appSlug: unanswered,
+  begin: unanswered,
+  add: unanswered,
+  make: unanswered,
+  readMade: unanswered,
+  reviseMade: unanswered,
+  reauthorize: unanswered,
+  complete: unanswered,
+  completeSignIn: unanswered,
+  status: unanswered,
+  identity: unanswered,
+  remove: unanswered,
+  tools: unanswered,
+  call: unanswered,
+  prepareRetirement: unanswered,
+  retire: unanswered,
+}
+
+/**
+ * A member caller for every Person, without an Executor to make members on: these suites prove
+ * the store over the recording adapter above. `members.live.test.ts` proves real members.
+ */
+export const testMembersLayer = Layer.succeed(
+  ExecutorMembers,
+  ExecutorMembers.of({
+    caller: ({ principal }) =>
+      Effect.succeed(
+        principal === 'installation'
+          ? installationCaller
+          : ExecutorCaller.cases.Member.make({ key: Redacted.make('test-member-key') }),
+      ),
+  }),
+)
+
 const dependencies = Layer.mergeAll(
   Layer.mock(ExecutorEvents, { unsubscribe: () => Effect.void }),
+  testMembersLayer,
   testDatabaseLayer,
   testConfigLayer,
   silentChangesLayer,

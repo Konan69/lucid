@@ -149,6 +149,7 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* (
     stop: () => Effect.succeed(false),
     child: () => Effect.die('Title tests start no helpers'),
     stopChild: () => Effect.succeed(false),
+    messageChild: () => Effect.die('This fake follows up no helpers'),
     watch: () => Stream.never,
     read: () =>
       Ref.get(messages).pipe(

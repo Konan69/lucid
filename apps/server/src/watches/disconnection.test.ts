@@ -1,3 +1,4 @@
+import { unansweredOperations } from '../connections/testing.ts'
 import { describe, expect, layer } from '@effect/vitest'
 import {
   ConnectionId,
@@ -99,16 +100,16 @@ describe.skipIf(!testDatabaseConfigured)('Watch disconnection', () => {
           const events = yield* ExecutorEvents
           const removal = yield* Layer.build(
             Layer.mock(ConnectionExecutor, {
-              remove: () => Effect.void,
+              as: () => ({ ...unansweredOperations, remove: () => Effect.void }),
             }),
           )
           yield* removeConnection(connection).pipe(
             Effect.provideContext(removal),
             Effect.provideService(ExecutorEvents, {
               ...events,
-              unsubscribe: (subscription) =>
+              unsubscribe: (caller, subscription) =>
                 events
-                  .unsubscribe(subscription)
+                  .unsubscribe(caller, subscription)
                   .pipe(Effect.andThen(Effect.fail(new ExecutorEventsUnreachable({})))),
             }),
           )
@@ -219,7 +220,9 @@ describe.skipIf(!testDatabaseConfigured)('Watch disconnection', () => {
           )
           expect((yield* watching.list(actor)).map((one) => one.account)).toEqual(['Mail (2)'])
           const removal = yield* Layer.build(
-            Layer.mock(ConnectionExecutor, { remove: () => Effect.void }),
+            Layer.mock(ConnectionExecutor, {
+              as: () => ({ ...unansweredOperations, remove: () => Effect.void }),
+            }),
           )
           yield* removeConnection(first).pipe(Effect.provideContext(removal))
           expect((yield* watching.list(actor)).map((one) => one.account)).toEqual(['Mail'])
@@ -261,7 +264,7 @@ describe.skipIf(!testDatabaseConfigured)('Watch disconnection', () => {
           const subscription = yield* Queue.take(executor.subscribed)
           const removal = yield* Layer.build(
             Layer.mock(ConnectionExecutor, {
-              remove: () => Effect.void,
+              as: () => ({ ...unansweredOperations, remove: () => Effect.void }),
             }),
           )
           yield* removeConnection(connection).pipe(Effect.provideContext(removal))
