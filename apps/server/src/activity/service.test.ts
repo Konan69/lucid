@@ -28,55 +28,57 @@ const testing = activitiesLayer.pipe(
 /** PostgreSQL proves that token rotation preserves ownership and session revocation removes delivery authority. */
 describe.skipIf(!testDatabaseConfigured)('ActivityKit registration', () => {
   layer(testing)((it) => {
-    it.effect('rotates only the owning installation and cascades session revocation', () =>
-      Effect.gen(function* () {
-        const owner = yield* fixture()
-        const other = yield* fixture()
-        const activities = yield* Activities
-        const installation = NodeCrypto.randomUUID()
-        yield* activities.register(
-          owner.person.id,
-          owner.sessionId,
-          ActivityRegistration.cases.Start.make({ installation, token: 'a'.repeat(64) }),
-        )
-        yield* activities.register(
-          owner.person.id,
-          owner.sessionId,
-          ActivityRegistration.cases.Update.make({ installation, token: 'b'.repeat(64) }),
-        )
-        const refused = yield* activities
-          .register(
-            other.person.id,
-            other.sessionId,
-            ActivityRegistration.cases.Start.make({ installation, token: 'c'.repeat(64) }),
+    it.effect(
+      'rotates push-to-start tokens only for the owner and cascades session revocation',
+      () =>
+        Effect.gen(function* () {
+          const owner = yield* fixture()
+          const other = yield* fixture()
+          const activities = yield* Activities
+          const installation = NodeCrypto.randomUUID()
+          yield* activities.register(
+            owner.person.id,
+            owner.sessionId,
+            ActivityRegistration.cases.Start.make({ installation, token: 'a'.repeat(64) }),
           )
-          .pipe(Effect.result)
-        expect(Result.isFailure(refused) && refused.failure._tag).toBe('Conflict')
-        const rows = yield* owner.database.run(
-          owner.database
-            .select()
-            .from(activityTargets)
-            .where(eq(activityTargets.installation, installation)),
-        )
-        expect(rows).toHaveLength(1)
-        expect(rows[0]).toMatchObject({
-          personId: owner.person.id,
-          sessionId: owner.sessionId,
-          startToken: 'a'.repeat(64),
-          updateToken: 'b'.repeat(64),
-        })
-        yield* owner.database.run(
-          owner.database.delete(sessionTable).where(eq(sessionTable.id, owner.sessionId)),
-        )
-        expect(
-          yield* owner.database.run(
+          yield* activities.register(
+            owner.person.id,
+            owner.sessionId,
+            ActivityRegistration.cases.Start.make({ installation, token: 'b'.repeat(64) }),
+          )
+          const refused = yield* activities
+            .register(
+              other.person.id,
+              other.sessionId,
+              ActivityRegistration.cases.Start.make({ installation, token: 'c'.repeat(64) }),
+            )
+            .pipe(Effect.result)
+          expect(Result.isFailure(refused) && refused.failure._tag).toBe('Conflict')
+          const rows = yield* owner.database.run(
             owner.database
               .select()
               .from(activityTargets)
               .where(eq(activityTargets.installation, installation)),
-          ),
-        ).toEqual([])
-      }),
+          )
+          expect(rows).toHaveLength(1)
+          expect(rows[0]).toMatchObject({
+            personId: owner.person.id,
+            sessionId: owner.sessionId,
+            startToken: 'b'.repeat(64),
+            updateToken: null,
+          })
+          yield* owner.database.run(
+            owner.database.delete(sessionTable).where(eq(sessionTable.id, owner.sessionId)),
+          )
+          expect(
+            yield* owner.database.run(
+              owner.database
+                .select()
+                .from(activityTargets)
+                .where(eq(activityTargets.installation, installation)),
+            ),
+          ).toEqual([])
+        }),
     )
   })
 })
