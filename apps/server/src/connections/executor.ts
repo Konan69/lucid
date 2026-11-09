@@ -3398,9 +3398,15 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
   })
   const availability = yield* makeAuthorization(http, catalog)
   const installation = yield* makeConnectionOperations(http, availability, publicOnly)
+  // Each member inspects sign-in setup with its own key: Executor answers OAuth setup only for
+  // a caller that can use an app requiring that provider, and a member's apps are "Only me", so
+  // the installation key is refused for them. Catalog display facts stay on `availability`.
   const members = yield* RcMap.make({
-    lookup: (member: Redacted.Redacted<string>) =>
-      makeConnectionOperations(httpWith(member), availability, publicOnly),
+    lookup: Effect.fn('Executor.memberOperations')(function* (member: Redacted.Redacted<string>) {
+      const memberHttp = httpWith(member)
+      const memberAvailability = yield* makeAuthorization(memberHttp, catalog)
+      return yield* makeConnectionOperations(memberHttp, memberAvailability, publicOnly)
+    }),
     idleTimeToLive: MEMBER_OPERATIONS_IDLE,
   })
   return Executor.of({
