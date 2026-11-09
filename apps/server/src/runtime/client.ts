@@ -261,23 +261,24 @@ const makeChildCalls = (input: {
       Effect.mapError(unavailable),
     )).aborted
   }, Effect.scoped)
-  const messageChild: RuntimeService['messageChild'] = Effect.fn('Runtime.messageChild')(
-    function* (threadId, runId, message) {
-      const address = yield* addressOf(threadId)
-      const suffix = `/children/${encodeURIComponent(runId)}/messages`
-      const encoded = yield* HttpClientRequest.schemaBodyJson(RuntimeChildMessage)(
-        request(address, suffix, 'POST'),
-        message,
-      ).pipe(Effect.mapError(unavailable))
-      const response = yield* requestRuntime(http, encoded, address).pipe(
-        Effect.mapError(unavailable),
-      )
-      return yield* HttpClientResponse.schemaBodyJson(RuntimeChildMessaged)(response).pipe(
-        Effect.mapError(unavailable),
-      )
-    },
-    Effect.scoped,
-  )
+  const messageChild: RuntimeService['messageChild'] = Effect.fn('Runtime.messageChild')(function* (
+    threadId,
+    runId,
+    message,
+  ) {
+    const address = yield* addressOf(threadId)
+    const suffix = `/children/${encodeURIComponent(runId)}/messages`
+    const encoded = yield* HttpClientRequest.schemaBodyJson(RuntimeChildMessage)(
+      request(address, suffix, 'POST'),
+      message,
+    ).pipe(Effect.mapError(unavailable))
+    const response = yield* requestRuntime(http, encoded, address).pipe(
+      Effect.mapError(unavailable),
+    )
+    return yield* HttpClientResponse.schemaBodyJson(RuntimeChildMessaged)(response).pipe(
+      Effect.mapError(unavailable),
+    )
+  }, Effect.scoped)
   return { child, stopChild, messageChild }
 }
 

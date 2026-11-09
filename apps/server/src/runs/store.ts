@@ -641,14 +641,17 @@ const reopen = Effect.fn('ChildRuns.reopen')(function* (
   followUp: FollowUp,
   now: number,
 ) {
-  yield* tx.select({ id: threads.id }).from(threads).where(eq(threads.id, run.threadId)).for('update')
+  yield* tx
+    .select({ id: threads.id })
+    .from(threads)
+    .where(eq(threads.id, run.threadId))
+    .for('update')
   const [row] = yield* tx.select().from(childRuns).where(eq(childRuns.id, run.id)).for('update')
   if (row === undefined) return yield* new NotFound({ message: 'Helper not found.' })
   const turn = yield* decodeTurn(row.turn)
   if (ChildTurn.guards.FollowUp(turn) && turn.key === followUp.key) return row
   const state = yield* decodeState(row.state)
-  if (!ChildRunState.isAnyOf(['Working', 'Completed', 'Failed'])(state))
-    return yield* notNow(state)
+  if (!ChildRunState.isAnyOf(['Working', 'Completed', 'Failed'])(state)) return yield* notNow(state)
   if (row.kind === 'ComputerUse' && !ChildRunState.guards.Working(state)) {
     const driving = yield* tx
       .select({ id: childRuns.id })

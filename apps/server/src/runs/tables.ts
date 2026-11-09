@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import { index, integer, jsonb, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core'
 import type { RunId, WorkerKind } from '@vivid/contracts'
 import { epoch, threadColumn } from '../database/owner.ts'
@@ -35,7 +36,10 @@ export const childRuns = pgTable(
     budget: jsonb('budget').notNull(),
     requestedAt: epoch('requested_at').notNull(),
     state: jsonb('state').notNull(),
-    turn: jsonb('turn').notNull().default({ _tag: 'Brief' }),
+    // A row from before follow-ups is a helper still on its brief.
+    turn: jsonb('turn')
+      .notNull()
+      .default(sql`'{"_tag":"Brief"}'::jsonb`),
     receipt: jsonb('receipt'),
     wake: text('wake').$type<'held' | 'due' | 'sent' | 'none'>().notNull(),
   },

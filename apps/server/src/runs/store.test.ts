@@ -110,9 +110,16 @@ const fixture = Effect.fn('Helpers.test.fixture')(function* () {
     stopChild: (_threadId, runId) =>
       Ref.update(stopped, (all) => [...all, runId]).pipe(Effect.as(true)),
     messageChild: (_threadId, id, message) =>
-      Ref.update(messaged, (all) => [...all, { ...message, id }]).pipe(
-        Effect.as(RuntimeChildMessaged.cases.Started.make({})),
-      ),
+      Ref.update(messaged, (all) => [
+        ...all,
+        {
+          id,
+          round: message.round,
+          message: message.message,
+          by: message.by,
+          budget: message.budget,
+        },
+      ]).pipe(Effect.as(RuntimeChildMessaged.cases.Started.make({}))),
     read: () => Effect.die('Helper tests read nothing'),
     watch: () => Stream.never,
   })
@@ -369,12 +376,14 @@ layer(testLayer)((it) => {
         // The same follow-up sent again starts no third round.
         const repeated = yield* test.helpers.followUp(reopened, sent)
         expect(ChildTurn.guards.FollowUp(repeated.turn) && repeated.turn.round).toBe(2)
-        expect((yield* Ref.get(test.messaged)).map(({ id, round, message, by }) => ({
-          id,
-          round,
-          message,
-          by,
-        }))).toEqual([
+        expect(
+          (yield* Ref.get(test.messaged)).map(({ id, round, message, by }) => ({
+            id,
+            round,
+            message,
+            by,
+          })),
+        ).toEqual([
           { id: run.id, round: 2, message: sent.message, by: 'Vivid' },
           { id: run.id, round: 2, message: sent.message, by: 'Vivid' },
         ])
@@ -383,7 +392,10 @@ layer(testLayer)((it) => {
         expect(Result.isSuccess(yield* authenticateHelper(headers).pipe(Effect.result))).toBe(true)
 
         // The first round's late ending changes nothing; the second round's is heard once.
-        const late = ends(1, ChildEnding.cases.Failed.make({ failure: ChildFailure.cases.RuntimeFault.make({}) }))
+        const late = ends(
+          1,
+          ChildEnding.cases.Failed.make({ failure: ChildFailure.cases.RuntimeFault.make({}) }),
+        )
         expect((yield* test.helpers.settle(test.reporter, run.id, late)).state._tag).toBe('Working')
         expect(yield* Queue.size(test.delivered)).toBe(0)
         expect((yield* test.helpers.settle(test.reporter, run.id, ends(2))).state._tag).toBe(

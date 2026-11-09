@@ -210,9 +210,7 @@ const latestOf = Effect.fn('Helpers.latest')(function* (
   conversationId: ConversationId,
   runId: RunId,
 ) {
-  const rounds = yield* pi(() =>
-    harness.snapshot(HelperRounds, conversationId, BACKGROUND_CONTEXT),
-  )
+  const rounds = yield* pi(() => harness.snapshot(HelperRounds, conversationId, BACKGROUND_CONTEXT))
   return Option.fromUndefinedOr(rounds === undefined ? undefined : rounds.rounds[runId])
 })
 
@@ -535,11 +533,10 @@ const claimWake = (
 const finish = (wiring: Wiring) =>
   Effect.fn('Helpers.finish')(function* (
     runtime: Runtime | FollowRuntime,
-    reporting: Reporting,
-    round: number,
-    encoded: Schema.Json,
+    ended: { readonly reporting: Reporting; readonly round: number; readonly encoded: Schema.Json },
     context: PiContext,
   ) {
+    const { reporting, round, encoded } = ended
     const answer = yield* decodeAnswer(encoded).pipe(Effect.mapError(() => new HelperFailed()))
     const wake = yield* claimWake(runtime, reporting.runId, round, context)
     yield* report(
@@ -594,9 +591,11 @@ const helperTask = (wiring: Wiring, run: RunHelpers): Task<Input, Step, Schema.J
         run(work(wiring)(record, runtime, context).pipe(faulted(runtime, context)), runtime.signal),
       report: (record, runtime, context) =>
         run(
-          finish(wiring)(runtime, record.input, 1, record.state.checkpoint.answer, context).pipe(
-            Effect.ignore,
-          ),
+          finish(wiring)(
+            runtime,
+            { reporting: record.input, round: 1, encoded: record.state.checkpoint.answer },
+            context,
+          ).pipe(Effect.ignore),
           runtime.signal,
         ),
     },
@@ -675,9 +674,11 @@ const followTask = (
         run(
           finish(wiring)(
             runtime,
-            record.input,
-            record.input.round,
-            record.state.checkpoint.answer,
+            {
+              reporting: record.input,
+              round: record.input.round,
+              encoded: record.state.checkpoint.answer,
+            },
             context,
           ).pipe(Effect.ignore),
           runtime.signal,
@@ -686,6 +687,34 @@ const followTask = (
     abort: (_record, runtime, context) =>
       runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context),
   })
+
+/**
+ * Starts a helper's later round in one commit of the Thread's conversation, unless that round or
+ * a later one already started. Each round works within the helper's tool budget again.
+ */
+// @effect-diagnostics-next-line asyncFunction:off -- Pi owns the commit that starts a round.
+const startRound = async (
+  tx: Tx,
+  start: {
+    readonly task: Task<FollowInput, FollowStep, Schema.Json, object>
+    readonly conversationId: ConversationId
+    readonly followUp: FollowInput
+    readonly toolCalls: number
+  },
+) => {
+  const { followUp } = start
+  const rounds = await tx.doc(HelperRounds, start.conversationId)
+  const latest = rounds.rounds[followUp.runId]
+  if (latest !== undefined && latest.round >= followUp.round) return
+  const calls = await tx.doc(HelperCalls, followUp.child)
+  calls.limit = calls.counted.length + start.toolCalls
+  const created = await tx.createTask(start.task, followUp, {
+    ownership: { kind: 'conversation' },
+    background: true,
+    conversationId: start.conversationId,
+  })
+  rounds.rounds[followUp.runId] = { round: followUp.round, task: created, claim: null }
+}
 
 /** A helper the Thread's conversation knows, by the number the model calls it. */
 export interface Named {
@@ -746,10 +775,10 @@ export function helpers(input: {
   const worker = workerExtensions(input.tools)
   const wiring: Wiring = { harness: input.harness, product: input.product, worker }
   const task = helperTask(wiring, input.run)
-  const round = followTask(wiring, input.run)
+  const later = followTask(wiring, input.run)
   return {
     extensions: [
-      defineExtension({ name: 'vivid-helpers', tasks: [task, round] }),
+      defineExtension({ name: 'vivid-helpers', tasks: [task, later] }),
       ...WorkerKind.literals.map(worker),
     ],
     // @effect-diagnostics-next-line asyncFunction:off -- Pi owns the commit this callback runs in.
@@ -830,23 +859,8 @@ export function helpers(input: {
         personId: scope.value.acting.personId,
         at,
       }
-      yield* pi(() =>
-        // @effect-diagnostics-next-line asyncFunction:off -- Pi owns the commit that starts a round.
-        harness.commit(async (tx) => {
-          const rounds = await tx.doc(HelperRounds, conversationId)
-          const latest = rounds.rounds[runId]
-          if (latest !== undefined && latest.round >= message.round) return
-          // Each round works within the helper's tool budget again.
-          const calls = await tx.doc(HelperCalls, followUp.child)
-          calls.limit = calls.counted.length + message.budget.toolCalls
-          const task = await tx.createTask(round, followUp, {
-            ownership: { kind: 'conversation' },
-            background: true,
-            conversationId,
-          })
-          rounds.rounds[runId] = { round: message.round, task, claim: null }
-        }, BACKGROUND_CONTEXT),
-      )
+      const start = { task: later, conversationId, followUp, toolCalls: message.budget.toolCalls }
+      yield* pi(() => harness.commit((tx) => startRound(tx, start), BACKGROUND_CONTEXT))
       return RuntimeChildMessaged.cases.Started.make({})
     }),
   }

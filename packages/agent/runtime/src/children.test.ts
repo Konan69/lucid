@@ -23,9 +23,9 @@ const decodeMessaged = Schema.decodeUnknownEffect(RuntimeChildMessaged)
  * Looks, and when the answer is not there yet waits for the next commit and looks again: a
  * signal, never a timer.
  */
-const until = Effect.fn('HelperProof.until')(function* <A>(
+const until = Effect.fn('HelperProof.until')(function* <A, E>(
   harness: Harness,
-  look: Effect.Effect<Option.Option<A>, unknown>,
+  look: Effect.Effect<Option.Option<A>, E>,
 ) {
   for (;;) {
     const committed = yield* Deferred.make<void>()
@@ -41,7 +41,10 @@ const until = Effect.fn('HelperProof.until')(function* <A>(
   }
 })
 
-/** What a conversation's model saw, in order: who said it and the words. */
+/**
+ * What a conversation's model saw, in order: who spoke, and their message's content as JSON, so a
+ * case can look for words in it without depending on how Pi splits a message into parts.
+ */
 const transcript = Effect.fn('HelperProof.transcript')(function* (
   harness: Harness,
   id: ConversationId,
@@ -52,18 +55,17 @@ const transcript = Effect.fn('HelperProof.transcript')(function* (
     conversation.entries({ order: 'ascending' }, 100, undefined, BACKGROUND_CONTEXT),
   )
   return page.items.flatMap((entry) =>
-    (entry.model === undefined ? [] : entry.model).flatMap((message) => {
-      if (message.role !== 'user' && message.role !== 'assistant') return []
-      const parts = typeof message.content === 'string' ? [message.content] : message.content
-      const words = parts
-        .flatMap((part) =>
-          typeof part === 'string' ? [part] : part.type === 'text' ? [part.text] : [],
-        )
-        .join('')
-      return [`${message.role}: ${words}`]
-    }),
+    (entry.model === undefined ? [] : entry.model).flatMap((message) =>
+      message.role === 'user' || message.role === 'assistant'
+        ? [{ role: message.role, said: JSON.stringify(message.content) }]
+        : [],
+    ),
   )
 })
+
+/** Whether any message in a transcript has these words. */
+const saying = (all: ReadonlyArray<{ readonly said: string }>, words: string) =>
+  all.some((message) => message.said.includes(words))
 
 describe('a helper taking a follow-up, on native Pi SQLite', () => {
   it.effect('reaches its own conversation as its next turn, and it answers again', () =>
@@ -122,7 +124,7 @@ describe('a helper taking a follow-up, on native Pi SQLite', () => {
               person.harness,
               transcript(person.harness, id).pipe(
                 Effect.map((said) =>
-                  said.includes('assistant: First answer.') ? Option.some(said) : Option.none(),
+                  saying(said, 'First answer.') ? Option.some(said) : Option.none(),
                 ),
               ),
             )
@@ -151,13 +153,14 @@ describe('a helper taking a follow-up, on native Pi SQLite', () => {
             const rounds = yield* pi(() =>
               person.harness.snapshot(HelperRounds, child.thread, BACKGROUND_CONTEXT),
             )
-            expect(rounds === undefined ? [] : Object.keys(rounds.rounds)).toEqual([runId])
-            expect(rounds === undefined ? undefined : rounds.rounds[runId]?.round).toBe(2)
+            const started = rounds === undefined ? {} : rounds.rounds
+            expect(Object.keys(started)).toEqual([runId])
+            expect(Object.values(started).map((later) => later.round)).toEqual([2])
             return yield* until(
               person.harness,
               transcript(person.harness, child.id).pipe(
                 Effect.map((all) =>
-                  all.includes('assistant: Second answer.') ? Option.some(all) : Option.none(),
+                  saying(all, 'Second answer.') ? Option.some(all) : Option.none(),
                 ),
               ),
             )
@@ -165,10 +168,15 @@ describe('a helper taking a follow-up, on native Pi SQLite', () => {
         )
         // Its own conversation, in order: the brief, its answer, the follow-up, its next answer.
         expect(said).toEqual([
-          `user: ${brief}`,
-          'assistant: First answer.',
-          'user: The person you are working for sends this follow-up:\n\nNow the weekend hours too.',
-          'assistant: Second answer.',
+          { role: 'user', said: expect.stringContaining(brief) },
+          { role: 'assistant', said: expect.stringContaining('First answer.') },
+          {
+            role: 'user',
+            said: expect.stringContaining(
+              'The person you are working for sends this follow-up:\\n\\nNow the weekend hours too.',
+            ),
+          },
+          { role: 'assistant', said: expect.stringContaining('Second answer.') },
         ])
       }),
     ),
