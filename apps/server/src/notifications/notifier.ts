@@ -14,7 +14,6 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
-import { announce, Topic } from '../live/changes.ts'
 import { settingsTable } from '../settings/tables.ts'
 import { notifications } from '../notifications/tables.ts'
 import { Push } from '../push/delivery.ts'
@@ -58,9 +57,15 @@ export const oweNotice = Effect.fn('Notifier.owe')(function* (input: {
           .onConflictDoNothing({ target: notifications.id })
           .returning({ id: notifications.id })
         if (inserted.length === 0) return true
-        yield* queue.offer(NotificationDelivery.cases.Publish.make({ personId: notice.personId }), {
-          id: `${input.id}:publish`,
-        })
+        yield* queue.offer(
+          NotificationDelivery.cases.Publish.make({
+            personId: notice.personId,
+            notificationId: input.id,
+          }),
+          {
+            id: `${input.id}:publish`,
+          },
+        )
         for (const target of yield* targets.active(notice.personId)) {
           yield* queue.offer(
             NotificationDelivery.cases.Push.make({
@@ -71,7 +76,6 @@ export const oweNotice = Effect.fn('Notifier.owe')(function* (input: {
             { id: `${input.id}:push:${target.id}` },
           )
         }
-        yield* announce(tx, [Topic.part('notifications')(Topic.person(notice.personId))])
         return true
       }),
     )

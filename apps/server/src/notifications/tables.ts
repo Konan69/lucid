@@ -17,6 +17,8 @@ export const notifications = pgTable(
     approvalId: text('approval_id'),
     createdAt: epoch('created_at').notNull(),
     readAt: epoch('read_at'),
+    /** Commit the publication receipt with NOTIFY so queue acknowledgement loss cannot repeat it. */
+    publishedAt: epoch('published_at'),
     /** The Person this notification is for, and the workspace it happened in. */
     personId: personColumn().notNull(),
     companyId: companyColumn(),

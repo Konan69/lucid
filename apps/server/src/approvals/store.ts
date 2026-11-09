@@ -67,6 +67,7 @@ import {
   Claim,
   claim as claimOperation,
   operationOf,
+  requireNotDeclined,
   release,
   resultDigest,
   settle,
@@ -299,7 +300,7 @@ export interface ApprovalStoreService {
     actor: Actor,
     action: ProposedAction,
     binding: ApprovalBinding,
-  ) => Effect.Effect<Approval, NotFound | DatabaseInfrastructureError>
+  ) => Effect.Effect<Approval, NotFound | InvalidRequest | DatabaseInfrastructureError>
   readonly decide: (
     actor: Actor,
     request: DecideApprovalRequest,
@@ -742,6 +743,8 @@ const raise = Effect.fn('Approvals.raise')(function* (
   const thread = yield* requireThread(threadId, actor.person.id)
   if (thread.companyId !== companyColumnOf(actor.workspace))
     return yield* new NotFound({ message: 'Thread not found in workspace' })
+  if (action.effect !== 'read')
+    yield* requireNotDeclined({ threadId, runId, target: action.target })
   const database = yield* Database
   const now = yield* Clock.currentTimeMillis
   const encoded = yield* encodeAction(action).pipe(

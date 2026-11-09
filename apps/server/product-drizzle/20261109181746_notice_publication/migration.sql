@@ -1,0 +1,1 @@
+ALTER TABLE "vivid_notifications" ADD COLUMN "published_at" bigint;
