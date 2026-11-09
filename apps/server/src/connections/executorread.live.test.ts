@@ -9,6 +9,7 @@ import {
   ExecutorStep,
   ExecutorCallOutcome,
   executorLayer,
+  installationCaller,
 } from './executor.ts'
 
 const decodeContent = Schema.decodeUnknownEffect(
@@ -70,29 +71,34 @@ describe.skipIf(!enabled)('GitHub authenticated read acceptance', () => {
             label: 'GitHub personal proof',
             returnAddress: 'https://vivid.example.test/api/connections/return',
           }
-          const step = yield* executor.begin(input)
+          const step = yield* executor.as(installationCaller).begin(input)
           const removed = yield* Ref.make(false)
           // Register cleanup before assertions or token submission can fail.
           yield* Effect.addFinalizer(() =>
             Effect.gen(function* () {
               if (yield* Ref.get(removed)) return
-              const cleanup = yield* executor.remove(step.references).pipe(Effect.exit)
+              const cleanup = yield* executor
+                .as(installationCaller)
+                .remove(step.references)
+                .pipe(Effect.exit)
               expect(cleanup._tag).toBe('Success')
             }),
           )
           expect(ExecutorStep.guards.EnterKey(step)).toBe(true)
           if (!ExecutorStep.guards.EnterKey(step))
             return expect.fail('GitHub must offer personal token entry')
-          const references = yield* executor.complete({
+          const references = yield* executor.as(installationCaller).complete({
             references: step.references,
             fields: { token: Redacted.make(token) },
           })
-          const tools = yield* executor.tools(references)
+          const tools = yield* executor.as(installationCaller).tools(references)
           expect(tools.length).toBeGreaterThan(0)
           const tool = tools.find((candidate) => /(?:^|\.)get_me$/u.test(candidate.name))
           if (tool === undefined)
             return expect.fail('GitHub must expose its authenticated account read')
-          const outcome = yield* executor.call({ references, tool: tool.name, input: {} })
+          const outcome = yield* executor
+            .as(installationCaller)
+            .call({ references, tool: tool.name, input: {} })
           if (!ExecutorCallOutcome.guards.Completed(outcome))
             expect.fail('Expected authenticated account data')
           const content = yield* decodeContent(outcome.value)
@@ -100,9 +106,12 @@ describe.skipIf(!enabled)('GitHub authenticated read acceptance', () => {
           if (answer === undefined) expect.fail('Expected account response text')
           const account = yield* decodeAccount(answer.text)
           expect(account).toEqual({ login: expectedLogin, id: Number(expectedId) })
-          yield* executor.remove(references)
+          yield* executor.as(installationCaller).remove(references)
           yield* Ref.set(removed, true)
-          const unavailable = yield* executor.tools(references).pipe(Effect.flip)
+          const unavailable = yield* executor
+            .as(installationCaller)
+            .tools(references)
+            .pipe(Effect.flip)
           // beta.8 masks a deleted app as organization access denial, before its tool route.
           expect(unavailable._tag).toBe('ExecutorAccessDenied')
           NodeProcess.stdout.write(`GitHub read tools=${tools.length} reads=1 removed-app=1\n`)

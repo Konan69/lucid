@@ -81,10 +81,13 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
             const calls = yield* Ref.get(probe.calls)
             const dispatch = Executor.of({
               ...executor,
-              call: Effect.fn('Executor.Test.dispatchBeforePersistenceFailure')(function* () {
-                yield* Ref.update(probe.calls, (count) => count + 1)
-                yield* Ref.set(unavailable, true)
-                return ExecutorCallOutcome.cases.NotReady.make({})
+              as: (caller) => ({
+                ...executor.as(caller),
+                call: Effect.fn('Executor.Test.dispatchBeforePersistenceFailure')(function* () {
+                  yield* Ref.update(probe.calls, (count) => count + 1)
+                  yield* Ref.set(unavailable, true)
+                  return ExecutorCallOutcome.cases.NotReady.make({})
+                }),
               }),
             })
             const outcome = yield* Effect.gen(function* () {
@@ -129,9 +132,15 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
           const calls = yield* Ref.get(probe.calls)
           const unavailable = Executor.of({
             ...executor,
-            call: Effect.fn('Executor.Test.dispatchedUnavailable')(function* () {
-              yield* Ref.update(probe.calls, (count) => count + 1)
-              return yield* ExecutorTransportFailure.make({ service: 'connections', tool: 'read' })
+            as: (caller) => ({
+              ...executor.as(caller),
+              call: Effect.fn('Executor.Test.dispatchedUnavailable')(function* () {
+                yield* Ref.update(probe.calls, (count) => count + 1)
+                return yield* ExecutorTransportFailure.make({
+                  service: 'connections',
+                  tool: 'read',
+                })
+              }),
             }),
           })
           const input = {

@@ -1244,14 +1244,17 @@ describe.skipIf(!testDatabaseConfigured)(
               const inputs = yield* Ref.make<readonly import('effect/Schema').Json[]>([])
               const provider = Executor.of({
                 ...executor,
-                call: Effect.fn('Test.records')(function* ({ input }) {
-                  yield* Ref.update(inputs, (values) => values.concat([input]))
-                  return ExecutorCallOutcome.cases.Completed.make({
-                    value: {
-                      cursor: 'next-page',
-                      rows: Array.from({ length: 500 }, (_, value) => ({ value })),
-                    },
-                  })
+                as: (caller) => ({
+                  ...executor.as(caller),
+                  call: Effect.fn('Test.records')(function* ({ input }) {
+                    yield* Ref.update(inputs, (values) => values.concat([input]))
+                    return ExecutorCallOutcome.cases.Completed.make({
+                      value: {
+                        cursor: 'next-page',
+                        rows: Array.from({ length: 500 }, (_, value) => ({ value })),
+                      },
+                    })
+                  }),
                 }),
               })
               const storedComputer = yield* ComputerStore
@@ -1319,16 +1322,19 @@ describe.skipIf(!testDatabaseConfigured)(
               const executor = yield* Executor
               const provider = Executor.of({
                 ...executor,
-                call: Effect.fn('Test.validation')(({ input }) =>
-                  Effect.succeed(
-                    isRepositoryInput(input)
-                      ? ExecutorCallOutcome.cases.Completed.make({ value: { corrected: true } })
-                      : ExecutorCallOutcome.cases.Rejected.make({
-                          message: 'Correct the input',
-                          problems: ['repoName: required'],
-                        }),
+                as: (caller) => ({
+                  ...executor.as(caller),
+                  call: Effect.fn('Test.validation')(({ input }) =>
+                    Effect.succeed(
+                      isRepositoryInput(input)
+                        ? ExecutorCallOutcome.cases.Completed.make({ value: { corrected: true } })
+                        : ExecutorCallOutcome.cases.Rejected.make({
+                            message: 'Correct the input',
+                            problems: ['repoName: required'],
+                          }),
+                    ),
                   ),
-                ),
+                }),
               })
               const outcome = yield* withCalls(
                 run(
@@ -1419,10 +1425,13 @@ describe.skipIf(!testDatabaseConfigured)(
                 const executor = yield* Executor
                 const controlled = Executor.of({
                   ...executor,
-                  call: Effect.fn('Test.revocationCall')(function* () {
-                    yield* Deferred.succeed(started, undefined)
-                    yield* Deferred.await(release)
-                    return ExecutorCallOutcome.cases.Completed.make({ value: { read: true } })
+                  as: (caller) => ({
+                    ...executor.as(caller),
+                    call: Effect.fn('Test.revocationCall')(function* () {
+                      yield* Deferred.succeed(started, undefined)
+                      yield* Deferred.await(release)
+                      return ExecutorCallOutcome.cases.Completed.make({ value: { read: true } })
+                    }),
                   }),
                 })
                 const program = withCalls(
@@ -1756,10 +1765,13 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
               Executor,
               Executor.of({
                 ...executor,
-                call: () =>
-                  Effect.succeed(
-                    ExecutorCallOutcome.cases.Rejected.make({ message: 'Private rejection' }),
-                  ),
+                as: (caller) => ({
+                  ...executor.as(caller),
+                  call: () =>
+                    Effect.succeed(
+                      ExecutorCallOutcome.cases.Rejected.make({ message: 'Private rejection' }),
+                    ),
+                }),
               }),
             ),
             Effect.updateService(

@@ -1,3 +1,4 @@
+import { testMembersLayer, unansweredOperations } from '../connections/testing.ts'
 import { describe, expect, layer } from '@effect/vitest'
 import { Company, CompanyId, ConnectionId, ServiceId, Workspace } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
@@ -46,8 +47,11 @@ const appsFor = Effect.fn('WatchAppsTest.appsFor')(function* (
     }),
   )
   const executor = Layer.mock(Executor, {
-    appSlug: (app) =>
-      Ref.update(asked, (previous) => [...previous, app]).pipe(Effect.as(`slug-${app}`)),
+    as: () => ({
+      ...unansweredOperations,
+      appSlug: (app) =>
+        Ref.update(asked, (previous) => [...previous, app]).pipe(Effect.as(`slug-${app}`)),
+    }),
   })
   const context = yield* Layer.build(
     watchedAppsLayer.pipe(
@@ -55,6 +59,7 @@ const appsFor = Effect.fn('WatchAppsTest.appsFor')(function* (
         Layer.mergeAll(
           Layer.succeed(Database, yield* Database),
           executor,
+          testMembersLayer,
           Layer.succeed(HttpClient.HttpClient, transport),
           ConfigProvider.layer(
             ConfigProvider.fromUnknown({
