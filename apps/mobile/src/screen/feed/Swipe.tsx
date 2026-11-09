@@ -236,15 +236,17 @@ function landing(projected: number, velocity: number, right: boolean, left: bool
 function Under({ side, words, motion }: { side: 1 | -1; words: string; motion: Motion }) {
   const { colors: c } = useTheme()
   const tone = side > 0 ? c.accent : c.ink
+  // Worklets copy what they close over: they get the shared values alone, never the gesture.
+  const { x, width, side: lit, fill } = motion
   const shown = useAnimatedStyle(() => {
-    const p = (motion.x.get() / motion.width.get()) * side
+    const p = (x.get() / width.get()) * side
     const fade = p > 1 ? Math.max(0, 1 - (p - 1) * 2) : 1
     return { opacity: p > 0 ? Math.min(1, p / 0.06) * fade : 0 }
   })
   // How armed this side is: the shared fill, only while this is the side last armed.
   const on = () => {
     'worklet'
-    return motion.side.get() === side ? motion.fill.get() : 0
+    return lit.get() === side ? fill.get() : 0
   }
   const wash = useAnimatedStyle(() => ({ opacity: 0.06 + 0.1 * on() }))
   const said = useAnimatedStyle(() => ({
@@ -252,13 +254,13 @@ function Under({ side, words, motion }: { side: 1 | -1; words: string; motion: M
     transform: [{ translateX: (1 - on()) * -8 * side }],
   }))
   const mark = useAnimatedStyle(() => {
-    const p = Math.max(0, (motion.x.get() / motion.width.get()) * side)
+    const p = Math.max(0, (x.get() / width.get()) * side)
     const grow = interpolate(Math.min(1, p / ARM), [0, 1], [0.7, 1])
     return { transform: [{ scale: grow + 0.06 * on() }] }
   })
   const filled = useAnimatedStyle(() => ({ opacity: 0.18 * on() }))
   const ring = useAnimatedProps(() => {
-    const p = Math.max(0, (motion.x.get() / motion.width.get()) * side)
+    const p = Math.max(0, (x.get() / width.get()) * side)
     return { strokeDashoffset: RING * (1 - Math.min(1, p / ARM)) }
   })
   const Glyph = side > 0 ? Check : X
