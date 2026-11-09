@@ -6,6 +6,7 @@ import {
   ChildFailure,
   ChildReport,
   ChildRunState,
+  ChildTurn,
   DEFAULT_CHILD_BUDGET,
   PersonId,
   PersonSummary,
@@ -13,7 +14,9 @@ import {
   RunOrigin,
   RunState,
   RuntimeChildAnswer,
+  RuntimeChildMessaged,
   RuntimeSubmissionId,
+  type RuntimeChildMessage,
   ThreadId,
   type ChildRun,
   type RunId,
@@ -21,7 +24,7 @@ import {
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { eq } from 'drizzle-orm'
-import { Effect, Layer, Queue, Ref, Result, Stream } from 'effect'
+import { Effect, Layer, Option, Queue, Ref, Result, Stream } from 'effect'
 import { ActionOrigin, actionOrigin } from '../approvals/gate.ts'
 import { requireActor } from '../auth/access.ts'
 import { authenticateHelper } from '../auth/session.ts'
@@ -39,6 +42,7 @@ import {
 import { deliveryRunId } from '../threads/key.ts'
 import { RunStore, runStoreLayer } from '../threads/runs.ts'
 import { threadStoreLayer } from '../threads/store.ts'
+import { stopPersonRun } from '../threads/stop.ts'
 import { threads } from '../threads/tables.ts'
 import { childHandlers } from './handlers.ts'
 import { childRuns } from './tables.ts'
@@ -95,6 +99,7 @@ const fixture = Effect.fn('Helpers.test.fixture')(function* () {
 
   const delivered = yield* Queue.unbounded<ServerDelivery>()
   const stopped = yield* Ref.make<ReadonlyArray<RunId>>([])
+  const messaged = yield* Ref.make<ReadonlyArray<RuntimeChildMessage & { readonly id: RunId }>>([])
   const summary = PersonSummary.make({ id: personId, name: 'Helper test', image: null })
   const runtime = Runtime.of({
     admit: () => Effect.die('Helper tests admit nothing'),
@@ -104,6 +109,10 @@ const fixture = Effect.fn('Helpers.test.fixture')(function* () {
       Effect.succeed(RuntimeChildAnswer.cases.Completed.make({ text: 'Found it', usage })),
     stopChild: (_threadId, runId) =>
       Ref.update(stopped, (all) => [...all, runId]).pipe(Effect.as(true)),
+    messageChild: (_threadId, id, message) =>
+      Ref.update(messaged, (all) => [...all, { ...message, id }]).pipe(
+        Effect.as(RuntimeChildMessaged.cases.Started.make({})),
+      ),
     read: () => Effect.die('Helper tests read nothing'),
     watch: () => Stream.never,
   })
@@ -159,9 +168,15 @@ const fixture = Effect.fn('Helpers.test.fixture')(function* () {
     start,
     delivered,
     stopped,
+    messaged,
+    runtime,
     context,
   }
 })
+
+/** One round of a helper ending as the runtime reports it. */
+const ends = (round: number, ending: ChildEnding = ChildEnding.cases.Completed.make({})) =>
+  ChildReport.cases.Ended.make({ ending, wake: true, round })
 
 layer(testLayer)((it) => {
   describe.skipIf(!testDatabaseConfigured)('Helper Runs', () => {
@@ -201,6 +216,7 @@ layer(testLayer)((it) => {
         const ended = ChildReport.cases.Ended.make({
           ending: ChildEnding.cases.Completed.make({}),
           wake: true,
+          round: 1,
         })
         expect((yield* test.helpers.settle(test.reporter, run.id, ended)).state._tag).toBe(
           'Completed',
@@ -221,6 +237,7 @@ layer(testLayer)((it) => {
             failure: ChildFailure.cases.RuntimeFault.make({}),
           }),
           wake: true,
+          round: 1,
         })
         expect((yield* test.helpers.settle(test.reporter, run.id, late)).state._tag).toBe(
           'Completed',
@@ -234,6 +251,7 @@ layer(testLayer)((it) => {
           ChildReport.cases.Ended.make({
             ending: ChildEnding.cases.Completed.make({}),
             wake: false,
+            round: 1,
           }),
         )
         const database = yield* Database
@@ -283,7 +301,11 @@ layer(testLayer)((it) => {
         yield* test.helpers.settle(
           test.reporter,
           working.id,
-          ChildReport.cases.Ended.make({ ending: ChildEnding.cases.Aborted.make({}), wake: true }),
+          ChildReport.cases.Ended.make({
+            ending: ChildEnding.cases.Aborted.make({}),
+            wake: true,
+            round: 1,
+          }),
         )
         expect(yield* Queue.size(test.delivered)).toBe(0)
       }).pipe(Effect.scoped),
@@ -328,6 +350,91 @@ layer(testLayer)((it) => {
         // Once stopped, it acts no more.
         yield* test.helpers.cancel(run, 'Vivid')
         expect(Result.isFailure(yield* authenticateHelper(headers).pipe(Effect.result))).toBe(true)
+      }).pipe(Effect.scoped),
+    )
+    it.effect('a follow-up is the next round of the same helper; only that round is heard', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const run = yield* test.spawn('follows')
+        yield* test.start(run)
+        yield* test.helpers.settle(test.reporter, run.id, ends(1))
+        expect((yield* Queue.take(test.delivered)).idempotencyKey).toBe(`child-result:${run.id}`)
+        const finished = yield* test.helpers.find(run.id).pipe(Effect.map(Option.getOrThrow))
+
+        // A finished helper takes the follow-up as its next round, in its own conversation.
+        const sent = { message: 'Now compare the prices too.', by: 'Vivid', key: 'call-f' } as const
+        const reopened = yield* test.helpers.followUp(finished, sent)
+        expect(reopened.state._tag).toBe('Working')
+        expect(ChildTurn.guards.FollowUp(reopened.turn) && reopened.turn.round).toBe(2)
+        // The same follow-up sent again starts no third round.
+        const repeated = yield* test.helpers.followUp(reopened, sent)
+        expect(ChildTurn.guards.FollowUp(repeated.turn) && repeated.turn.round).toBe(2)
+        expect((yield* Ref.get(test.messaged)).map(({ id, round, message, by }) => ({
+          id,
+          round,
+          message,
+          by,
+        }))).toEqual([
+          { id: run.id, round: 2, message: sent.message, by: 'Vivid' },
+          { id: run.id, round: 2, message: sent.message, by: 'Vivid' },
+        ])
+        // While it works it authenticates as itself again.
+        const headers = { thread: test.threadId, actor: test.personId, helper: run.id }
+        expect(Result.isSuccess(yield* authenticateHelper(headers).pipe(Effect.result))).toBe(true)
+
+        // The first round's late ending changes nothing; the second round's is heard once.
+        const late = ends(1, ChildEnding.cases.Failed.make({ failure: ChildFailure.cases.RuntimeFault.make({}) }))
+        expect((yield* test.helpers.settle(test.reporter, run.id, late)).state._tag).toBe('Working')
+        expect(yield* Queue.size(test.delivered)).toBe(0)
+        expect((yield* test.helpers.settle(test.reporter, run.id, ends(2))).state._tag).toBe(
+          'Completed',
+        )
+        const wake = yield* Queue.take(test.delivered)
+        expect(wake.idempotencyKey).toBe(`child-result:${run.id}:2`)
+        if (
+          !DeliveryMessage.guards.Signal(wake.message) ||
+          !SignalCue.guards.ChildResult(wake.message.cue)
+        )
+          return expect.fail('Expected a helper result delivery')
+        expect(wake.message.cue.body).toContain(sent.message)
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect("a Person's follow-up steers a helper at work; a stopped helper takes none", () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const run = yield* test.spawn('steered')
+        const working = yield* test.start(run)
+        const sent = { message: 'Only look at Lagos.', by: 'Person', key: 'press-1' } as const
+        const steered = yield* test.helpers.followUp(working, sent)
+        expect(steered.state).toEqual(working.state)
+        expect(ChildTurn.guards.FollowUp(steered.turn) && steered.turn.by).toBe('Person')
+
+        const stopped = yield* test.helpers.cancel(steered, 'Person')
+        yield* Queue.take(test.delivered)
+        const refused = yield* test.helpers
+          .followUp(stopped, { ...sent, key: 'press-2' })
+          .pipe(Effect.flip)
+        expect(refused._tag).toBe('Conflict')
+        expect(yield* Ref.get(test.messaged)).toHaveLength(1)
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect("a device's Stop of the Run stops its Thread's helpers and hears none of them", () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const run = yield* test.spawn('desktop-stop')
+        yield* test.start(run)
+        expect(
+          yield* stopPersonRun(test.personId, test.parentRunId).pipe(
+            Effect.provideContext(test.context),
+            Effect.provideService(Runtime, test.runtime),
+          ),
+        ).toBe(true)
+        const after = yield* test.helpers.find(run.id).pipe(Effect.map(Option.getOrThrow))
+        expect(ChildRunState.guards.Stopped(after.state) && after.state.by).toBe('Person')
+        expect(yield* Ref.get(test.stopped)).toEqual([run.id])
+        expect(yield* Queue.size(test.delivered)).toBe(0)
       }).pipe(Effect.scoped),
     )
   })

@@ -31,6 +31,8 @@ import {
   RuntimeStopped,
   RuntimeUnavailable,
   RuntimeChildAnswer,
+  RuntimeChildMessage,
+  RuntimeChildMessaged,
   type ConversationFrame,
   type DeliveryScope,
   type RuntimeDelivery,
@@ -152,6 +154,12 @@ export interface RuntimeService {
     threadId: ThreadId,
     runId: RunId,
   ) => Effect.Effect<boolean, RuntimeUnavailable>
+  /** Starts one helper's next round in its own conversation; a repeat of a round starts nothing. */
+  readonly messageChild: (
+    threadId: ThreadId,
+    runId: RunId,
+    message: RuntimeChildMessage,
+  ) => Effect.Effect<RuntimeChildMessaged, RuntimeUnavailable>
   readonly read: (
     read: ConversationRead,
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse, RuntimeUnavailable, Scope.Scope>
@@ -221,7 +229,7 @@ const makeAdmit = ({ http, request }: Transport): RuntimeService['admit'] =>
   )
 
 /**
- * Reading and stopping one helper. A helper lives in its Thread's conversation store, under the
+ * Reading, stopping and following up one helper. A helper lives in its Thread's conversation store, under the
  * Thread creator's address, so both calls go to that address.
  */
 const makeChildCalls = (input: {
@@ -253,7 +261,24 @@ const makeChildCalls = (input: {
       Effect.mapError(unavailable),
     )).aborted
   }, Effect.scoped)
-  return { child, stopChild }
+  const messageChild: RuntimeService['messageChild'] = Effect.fn('Runtime.messageChild')(
+    function* (threadId, runId, message) {
+      const address = yield* addressOf(threadId)
+      const suffix = `/children/${encodeURIComponent(runId)}/messages`
+      const encoded = yield* HttpClientRequest.schemaBodyJson(RuntimeChildMessage)(
+        request(address, suffix, 'POST'),
+        message,
+      ).pipe(Effect.mapError(unavailable))
+      const response = yield* requestRuntime(http, encoded, address).pipe(
+        Effect.mapError(unavailable),
+      )
+      return yield* HttpClientResponse.schemaBodyJson(RuntimeChildMessaged)(response).pipe(
+        Effect.mapError(unavailable),
+      )
+    },
+    Effect.scoped,
+  )
+  return { child, stopChild, messageChild }
 }
 
 /** Capture transport once. Product ownership supplies every address; the runtime owns settlement. */

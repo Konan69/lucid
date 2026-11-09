@@ -8,10 +8,11 @@ import { runs, threads } from '../threads/tables.ts'
  * Run's `person_id`; `thread_id` is the parent's Thread, copied at reservation so a Thread's
  * helpers are numbered and listed without a join.
  *
- * `state` is the encoded `ChildRunState`. `receipt` is the runtime's native address once its work
+ * `state` is the encoded `ChildRunState`; `turn` the encoded `ChildTurn`, what its current or last
+ * round of work is (its brief, or the latest follow-up). `receipt` is the runtime's native address once its work
  * was admitted (`ChildReceipt`). The helper's answer and transcript stay in Pi, never here.
  *
- * `wake` is whether the Thread still has to hear how the helper ended: `held` while it works,
+ * `wake` is whether the Thread still has to hear how the helper's round ended: `held` while it works,
  * `due` once it ended and the parent has not heard, `sent` once the result delivery was admitted,
  * `none` when nobody needs to hear it (the parent read it by waiting or stopped it itself, or the
  * Thread was stopped).
@@ -34,6 +35,7 @@ export const childRuns = pgTable(
     budget: jsonb('budget').notNull(),
     requestedAt: epoch('requested_at').notNull(),
     state: jsonb('state').notNull(),
+    turn: jsonb('turn').notNull().default({ _tag: 'Brief' }),
     receipt: jsonb('receipt'),
     wake: text('wake').$type<'held' | 'due' | 'sent' | 'none'>().notNull(),
   },
