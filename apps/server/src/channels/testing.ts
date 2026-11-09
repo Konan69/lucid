@@ -164,6 +164,7 @@ const ports = Layer.effectContext(
       stop: () => Effect.succeed(false),
       child: () => Effect.die('Channel tests start no helpers'),
       stopChild: () => Effect.succeed(false),
+      messageChild: () => Effect.die('This fake follows up no helpers'),
       watch: () => Stream.never,
       read: () =>
         Effect.succeed(
