@@ -101,6 +101,41 @@ describe.skipIf(!testDatabaseConfigured)('durable notification delivery', () => 
       }),
     )
 
+    it.effect('the final failed Publish attempt becomes a terminal failed job', () =>
+      Effect.gen(function* () {
+        const owner = yield* fixture()
+        const sql = yield* PgClient
+        const id = NotificationId.make(crypto.randomUUID())
+        const constraint = `poison_${crypto.randomUUID().replaceAll('-', '')}`
+        yield* Effect.addFinalizer(() =>
+          sql.unsafe(`ALTER TABLE vivid_notifications DROP CONSTRAINT IF EXISTS ${constraint}`)
+            .pipe(Effect.orDie),
+        )
+        // Only this UUID fails the real publication write; other suites keep their own rows.
+        yield* sql.unsafe(
+          `ALTER TABLE vivid_notifications ADD CONSTRAINT ${constraint} CHECK (id <> '${id}' OR published_at IS NULL)`,
+        )
+        yield* oweNotice({
+          id,
+          notice: {
+            personId: owner.person.id,
+            companyId: null,
+            kind: 'needs-you',
+            title: 'Poisoned publication',
+            body: 'Review it.',
+            threadId: owner.threadId,
+          },
+        })
+        // Persist nine prior claims, as a restarted worker would find them, without waiting out backoff.
+        yield* sql`UPDATE ${sql(noticeTable)} SET attempts = 9 WHERE id = ${`${id}:publish`}`
+        yield* takeNotification().pipe(Effect.exit)
+        const rows = yield* sql`SELECT state, attempts, last_failure FROM ${sql(noticeTable)}
+          WHERE id = ${`${id}:publish`}`
+        expect(rows).toMatchObject([{ state: 'failed', attempts: 10 }])
+        expect(rows[0]?.last_failure).toBeTruthy()
+      }),
+    )
+
     it.effect(
       'rolls back product and obligations together, then replays devices independently',
       () =>

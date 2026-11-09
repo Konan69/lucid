@@ -17,12 +17,14 @@ export const NotificationDelivery = Schema.TaggedUnion({
  * Source-verified in Effect 4.0.2 PersistedQueue: layerStoreSql captures the shared SqlClient;
  * offer joins its fiber transaction, and take acknowledges only success. SQL polling covers
  * the process-local offer wake preceding commit. The existing push ledger fences uncertain
- * external sends across retries. Retain debts through the SDK's int32 attempt ceiling.
+ * external sends across retries. Exhausted jobs remain in the SDK's terminal failed state.
  */
+const DELIVERY_ATTEMPTS = 10
+
 export const notificationDelivery = PersistedQueue.make({
   name: 'notification-delivery',
   schema: NotificationDelivery,
-  maxAttempts: 2147483647,
+  maxAttempts: DELIVERY_ATTEMPTS,
   retrySchedule: Schedule.min([Schedule.exponential('1 second'), Schedule.spaced('5 minutes')]),
 })
 
@@ -30,7 +32,7 @@ export const notificationDelivery = PersistedQueue.make({
 export const takeNotification = Effect.fn('Notifications.take')(function* () {
   const queue = yield* notificationDelivery
   const database = yield* Database
-  return yield* queue.take((job) =>
+  return yield* queue.take((job, metadata) =>
     NotificationDelivery.match(job, {
       Publish: ({ notificationId, personId }) =>
         database.transaction((tx) =>
@@ -46,7 +48,16 @@ export const takeNotification = Effect.fn('Notifications.take')(function* () {
           }),
         ),
       Push: (target) => deliverTarget(target),
-    }),
+    }).pipe(
+      Effect.tapCause((cause) =>
+        metadata.attempts >= DELIVERY_ATTEMPTS && !Cause.hasInterruptsOnly(cause)
+          ? Effect.logError('Notification delivery exhausted its attempts', {
+              noticeId: job.notificationId,
+              attempts: metadata.attempts,
+            })
+          : Effect.void,
+      ),
+    ),
   )
 })
 
