@@ -1,9 +1,9 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "0b6a45d5-af04-44f1-bb90-7911d8513f6d",
+  "id": "0d1039a1-ae48-4564-b79c-fdeb2bc9af87",
   "prevIds": [
-    "2ba01534-9ec4-436d-be9c-dd308f4de793"
+    "4942ae88-86a1-499a-a150-867f58bb69e1"
   ],
   "ddl": [
     {
@@ -1551,6 +1551,19 @@
       "generated": null,
       "identity": null,
       "name": "state",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_child_runs"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'{\"_tag\":\"Brief\"}'",
+      "generated": null,
+      "identity": null,
+      "name": "turn",
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_child_runs"
