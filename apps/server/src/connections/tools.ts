@@ -57,6 +57,7 @@ import {
   resourceReason,
 } from './executor.ts'
 import { operationsOf } from './members.ts'
+import { prepareReconciliation } from './reconcile.ts'
 import { callableTool, discoveredTool } from '../code/signatures.ts'
 import { executorFailure } from './errors.ts'
 import { ConnectionStore, ToolDiscovery } from './store.ts'
@@ -391,8 +392,11 @@ export const runConnection = Effect.fn('Connections.run')(
     const { effect, operation } = call
     const refusal = yield* permissionRefusal(row)
     if (Option.isSome(refusal)) return yield* notRead(refusal.value)
+    const sending = Option.isSome(operation)
+      ? yield* prepareReconciliation(row, target, operation.value)
+      : target
     const outcome = yield* (yield* operationsOf(row))
-      .call({ references: row.references, tool: target.tool, input: target.input })
+      .call({ references: row.references, tool: sending.tool, input: sending.input })
       .pipe(
         Effect.mapError((error) =>
           isResourceMissing(error) || isApprovalUnsupported(error) ? error : executorFailure(error),
@@ -1010,6 +1014,7 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
     readonly person: Person
     readonly workspace: Workspace
     readonly target: typeof ActionTarget.cases.Connection.Type
+    readonly operation: Option.Option<ActionOperationId>
   }) {
     const workspace = yield* workspaceIn(
       input.person.id,
@@ -1047,7 +1052,7 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
     // The Approval's decision journals this operation around the runner (`approvals/store.ts`).
     const outcome = yield* runConnection(actor, row, input.target, {
       effect: tool.effect,
-      operation: Option.none(),
+      operation: input.operation,
     })
     yield* recordTimerOutcome(actor, input.target, outcome)
     return actionOutcome(outcome)

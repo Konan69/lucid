@@ -3,7 +3,6 @@ import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
-import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import {
@@ -27,7 +26,7 @@ import {
   type ToolCallId,
 } from '@vivid/contracts'
 import { canonical } from '../approvals/action.ts'
-import { Database, decodeStored, encodeStored } from '../database/client.ts'
+import { Database, decodeStored, encodeStored, returned } from '../database/client.ts'
 import { requireThread } from '../threads/access.ts'
 import { actions } from './tables.ts'
 import { approvals } from '../approvals/tables.ts'
@@ -260,6 +259,22 @@ export const claim = Effect.fn('Actions.claim')(function* (input: {
   )
 })
 
+/** Keep the actual marked request before dispatch, preserving the original act's fingerprint. */
+export const retainTarget = Effect.fn('Actions.retainTarget')(function* (
+  id: ActionOperationId,
+  target: ActionTarget,
+) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .update(actions)
+      .set({ target: yield* encodeTarget(target) })
+      .where(and(eq(actions.id, id), isNull(actions.receipt)))
+      .returning({ id: actions.id }),
+  )
+  yield* returned(rows, 'Dispatching action')
+})
+
 /** Writes the one receipt of a claimed operation; a second settlement changes nothing. */
 export const settle = Effect.fn('Actions.settle')(function* (receipt: ActionReceipt) {
   const database = yield* Database
@@ -319,7 +334,7 @@ export const unresolvedOf = Effect.fn('Actions.unresolvedOf')(function* (
 
 /**
  * What a provider's own lookup says about one operation. `Unsupported` when the provider offers no
- * way to look an operation up, which is every Integration today; that can never prove absence.
+ * way to look this operation up; that can never prove absence.
  */
 export const Lookup = Schema.TaggedUnion({
   Found: { receipt: ActionApplied },
@@ -336,12 +351,6 @@ export interface ActionLookupService {
 export class ActionLookup extends Context.Service<ActionLookup, ActionLookupService>()(
   'vivid/ActionLookup',
 ) {}
-
-/** No Integration or Computer exposes a lookup by operation yet, so every check is inconclusive. */
-export const actionLookupLayer = Layer.succeed(
-  ActionLookup,
-  ActionLookup.of({ look: () => Effect.succeed(Lookup.cases.Unsupported.make({})) }),
-)
 
 /** Settled with a receipt that says it happened: no provider needs asking. */
 const appliedReceipt = (phase: ActionPhase) =>
