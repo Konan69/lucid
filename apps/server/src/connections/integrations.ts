@@ -431,6 +431,12 @@ export const testIntegration = Effect.fn('Connections.testIntegration')(
       rationale: 'Confirm the integration works with one read-only call.',
     })
     return ToolOutcome.match<TestIntegrationOutcome>(outcome.outcome, {
+      Accepted: () =>
+        TestIntegrationOutcome.cases.NotTested.make({
+          account,
+          tools: names,
+          reason: 'result not confirmed',
+        }),
       Completed: () =>
         TestIntegrationOutcome.cases.Tested.make({ account, tools: names, tool: tool.name }),
       // The test call is a read, which the journal never answers in place of sending.

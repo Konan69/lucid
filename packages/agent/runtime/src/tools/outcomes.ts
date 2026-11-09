@@ -79,7 +79,7 @@ function writeUnknown(receipt: ActionReceipt): ToolResult {
 /** What each applied receipt proves, in the words the model reports to the Person. */
 const appliedWords = (receipt: ActionApplied) =>
   ActionApplied.match(receipt, {
-    Accepted: () => 'The service accepted the action; it has not finished it yet.',
+    Accepted: () => 'The service accepted the action; it is queued, not confirmed yet.',
     Completed: () => 'The service answered that the action is done.',
     Delivered: () => 'The service answered that the action is done and confirmed it arrived.',
   })
@@ -88,6 +88,14 @@ const appliedWords = (receipt: ActionApplied) =>
  * Each service outcome gives one truthful next step; an unknown side effect must never be retried blindly. */
 export function toolOutcome(result: IntegrationResult): ToolResult {
   const projected = ToolOutcome.match<ToolResult>(result.outcome, {
+    Accepted: ({ output, receipt }) => ({
+      output: {
+        ok: true,
+        output,
+        message: 'The service accepted the action; it is queued, not confirmed yet.',
+      },
+      receipts: receipt === null ? [] : [receipt],
+    }),
     Completed: ({ output, receipt }) =>
       receipt === null
         ? { output: { ok: true, output, message: 'The action completed.' } }
@@ -95,7 +103,7 @@ export function toolOutcome(result: IntegrationResult): ToolResult {
     Repeated: ({ receipt }) => ({
       output: {
         ok: true,
-        message: `This exact action was already done, so it was not sent again. ${appliedWords(receipt)} Its earlier answer is not available here.`,
+        message: `This exact action was already sent, so it was not sent again. ${appliedWords(receipt)} Its earlier answer is not available here.`,
       },
       receipts: [receipt],
     }),

@@ -376,8 +376,8 @@ const exposureOf = Effect.fn('Connections.exposure')(function* (
 /**
  * Vivid's gate authorizes execution; unsupported provider approval fails at the adapter.
  *
- * The adapter picks the receipt for a journaled operation: Executor calls are synchronous, so an
- * answer is `Completed` (never `Accepted`), and a lost answer is `Unknown`. Unjournaled calls (reads,
+ * The adapter records what the provider confirmed: acceptance is not completion, and a lost
+ * answer is `Unknown`. Unjournaled calls (reads,
  * a Person's display press) carry no receipt.
  */
 export const runConnection = Effect.fn('Connections.run')(
@@ -408,6 +408,16 @@ export const runConnection = Effect.fn('Connections.run')(
         ConnectionStore
       >
     >(outcome, {
+      Accepted: Effect.fnUntraced(function* ({ value }) {
+        const acceptedAt = yield* Clock.currentTimeMillis
+        const receipt = Option.map(operation, (operationId) =>
+          ActionReceipt.cases.Accepted.make({ operationId, acceptedAt }),
+        )
+        return yield* observedResult(
+          ToolOutcome.cases.Accepted.make({ output: value, receipt: Option.getOrNull(receipt) }),
+          { service: row.service, target, effect },
+        )
+      }),
       Completed: Effect.fnUntraced(function* ({ value }) {
         const completedAt = yield* Clock.currentTimeMillis
         const receipt = Option.map(operation, (operationId) =>
@@ -722,6 +732,7 @@ const sendJournaled = Effect.fn('Connections.sendJournaled')(function* (
     operation: Option.some(operation.id),
   }).pipe(Effect.tapError(() => release(operation.id)))
   yield* ToolOutcome.match(result.outcome, {
+    Accepted: ({ receipt }) => (receipt === null ? Effect.void : settle(receipt)),
     Completed: ({ receipt }) => (receipt === null ? Effect.void : settle(receipt)),
     OutcomeUnknown: ({ receipt }) => (receipt === null ? Effect.void : settle(receipt)),
     Rejected: () => release(operation.id),
@@ -933,6 +944,10 @@ export const useDisplayTool = Effect.fn('Connections.useDisplayTool')(function* 
 /** Approved execution carries the shared Tool decision as an action receipt without recording again. */
 const actionOutcome = (result: IntegrationResult) =>
   ToolOutcome.match<ActionOutcome>(result.outcome, {
+    Accepted: () =>
+      ActionOutcome.cases.Succeeded.make({
+        result: 'The service accepted the action; its result is not confirmed yet.',
+      }),
     Completed: ({ output }) =>
       ActionOutcome.cases.Succeeded.make({ result: JSON.stringify(output).slice(0, 4000) }),
     Rejected: ({ message }) => ActionOutcome.cases.Failed.make({ reason: message }),
@@ -946,7 +961,9 @@ const actionOutcome = (result: IntegrationResult) =>
       ActionOutcome.cases.Failed.make({ reason: 'This integration needs authorization.' }),
     OutcomeUnknown: () => ActionOutcome.cases.Unknown.make({}),
     Repeated: () =>
-      ActionOutcome.cases.Succeeded.make({ result: 'This exact action was already done.' }),
+      ActionOutcome.cases.Succeeded.make({
+        result: 'This exact action was already sent. Its receipt says whether it finished.',
+      }),
     Blocked: ({ rule }) => ActionOutcome.cases.Failed.make({ reason: rule }),
     ApprovalRequired: () =>
       ActionOutcome.cases.Failed.make({ reason: 'This action requires a new Approval.' }),

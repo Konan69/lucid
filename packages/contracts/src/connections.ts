@@ -473,6 +473,8 @@ export const ToolOutcome = Schema.TaggedUnion({
    * on a display.
    */
   Completed: { output: Schema.Json, receipt: Schema.NullOr(ActionApplied) },
+  /** The provider took the request, but has not confirmed its result. */
+  Accepted: { output: Schema.Json, receipt: Schema.NullOr(ActionReceipt.cases.Accepted) },
   /**
    * This exact operation was already done: the runtime retried a call that had been answered, or
    * the same act was reconciled as applied. Its receipt is what is known; it was not sent again,
@@ -703,6 +705,7 @@ export const TestIntegrationOutcome = Schema.TaggedUnion({
       'integration failed',
       'no read-only tool can be tested without extra input',
       'call failed',
+      'result not confirmed',
     ]),
   },
   /**
