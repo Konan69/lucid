@@ -1,16 +1,10 @@
 import { Machine } from '@typeonce/effect-machine'
 import { AtomMachine } from '@typeonce/effect-machine/reactivity'
-import {
-  ApprovalChanged,
-  type ApprovalDecision,
-  ApprovalExpired,
-  ApprovalId,
-  DecideApprovalRequest,
-} from '@vivid/contracts'
+import { type ApprovalDecision, ApprovalId, DecideApprovalRequest } from '@vivid/contracts'
 import { Context, Effect, type Layer, Option, Schema } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
-import type { ProductFailure } from './live.js'
+import { Refusal, refusalWords } from './responding.js'
 
 /**
  * Deciding an Approval away from its Thread: from Needs you on the Feed and from Notifications,
@@ -22,17 +16,6 @@ import type { ProductFailure } from './live.js'
  * Built as `deciding.ts` is for a computer's access: one decision at a time for the session,
  * held in atoms the app owns, so leaving the screen that pressed does not lose a refusal.
  */
-
-/** Why the server did not take a decision, as far as the Person needs to know. */
-export const Refusal = Schema.Literals(['Changed', 'Expired', 'Failed'])
-export type Refusal = typeof Refusal.Type
-
-/** The refusal a failed `DecideApproval` call is, by the server's typed answer. */
-export const refusalOf = (failure: ProductFailure): Refusal => {
-  if (failure instanceof ApprovalChanged) return 'Changed'
-  if (failure instanceof ApprovalExpired) return 'Expired'
-  return 'Failed'
-}
 
 /** A decision the server refused. Nothing ran; the Approval reads as the server now has it. */
 export class Refused extends Schema.TaggedError<Refused>()(
@@ -147,11 +130,5 @@ export const sentOn = (reading: Reading, id: ApprovalId): boolean =>
 /** What the refused Approval says beside its controls; nothing on any other. */
 export const refusalFor = (reading: Reading, id: ApprovalId): Option.Option<string> =>
   Reading.guards.Refused(reading) && reading.request.id === id
-    ? Option.some(
-        {
-          Changed: 'What this was for changed, so nothing was sent. Vivid will ask again.',
-          Expired: 'This ran out, so nothing was sent.',
-          Failed: 'That did not go through. Try again.',
-        }[reading.refusal],
-      )
+    ? Option.some(refusalWords[reading.refusal])
     : Option.none()

@@ -1,5 +1,11 @@
 import { useAtomValue } from '@effect/atom-react'
-import { PushDestination, PushPayload, type NotificationOpens } from '@vivid/contracts'
+import {
+  NotificationOpens,
+  PUSH_CATEGORY,
+  PushDestination,
+  PushPayload,
+  type PushAnswer,
+} from '@vivid/contracts'
 import { notifying, type makeLive } from '@vivid/state'
 import { Effect, Layer, Option, Result, Schema, Struct } from 'effect'
 import { PermissionStatus } from 'expo'
@@ -97,6 +103,41 @@ const channels = Effect.tryPromise({
   catch: unavailable,
 }).pipe(Effect.when(Effect.succeed(Platform.OS === 'android')))
 
+/**
+ * The buttons on a notification the Person can answer (`PushAsk`): Allow and Decline on an
+ * Approval, Review and Decline on a draft, which is never allowed unread. Registered again on
+ * every read, as the channels are; registering one that exists replaces it, and the system keeps
+ * them for a launch that starts in the background. `data/answers.ts` answers the presses.
+ *
+ * On iOS Allow and Decline answer without opening Vivid: Allow asks for the phone to be unlocked
+ * first (`isAuthenticationRequired`), and Decline does not. On Android this build has no runner
+ * for work while Vivid is closed (`expo-task-manager` is not in its native side), so a press that
+ * did not open the app would reach nothing; there each button opens Vivid, which answers at once.
+ */
+const quietly = Platform.OS === 'ios'
+const ALLOW = { identifier: 'allow' satisfies PushAnswer, buttonTitle: 'Allow' }
+const DECLINE = {
+  identifier: 'decline' satisfies PushAnswer,
+  buttonTitle: 'Decline',
+  options: { opensAppToForeground: !quietly, isDestructive: true },
+}
+const REVIEW = {
+  identifier: 'review' satisfies PushAnswer,
+  buttonTitle: 'Review',
+  options: { opensAppToForeground: true },
+}
+const categories = Effect.tryPromise({
+  try: () =>
+    Promise.all([
+      Notifications.setNotificationCategoryAsync(PUSH_CATEGORY.Approval, [
+        { ...ALLOW, options: { opensAppToForeground: !quietly, isAuthenticationRequired: true } },
+        DECLINE,
+      ]),
+      Notifications.setNotificationCategoryAsync(PUSH_CATEGORY.Draft, [REVIEW, DECLINE]),
+    ]),
+  catch: unavailable,
+})
+
 const permissions = Effect.tryPromise({
   try: () => Notifications.getPermissionsAsync(),
   catch: unavailable,
@@ -123,6 +164,7 @@ const phone = notifying.Device.of({
         return notifying.Holding.cases.Unasked.make({})
       case PermissionStatus.GRANTED:
         yield* channels
+        yield* categories
         if (yield* turnedOff) return notifying.Holding.cases.Off.make({})
         return notifying.Holding.cases.Held.make({ destination: yield* tokenFor(projectId) })
     }
@@ -141,6 +183,7 @@ const phone = notifying.Device.of({
       case PermissionStatus.UNDETERMINED:
         return yield* new notifying.DeviceRefused({ reason: 'Dismissed' })
       case PermissionStatus.GRANTED: {
+        yield* categories
         const destination = yield* tokenFor(projectId)
         yield* choose('on')
         return destination
@@ -226,9 +269,19 @@ Notifications.setNotificationHandler({
 
 const decodePressed = Schema.decodeUnknownOption(PushPayload)
 
-/** Where a pressed notification opens (`NotificationOpens`), as the server said in its payload. */
+/**
+ * Where a pressed notification opens (`NotificationOpens`): where the server said for a tap on
+ * the notification itself, and Notifications for Review, where a draft is read and edited
+ * before it is sent. Allow and Decline open nothing here; `data/answers.ts` answers them.
+ */
 const pressedOf = (response: Notifications.NotificationResponse) =>
-  Option.map(decodePressed(response.notification.request.content.data), (payload) => payload.opens)
+  Option.flatMap(decodePressed(response.notification.request.content.data), (payload) => {
+    if (response.actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER)
+      return Option.some(payload.opens)
+    if (response.actionIdentifier === ('review' satisfies PushAnswer))
+      return Option.some(NotificationOpens.cases.Notifications.make({}))
+    return Option.none()
+  })
 
 /**
  * Hears each notification the Person presses and hands what it is about to `open`, once the

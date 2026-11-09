@@ -13,6 +13,7 @@ import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import {
   NotificationId,
   NotificationOpens,
+  PushAsk,
   PushDestination,
   PushPayload,
   ThreadId,
@@ -27,6 +28,7 @@ const payload = PushPayload.make({
   body: 'Choose which meeting to move.',
   opens: NotificationOpens.cases.Thread.make({ threadId: ThreadId.make('thread') }),
   sound: 'Audible',
+  asks: PushAsk.cases.Nothing.make({}),
 })
 const phone = PushDestination.cases.Phone.make({ token: 'ExpoPushToken[test-device]' })
 

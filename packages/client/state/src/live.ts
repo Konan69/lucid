@@ -1,6 +1,7 @@
 import { RpcConnection, isTransientSocketReason, VividRpcClient } from '@vivid/client-runtime'
 import type {
   ApprovalChanged,
+  ApprovalDecided,
   ApprovalExpired,
   OwedResultUndelivered,
   SkillReadOnly,
@@ -32,6 +33,7 @@ export type ProductFailure =
   | OwedResultUndelivered
   | ApprovalChanged
   | ApprovalExpired
+  | ApprovalDecided
   | InputAnswerFailure
   | HandoffFailure
   | RpcClientError.RpcClientError
@@ -187,6 +189,7 @@ const FINAL = {
   InputAnswerWrittenForbidden: true,
   ApprovalChanged: true,
   ApprovalExpired: true,
+  ApprovalDecided: true,
   // A handoff refusal is the Person's to act on: they press again, nothing asks again by itself.
   HandoffClosed: true,
   HandoffNotAddressee: true,

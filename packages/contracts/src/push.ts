@@ -1,5 +1,5 @@
 import * as Schema from 'effect/Schema'
-import { NotificationId } from './identity.js'
+import { ApprovalId, NotificationId } from './identity.js'
 import { NotificationOpens } from './notifications.js'
 
 /** Random product identity; ownership and session authority never enter provider payloads. */
@@ -60,6 +60,41 @@ export type NotifyPersonOutcome = typeof NotifyPersonOutcome.Type
 export const PushSound = Schema.Literals(['Audible', 'Quiet'] as const)
 export type PushSound = typeof PushSound.Type
 
+/**
+ * What a Person can answer from the notification itself, without opening Vivid. The server reads
+ * it from the Approval the notice is about, at the moment it pushes, so one already answered
+ * elsewhere is pushed as `Nothing`.
+ *
+ * - `Nothing`: a notice to open, with no answer of its own.
+ * - `Approval`: Allow or Decline, sent as `DecideApproval` quoting `digest`, exactly as the Feed
+ *   and Notifications send it.
+ * - `Draft`: a send the Person may edit first (`draftOf`), so it is never allowed blind: Review
+ *   opens it, and Decline answers it where it stands.
+ */
+export const PushAsk = Schema.TaggedUnion({
+  Nothing: {},
+  Approval: { approvalId: ApprovalId, digest: Schema.String },
+  Draft: { approvalId: ApprovalId, digest: Schema.String },
+})
+export type PushAsk = typeof PushAsk.Type
+
+/**
+ * The notification category each answerable ask is pushed under. The phone registers each with
+ * its buttons at launch (`apps/mobile/src/data/notifying.ts`), and the server names it in the
+ * message (`push/adapter.ts`); the browser worker reads the ask itself.
+ */
+export const PUSH_CATEGORY = {
+  Approval: 'vivid.approval',
+  Draft: 'vivid.draft',
+} as const satisfies Record<Exclude<PushAsk['_tag'], 'Nothing'>, string>
+
+/**
+ * A button on an answerable notification, by the identifier the platform hands back when it is
+ * pressed. `review` opens Vivid at the notice; the other two decide.
+ */
+export const PushAnswer = Schema.Literals(['allow', 'decline', 'review'] as const)
+export type PushAnswer = typeof PushAnswer.Type
+
 /** The same payload is used by the browser worker and the phone tap handler. */
 export const PushPayload = Schema.Struct({
   notificationId: NotificationId,
@@ -67,5 +102,6 @@ export const PushPayload = Schema.Struct({
   body: Schema.String,
   opens: NotificationOpens,
   sound: PushSound,
+  asks: PushAsk,
 })
 export interface PushPayload extends Schema.Schema.Type<typeof PushPayload> {}

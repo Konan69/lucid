@@ -1,13 +1,5 @@
-import { ApprovalDecision, type Approval } from '@vivid/contracts'
-import {
-  allowing,
-  draftOf,
-  draftWords,
-  editedInput,
-  riskWords,
-  type Draft,
-  type DraftWords,
-} from '@vivid/state'
+import { ApprovalDecision, draftOf, type Approval, type SendDraft } from '@vivid/contracts'
+import { allowing, draftWords, editedInput, riskWords, type DraftWords } from '@vivid/state'
 import { Option } from 'effect'
 import { Paperclip } from 'lucide-react-native'
 import { useState, type ReactNode } from 'react'
@@ -52,7 +44,7 @@ export function Decide({ approval }: { approval: Approval }) {
       <Label size="caption" tone={action.effect === 'destructive' ? 'status-danger' : 'ink-3'}>
         {riskWords(action.effect)}
       </Label>
-      {Option.match(draftOf(approval), {
+      {Option.match(draftOf(approval.action), {
         onSome: (draft) => (
           <DraftForm
             // A newer record of the same ask is a new draft: the words start again from it.
@@ -130,7 +122,7 @@ function DraftForm({
   onDiscard,
   onSend,
 }: {
-  draft: Draft
+  draft: SendDraft
   held: boolean
   sending: boolean
   discarding: boolean
