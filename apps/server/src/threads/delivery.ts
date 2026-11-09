@@ -98,7 +98,9 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
     notice: Parameters<typeof oweRunNotice>[0],
     error: DatabaseInfrastructureError,
   ) {
-    yield* queue
+    // The retry gets its own savepoint too: if even owing the retry fails, the Run still ends
+    // (the #207 invariant) and the lost notice is logged rather than rolling the ending back.
+    const retry = queue
       .offer(
         NotificationDelivery.cases.OweRun.make({
           notificationId: NotificationId.make(`${notice.runId}:finished`),
@@ -111,10 +113,18 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
           Effect.fail(new DatabaseFailure({ message: 'Run notice retry could not be owed.' })),
         ),
       )
-    yield* Effect.logError('A settled Run could not owe its notice; retry recorded', {
-      runId: notice.runId,
-      reason: error._tag,
-    })
+    const offered = yield* database
+      .transaction(() => retry)
+      .pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      )
+    yield* Effect.logError(
+      offered
+        ? 'A settled Run could not owe its notice; retry recorded'
+        : 'A settled Run could not owe its notice or its retry; the notice is lost',
+      { runId: notice.runId, reason: error._tag },
+    )
   })
 
   /**
