@@ -378,13 +378,6 @@ const exposureOf = Effect.fn('Connections.exposure')(function* (
   return thread.audience === 'private' ? 'Ordinary' : 'PersonalInShared'
 })
 
-/**
- * Vivid's gate authorizes execution; unsupported provider approval fails at the adapter.
- *
- * The adapter records what the provider confirmed: acceptance is not completion, and a lost
- * answer is `Unknown`. Unjournaled calls (reads,
- * a Person's display press) carry no receipt.
- */
 /** A dispatch without a conclusive result remains held by the original operation, including a lost question write. */
 const unknownConnection = Effect.fn('Connections.unknown')(function* (
   operation: Option.Option<ActionOperationId>,
@@ -404,6 +397,7 @@ const unknownConnection = Effect.fn('Connections.unknown')(function* (
   )
 })
 
+/** Save the remote question under its original operation; a display press without one cannot offer a continuation. */
 const pauseConnection = Effect.fn('Connections.pause')(function* (
   actor: Actor,
   row: ConnectionRecord,
@@ -441,6 +435,7 @@ const pauseConnection = Effect.fn('Connections.pause')(function* (
     )
 })
 
+/** A Gate authorizes dispatch. Pauses keep the same operation; only provider evidence settles its receipt. */
 export const runConnection = Effect.fn('Connections.run')(
   function* (
     actor: Actor,
