@@ -1,5 +1,10 @@
 import * as NodeCrypto from 'node:crypto'
 import {
+  ActionTarget,
+  ApprovalId,
+  ConnectionId,
+  ProposedAction,
+  PushAsk,
   ResolveOwedRequest,
   RuntimeSubmissionId,
   TrackOwedRequest,
@@ -23,6 +28,7 @@ import {
   ThreadId,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
+import { approvals } from '../approvals/tables.ts'
 import { sessionTable } from '../auth/tables.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { feedHandlers } from '../feed/handlers.ts'
@@ -145,9 +151,52 @@ const notice = (owner: Effect.Success<ReturnType<typeof fixture>>) => {
     title: 'The reply is overdue',
     body: 'Please review\n the draft.',
     threadId: owner.threadId,
+    approvalId: null,
   }
   return { id, notice: words }
 }
+
+const encodeAction = Schema.encodeEffect(ProposedAction)
+
+/** An Integration action with these fields; one with a recipient and words is a draft (`draftOf`). */
+const integrationAction = (tool: string, input: Record<string, string>) =>
+  ProposedAction.make({
+    summary: `Use ${tool}`,
+    rationale: 'The Person asked for it.',
+    effect: 'destructive',
+    target: ActionTarget.cases.Connection.make({
+      connectionId: ConnectionId.make('connection'),
+      account: 'Gmail (Work)',
+      tool,
+      input,
+    }),
+  })
+
+/** A pending Approval in the owner's Thread, written as the store writes one. */
+const pendingApproval = Effect.fn('Test.pendingApproval')(function* (
+  owner: Effect.Success<ReturnType<typeof fixture>>,
+  action: ProposedAction,
+) {
+  const id = ApprovalId.make(NodeCrypto.randomUUID())
+  const digest = NodeCrypto.randomBytes(32).toString('hex')
+  const now = yield* Clock.currentTimeMillis
+  yield* owner.database.run(
+    owner.database.insert(approvals).values({
+      id,
+      threadId: owner.threadId,
+      runId: null,
+      personId: owner.person.id,
+      companyId: null,
+      action: yield* encodeAction(action),
+      digest,
+      binding: null,
+      status: 'pending',
+      expiresAt: now + 60_000,
+      createdAt: now,
+    }),
+  )
+  return { id, digest }
+})
 
 /** Each scoped test builds a fresh presence/adapter Layer while retaining real SQL semantics. */
 describe.skipIf(!testDatabaseConfigured)('push delivery and registration handlers', () => {
@@ -283,6 +332,57 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
             expect(rows).toHaveLength(2)
             expect(rows[0]).toMatchObject({ bodyLength: Buffer.byteLength(encodePayload(payload)) })
             expect(JSON.stringify(rows)).not.toContain('Please review')
+          }),
+        ),
+    )
+    it.effect(
+      'pushes Allow and Decline for a pending Approval, Review for a draft, nothing once answered',
+      () =>
+        withPush(
+          Effect.gen(function* () {
+            const owner = yield* fixture()
+            yield* (yield* PushTargets).register({
+              personId: owner.person.id,
+              sessionId: owner.sessionId,
+              destination: owner.destination,
+            })
+            const probe = yield* PushProbe
+            /** The ask the push of one new notice about `approvalId` carried. */
+            const pushedAbout = Effect.fn('Test.pushedAbout')(function* (approvalId: ApprovalId) {
+              const base = notice(owner)
+              yield* recordNotice({ id: base.id, notice: { ...base.notice, approvalId } })
+              const sent = yield* Ref.get(probe.sent)
+              const last = sent[sent.length - 1]
+              if (last === undefined) expect.fail('Expected a push')
+              expect(last.notificationId).toBe(base.id)
+              return last.asks
+            })
+            const update = yield* pendingApproval(
+              owner,
+              integrationAction('update_project', { project: 'Launch', status: 'done' }),
+            )
+            expect(yield* pushedAbout(update.id)).toEqual(
+              PushAsk.cases.Approval.make({ approvalId: update.id, digest: update.digest }),
+            )
+            const send = yield* pendingApproval(
+              owner,
+              integrationAction('send_email', {
+                to: 'dami@example.test',
+                subject: 'NDA',
+                body: 'The signed copy is attached.',
+              }),
+            )
+            expect(yield* pushedAbout(send.id)).toEqual(
+              PushAsk.cases.Draft.make({ approvalId: send.id, digest: send.digest }),
+            )
+            // Answered on another device before this push: nothing to answer from it.
+            yield* owner.database.run(
+              owner.database
+                .update(approvals)
+                .set({ status: 'denied' })
+                .where(eq(approvals.id, update.id)),
+            )
+            expect(yield* pushedAbout(update.id)).toEqual(PushAsk.cases.Nothing.make({}))
           }),
         ),
     )

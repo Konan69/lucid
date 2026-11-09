@@ -139,6 +139,7 @@ export const companyHandlers = {
         title: `Join ${company.name}`,
         body: `${auth.person.name} invited you to ${company.name}. invitation:${invitation.id}`,
         threadId: null,
+        approvalId: null,
       })
     }
     return invitation

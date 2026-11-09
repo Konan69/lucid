@@ -1,0 +1,1 @@
+ALTER TABLE "vivid_notifications" ADD COLUMN "approval_id" text;

@@ -44,6 +44,7 @@ export const oweRunNotice = Effect.fn('Notifications.oweRun')(function* (
       ? settlement.reply.slice(0, 240)
       : 'Vivid could not finish this.',
     threadId: run.threadId,
+    approvalId: null,
   })
 })
 

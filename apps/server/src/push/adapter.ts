@@ -5,7 +5,7 @@ import { Context, Effect, Layer, Option, Redacted, Schema } from 'effect'
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
-import { PushDestination, PushPayload } from '@vivid/contracts'
+import { PUSH_CATEGORY, PushAsk, PushDestination, PushPayload } from '@vivid/contracts'
 import { PushConfig } from './config.ts'
 import {
   PushAcceptance,
@@ -59,6 +59,10 @@ const ExpoMessage = Schema.Struct({
   sound: Schema.NullOr(Schema.Literal('default')),
   channelId: Schema.Literals(['default', 'quiet'] as const),
   data: PushPayload,
+  // The buttons the phone shows (`PUSH_CATEGORY`); absent on a notice that asks nothing.
+  categoryId: Schema.optionalKey(
+    Schema.Literals([PUSH_CATEGORY.Approval, PUSH_CATEGORY.Draft] as const),
+  ),
 })
 const ReceiptRequest = Schema.Struct({ ids: Schema.Array(Schema.String) })
 const encodePayload = Schema.encodeEffect(Schema.fromJsonString(PushPayload))
@@ -110,6 +114,29 @@ const sendBrowser = Effect.fn('PushAdapter.browser')(function* (
   return PushAcceptance.cases.Browser.make({})
 })
 
+/**
+ * The Expo message for one payload. A notice the Person can answer names its category, so the
+ * phone draws that category's buttons (Allow and Decline, or Review and Decline for a draft).
+ */
+const messageOf = (
+  destination: typeof PushDestination.cases.Phone.Type,
+  payload: PushPayload,
+): typeof ExpoMessage.Type => {
+  const message = {
+    to: destination.token,
+    title: payload.title,
+    body: payload.body,
+    sound: payload.sound === 'Audible' ? ('default' as const) : null,
+    channelId: payload.sound === 'Audible' ? ('default' as const) : ('quiet' as const),
+    data: payload,
+  }
+  return PushAsk.match(payload.asks, {
+    Nothing: () => message,
+    Approval: () => ({ ...message, categoryId: PUSH_CATEGORY.Approval }),
+    Draft: () => ({ ...message, categoryId: PUSH_CATEGORY.Draft }),
+  })
+}
+
 /** Expo HTTP v2 accepts one message and returns one ticket; no server secret is needed by default. */
 const sendPhone = Effect.fn('PushAdapter.phone')(function* (
   destination: typeof PushDestination.cases.Phone.Type,
@@ -119,14 +146,7 @@ const sendPhone = Effect.fn('PushAdapter.phone')(function* (
   const client = HttpClient.withScope(yield* HttpClient.HttpClient)
   const request = yield* HttpClientRequest.schemaBodyJson(ExpoMessage)(
     HttpClientRequest.post('https://exp.host/--/api/v2/push/send'),
-    {
-      to: destination.token,
-      title: payload.title,
-      body: payload.body,
-      sound: payload.sound === 'Audible' ? 'default' : null,
-      channelId: payload.sound === 'Audible' ? 'default' : 'quiet',
-      data: payload,
-    },
+    messageOf(destination, payload),
   ).pipe(Effect.mapError(() => new PushRejected({})))
   const response = yield* client.execute(request).pipe(Effect.mapError(() => new PushUncertain({})))
   yield* acceptedStatus(response.status)
