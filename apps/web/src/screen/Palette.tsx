@@ -79,7 +79,7 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
   {
     key: 'do:projects',
     title: 'Projects',
-    detail: 'Threads kept together',
+    detail: 'Threads grouped by piece of work',
     words: 'folders groups spaces',
     icon: <PlaceMark place="projects" />,
     keys: Option.none(),
@@ -106,7 +106,7 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
   {
     key: 'do:memory',
     title: 'What Vivid knows',
-    detail: 'Read, correct or remove what it has kept',
+    detail: 'Read, correct or remove what Vivid remembers',
     words: 'memory remember forget brain',
     icon: <PlaceMark place="memory" />,
     keys: Option.none(),
@@ -214,7 +214,7 @@ function groupsFor(
 const nothingSaid = (answer: LiveState<SearchResponse>) =>
   LiveState.$match(answer, {
     Loading: () => 'Searching…',
-    Failed: () => 'Search could not be reached. Try again in a moment.',
+    Failed: () => 'Search isn’t available. Try again in a moment.',
     Ready: () => 'Nothing matches that.',
   })
 

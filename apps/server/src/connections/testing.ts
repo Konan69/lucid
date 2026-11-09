@@ -1,4 +1,5 @@
 import { IntegrationAnswers } from '../connections/answers.ts'
+import { ExecutorAdoption } from './adopter.ts'
 import { discordServiceId } from './discord.ts'
 import { ExecutorEvents } from '../watches/events.ts'
 import * as NodeHttp from 'node:http'
@@ -14,6 +15,7 @@ import {
   Context,
   Effect,
   Layer,
+  Match,
   Option,
   Redacted,
   Ref,
@@ -53,6 +55,7 @@ import {
   type ExecutorConnectionOperations,
   type ExecutorActiveReferences,
   ExecutorCaller,
+  ExecutorUserId,
   Executor,
   ExecutorAppId,
   ExecutorAuthorizationId,
@@ -163,6 +166,7 @@ const makeOperations = (
 ): ExecutorConnectionOperations => {
   return {
     resume: () => Effect.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({})),
+    refresh: Effect.void,
     appSlug: (app) => Effect.succeed(`slug-${app}`),
     prepareRetirement: Effect.fn('Executor.Test.prepareRetirement')((resources) =>
       Effect.succeed(resources),
@@ -334,6 +338,7 @@ const probeLayer = Layer.effectContext(
 /** Operations a suite did not expect to reach Executor; each one fails the test it is called in. */
 const unanswered = () => Effect.die('This Executor operation is not answered by the test')
 export const unansweredOperations: ExecutorConnectionOperations = {
+  refresh: Effect.void,
   appSlug: unanswered,
   begin: unanswered,
   add: unanswered,
@@ -357,16 +362,26 @@ export const unansweredOperations: ExecutorConnectionOperations = {
  * A member caller for every Person, without an Executor to make members on: these suites prove
  * the store over the recording adapter above. `members.live.test.ts` proves real members.
  */
-export const testMembersLayer = Layer.succeed(
-  ExecutorMembers,
-  ExecutorMembers.of({
-    caller: ({ principal }) =>
-      Effect.succeed(
-        principal === 'installation'
-          ? installationCaller
-          : ExecutorCaller.cases.Member.make({ key: Redacted.make('test-member-key') }),
-      ),
-  }),
+export const testMembersLayer = Layer.mergeAll(
+  Layer.mock(ExecutorAdoption, {}),
+  Layer.succeed(
+    ExecutorMembers,
+    ExecutorMembers.of({
+      caller: ({ principal }) =>
+        Effect.succeed(
+          Match.value(principal).pipe(
+            Match.when('installation', () => installationCaller),
+            Match.whenOr('member', 'adopted-account', 'adopted-public', () =>
+              ExecutorCaller.cases.Member.make({
+                user: ExecutorUserId.make('test-executor-user'),
+                key: Redacted.make('test-member-key'),
+              }),
+            ),
+            Match.exhaustive,
+          ),
+        ),
+    }),
+  ),
 )
 
 const dependencies = Layer.mergeAll(

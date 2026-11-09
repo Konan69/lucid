@@ -102,7 +102,7 @@ function DeviceList({
   // `at` is when the list was asked for, which is the "now" its times are said against.
   const { answer, at } = use(asked)
   if (Result.isFailure(answer)) {
-    return <Empty>Vivid could not list your devices just now. Open this again in a moment.</Empty>
+    return <Empty>Couldn’t load your devices. Try again in a moment.</Empty>
   }
   const devices = answer.success
   const elsewhere = devices.filter((device) => !device.here)

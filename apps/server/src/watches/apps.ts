@@ -14,7 +14,7 @@ import {
   type ExecutorAppId,
   type ExecutorCaller,
 } from '../connections/executor.ts'
-import { ExecutorMembers, type MemberFailure } from '../connections/members.ts'
+import { ExecutorMembers, watchPrincipal, type MemberFailure } from '../connections/members.ts'
 import { listRecords, type ConnectionRecord } from '../connections/records.ts'
 import { namedAccounts } from '../connections/names.ts'
 import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
@@ -147,6 +147,7 @@ const dedicatedApp = (row: ConnectionRecord): Dedicated =>
   ExecutorReferences.match(row.references, {
     Public: ({ app, appOwnership }) => ready(row, app, appOwnership),
     Authorized: ({ app, appOwnership }) => ready(row, app, appOwnership),
+    Adopting: ({ app, appOwnership }) => ready(row, app, appOwnership),
     ReconnectRequired: shared,
     EnteringKey: notReady,
     SigningIn: notReady,
@@ -176,7 +177,7 @@ export const makeWatchedApps = (
 ) => {
   const callerOfRow = (row: Pick<ConnectionRecord, 'executorPrincipal' | 'personId'>) =>
     members
-      .caller({ principal: row.executorPrincipal, personId: row.personId })
+      .caller({ principal: watchPrincipal(row.executorPrincipal), personId: row.personId })
       .pipe(Effect.mapError(unreachable))
 
   /**

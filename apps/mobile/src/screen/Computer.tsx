@@ -229,8 +229,8 @@ function Said({
 const REFUSED = {
   start: 'The computer could not be turned on. Try again.',
   stop: 'The computer could not be turned off. Try again.',
-  take: 'Vivid still has the keyboard: taking over did not go through. Try again.',
-  hand: 'You still have the keyboard: handing back did not go through. Try again.',
+  take: 'Couldn’t take over. Vivid still has the keyboard. Try again.',
+  hand: 'Couldn’t hand back. You still have the keyboard. Try again.',
   watch: 'The screen could not be opened. Try again.',
 } as const
 

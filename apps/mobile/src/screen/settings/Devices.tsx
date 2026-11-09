@@ -40,9 +40,9 @@ export function Devices({ onClose }: { onClose: () => void }) {
   // The section header already names the thing, so the row says how it stands: the header
   // and the row both read "Vivid's Computer" until 26 October 2026 (seen on an iPhone).
   const computerRow = LiveState.$match(computer, {
-    Loading: () => ({ title: 'Looking for it…', detail: Option.none<string>() }),
+    Loading: () => ({ title: 'Checking…', detail: Option.none<string>() }),
     Failed: ({ failure }) => ({
-      title: 'Could not check it',
+      title: 'Couldn’t check its status',
       detail: Option.some(failure.message),
     }),
     Ready: ({ value }) => {
@@ -67,7 +67,7 @@ export function Devices({ onClose }: { onClose: () => void }) {
         {({ devices }) => (
           <Section
             title="Your computers"
-            detail="Allowing one stops allowing the previous one. A notice shows while Vivid works there."
+            detail="Vivid can use one computer at a time. Allowing one replaces the last. A notice shows on it while Vivid works there."
           >
             {devices.length === 0 && (
               <Row

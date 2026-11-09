@@ -41,6 +41,8 @@ import { egressLayer } from './computers/egress/relay.ts'
 import { loadServerConfig, ServerConfig } from './config.ts'
 import { executorLayer } from './connections/executor.ts'
 import { executorMembersLayer } from './connections/members.ts'
+import { executorAdoptionLayer } from './connections/adopter.ts'
+import { adoptionLayer } from './connections/migration.ts'
 import { toolEffectsLayer } from './connections/effects.ts'
 import { connectionStoreLayer } from './connections/store.ts'
 import { workLayer } from './database/work.ts'
@@ -132,6 +134,7 @@ const serverProgram = Effect.gen(function* () {
     libraryStoreLayer,
     executorLayer,
     executorMembersLayer,
+    executorAdoptionLayer,
     executorEventsLayer,
     boatMachineLayer,
     publicPageLayer,
@@ -182,6 +185,7 @@ const serverProgram = Effect.gen(function* () {
     Layer.provideMerge(work),
   )
   const background = Layer.mergeAll(
+    adoptionLayer,
     commandWorkerLayer,
     watchRenewalLayer,
     feedPacingLayer,

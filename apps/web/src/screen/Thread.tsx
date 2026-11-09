@@ -121,9 +121,9 @@ function Gone() {
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-surface-0 px-6 text-center">
       <Face size={40} mood="neutral" />
-      <h1 className="text-title font-title text-ink">This thread is not here</h1>
+      <h1 className="text-title font-title text-ink">Thread not found</h1>
       <p className="max-w-sm text-label text-ink-3">
-        It may have been deleted, or it is in a space you are not working in right now.
+        It may have been deleted, or it belongs to another space.
       </p>
       <Button variant="outline" onClick={() => void router.navigate({ to: '/' })}>
         Start a new thread
@@ -152,7 +152,7 @@ const stop = (id: ThreadId) => {
   void act(
     orSay(
       changing((sdk) => sdk.StopThread({ id })),
-      'Vivid could not be stopped just now. Try again.',
+      'Couldn’t stop Vivid. Try again.',
     ),
   )
 }

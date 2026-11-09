@@ -106,7 +106,7 @@ export function Switcher({ me, onClose }: { me: MeResponse; onClose: () => void 
           ))}
         </Section>
       )}
-      <Section title="Something new">
+      <Section title="New">
         <Row
           leading={<Plus size={22} strokeWidth={1.6} color={c['ink-2']} />}
           title="Create a company"

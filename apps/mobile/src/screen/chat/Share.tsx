@@ -90,7 +90,7 @@ export function Share({
   return (
     <Sheet
       title="Share this thread"
-      detail="People you share with can read it and write in it. Vivid answers each person as themselves."
+      detail="People you share with can read and write in it. Vivid answers each person as themselves."
       onClose={onClose}
     >
       <View accessibilityRole="radiogroup" style={{ gap: 8 }}>

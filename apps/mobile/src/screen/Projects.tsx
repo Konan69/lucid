@@ -171,8 +171,8 @@ export function Project({ route }: NativeStackScreenProps<Routes, 'Project'>) {
         {gone && (
           <Empty
             icon={FolderSearch}
-            title="This project is not here"
-            line="It may be in a space you are not working in right now."
+            title="Project not found"
+            line="It may belong to another space."
             room="page"
           />
         )}
@@ -223,7 +223,7 @@ function Filed({
   if (threads.length === 0 && hidden === 0) {
     return (
       <Label size="label" tone="ink-2">
-        No threads here yet. Start one and it is filed in this project.
+        No threads yet. Threads you start here are filed in this project.
       </Label>
     )
   }
@@ -428,7 +428,7 @@ function Inside({ project, all }: { project: ProjectRecord; all: ReadonlyArray<P
       {Option.isSome(refused) && <Notice message={refused.value} />}
       <View style={styles.wrap}>
         <Button kind="primary" icon={SquarePen} label="New thread" onPress={() => void begin()} />
-        <Button icon={Plus} label="Project inside" onPress={() => setCreating(true)} />
+        <Button icon={Plus} label="New project inside" onPress={() => setCreating(true)} />
       </View>
       <Work project={project} now={now} />
       <Filed threads={filed} hidden={hidden} now={now} />

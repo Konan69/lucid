@@ -177,7 +177,7 @@ function ApprovalOutcome({ state }: { state: ApprovalState }) {
     ),
     Expired: () => (
       <Label size="label" tone="ink-2">
-        This request ran out.
+        This request expired.
       </Label>
     ),
     Withdrawn: () => (

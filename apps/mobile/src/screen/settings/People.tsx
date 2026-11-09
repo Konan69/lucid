@@ -157,7 +157,8 @@ function Listed({
         void data
           .change((client) => client.LeaveCompany())
           .then((result) => {
-            if (Result.isFailure(result)) setRefused(Option.some('You could not leave just now.'))
+            if (Result.isFailure(result))
+              setRefused(Option.some('Couldn’t leave the company. Try again.'))
             else go.popToTop()
           })
       },
@@ -193,7 +194,7 @@ function Listed({
         })}
       </Section>
       {admin && (
-        <Section title="Invitations" detail="Open offers to join. Each link works once.">
+        <Section title="Invitations" detail="Pending invitations. Each link works once.">
           {people.invitations.length === 0 && <Row title="No open invitations" />}
           {people.invitations.map((invitation) => (
             <Row
@@ -361,7 +362,7 @@ function Invite({ company, onClose }: { company: string; onClose: () => void }) 
     return (
       <Sheet
         title="Send them this link"
-        detail={`It lets ${sent.value.email} join ${company}. It works once and runs out in a week.`}
+        detail={`It lets ${sent.value.email} join ${company}. It works once and expires in a week.`}
         onClose={onClose}
       >
         <InviteLink invitation={sent.value} />

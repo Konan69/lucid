@@ -52,7 +52,7 @@ type Fault = 'none' | 'name' | 'unsaved'
 
 const FAULT_WORDS = {
   name: `Use 1 to ${VIVID_NAME_MAX} characters, without backslashes.`,
-  unsaved: 'That was not saved: Vivid could not be reached. Try again.',
+  unsaved: 'Couldn’t reach Vivid, so that wasn’t saved. Try again.',
 } satisfies Record<Exclude<Fault, 'none'>, string>
 
 /**
@@ -139,7 +139,7 @@ export function Customise({ onClose }: { onClose: () => void }) {
               <DialogTitle>Customise Vivid</DialogTitle>
               <p className="mt-1 text-label text-pretty text-ink-3">
                 {Option.match(Option.flatMap(me, companyOf), {
-                  onNone: () => 'A name, a colour and a shape, shown wherever Vivid is.',
+                  onNone: () => 'Vivid’s name, colour and shape, shown wherever it appears.',
                   onSome: (company) => `Everyone in ${company} sees this name and look.`,
                 })}
               </p>

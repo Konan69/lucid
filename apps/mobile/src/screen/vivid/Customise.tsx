@@ -87,10 +87,10 @@ export function Customise({ onClose }: { onClose: () => void }) {
   const detail = Option.match(
     Option.map(me, (value) => value.workspace),
     {
-      onNone: () => 'A name, a colour and a shape, shown wherever Vivid is.',
+      onNone: () => 'Vivid’s name, colour and shape, shown wherever it appears.',
       onSome: (workspace) =>
         Workspace.match(workspace, {
-          Personal: () => 'A name, a colour and a shape, shown wherever Vivid is.',
+          Personal: () => 'Vivid’s name, colour and shape, shown wherever it appears.',
           Company: ({ company }) => `Everyone in ${company.name} sees this name and look.`,
         }),
     },

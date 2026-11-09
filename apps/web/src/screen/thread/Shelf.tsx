@@ -57,7 +57,7 @@ export function Shelf({ onClose }: { onClose: () => void }) {
         <>
           {items.length === 0 && (
             <p className="py-1.5 text-label font-meta text-pretty text-ink-3">
-              Nothing in your Library yet. What you add there, Vivid can read in every Thread.
+              Nothing in your Library yet. Vivid can read anything you add there in every thread.
             </p>
           )}
           <ul className="empty:hidden">
