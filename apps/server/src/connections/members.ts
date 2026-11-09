@@ -5,6 +5,7 @@ import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Match from 'effect/Match'
 import * as Option from 'effect/Option'
 import * as Redacted from 'effect/Redacted'
 import * as Ref from 'effect/Ref'
@@ -24,12 +25,14 @@ import {
   Executor,
   ExecutorAccessDenied,
   ExecutorCaller,
+  ExecutorUserId,
   ExecutorRateLimited,
   ExecutorResponseInvalid,
   ExecutorTransportFailure,
   executorAddress,
   installationCaller,
   type ExecutorPrincipal,
+  type ExecutorConnectionOperations,
 } from './executor.ts'
 import { memberPassword, seal, sealSecret, unseal, type SealSecret } from './seal.ts'
 import { executorMembers } from './tables.ts'
@@ -69,8 +72,6 @@ export type MemberFailure =
   | ExecutorAccessDenied
   | ExecutorResponseInvalid
   | DatabaseInfrastructureError
-
-const ExecutorUserId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorUserId'))
 
 /**
  * Where a Person's member is. `Provisioning` is written before Executor is first asked anything,
@@ -282,7 +283,7 @@ const makeMembers = Effect.fn('ExecutorMembers.make')(function* () {
   /** The member's key from a Ready row, opened for this request only. */
   const keyOf = (person: PersonId, state: Extract<MemberState, { readonly _tag: 'Ready' }>) =>
     unseal(secret, person, state.sealedKey).pipe(
-      Effect.map((key) => ExecutorCaller.cases.Member.make({ key })),
+      Effect.map((key) => ExecutorCaller.cases.Member.make({ user: state.user, key })),
     )
 
   const member = Effect.fn('ExecutorMembers.member')(function* (person: PersonId) {
@@ -299,7 +300,11 @@ const makeMembers = Effect.fn('ExecutorMembers.make')(function* () {
 
   return ExecutorMembers.of({
     caller: ({ principal, personId }) =>
-      principal === 'installation' ? Effect.succeed(installationCaller) : member(personId),
+      Match.value(principal).pipe(
+        Match.when('installation', () => Effect.succeed(installationCaller)),
+        Match.whenOr('member', 'adopted-account', 'adopted-public', () => member(personId)),
+        Match.exhaustive,
+      ),
   })
 })
 
@@ -419,13 +424,52 @@ export const callerOf = (connection: {
     members.caller({ principal: connection.executorPrincipal, personId: connection.personId }),
   ).pipe(Effect.mapError(memberFailure))
 
-/** The adapter's operations on one Connection, sent as its own caller (`callerOf`). */
+/** Watch authority is explicit for every principal. Account delegation grants app use, not
+ * direct personal-account use, which beta.23 requires when authorizing event delivery. */
+export const watchPrincipal = (principal: ExecutorPrincipal) =>
+  Match.value(principal).pipe(
+    Match.whenOr('installation', 'adopted-account', () => 'installation' as const),
+    Match.whenOr('member', 'adopted-public', () => 'member' as const),
+    Match.exhaustive,
+  )
+
+/** Separate execution from creator management, with the status authority chosen by the case. */
+function adoptedOperations(
+  management: ExecutorConnectionOperations,
+  execution: ExecutorConnectionOperations,
+  status: ExecutorConnectionOperations['status'],
+): ExecutorConnectionOperations {
+  return {
+    ...management,
+    appSlug: (app) => execution.appSlug(app),
+    tools: (references) => execution.tools(references),
+    call: (input) => execution.call(input),
+    status,
+    refresh: execution.refresh,
+    reviseMade: (app, files) =>
+      management.reviseMade(app, files).pipe(Effect.tap(() => execution.refresh)),
+  }
+}
+
+/** Adopted Account status uses the same owner authority as reauthorize's initial status probe. */
 export const operationsOf = Effect.fn('ExecutorMembers.operationsOf')(function* (connection: {
   readonly executorPrincipal: ExecutorPrincipal
   readonly personId: PersonId
 }) {
   const caller = yield* callerOf(connection)
-  return (yield* Executor).as(caller)
+  const executor = yield* Executor
+  const own = executor.as(caller)
+  const owner = executor.as(installationCaller)
+  return Match.value(connection.executorPrincipal).pipe(
+    Match.whenOr('installation', 'member', () => own),
+    Match.when('adopted-account', () =>
+      adoptedOperations(owner, own, (references) => owner.status(references)),
+    ),
+    Match.when('adopted-public', () =>
+      adoptedOperations(owner, own, (references) => own.status(references)),
+    ),
+    Match.exhaustive,
+  )
 })
 
 /** Requires Database, HttpClient and the Executor settings; a missing one stops launch. */

@@ -3,9 +3,9 @@ import { Clock, Effect, Option, Result } from 'effect'
 import { ApprovalInvalidation, Conflict } from '@vivid/contracts'
 import { Database } from '../database/client.ts'
 import { executorFailure, ConnectionReclamationBlocked } from './errors.ts'
-import { callerOf } from './members.ts'
+import { callerOf, operationsOf, watchPrincipal } from './members.ts'
+import { ExecutorAdoption } from './adopter.ts'
 import {
-  Executor,
   ExecutorAppId,
   ExecutorAccountId,
   ExecutorReferences,
@@ -45,6 +45,7 @@ export function storedResources(
       account: retired.account,
     }),
     Authorized: activeResources,
+    Adopting: activeResources,
     Public: activeResources,
     EnteringKey: activeResources,
     SigningIn: activeResources,
@@ -104,20 +105,34 @@ const removeRow = Effect.fn('Connections.removeRow')(function* (
  * cannot lose the copy IDs needed by a retry. Reclamation and row deletion then share the same
  * reclamation lock; concurrent removals cannot both defer cleanup to a row being removed.
  */
-export const removeConnection = Effect.fn('Connections.removeResources')(function* (
-  row: ConnectionRecord,
-) {
+const removeResources = Effect.fn('Connections.removeResources')(function* (row: ConnectionRecord) {
   const database = yield* Database
   // A member's app and personal account are removed with that member's own key: the owner may
   // delete a member's app but not the account the member connected (`members.ts`). Its Watches
   // were subscribed as that member, so they are unsubscribed as it too.
-  const caller = yield* callerOf(row)
-  const executor = (yield* Executor).as(caller)
+  const caller = yield* callerOf({
+    executorPrincipal: watchPrincipal(row.executorPrincipal),
+    personId: row.personId,
+  })
+  const executor = yield* operationsOf(row)
   if (
-    ExecutorReferences.isAnyOf(['Public', 'Authorized'])(row.references) &&
-    ExecutorAppOwnership.guards.Dedicated(row.references.appOwnership)
+    !ExecutorReferences.guards.ReconnectRequired(row.references) &&
+    (ExecutorAppOwnership.guards.Adopted(row.references.appOwnership) ||
+      (ExecutorReferences.isAnyOf(['Public', 'Authorized', 'Adopting'])(row.references) &&
+        ExecutorAppOwnership.guards.Dedicated(row.references.appOwnership)))
   ) {
-    yield* executor.remove(row.references).pipe(Effect.mapError(executorFailure))
+    const ownership = row.references.appOwnership
+    if (ExecutorAppOwnership.guards.Adopted(ownership))
+      yield* (yield* ExecutorAdoption).remove(row.references).pipe(Effect.mapError(executorFailure))
+    else yield* executor.remove(row.references).pipe(Effect.mapError(executorFailure))
+    if (ExecutorAppOwnership.guards.Adopted(ownership))
+      yield* (yield* ExecutorAdoption)
+        .removeGroup(ownership.group)
+        .pipe(Effect.mapError(executorFailure))
+    if (ExecutorReferences.guards.Adopting(row.references))
+      yield* (yield* ExecutorAdoption)
+        .removeGroup(row.references.group)
+        .pipe(Effect.mapError(executorFailure))
     const stopped = yield* database.transaction((tx) => removeRow(tx, row))
     yield* unsubscribeWatches(caller, stopped)
     return yield* Effect.void
@@ -154,7 +169,9 @@ export const removeConnection = Effect.fn('Connections.removeResources')(functio
         .returning({ id: connections.id }),
     )
     if (saved.length === 0)
-      return yield* new Conflict({ message: 'This integration changed before removal; reload it.' })
+      return yield* new Conflict({
+        message: 'This integration changed before removal; reload it.',
+      })
   }
   const stopped = yield* database.transaction((tx) =>
     Effect.gen(function* () {
@@ -189,4 +206,29 @@ export const removeConnection = Effect.fn('Connections.removeResources')(functio
     }),
   )
   yield* unsubscribeWatches(caller, stopped)
+})
+
+/** Hold the same cross-process claim as adoption before deleting foreign resources. A stale
+ * removal must reload rather than delete an app whose execution principal changed meanwhile. */
+export const removeConnection = Effect.fn('Connections.remove')(function* (row: ConnectionRecord) {
+  const database = yield* Database
+  const context = yield* Effect.context<Effect.Services<ReturnType<typeof removeResources>>>()
+  return yield* database.transaction((tx) =>
+    Effect.gen(function* () {
+      yield* tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${`vivid-adopt:${row.id}`}, 0))`,
+      )
+      const [current] = yield* tx
+        .select({ updatedAt: connections.updatedAt })
+        .from(connections)
+        .where(eq(connections.id, row.id))
+      if (current === undefined || current.updatedAt !== row.updatedAt)
+        return yield* new Conflict({
+          message: 'This integration changed before removal; reload it.',
+        })
+      // The lock transaction must not absorb retirement's independently committed recovery writes.
+      // Effect.setContext replaces the transaction context with the caller's captured context.
+      return yield* removeResources(row).pipe(Effect.setContext(context))
+    }),
+  )
 })
