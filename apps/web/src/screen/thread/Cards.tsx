@@ -244,7 +244,7 @@ function ApprovalOutcome({ state }: { state: ApprovalState }) {
         Not allowed by {decidedBy.name}.
       </span>
     ),
-    Expired: () => <span className={cn(SETTLED, 'text-ink-3')}>This request ran out.</span>,
+    Expired: () => <span className={cn(SETTLED, 'text-ink-3')}>This request expired.</span>,
     Withdrawn: () => <span className={cn(SETTLED, 'text-ink-3')}>Withdrawn.</span>,
     Invalidated: ({ reason }) => (
       <span className={cn(SETTLED, 'text-ink-3')}>{changedLine(reason)}</span>
@@ -597,7 +597,7 @@ function ConnectionAction({
     // press here was owed its carry-on. Once the Thread has moved on there is nothing to press.
     return current ? (
       <Button size="pill" onClick={onCarryOn}>
-        Carry on
+        Continue
       </Button>
     ) : null
   }
@@ -666,7 +666,7 @@ const offered = (
     CarryOn: ({ message }) =>
       card.current ? (
         <Button size="pill" onClick={() => card.onGiveUp(message)}>
-          Carry on
+          Continue
         </Button>
       ) : null,
   })

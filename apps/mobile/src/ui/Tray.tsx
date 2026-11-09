@@ -60,7 +60,7 @@ function Tile({
       {removable && (
         <Press
           accessibilityRole="button"
-          accessibilityLabel={`Take ${item.file.name} off`}
+          accessibilityLabel={`Remove ${item.file.name}`}
           onPress={onRemove}
           hitSlop={10}
           style={({ pressed }) => ({

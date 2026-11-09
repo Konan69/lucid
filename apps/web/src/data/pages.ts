@@ -71,7 +71,7 @@ if (Option.isSome(bridge)) {
     if (started) panel.show()
   })
   bridge.value.watchDownloads((refused) =>
-    say(`“${refused.filename}” was not downloaded. Vivid’s pages do not keep files yet.`),
+    say(`“${refused.filename}” wasn’t downloaded. Vivid’s pages can’t save files yet.`),
   )
 }
 

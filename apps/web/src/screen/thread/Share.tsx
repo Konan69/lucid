@@ -86,8 +86,7 @@ export function Share({
         <DialogHeader>
           <DialogTitle>Share this thread</DialogTitle>
           <DialogDescription>
-            People you share with can read it and write in it. Vivid answers each person as
-            themselves.
+            People you share with can read and write in it. Vivid answers each person as themselves.
           </DialogDescription>
         </DialogHeader>
         {/* One body: a refusal is said close under the choices it is about. */}

@@ -153,12 +153,9 @@ function Listed({
   const companys = rules.filter((rule) => RuleScope.guards.Company(rule.scope))
   return (
     <>
-      <Section
-        title="Your rules"
-        detail="They apply to Vivid when it acts for you, in every workspace."
-      >
+      <Section title="Your rules" detail="They apply whenever Vivid acts for you, in every space.">
         {mine.length === 0 && (
-          <Row wrap title="No rules yet. Vivid asks before it changes anything outside itself." />
+          <Row wrap title="No rules yet. Vivid asks before it changes anything outside Vivid." />
         )}
         {mine.map((rule) => (
           <RuleRow key={rule.id} rule={rule} removal={Option.some(onRemove)} />
@@ -167,7 +164,7 @@ function Listed({
       {Option.isSome(shared) && (
         <Section
           title={`${shared.value.name}’s rules`}
-          detail="They bind everyone. A personal rule can make Vivid stricter, never looser."
+          detail="They apply to everyone. A personal rule can make Vivid stricter, never looser."
         >
           {companys.length === 0 && <Row title="No company rules yet." />}
           {companys.map((rule) => (

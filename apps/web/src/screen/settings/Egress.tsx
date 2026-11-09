@@ -28,18 +28,17 @@ export const LABEL = 'Send Vivid’s browsing through your computer'
  */
 export const said = (status: LiveState<EgressStatus>): string =>
   LiveState.$match(status, {
-    Loading: () => 'Checking whether Vivid’s browsing is going through a computer of yours.',
-    Failed: () =>
-      'Vivid could not check whether its browsing is going through a computer of yours.',
+    Loading: () => 'Checking whether Vivid is browsing through your computer.',
+    Failed: () => 'Couldn’t check whether Vivid is browsing through your computer.',
     Ready: ({ value }) =>
       EgressStatus.match(value, {
         Off: () => 'Off. Sites Vivid opens see the address of Vivid’s computer, not yours.',
         Waiting: () =>
-          'On, but not in use yet. It starts when Vivid’s computer is running and the Vivid app is open on a computer of yours.',
+          'On, but not in use yet. It starts once Vivid’s computer is running and the Vivid app is open on one of your computers.',
         Routing: () =>
-          'On. Sites Vivid opens see the address of a computer of yours that has the Vivid app open. A browser that was already open on Vivid’s computer changes over the next time Vivid opens it.',
+          'On. Sites Vivid opens see the address of your computer that has the Vivid app open. A browser already open on Vivid’s computer switches over the next time Vivid opens it.',
         Failed: () =>
-          'On, but Vivid’s computer could not be connected to a computer of yours. Vivid keeps trying.',
+          'On, but Vivid’s computer couldn’t connect to your computer. Vivid keeps trying.',
       }),
   })
 

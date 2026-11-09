@@ -142,7 +142,7 @@ function Quiet() {
       <Empty
         icon={Bell}
         title="You’re all caught up"
-        line="Vivid will tell you here."
+        line="New notifications from Vivid appear here."
         room="page"
       />
     </ScrollView>

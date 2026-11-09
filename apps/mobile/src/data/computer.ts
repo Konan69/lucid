@@ -51,14 +51,14 @@ export const standingOf = (computer: Computer): Standing =>
         ? {
             glass: 'You have the keyboard',
             title: 'Turned on',
-            detail: 'Vivid will not act on its computer until you hand it back.',
+            detail: 'Vivid won’t use its computer until you hand it back.',
             mood: 'neutral',
             start: Option.none(),
           }
         : {
             glass: 'Vivid has the keyboard',
             title: 'Turned on',
-            detail: 'Take over to stop Vivid acting on its computer until you hand it back.',
+            detail: 'Take over to stop Vivid using its computer until you hand it back.',
             mood: 'happy',
             start: Option.none(),
           },
@@ -131,11 +131,11 @@ export const viewerOnGlass = (address: string): string => {
  */
 export const screenNote = (computer: Computer): string =>
   Option.match(viewerOf(computer), {
-    onNone: () => 'Its screen is not shown on the phone. Open Vivid in a browser to watch it.',
+    onNone: () => 'The phone can’t show its screen. Open Vivid in a browser to watch it.',
     onSome: () =>
       computer.heldByPerson
         ? 'Its screen opens in your browser.'
-        : 'Its screen opens in your browser. A touch there reaches the computer, so take over first if you mean to use it.',
+        : 'Its screen opens in your browser. Anything you tap there reaches the computer, so take over first if you want to use it.',
   })
 
 /**
@@ -152,5 +152,5 @@ export const arrive = (data: LiveData) => void data.run(wakeComputer())
  */
 export const glassNote = (computer: Computer): string =>
   computer.heldByPerson
-    ? 'Touch the screen to use it. Hand back when you are done.'
+    ? 'Tap the screen to use it. Hand back when you’re done.'
     : 'You are watching. Take over to use it yourself.'

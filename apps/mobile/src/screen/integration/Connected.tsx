@@ -61,7 +61,8 @@ export function Connected({
       detail={Option.getOrUndefined(
         Option.map(
           company,
-          (name) => `Yours act only for you. Every member’s Vivid can read through ${name}’s.`,
+          (name) =>
+            `Your integrations act only for you. Vivid can read data from ${name}’s integrations for every member.`,
         ),
       )}
     >

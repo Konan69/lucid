@@ -107,9 +107,9 @@ export function useAttachments(pictures: boolean) {
       if (!pictures) return refused('Pictures can only be sent in a private thread for now.')
       if (file.size > LARGEST_PICTURE) return refused('Too large. Pictures can be up to 5 MB.')
       const read = yield* running(readPicture(file))
-      if (!Result.isSuccess(read)) return refused('It could not be read. Try another file.')
+      if (!Result.isSuccess(read)) return refused('That file couldn’t be read. Try another one.')
       const picture = read.success
-      if (Option.isNone(picture)) return refused('It could not be read. Try another file.')
+      if (Option.isNone(picture)) return refused('That file couldn’t be read. Try another one.')
       return setFiles((now) =>
         now.filter((one) => Option.isSome(one.picture)).length >= MOST_PICTURES
           ? [
@@ -142,7 +142,7 @@ export function useAttachments(pictures: boolean) {
         key,
         Result.isSuccess(result)
           ? { at: 'kept' }
-          : { at: 'refused', why: 'It did not upload. Take it off and try again.' },
+          : { at: 'refused', why: 'It didn’t upload. Remove it and try again.' },
       )
     })
   }
@@ -202,7 +202,7 @@ export function Attached({
           </span>
           <button
             type="button"
-            aria-label={`Take off ${file.name}`}
+            aria-label={`Remove ${file.name}`}
             onClick={() => onRemove(file.key)}
             className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-xs text-ink-3 hover:bg-wash-pressed hover:text-ink"
           >

@@ -49,7 +49,7 @@ const sending = Layer.succeed(feed.Sending, {
           closing.delete(card)
           const closed = yield* changing((client) => client.MarkFeedCard({ card, state: 'done' }))
           if (Result.isFailure(closed)) {
-            Option.map(title, (words) => say(`“${words}” could not be closed just now.`))
+            Option.map(title, (words) => say(`“${words}” couldn’t be closed.`))
             return yield* new feed.SendRefused({ card })
           }
           return undefined

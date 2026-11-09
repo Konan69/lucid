@@ -142,7 +142,7 @@ function Shown({ shown, send, now }: { shown: ShownReading; send: Send; now: num
       <Pages title="How Vivid reaches you" pages={page('attention')} />
       <Pages title="Vivid" pages={[...page('self'), ...page('soul')]} />
       {remembering.Entry.guards.Unforgotten(shown.entry) && (
-        <Notice message="That could not be forgotten, so it is back in the list. Try again." />
+        <Notice message="Couldn’t forget that, so it’s back in the list. Try again." />
       )}
       {remembering.Entry.guards.Vanished(shown.entry) && (
         <Notice message="Vivid no longer remembers that, so it has left the list." />

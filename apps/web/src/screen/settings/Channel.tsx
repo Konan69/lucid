@@ -324,7 +324,7 @@ function Confirming({
         <Figure name="This code" value={standing.code} spent={ended} />
       </dl>
       <p aria-live="polite" className="text-label text-ink-3">
-        {ended ? `This code ended at ${at}. Get a new one.` : `The code works until ${at}.`}
+        {ended ? `This code expired at ${at}. Get a new one.` : `The code works until ${at}.`}
       </p>
       <div className="flex flex-wrap items-center gap-2">
         {!ended && (

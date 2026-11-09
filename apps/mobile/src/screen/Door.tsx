@@ -102,8 +102,7 @@ function Missing() {
         Vivid is not set up on this phone
       </Label>
       <Label tone="ink-2">
-        This copy of the app was not given a Vivid to open. Install it again from the link you were
-        sent.
+        This copy of the app isn’t linked to a Vivid. Reinstall it from the link you were sent.
       </Label>
     </View>
   )

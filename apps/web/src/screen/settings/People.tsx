@@ -150,7 +150,7 @@ function CompanyPeople({
       {admin && (
         <Section
           title="Invitations"
-          detail="Open offers to join. Each link works once, for its address."
+          detail="Pending invitations. Each link works once, for the email it was sent to."
         >
           {people.invitations.length === 0 && <Empty>No open invitations.</Empty>}
           {people.invitations.map((invitation) => (
@@ -177,7 +177,10 @@ function CompanyPeople({
               variant="outline"
               onClick={() =>
                 void act(
-                  attempt((client) => client.LeaveCompany(), 'You could not leave just now.'),
+                  attempt(
+                    (client) => client.LeaveCompany(),
+                    'Couldn’t leave the company. Try again.',
+                  ),
                 ).then((left) => {
                   if (left) void router.navigate({ to: '/' })
                 })
@@ -279,7 +282,7 @@ function Invite({ company, onClose }: { company: string; onClose: () => void }) 
           <DialogHeader>
             <DialogTitle>Send them this link</DialogTitle>
             <DialogDescription>
-              {`It lets ${sent.email} join ${company}. It works once and runs out in a week.`}
+              {`It lets ${sent.email} join ${company}. It works once and expires in a week.`}
             </DialogDescription>
           </DialogHeader>
           <div className="flex items-center gap-2 rounded-control bg-well px-3 py-2">

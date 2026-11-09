@@ -56,7 +56,7 @@ export function Add({ route, navigation }: NativeStackScreenProps<Routes, 'Add'>
   }
 
   return (
-    <FittedSheet title="Add to Thread">
+    <FittedSheet title="Add to thread">
       {recent ? (
         <Recent picked={picked} onCamera={() => choose('Camera')} onToggle={toggle} />
       ) : (

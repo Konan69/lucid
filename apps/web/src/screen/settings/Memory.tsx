@@ -218,7 +218,7 @@ function Pages({ title, pages }: { title: string; pages: ReadonlyArray<SavedMemo
  */
 function Notice({ entry }: { entry: remembering.Entry }) {
   const said = remembering.Entry.match(entry, {
-    Unforgotten: () => 'That could not be forgotten, so it is back in the list. Try again.',
+    Unforgotten: () => 'Couldn’t forget that, so it’s back in the list. Try again.',
     Vanished: () => 'Vivid no longer remembers that, so it has left the list.',
     Closed: () => null,
     Opening: () => null,

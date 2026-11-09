@@ -191,7 +191,7 @@ export const seenIn =
  */
 export const askedWords = (item: Waiting): string =>
   item.asking.includes('approval')
-    ? 'Vivid wants to do something and needs your yes. Open it to decide.'
+    ? 'Vivid needs your approval to do something. Open it to decide.'
     : 'Vivid has a question for you. Open it to answer.'
 
 /**

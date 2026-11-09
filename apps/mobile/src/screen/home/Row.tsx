@@ -146,7 +146,7 @@ export function ThreadRow({
     commit()
     void follow(
       patchThread(data, thread.id, { archived: !thread.archived }),
-      'That thread could not be moved just now. Try again.',
+      'Couldn’t move that thread. Try again.',
     )
   }
   /**
@@ -163,7 +163,7 @@ export function ThreadRow({
     const asked = retitleThread(data, thread.id).pipe(
       Effect.ensuring(Effect.sync(() => setRetitling(false))),
     )
-    void follow(asked, 'Vivid could not think of a better title just now.')
+    void follow(asked, 'Vivid couldn’t come up with a better title.')
   }
   const remove = () =>
     confirmDestructive({

@@ -14,13 +14,13 @@ const when = new Intl.DateTimeFormat(undefined, {
 export const auditSentence = (event: AuditEvent) =>
   AuditEvent.match(event, {
     ActionAllowed: ({ service, tool }) => `Used ${tool} on ${service}, allowed by a rule`,
-    ActionApproved: ({ service, tool }) => `Used ${tool} on ${service}, after being allowed`,
+    ActionApproved: ({ service, tool }) => `Used ${tool} on ${service} after approval`,
     ActionDenied: ({ service, tool }) => `Was not allowed to use ${tool} on ${service}`,
-    ActionFailed: ({ service, tool }) => `Tried ${tool} on ${service}; it did not work`,
+    ActionFailed: ({ service, tool }) => `Tried ${tool} on ${service}, but it didn’t work`,
     ActionBlocked: ({ service, tool, rule }) =>
       `Blocked from ${tool} on ${service} by the rule “${rule}”`,
     ActionOutcomeUnknown: ({ service, tool }) =>
-      `Used ${tool} on ${service}; it may or may not have happened`,
+      `Used ${tool} on ${service}, but it’s unclear whether it worked`,
     ConnectionAdded: ({ service, shared }) =>
       shared ? `Connected ${service} for the company` : `Connected ${service}`,
     ConnectionRemoved: ({ service, shared }) =>
@@ -32,7 +32,7 @@ export const auditSentence = (event: AuditEvent) =>
     RuleAdded: ({ action, decision }) => `Rule added: ${decision.toLowerCase()} “${action}”`,
     RuleRemoved: ({ action }) => `Rule removed: “${action}”`,
     ThreadShared: ({ title, audience }) => `Shared “${title}” with ${audience}`,
-    MemorySaved: ({ scope }) => `Vivid kept something (${scope})`,
+    MemorySaved: ({ scope }) => `Vivid saved something (${scope})`,
     MemoryForgotten: ({ scope }) => `Vivid forgot something (${scope})`,
   })
 

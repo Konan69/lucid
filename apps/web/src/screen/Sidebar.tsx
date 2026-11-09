@@ -241,7 +241,8 @@ function Work({ scoped }: { scoped: Option.Option<Project> }) {
         active={Option.getOrNull(Option.fromUndefinedOr(onThread))}
         empty={Option.match(scoped, {
           onNone: () => 'Threads you start will appear here.',
-          onSome: (project) => `No threads in ${project.name} yet. Start one and it is filed here.`,
+          onSome: (project) =>
+            `No threads in ${project.name} yet. Threads you start here go in this project.`,
         })}
       />
     </>

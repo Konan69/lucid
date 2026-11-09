@@ -134,7 +134,7 @@ export const cardSaid = (
         // account would never be answered by another, and its Thread would be stuck. The button
         // carries the Thread on with what happened instead.
         Unusable: ({ serviceName }): CardSaid => ({
-          button: Option.some('Carry on'),
+          button: Option.some('Continue'),
           line: Option.some({ words: `${serviceName} did not accept that.`, urgent: true }),
           carryOn: Option.some(`${serviceName} did not accept that key.`),
         }),

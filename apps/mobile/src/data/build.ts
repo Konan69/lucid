@@ -61,10 +61,10 @@ export const shortId = (id: string): string => id.slice(0, 8)
  */
 export const runningWords = (running: Running, write: (moment: Date) => string): string =>
   Running.$match(running, {
-    Off: () => 'This build does not take updates.',
-    Installed: () => 'None running. This is the app as it was installed.',
+    Off: () => 'Updates are off in this build.',
+    Installed: () => 'Original app version',
     Updated: ({ published, id }) => `Published ${write(published)} · ${shortId(id)}`,
-    Unnamed: () => 'An update is running, but this phone cannot say which.',
+    Unnamed: () => 'Running an update. Its version is unknown.',
   })
 
 /**
@@ -100,6 +100,6 @@ export const reportsFrom = (started: Option.Option<{ readonly native: boolean }>
 export const reportsWords = (reports: Reports): string =>
   Reports.$match(reports, {
     Unstarted: () => 'Off in this build.',
-    Unsendable: () => 'Off. This install is older than error reports. A new install turns them on.',
+    Unsendable: () => 'Off. Install a newer version of the app to enable error reports.',
     Sending: () => 'On',
   })

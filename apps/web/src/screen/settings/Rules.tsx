@@ -61,12 +61,9 @@ export function Rules({ me }: { me: MeResponse }) {
   return (
     <>
       <Refusal message={refusal} />
-      <Section
-        title="Your rules"
-        detail="They apply to Vivid when it acts for you, in every workspace."
-      >
+      <Section title="Your rules" detail="They apply whenever Vivid acts for you, in every space.">
         {mine.length === 0 && (
-          <Empty>No rules yet. Vivid asks before it changes anything outside itself.</Empty>
+          <Empty>No rules yet. Vivid asks before it changes anything outside Vivid.</Empty>
         )}
         {mine.map((rule) => (
           <RuleRow key={rule.id} rule={rule} onRemove={() => remove(rule)} />
@@ -79,7 +76,7 @@ export function Rules({ me }: { me: MeResponse }) {
       {company !== null && (
         <Section
           title={`${company.company.name}’s rules`}
-          detail="They bind everyone. A personal rule can make Vivid stricter, never looser."
+          detail="They apply to everyone. A personal rule can make Vivid stricter, never looser."
         >
           {companys.length === 0 && <Empty>No company rules yet.</Empty>}
           {companys.map((rule) => (

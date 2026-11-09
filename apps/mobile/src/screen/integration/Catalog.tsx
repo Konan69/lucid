@@ -58,7 +58,7 @@ export function Catalog({
     return (
       <View style={{ gap: 16 }}>
         {whose}
-        <View accessibilityRole="progressbar" accessibilityLabel="Looking through the integrations">
+        <View accessibilityRole="progressbar" accessibilityLabel="Loading integrations">
           <Section title={searching ? 'Results' : 'Popular'}>
             {SLOTS.map((slot) => (
               <Placeholder key={slot} />
@@ -72,11 +72,11 @@ export function Catalog({
     return (
       <Empty
         icon={CloudOff}
-        title="The list is out of reach"
+        title="Couldn’t load integrations"
         line="Vivid can’t reach its list of integrations right now. What you have connected still works."
         room="section"
       >
-        <Button label="Look again" onPress={onAgain} />
+        <Button label="Try again" onPress={onAgain} />
       </Empty>
     )
   }
