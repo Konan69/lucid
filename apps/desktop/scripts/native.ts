@@ -149,7 +149,12 @@ const launchProof = Effect.fn('Test.launchNativeProof')(function* (proof: Native
         output.text = (output.text + chunk.toString()).slice(-65536)
       })
       child.once('error', () => resume(Effect.fail(new NativeProofFailed({}))))
-      child.once('close', () => resume(Effect.fail(new NativeProofFailed({}))))
+      // An exit before the ready line fails acquisition, so `finish` never runs and never prints
+      // what Electron and xvfb-run said; print it here. After ready, `finish` owns the output.
+      child.once('close', () => {
+        if (!output.text.includes(proof.ready)) console.error(output.text)
+        resume(Effect.fail(new NativeProofFailed({})))
+      })
       return stopNative(child)
     }),
     (process) => finish(process, proof),

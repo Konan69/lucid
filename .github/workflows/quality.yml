@@ -113,8 +113,14 @@ jobs:
           restore-keys: |
             turbo-${{ runner.os }}-${{ strategy.job-index }}-${{ hashFiles('pnpm-lock.yaml') }}-
 
+      # The gate prints only its verdict at the end, so a failure or a timeout showed nothing. The
+      # trap prints this run's stage logs and keeps the gate's exit; the runner's SIGTERM on a
+      # timeout fires it at once (SIGINT waits for the gate). A pass removes it.
       - name: Run the gate stages
-        run: node scripts/gate.mjs full --here --only ${{ matrix.stages }} --ceilings-base "$CEILINGS_BASE"
+        run: |
+          trap 'status=$?; cat .cache/gate/runs/*/*.log || true; exit $status' EXIT
+          node scripts/gate.mjs full --here --only ${{ matrix.stages }} --ceilings-base "$CEILINGS_BASE"
+          trap - EXIT
 
   test:
     name: Test
