@@ -9,8 +9,6 @@ export const settingsTable = pgTable('settings', {
   theme: text().notNull().default('system'),
   /** An IANA zone name. Local dates and times are resolved in it. */
   timezone: text().notNull().default('UTC'),
-  /** Whether this Person wants to be told when something needs them or finishes. */
-  notify: boolean().notNull().default(true),
   /**
    * Whether the Computer's browser sends its traffic out through this Person's own computer
    * (`computers/egress/`). Off until the Person turns it on. Issue 61 removes the choice.

@@ -1,0 +1,12 @@
+{
+  "type": "widget",
+  "bundleIdentifier": ".controls",
+  "deploymentTarget": "18.0",
+  "frameworks": ["WidgetKit", "AppIntents", "SwiftUI", "ActivityKit", "Security"],
+  "entitlements": {
+    "keychain-access-groups": ["$(AppIdentifierPrefix)work.vivid.mobile.awareness"]
+  },
+  "images": {
+    "Avatar": "../../assets/icon.png"
+  }
+}

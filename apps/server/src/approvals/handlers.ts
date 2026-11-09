@@ -1,3 +1,4 @@
+import { Activities } from '../activity/service.ts'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import type { ApprovalId, DecideApprovalRequest } from '@vivid/contracts'
@@ -36,7 +37,12 @@ export const approvalHandlers = {
   WatchInbox: () => live('WatchInbox', ['activity'], loadInbox),
   /** The digest and pending claim are enforced in the store before any execution. */
   DecideApproval: Effect.fn('Rpc.DecideApproval')(function* (request: DecideApprovalRequest) {
-    return { approval: yield* (yield* ApprovalStore).decide(yield* decidingPerson(), request) }
+    const actor = yield* decidingPerson()
+    const approval = yield* (yield* ApprovalStore).decide(actor, request)
+    yield* (yield* Activities)
+      .refresh(actor.person.id)
+      .pipe(Effect.catch(() => Effect.logWarning('Live Activity refresh failed')))
+    return { approval }
   }),
   /** Withdrawal publishes the settled Thread and addressed Person without executing anything. */
   WithdrawApproval: Effect.fn('Rpc.WithdrawApproval')(function* ({

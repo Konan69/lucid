@@ -9,6 +9,7 @@ export const notifications = pgTable(
     kind: text('kind').notNull(),
     title: text('title').notNull(),
     body: text('body').notNull().default(''),
+    previewUrl: text('preview_url'),
     conversationId: text('conversation_id'),
     /**
      * The Approval this notice asks the Person to decide, so its push can carry Allow and Decline

@@ -153,41 +153,13 @@ const LEAN = PERSONAL_TEAM || DEVELOPMENT
 /** The entitlements a personal team cannot sign, taken off its build. */
 const withoutPaidTeamCapabilities = (config: ExpoConfig): ExpoConfig =>
   withEntitlementsPlist(config, (plist) => {
+    delete plist.modResults['com.apple.developer.usernotifications.communication']
+    delete plist.modResults['keychain-access-groups']
     delete plist.modResults['aps-environment']
     delete plist.modResults['com.apple.security.application-groups']
     delete plist.modResults['com.apple.developer.associated-domains']
     return plist
   })
-
-/**
- * The widget extension: a Live Activity and a widget that show what Vivid is doing in the
- * Person's Threads while the app is closed, updated from the server. As T3 Code mobile's
- * `AgentActivity` (`apps/mobile/app.config.ts`, `widgetsPlugin`): its own bundle under the app's,
- * one App Group shared with the app, remote updates, and the frequent-updates budget because a
- * Run can change its state many times an hour. The layout ships over the air (`expo-widgets`
- * draws it with `@expo/ui`); only the target and its capabilities are native.
- */
-const withThreadActivity = (config: ExpoConfig, app: string): ExpoConfig =>
-  withPlugins(config, [
-    [
-      'expo-widgets',
-      {
-        bundleIdentifier: `${app}.widgets`,
-        groupIdentifier: `group.${app}`,
-        enablePushNotifications: true,
-        frequentUpdates: true,
-        widgets: [
-          {
-            name: 'ThreadActivity',
-            displayName: 'Vivid at work',
-            description: 'What Vivid is doing in your Threads.',
-            android: null,
-            ios: { supportedFamilies: ['systemSmall', 'systemMedium', 'accessoryRectangular'] },
-          },
-        ],
-      },
-    ],
-  ])
 
 /**
  * "Share to Vivid" from any app: a link, words, pictures or files from the system's share sheet
@@ -248,7 +220,7 @@ const withSigning = (config: ExpoConfig): ExpoConfig => {
   const app = ios.bundleIdentifier
   return LEAN
     ? withoutPaidTeamCapabilities(withShareTarget(config, app))
-    : withShareTarget(withThreadActivity(config, app), app)
+    : withPlugins(withShareTarget(config, app), ['@bacons/apple-targets'])
 }
 
 export default ({ config }: ConfigContext): Partial<ExpoConfig> => {
