@@ -8,13 +8,6 @@ import { summary, text } from './inputs.ts'
 /** The model sees delivery evidence, not target credentials, notification ids or recipient identity. */
 const resultOf = (outcome: NotifyPersonOutcome) =>
   NotifyPersonOutcome.match(outcome, {
-    Disabled: () => ({
-      output: {
-        ok: false,
-        status: 'disabled',
-        message: 'The Person has turned notifications off.',
-      },
-    }),
     Created: ({ push }) =>
       PushOutcome.match(push, {
         Present: () => ({
@@ -58,13 +51,20 @@ export function notifyTools(runTool: RunTool) {
         summary,
         title: text('A short title.', 100),
         body: text('One or two short lines explaining what needs attention.', 280),
+        previewUrl: v.optional(
+          text('An HTTPS image URL to show as a chart or document preview.', 2048),
+        ),
       }),
       /** Runtime authority supplies the recipient and Thread; replay deduplication stays on the server. */
       run({ data, signal }) {
         return runTool(
           Effect.gen(function* () {
             const { client } = yield* Scope
-            return resultOf(yield* client.NotifyPerson({ title: data.title, body: data.body }))
+            const request =
+              data.previewUrl === undefined
+                ? { title: data.title, body: data.body }
+                : { title: data.title, body: data.body, previewUrl: data.previewUrl }
+            return resultOf(yield* client.NotifyPerson(request))
           }),
           { signal, tool: 'notify_person' },
         )

@@ -1,5 +1,5 @@
 import { useAtomValue } from '@effect/atom-react'
-import { PushDestination, PushPayload, type NotificationOpens } from '@vivid/contracts'
+import { PushDestination, PushPayload, NotificationOpens, ApprovalDecision } from '@vivid/contracts'
 import { notifying, type makeLive } from '@vivid/state'
 import { Effect, Layer, Option, Result, Schema, Struct } from 'effect'
 import { PermissionStatus } from 'expo'
@@ -80,6 +80,35 @@ const tokenFor = (projectId: string) =>
  * updates it, and a phone that allowed notifications before the quiet channel existed gets it
  * here. A message naming a channel the phone lacks would arrive on Android's fallback, with sound.
  */
+/** Both launch and permission enrolment install actions before any push can be pressed. */
+const categories = Effect.tryPromise({
+  try: () =>
+    Promise.all([
+      Notifications.setNotificationCategoryAsync('vivid.approval', [
+        {
+          identifier: 'vivid.allow',
+          buttonTitle: 'Allow once',
+          options: { opensAppToForeground: true, isAuthenticationRequired: true },
+        },
+        {
+          identifier: 'vivid.deny',
+          buttonTitle: 'Don’t allow',
+          options: { opensAppToForeground: true, isAuthenticationRequired: true },
+        },
+      ]),
+      Notifications.setNotificationCategoryAsync('vivid.thread', [
+        {
+          identifier: 'vivid.reply',
+          buttonTitle: 'Reply',
+          textInput: { submitButtonTitle: 'Send', placeholder: 'Message Vivid' },
+          options: { opensAppToForeground: true },
+        },
+        { identifier: 'vivid.open', buttonTitle: 'Open', options: { opensAppToForeground: true } },
+      ]),
+    ]),
+  catch: unavailable,
+})
+
 const channels = Effect.tryPromise({
   try: () =>
     Promise.all([
@@ -122,6 +151,7 @@ const phone = notifying.Device.of({
       case PermissionStatus.UNDETERMINED:
         return notifying.Holding.cases.Unasked.make({})
       case PermissionStatus.GRANTED:
+        yield* categories
         yield* channels
         if (yield* turnedOff) return notifying.Holding.cases.Off.make({})
         return notifying.Holding.cases.Held.make({ destination: yield* tokenFor(projectId) })
@@ -130,6 +160,7 @@ const phone = notifying.Device.of({
   open: Effect.gen(function* () {
     if (Option.isNone(PROJECT)) return yield* unavailable()
     const projectId = PROJECT.value
+    yield* categories
     yield* channels
     const { status } = yield* Effect.tryPromise({
       try: () => Notifications.requestPermissionsAsync(),
@@ -224,27 +255,61 @@ Notifications.setNotificationHandler({
     }),
 })
 
+const decodeReplyText = Schema.decodeUnknownOption(Schema.String)
 const decodePressed = Schema.decodeUnknownOption(PushPayload)
-
-/** Where a pressed notification opens (`NotificationOpens`), as the server said in its payload. */
-const pressedOf = (response: Notifications.NotificationResponse) =>
-  Option.map(decodePressed(response.notification.request.content.data), (payload) => payload.opens)
 
 /**
  * Hears each notification the Person presses and hands what it is about to `open`, once the
  * navigator can go there. A press that started the app is read once, at that moment, and cleared
  * so it is not opened again; later presses arrive as they happen.
  */
-export const listenForPresses = (open: (opens: NotificationOpens) => void) => {
-  Option.map(
-    Option.flatMap(Option.fromNullOr(Notifications.getLastNotificationResponse()), pressedOf),
-    (opens) => {
-      Notifications.clearLastNotificationResponse()
-      open(opens)
-    },
-  )
-  const heard = Notifications.addNotificationResponseReceivedListener((response) => {
-    Option.map(pressedOf(response), open)
-  })
+export const listenForPresses = (
+  open: (opens: NotificationOpens) => void,
+  decide: (request: import('@vivid/contracts').DecideApprovalRequest) => void,
+  reply: (request: {
+    readonly threadId: import('@vivid/contracts').ThreadId
+    readonly text: string
+    readonly key: string
+  }) => void,
+) => {
+  /** A reply carries the original notification's Thread, never the currently open screen. */
+  const respond = (response: Notifications.NotificationResponse) => {
+    const payload = decodePressed(response.notification.request.content.data)
+    if (Option.isNone(payload)) return
+    const replyText = decodeReplyText('userText' in response ? response.userText : undefined)
+    if (
+      response.actionIdentifier === 'vivid.reply' &&
+      Option.isSome(replyText) &&
+      replyText.value.trim().length > 0 &&
+      NotificationOpens.guards.Thread(payload.value.opens)
+    ) {
+      reply({
+        threadId: payload.value.opens.threadId,
+        text: replyText.value,
+        key: `notification:${payload.value.notificationId}:${response.notification.date}`,
+      })
+    }
+    if (
+      payload.value.approval !== undefined &&
+      payload.value.approval !== null &&
+      (response.actionIdentifier === 'vivid.allow' || response.actionIdentifier === 'vivid.deny')
+    ) {
+      decide({
+        id: payload.value.approval.id,
+        digest: payload.value.approval.digest,
+        decision:
+          response.actionIdentifier === 'vivid.allow'
+            ? ApprovalDecision.cases.AllowOnce.make({})
+            : ApprovalDecision.cases.Deny.make({}),
+      })
+    }
+    open(payload.value.opens)
+  }
+  const previous = Notifications.getLastNotificationResponse()
+  if (previous !== null) {
+    Notifications.clearLastNotificationResponse()
+    respond(previous)
+  }
+  const heard = Notifications.addNotificationResponseReceivedListener(respond)
   return () => heard.remove()
 }

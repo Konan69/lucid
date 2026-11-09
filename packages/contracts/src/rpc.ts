@@ -1,3 +1,4 @@
+import { ActivityRegistration, ActivityUnavailable } from './activity.js'
 import { ReviseWatchRequest } from './watches.js'
 import {
   ReadMadeIntegrationRequest,
@@ -364,6 +365,11 @@ const call = { error: RpcFailure } as const
 const live = { error: RpcFailure, stream: true } as const
 
 /** Push registration is session-scoped; NotifyPerson is runtime-only at the handler boundary. */
+const RegisterActivity = Rpc.make('RegisterActivity', {
+  ...call,
+  payload: ActivityRegistration,
+  error: Schema.Union([RpcFailure, ActivityUnavailable]),
+})
 const RegisterPushTarget = Rpc.make('RegisterPushTarget', {
   ...call,
   payload: RegisterPushTargetRequest,
@@ -1438,6 +1444,7 @@ export const VividRpc = RpcGroup.make(
   ListAudit,
   WatchAudit,
   ListNotifications,
+  RegisterActivity,
   RegisterPushTarget,
   ListPushTargets,
   WatchPushTargets,

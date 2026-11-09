@@ -1,6 +1,6 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
-import { eq, inArray } from 'drizzle-orm'
+import { inArray } from 'drizzle-orm'
 import { Effect, Layer, Option, Ref, Result, Stream } from 'effect'
 import { Person, PersonId, PushOutcome, Workspace } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
@@ -8,7 +8,6 @@ import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { Changes, Topic } from '../live/changes.ts'
-import { settingsTable } from '../settings/tables.ts'
 import { workLayer } from '../database/work.ts'
 import { PushTargets, pushTargetsLayer } from '../push/targets.ts'
 import * as PersistedQueue from 'effect/persistence/PersistedQueue'
@@ -106,13 +105,10 @@ const fixture = Effect.fn('NotificationsTest.fixture')(function* () {
 
 describe.skipIf(!testDatabaseConfigured)('recipient notifications', () => {
   layer(testLayer)((it) => {
-    it.effect('suppresses opted-out notices and conceals other recipients from list and read', () =>
+    it.effect('conceals other recipients from list and read', () =>
       Effect.gen(function* () {
-        const { database, owner, other, notifier, published, pushed } = yield* fixture()
+        const { owner, other, notifier, published, pushed } = yield* fixture()
         const store = yield* NotificationStore
-        yield* database.run(
-          database.insert(settingsTable).values({ personId: owner.person.id, notify: false }),
-        )
         const notice = {
           personId: owner.person.id,
           companyId: null,
@@ -121,16 +117,6 @@ describe.skipIf(!testDatabaseConfigured)('recipient notifications', () => {
           body: 'A decision is waiting.',
           threadId: null,
         }
-        yield* notifier.notify(notice)
-        expect((yield* store.list(owner)).notifications).toEqual([])
-        expect(yield* Ref.get(published)).toEqual([])
-        expect(yield* Ref.get(pushed)).toEqual([])
-        yield* database.run(
-          database
-            .update(settingsTable)
-            .set({ notify: true })
-            .where(eq(settingsTable.personId, owner.person.id)),
-        )
         yield* notifier.notify(notice)
         const own = yield* store.list(owner)
         expect(own.unreadCount).toBe(1)

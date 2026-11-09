@@ -37,11 +37,6 @@ const THEMES = [
   { value: 'dark', label: 'Dark', name: 'Dark' },
 ] as const satisfies ReadonlyArray<{ value: Theme; label: string; name: string }>
 
-const SWITCH = [
-  { value: 'on', label: 'On', name: 'On' },
-  { value: 'off', label: 'Off', name: 'Off' },
-] as const
-
 /** Every zone the platform knows, so the list is never out of date with the runtime that uses it. */
 const ZONES = ['UTC', ...Intl.supportedValuesOf('timeZone')]
 
@@ -193,7 +188,6 @@ function Preferences({ settings }: { settings: Settings }) {
                 personId: current.personId,
                 theme: edit.theme === undefined ? current.theme : edit.theme,
                 timezone: edit.timezone === undefined ? current.timezone : edit.timezone,
-                notify: edit.notify === undefined ? current.notify : edit.notify,
                 egress: edit.egress === undefined ? current.egress : edit.egress,
               }),
           ),
@@ -250,14 +244,6 @@ function Preferences({ settings }: { settings: Settings }) {
               </SelectGroup>
             </SelectContent>
           </Select>
-        </Row>
-        <Row label="Notifications" detail="Tell me when something finishes or needs me.">
-          <Segmented
-            label="Notifications"
-            value={settings.notify ? 'on' : 'off'}
-            options={SWITCH}
-            onChange={(next) => void act(save(new PatchSettingsRequest({ notify: next === 'on' })))}
-          />
         </Row>
         {Option.isNone(desktopVersion) && <Away />}
         <Egress

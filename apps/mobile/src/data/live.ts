@@ -1,3 +1,4 @@
+import { followActivities } from './activity'
 import { useAtomValue } from '@effect/atom-react'
 import { VividRpcClient } from '@vivid/client-runtime'
 import {
@@ -54,6 +55,7 @@ import { launch, start } from './app'
 import { forgetHeard, hearIn } from './hearing'
 import { forgetPlaces } from './placed'
 import { snapshotStore } from './snapshot'
+import { followWidget } from './widget'
 
 /**
  * Every screen's data, live, as Effect Atoms: the phone's half of what `apps/web/src/data/live.ts`
@@ -403,6 +405,11 @@ function makeLiveData(session: SignedIn) {
   // (`screen/Chat.tsx`), and the Thread's own query the rest of the time.
   const seenThread = makeSeenThread({ engine, threads: live.thread, me: live.me, launch })
 
+  // The same session-owned query feeds the extension; disposal removes both its subscription
+  // and the previous Person's snapshot before another account can take up this phone.
+  const stopActivities = followActivities(engine, session)
+  const stopWidget = followWidget(engine, live.threads)
+
   // Connecting an Integration is one machine for the session, made here because this is where
   // the session's registry and socket are made: every screen, sheet and card of the session
   // presses and draws from it, and an attempt outlives whichever of them began it.
@@ -434,6 +441,8 @@ function makeLiveData(session: SignedIn) {
      * subscription and the socket go.
      */
     dispose: () => {
+      stopActivities()
+      stopWidget()
       launch(onDevice.ended)
       onDevice.stop()
       connecting.stop()

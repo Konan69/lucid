@@ -1,3 +1,4 @@
+import { activitiesLayer } from './activity/service.ts'
 import { commandWorkerLayer } from './computers/commands.ts'
 import * as NodeHttp from 'node:http'
 import { migrationLayer } from './connections/migration.ts'
@@ -110,6 +111,7 @@ const serverProgram = Effect.gen(function* () {
     Layer.provideMerge(data),
   )
   const foundation = Layer.mergeAll(
+    activitiesLayer,
     changesLayer,
     tallyLayer,
     channelProviderLayer,

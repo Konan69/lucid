@@ -1,4 +1,5 @@
-import { index, pgTable, text } from 'drizzle-orm/pg-core'
+import type { NotificationApproval } from '@vivid/contracts'
+import { index, jsonb, pgTable, text } from 'drizzle-orm/pg-core'
 import { companyColumn, epoch, personColumn } from '../database/owner.ts'
 
 /** Recipient-owned notices link to a Thread when the event has one. */
@@ -9,6 +10,8 @@ export const notifications = pgTable(
     kind: text('kind').notNull(),
     title: text('title').notNull(),
     body: text('body').notNull().default(''),
+    previewUrl: text('preview_url'),
+    approval: jsonb('approval').$type<NotificationApproval>(),
     conversationId: text('conversation_id'),
     createdAt: epoch('created_at').notNull(),
     readAt: epoch('read_at'),

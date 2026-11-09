@@ -1,5 +1,5 @@
 import * as Schema from 'effect/Schema'
-import { NotificationId } from './identity.js'
+import { ApprovalId, NotificationId } from './identity.js'
 import { NotificationOpens } from './notifications.js'
 
 /** Random product identity; ownership and session authority never enter provider payloads. */
@@ -42,12 +42,14 @@ export const PushOutcome = Schema.TaggedUnion({
 export type PushOutcome = typeof PushOutcome.Type
 
 /** Model input contains words only; the acting Thread and recipient come from server authority. */
+const PreviewUrl = Schema.String.check(Schema.isPattern(/^https:\/\/[^\s]+$/u))
+
 export const NotifyPersonRequest = Schema.Struct({
+  previewUrl: Schema.optionalKey(PreviewUrl),
   title: Schema.NonEmptyString.check(Schema.isMaxLength(100)),
   body: Schema.NonEmptyString.check(Schema.isMaxLength(280)),
 })
 export const NotifyPersonOutcome = Schema.TaggedUnion({
-  Disabled: {},
   Created: { notificationId: NotificationId, push: PushOutcome },
 })
 export type NotifyPersonOutcome = typeof NotifyPersonOutcome.Type
@@ -61,8 +63,17 @@ export const PushSound = Schema.Literals(['Audible', 'Quiet'] as const)
 export type PushSound = typeof PushSound.Type
 
 /** The same payload is used by the browser worker and the phone tap handler. */
+export const NotificationApproval = Schema.Struct({
+  id: ApprovalId,
+  digest: Schema.String,
+  summary: Schema.String,
+})
+export type NotificationApproval = typeof NotificationApproval.Type
+
 export const PushPayload = Schema.Struct({
   notificationId: NotificationId,
+  previewUrl: Schema.optionalKey(Schema.NullOr(PreviewUrl)),
+  approval: Schema.optionalKey(Schema.NullOr(NotificationApproval)),
   title: Schema.String,
   body: Schema.String,
   opens: NotificationOpens,

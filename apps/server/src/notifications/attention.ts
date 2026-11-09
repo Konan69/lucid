@@ -41,7 +41,7 @@ export const notifyPerson = Effect.fn('Notifications.notifyPerson')(function* (i
     })
   const id = NotificationId.make(
     NodeCrypto.createHash('sha256')
-      .update(JSON.stringify([run, title, body]))
+      .update(JSON.stringify([run, title, body, input.message.previewUrl]))
       .digest('hex'),
   )
   return yield* recordNotice({
@@ -50,6 +50,7 @@ export const notifyPerson = Effect.fn('Notifications.notifyPerson')(function* (i
       personId: input.personId,
       companyId: thread.companyId,
       kind: 'needs-you',
+      previewUrl: input.message.previewUrl,
       title,
       body,
       threadId: thread.id,

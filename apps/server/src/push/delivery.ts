@@ -6,6 +6,7 @@ import {
   CompanyId,
   NotFound,
   NotificationId,
+  NotificationApproval,
   NotificationKind,
   NotificationOpens,
   PersonId,
@@ -28,6 +29,7 @@ import { PushTargets } from './targets.ts'
 import { untraced } from '../observability/quiet.ts'
 
 const NoticeRow = createSelectSchema(notifications, {
+  approval: Schema.NullOr(NotificationApproval),
   id: NotificationId,
   kind: NotificationKind,
   personId: PersonId,
@@ -215,6 +217,8 @@ const makePush = Effect.fn('Push.make')(function* () {
     if (active.length === 0) return PushOutcome.cases.NoTargets.make({})
     const payload = PushPayload.make({
       notificationId,
+      previewUrl: notice.previewUrl,
+      approval: notice.approval,
       title: notice.title.slice(0, 180),
       body: notice.body.replace(/\s+/gu, ' ').trim().slice(0, 280),
       opens: opens.value,
@@ -253,6 +257,8 @@ export const deliverTarget = Effect.fn('Push.deliverTarget')(function* (input: {
   if (target === undefined) return
   const payload = PushPayload.make({
     notificationId: input.notificationId,
+    previewUrl: notice.previewUrl,
+    approval: notice.approval,
     title: notice.title.slice(0, 180),
     body: notice.body.replace(/\s+/gu, ' ').trim().slice(0, 280),
     opens: opens.value,

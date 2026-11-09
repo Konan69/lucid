@@ -3,14 +3,20 @@
     "name": "Vivid",
     "slug": "vivid",
     "scheme": "vivid",
-    "version": "0.4.37",
-    "runtimeVersion": "0.3.19",
+    "version": "0.4.40",
+    "runtimeVersion": "0.3.20",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "work.vivid.mobile",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "VividKeychainGroup": "$(AppIdentifierPrefix)work.vivid.mobile.awareness",
+        "NSSupportsLiveActivities": true
+      },
+      "entitlements": {
+        "com.apple.developer.usernotifications.communication": true,
+        "keychain-access-groups": ["$(AppIdentifierPrefix)work.vivid.mobile.awareness"]
       }
     },
     "android": {
@@ -66,7 +72,8 @@
           "enableBackgroundRemoteNotifications": false
         }
       ],
-      "expo-quick-actions"
+      "expo-quick-actions",
+      "@bacons/apple-targets"
     ],
     "web": {
       "bundler": "metro"

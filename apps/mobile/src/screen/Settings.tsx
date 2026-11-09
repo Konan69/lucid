@@ -370,7 +370,6 @@ const saveSettings = (data: LiveData, edit: PatchSettingsRequest) =>
             personId: current.personId,
             theme: edit.theme === undefined ? current.theme : edit.theme,
             timezone: edit.timezone === undefined ? current.timezone : edit.timezone,
-            notify: edit.notify === undefined ? current.notify : edit.notify,
             // Not a phone setting: carried through as the server has it.
             egress: current.egress,
           }),
@@ -384,7 +383,6 @@ const saveSettings = (data: LiveData, edit: PatchSettingsRequest) =>
  */
 function Preferences({ settings, onZone }: { settings: SettingsRecord; onZone: () => void }) {
   const data = useLiveData()
-  const { colors: c } = useTheme()
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
 
   function save(edit: PatchSettingsRequest) {
@@ -414,19 +412,6 @@ function Preferences({ settings, onZone }: { settings: SettingsRecord; onZone: (
         <Setting title="Theme" detail="The colours Vivid is painted in on this phone.">
           <Themes />
         </Setting>
-        <Row
-          title="Notifications"
-          detail="Tell me when something finishes or needs me."
-          trailing={
-            // The system's own switch, in the theme's primary: on or off is what it is for.
-            <Switch
-              accessibilityLabel="Notifications"
-              value={settings.notify}
-              trackColor={{ true: c.primary, false: c['subtle-strong'] }}
-              onValueChange={(notify) => void save(new PatchSettingsRequest({ notify }))}
-            />
-          }
-        />
         <Away />
         <Row
           title="Time zone"
@@ -498,13 +483,13 @@ function Away() {
   const blocked = notifying.Reading.guards.Blocked(reading)
   return (
     <Row
-      title="Notify me when something needs me"
+      title="Notifications"
       detail={awayDetail(reading)}
       wrap
       onPress={blocked ? () => void Linking.openSettings() : undefined}
       trailing={
         <Switch
-          accessibilityLabel="Notify me when something needs me"
+          accessibilityLabel="Notifications"
           value={notifying.isOn(reading)}
           disabled={
             blocked || notifying.isWaiting(reading) || notifying.Reading.guards.Unsupported(reading)

@@ -794,7 +794,8 @@ const raise = Effect.fn('Approvals.raise')(function* (
     personId: actor.person.id,
     companyId: companyColumnOf(actor.workspace),
     kind: 'needs-you',
-    title: 'Vivid needs your approval',
+    title: 'Approval needed',
+    approval: { id: approval.id, digest: approval.digest, summary: action.summary },
     body: action.summary,
     threadId,
   })

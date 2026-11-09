@@ -5,7 +5,7 @@ import { Context, Effect, Layer, Option, Redacted, Schema } from 'effect'
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
-import { PushDestination, PushPayload } from '@vivid/contracts'
+import { NotificationOpens, PushDestination, PushPayload } from '@vivid/contracts'
 import { PushConfig } from './config.ts'
 import {
   PushAcceptance,
@@ -59,6 +59,9 @@ const ExpoMessage = Schema.Struct({
   sound: Schema.NullOr(Schema.Literal('default')),
   channelId: Schema.Literals(['default', 'quiet'] as const),
   data: PushPayload,
+  mutableContent: Schema.Boolean,
+  categoryId: Schema.String,
+  threadId: Schema.String,
 })
 const ReceiptRequest = Schema.Struct({ ids: Schema.Array(Schema.String) })
 const encodePayload = Schema.encodeEffect(Schema.fromJsonString(PushPayload))
@@ -126,6 +129,16 @@ const sendPhone = Effect.fn('PushAdapter.phone')(function* (
       sound: payload.sound === 'Audible' ? 'default' : null,
       channelId: payload.sound === 'Audible' ? 'default' : 'quiet',
       data: payload,
+      mutableContent: true,
+      categoryId:
+        payload.approval !== undefined && payload.approval !== null
+          ? 'vivid.approval'
+          : NotificationOpens.guards.Thread(payload.opens)
+            ? 'vivid.thread'
+            : 'vivid.notice',
+      threadId: NotificationOpens.guards.Thread(payload.opens)
+        ? payload.opens.threadId
+        : payload.notificationId,
     },
   ).pipe(Effect.mapError(() => new PushRejected({})))
   const response = yield* client.execute(request).pipe(Effect.mapError(() => new PushUncertain({})))
