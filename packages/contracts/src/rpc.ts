@@ -23,6 +23,7 @@ import {
 import { ConversationFrame } from './conversation.js'
 import {
   ApprovalChanged,
+  ApprovalDecided,
   ApprovalExpired,
   ApprovalResponse,
   DecideApprovalRequest,
@@ -680,7 +681,7 @@ const WatchInbox = Rpc.make('WatchInbox', { ...live, success: Inbox })
 const DecideApproval = Rpc.make('DecideApproval', {
   payload: DecideApprovalRequest,
   success: ApprovalResponse,
-  error: Schema.Union([RpcFailure, ApprovalChanged, ApprovalExpired]),
+  error: Schema.Union([RpcFailure, ApprovalChanged, ApprovalExpired, ApprovalDecided]),
 })
 /** Withdraws an Approval the Person no longer wants decided, leaving the action undone. */
 const WithdrawApproval = Rpc.make('WithdrawApproval', { ...call, payload: { id: ApprovalId } })

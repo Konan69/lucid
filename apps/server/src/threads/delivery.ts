@@ -117,6 +117,7 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
         ? settlement.reply.slice(0, 240)
         : 'Vivid could not finish this.',
       threadId: thread.id,
+      approvalId: null,
     })
   })
 

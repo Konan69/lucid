@@ -10,6 +10,11 @@ export const notifications = pgTable(
     title: text('title').notNull(),
     body: text('body').notNull().default(''),
     conversationId: text('conversation_id'),
+    /**
+     * The Approval this notice asks the Person to decide, so its push can carry Allow and Decline
+     * (`push/delivery.ts`). Null for every notice that asks nothing of its own.
+     */
+    approvalId: text('approval_id'),
     createdAt: epoch('created_at').notNull(),
     readAt: epoch('read_at'),
     /** The Person this notification is for, and the workspace it happened in. */

@@ -832,7 +832,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           )
           expect(JSON.stringify(receipt)).not.toContain(signedPage.outline)
           expect((yield* store.decide(browser.test.personal, decide).pipe(Effect.flip))._tag).toBe(
-            'Conflict',
+            'ApprovalDecided',
           )
           expect(yield* Queue.size(browser.requests)).toBe(0)
         }).pipe(Effect.scoped, (program) => scopedCase(personBrowserLayer, program, 'fresh')),

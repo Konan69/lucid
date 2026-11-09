@@ -4,6 +4,7 @@ import * as Clock from 'effect/Clock'
 import * as Layer from 'effect/Layer'
 import { eq } from 'drizzle-orm'
 import {
+  type ApprovalId,
   DatabaseFailure,
   NotifyPersonOutcome,
   NotificationId,
@@ -50,6 +51,7 @@ export const oweNotice = Effect.fn('Notifier.owe')(function* (input: {
             title: notice.title,
             body: notice.body,
             conversationId: notice.threadId,
+            approvalId: notice.approvalId,
             createdAt: now,
             readAt: null,
           })
@@ -105,6 +107,8 @@ export interface Notice {
   readonly title: string
   readonly body: string
   readonly threadId: ThreadId | null
+  /** The Approval the notice asks the Person to decide; null when it asks nothing of its own. */
+  readonly approvalId: ApprovalId | null
 }
 
 export interface NotifierService {

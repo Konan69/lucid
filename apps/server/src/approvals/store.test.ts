@@ -17,6 +17,7 @@ import * as Ref from 'effect/Ref'
 import * as Result from 'effect/Result'
 import * as TestClock from 'effect/testing/TestClock'
 import {
+  ApprovalDecided,
   ApprovalDecision,
   ApprovalExpired,
   ApprovalState,
@@ -200,7 +201,43 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
       ),
     )
 
-    it.effect('two concurrent decisions execute once and the loser gets Conflict', () =>
+    it.effect(
+      'a notification answer decides by the notice’s Approval, and a second is told it was answered',
+      () =>
+        scopedCase(
+          trustTestServices,
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const store = yield* ApprovalStore
+            const approval = yield* store.raise(test.vivid, desktopAction, unbound)
+            // The notice names the Approval its push answers (`push/delivery.ts` reads it).
+            const [notice] = yield* Ref.get((yield* Observation).notices)
+            if (notice === undefined || notice.approvalId === null)
+              expect.fail('Expected a notice that names its Approval')
+            expect(notice.approvalId).toBe(approval.id)
+            // Decline from the notification: DecideApproval by that id and the pushed digest.
+            const declined = yield* store.decide(test.personal, {
+              id: notice.approvalId,
+              digest: approval.digest,
+              decision: ApprovalDecision.cases.Deny.make({}),
+            })
+            expect(declined.state._tag).toBe('Denied')
+            // Allow pressed afterwards, on another device's copy of the same push.
+            const late = yield* store
+              .decide(test.personal, {
+                id: notice.approvalId,
+                digest: approval.digest,
+                decision: once,
+              })
+              .pipe(Effect.flip)
+            expect(late).toEqual(new ApprovalDecided({ id: approval.id }))
+            expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
+          }),
+          'fresh',
+        ),
+    )
+
+    it.effect('two concurrent decisions execute once and the loser gets ApprovalDecided', () =>
       scopedCase(
         trustTestServices,
         Effect.gen(function* () {
@@ -217,7 +254,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           )
           expect(results.filter(Result.isSuccess)).toHaveLength(1)
           const failures = results.filter(Result.isFailure)
-          expect(failures.map((result) => result.failure)).toEqual([expect.any(Conflict)])
+          expect(failures.map((result) => result.failure)).toEqual([expect.any(ApprovalDecided)])
           const observed = yield* Observation
           expect(yield* Ref.get(observed.actions)).toEqual([test.connectionAction])
           const deliveries = yield* Ref.get(observed.deliveries)
@@ -513,7 +550,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             (yield* store
               .decide(test.personal, request)
               .pipe(Effect.flip, Effect.provideService(Logger.CurrentLoggers, loggers)))._tag,
-          ).toBe('Conflict')
+          ).toBe('ApprovalDecided')
           yield* store
             .inThread(test.personalId)
             .pipe(Effect.provideService(Logger.CurrentLoggers, loggers))
@@ -627,7 +664,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             yield* Ref.set(observed.runnerDefect, false)
             const again = yield* Effect.result(store.decide(test.member, request))
             expect(Result.isFailure(again)).toBe(true)
-            if (Result.isFailure(again)) expect(again.failure).toBeInstanceOf(Conflict)
+            if (Result.isFailure(again)) expect(again.failure).toBeInstanceOf(ApprovalDecided)
             yield* store.expire
             expect(yield* Ref.get(observed.actions)).toHaveLength(1)
             expect(yield* Ref.get(observed.deliveries)).toHaveLength(1)
@@ -866,7 +903,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           const request = { id: initial.id, digest: initial.digest, decision: once }
           expect((yield* store.decide(test.personal, request)).state._tag).toBe('Succeeded')
           expect((yield* store.decide(test.personal, request).pipe(Effect.flip))._tag).toBe(
-            'Conflict',
+            'ApprovalDecided',
           )
           expect(yield* Ref.get((yield* Observation).actions)).toEqual([desktopAction])
         }),

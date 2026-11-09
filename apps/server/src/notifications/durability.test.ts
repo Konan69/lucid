@@ -60,6 +60,7 @@ describe.skipIf(!testDatabaseConfigured)('durable notification delivery', () => 
             title: 'Committed work',
             body: 'Review it.',
             threadId: owner.threadId,
+            approvalId: null,
           }
           const write = owner.database.transaction(() =>
             Effect.gen(function* () {
