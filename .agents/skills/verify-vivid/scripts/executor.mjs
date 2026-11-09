@@ -44,10 +44,10 @@ async function authority(state) {
       throw new Error('Disposable Executor setup refused ' + path + ' ' + response.status)
     return decodeText(schema, await response.text())
   }
+  const owner = { email: state.run + '@example.test', password: crypto.randomUUID() + '!Aa1' }
   await request(Setup, 'self-host/setup', {
     name: 'Verification owner',
-    email: state.run + '@example.test',
-    password: crypto.randomUUID() + '!Aa1',
+    ...owner,
     organizationName: 'Watch verification',
   })
   const organizations = await request(Organizations, 'organization/list')
@@ -72,6 +72,10 @@ async function authority(state) {
     VIVID_EXECUTOR_URL: origin,
     VIVID_EXECUTOR_ORGANIZATION: organization,
     VIVID_EXECUTOR_KEY: key,
+    // Each Person's own Integrations are made as their own member, invited by this owner.
+    VIVID_EXECUTOR_OWNER_EMAIL: owner.email,
+    VIVID_EXECUTOR_OWNER_PASSWORD: owner.password,
+    VIVID_EXECUTOR_SEAL_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'),
   }
 }
 
