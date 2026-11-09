@@ -799,7 +799,7 @@ const raise = Effect.fn('Approvals.raise')(function* (
     personId: actor.person.id,
     companyId: companyColumnOf(actor.workspace),
     kind: 'needs-you',
-    title: 'Vivid needs your approval',
+    title: 'Approval needed',
     body: action.summary,
     threadId,
     // Its push carries Allow and Decline for this Approval (`push/delivery.ts`).

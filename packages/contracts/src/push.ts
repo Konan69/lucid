@@ -42,12 +42,14 @@ export const PushOutcome = Schema.TaggedUnion({
 export type PushOutcome = typeof PushOutcome.Type
 
 /** Model input contains words only; the acting Thread and recipient come from server authority. */
+const PreviewUrl = Schema.String.check(Schema.isPattern(/^https:\/\/[^\s]+$/u))
+
 export const NotifyPersonRequest = Schema.Struct({
+  previewUrl: Schema.optionalKey(PreviewUrl),
   title: Schema.NonEmptyString.check(Schema.isMaxLength(100)),
   body: Schema.NonEmptyString.check(Schema.isMaxLength(280)),
 })
 export const NotifyPersonOutcome = Schema.TaggedUnion({
-  Disabled: {},
   Created: { notificationId: NotificationId, push: PushOutcome },
 })
 export type NotifyPersonOutcome = typeof NotifyPersonOutcome.Type
@@ -98,6 +100,7 @@ export type PushAnswer = typeof PushAnswer.Type
 /** The same payload is used by the browser worker and the phone tap handler. */
 export const PushPayload = Schema.Struct({
   notificationId: NotificationId,
+  previewUrl: Schema.optionalKey(Schema.NullOr(PreviewUrl)),
   title: Schema.String,
   body: Schema.String,
   opens: NotificationOpens,

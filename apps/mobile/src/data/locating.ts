@@ -109,7 +109,6 @@ const sharingAs = (current: Settings, location: LocationSharing) =>
     personId: current.personId,
     theme: current.theme,
     timezone: current.timezone,
-    notify: current.notify,
     egress: current.egress,
     location,
   })

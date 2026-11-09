@@ -5,7 +5,13 @@ import { Context, Effect, Layer, Option, Redacted, Schema } from 'effect'
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
-import { PUSH_CATEGORY, PushAsk, PushDestination, PushPayload } from '@vivid/contracts'
+import {
+  NotificationOpens,
+  PUSH_CATEGORY,
+  PushAsk,
+  PushDestination,
+  PushPayload,
+} from '@vivid/contracts'
 import { PushConfig } from './config.ts'
 import {
   PushAcceptance,
@@ -59,9 +65,16 @@ const ExpoMessage = Schema.Struct({
   sound: Schema.NullOr(Schema.Literal('default')),
   channelId: Schema.Literals(['default', 'quiet'] as const),
   data: PushPayload,
+  mutableContent: Schema.Boolean,
+  threadId: Schema.String,
   // The buttons the phone shows (`PUSH_CATEGORY`); absent on a notice that asks nothing.
   categoryId: Schema.optionalKey(
-    Schema.Literals([PUSH_CATEGORY.Approval, PUSH_CATEGORY.Draft] as const),
+    Schema.Literals([
+      PUSH_CATEGORY.Approval,
+      PUSH_CATEGORY.Draft,
+      'vivid.thread',
+      'vivid.notice',
+    ] as const),
   ),
 })
 const ReceiptRequest = Schema.Struct({ ids: Schema.Array(Schema.String) })
@@ -129,11 +142,20 @@ const messageOf = (
     sound: payload.sound === 'Audible' ? ('default' as const) : null,
     channelId: payload.sound === 'Audible' ? ('default' as const) : ('quiet' as const),
     data: payload,
+    mutableContent: true,
+    threadId: NotificationOpens.guards.Thread(payload.opens)
+      ? payload.opens.threadId
+      : payload.notificationId,
   }
   return PushAsk.match(payload.asks, {
-    Nothing: () => message,
-    Approval: () => ({ ...message, categoryId: PUSH_CATEGORY.Approval }),
-    Draft: () => ({ ...message, categoryId: PUSH_CATEGORY.Draft }),
+    Nothing: (): typeof ExpoMessage.Type => ({
+      ...message,
+      categoryId: NotificationOpens.guards.Thread(payload.opens)
+        ? ('vivid.thread' as const)
+        : ('vivid.notice' as const),
+    }),
+    Approval: (): typeof ExpoMessage.Type => ({ ...message, categoryId: PUSH_CATEGORY.Approval }),
+    Draft: (): typeof ExpoMessage.Type => ({ ...message, categoryId: PUSH_CATEGORY.Draft }),
   })
 }
 

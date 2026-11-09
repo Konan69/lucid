@@ -129,6 +129,15 @@ const REVIEW = {
 const categories = Effect.tryPromise({
   try: () =>
     Promise.all([
+      Notifications.setNotificationCategoryAsync('vivid.thread', [
+        {
+          identifier: 'vivid.reply',
+          buttonTitle: 'Reply',
+          textInput: { submitButtonTitle: 'Send', placeholder: 'Message Vivid' },
+          options: { opensAppToForeground: true },
+        },
+        { identifier: 'vivid.open', buttonTitle: 'Open', options: { opensAppToForeground: true } },
+      ]),
       Notifications.setNotificationCategoryAsync(PUSH_CATEGORY.Approval, [
         { ...ALLOW, options: { opensAppToForeground: !quietly, isAuthenticationRequired: true } },
         DECLINE,
@@ -267,6 +276,7 @@ Notifications.setNotificationHandler({
     }),
 })
 
+const decodeReply = Schema.decodeUnknownOption(Schema.String)
 const decodePressed = Schema.decodeUnknownOption(PushPayload)
 
 /**
@@ -276,7 +286,11 @@ const decodePressed = Schema.decodeUnknownOption(PushPayload)
  */
 const pressedOf = (response: Notifications.NotificationResponse) =>
   Option.flatMap(decodePressed(response.notification.request.content.data), (payload) => {
-    if (response.actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER)
+    if (
+      response.actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER ||
+      response.actionIdentifier === 'vivid.open' ||
+      response.actionIdentifier === 'vivid.reply'
+    )
       return Option.some(payload.opens)
     if (response.actionIdentifier === ('review' satisfies PushAnswer))
       return Option.some(NotificationOpens.cases.Notifications.make({}))
@@ -288,16 +302,43 @@ const pressedOf = (response: Notifications.NotificationResponse) =>
  * navigator can go there. A press that started the app is read once, at that moment, and cleared
  * so it is not opened again; later presses arrive as they happen.
  */
-export const listenForPresses = (open: (opens: NotificationOpens) => void) => {
-  Option.map(
-    Option.flatMap(Option.fromNullOr(Notifications.getLastNotificationResponse()), pressedOf),
-    (opens) => {
+export const listenForPresses = (
+  open: (opens: NotificationOpens) => void,
+  reply: (request: {
+    readonly threadId: import('@vivid/contracts').ThreadId
+    readonly text: string
+    readonly key: string
+  }) => void,
+) => {
+  /** A reply is bound to the original notification's Thread and idempotency key. */
+  const respond = (response: Notifications.NotificationResponse) => {
+    const payload = decodePressed(response.notification.request.content.data)
+    const text = decodeReply('userText' in response ? response.userText : undefined)
+    if (
+      response.actionIdentifier === 'vivid.reply' &&
+      Option.isSome(payload) &&
+      Option.isSome(text) &&
+      text.value.trim().length > 0 &&
+      NotificationOpens.guards.Thread(payload.value.opens)
+    ) {
+      reply({
+        threadId: payload.value.opens.threadId,
+        text: text.value,
+        key: `notification:${payload.value.notificationId}:${response.notification.date}`,
+      })
+    }
+    Option.map(pressedOf(response), open)
+  }
+  const previous = Notifications.getLastNotificationResponse()
+  if (previous !== null && previous.actionIdentifier === 'vivid.reply') {
+    Notifications.clearLastNotificationResponse()
+    respond(previous)
+  } else {
+    Option.map(Option.flatMap(Option.fromNullOr(previous), pressedOf), (opens) => {
       Notifications.clearLastNotificationResponse()
       open(opens)
-    },
-  )
-  const heard = Notifications.addNotificationResponseReceivedListener((response) => {
-    Option.map(pressedOf(response), open)
-  })
+    })
+  }
+  const heard = Notifications.addNotificationResponseReceivedListener(respond)
   return () => heard.remove()
 }

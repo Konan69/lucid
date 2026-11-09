@@ -251,6 +251,7 @@ const makePush = Effect.fn('Push.make')(function* () {
     if (active.length === 0) return PushOutcome.cases.NoTargets.make({})
     const payload = PushPayload.make({
       notificationId,
+      previewUrl: notice.previewUrl,
       title: notice.title.slice(0, 180),
       body: notice.body.replace(/\s+/gu, ' ').trim().slice(0, 280),
       opens: opens.value,
@@ -290,6 +291,7 @@ export const deliverTarget = Effect.fn('Push.deliverTarget')(function* (input: {
   if (target === undefined) return
   const payload = PushPayload.make({
     notificationId: input.notificationId,
+    previewUrl: notice.previewUrl,
     title: notice.title.slice(0, 180),
     body: notice.body.replace(/\s+/gu, ' ').trim().slice(0, 280),
     opens: opens.value,

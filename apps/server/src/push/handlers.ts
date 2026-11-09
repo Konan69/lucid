@@ -1,3 +1,5 @@
+import { Activities } from '../activity/service.ts'
+import type { ActivityRegistration } from '@vivid/contracts'
 import { Effect } from 'effect'
 import {
   PushKeyResponse,
@@ -21,6 +23,11 @@ const loadTargets = Effect.fn('Rpc.loadPushTargets')(function* (
 })
 
 export const pushHandlers = {
+  /** ActivityKit tokens are personal and tied to this authenticated session. */
+  RegisterActivity: Effect.fn('Rpc.RegisterActivity')(function* (request: ActivityRegistration) {
+    const auth = yield* requirePerson()
+    yield* (yield* Activities).register(auth.person.id, auth.sessionId, request)
+  }),
   /** Permission is obtained by the client; this call binds its credential to this live session. */
   RegisterPushTarget: Effect.fn('Rpc.RegisterPushTarget')(function* (
     request: typeof RegisterPushTargetRequest.Type,
