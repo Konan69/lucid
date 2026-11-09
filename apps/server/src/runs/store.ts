@@ -15,6 +15,10 @@ import {
   RuntimeChildAnswer,
   SignalCue,
   ChildReport,
+  ChildTurn,
+  RuntimeChildMessaged,
+  roundOf,
+  type ChildSender,
   type ChildStopCause,
   type PersonId,
   type RuntimeUnavailable,
@@ -93,6 +97,19 @@ export interface ChildRunsService {
   readonly actingFor: (
     id: RunId,
   ) => Effect.Effect<Option.Option<PersonId>, DatabaseInfrastructureError>
+  /**
+   * Sends one helper a follow-up as its next round of work. A repeat of the same follow-up (by its
+   * key) starts nothing more. The round is recorded before the runtime is asked: if the runtime
+   * cannot be reached the helper reads `Working` with nothing at work until the sender repeats it
+   * or someone stops it.
+   */
+  readonly followUp: (
+    run: ChildRun,
+    followUp: FollowUp,
+  ) => Effect.Effect<
+    ChildRun,
+    NotFound | Conflict | RuntimeUnavailable | DatabaseInfrastructureError
+  >
   /** Stops one helper and answers once its work ended. */
   readonly cancel: (
     run: ChildRun,
@@ -107,6 +124,13 @@ export interface ChildRunsService {
   ) => Effect.Effect<void, RuntimeUnavailable | DatabaseInfrastructureError>
 }
 
+/** A follow-up for a helper: its words, who sent them, and the sender's idempotency key. */
+export interface FollowUp {
+  readonly message: string
+  readonly by: ChildSender
+  readonly key: string
+}
+
 /** A Thread's helpers. Implemented here by `childRunsLayer`. */
 export class ChildRuns extends Context.Service<ChildRuns, ChildRunsService>()('vivid/ChildRuns') {}
 
@@ -115,6 +139,11 @@ const encodeState = encodeStored(ChildRunState, 'helper state')
 const decodeBudget = decodeStored(ChildBudget, 'helper budget')
 const encodeBudget = encodeStored(ChildBudget, 'helper budget')
 const encodeReceipt = encodeStored(ChildReceipt, 'helper receipt')
+const decodeTurn = decodeStored(ChildTurn, 'helper turn')
+const encodeTurn = encodeStored(ChildTurn, 'helper turn')
+
+/** The round a stored helper is in, as SQL: a brief is round one and stores no number. */
+const storedRound: SQL = sql`coalesce((${childRuns.turn}->>'round')::int, 1)`
 
 /** The tags of a helper that has not ended. Stored state is the encoded union, keyed by `_tag`. */
 const ACTIVE = ['Reserved', 'Working', 'Stopping'] as const
@@ -140,6 +169,7 @@ const toChildRun = Effect.fn('ChildRuns.toChildRun')(function* (row: Row) {
     budget: yield* decodeBudget(row.budget),
     requestedAt: row.requestedAt,
     state: yield* decodeState(row.state),
+    turn: yield* decodeTurn(row.turn),
   })
 })
 
@@ -208,15 +238,33 @@ const resultOf = (state: ChildRunState, answer: RuntimeChildAnswer) =>
       ),
   })
 
+/** What the round that ended was asked: the helper's brief, or the follow-up and who sent it. */
+const askedOf = (run: ChildRun) =>
+  ChildTurn.match(run.turn, {
+    Brief: () => run.brief,
+    FollowUp: ({ message, by }) =>
+      `${message} (a follow-up ${by === 'Person' ? 'a person' : 'you'} sent; its first task was: ${run.brief})`,
+  })
+
 /** What a result delivery says. Its words are the helper's own; the rest names helper and ending. */
 const resultBody = (run: ChildRun, result: ChildRunResult) =>
   ChildRunResult.match(result, {
     Completed: ({ text }) =>
-      `Helper ${run.number} finished: ${run.brief}\n\n${text.length > RESULT_LIMIT ? `${text.slice(0, RESULT_LIMIT)}\n[The rest of this answer was cut.]` : text}`,
+      `Helper ${run.number} finished: ${askedOf(run)}\n\n${text.length > RESULT_LIMIT ? `${text.slice(0, RESULT_LIMIT)}\n[The rest of this answer was cut.]` : text}`,
     Failed: ({ failure }) =>
-      `Helper ${run.number} could not finish (${failure._tag}): ${run.brief}`,
+      `Helper ${run.number} could not finish (${failure._tag}): ${askedOf(run)}`,
     Stopped: () =>
-      `Helper ${run.number} was stopped by a person before it finished: ${run.brief}. Anything it already did stays done.`,
+      `Helper ${run.number} was stopped by a person before it finished: ${askedOf(run)}. Anything it already did stays done.`,
+  })
+
+/**
+ * The key of one round's result delivery. Each round is heard once; the first keeps the key it
+ * had before helpers took follow-ups.
+ */
+const resultKey = (run: ChildRun) =>
+  ChildTurn.match(run.turn, {
+    Brief: () => `child-result:${run.id}`,
+    FollowUp: ({ round }) => `child-result:${run.id}:${round}`,
   })
 
 /** Retries a result delivery the Thread could not take yet: busy with another Person, or unreachable. */
@@ -300,7 +348,7 @@ const waker = (deps: Deps) => {
         }),
       }),
       origin: StoredRunOrigin.cases.ChildResult.make({ childRunId: id }),
-      idempotencyKey: `child-result:${id}`,
+      idempotencyKey: resultKey(run),
     })
     const sent = yield* deps.database.run(
       deps.database
@@ -338,6 +386,7 @@ const reserve = Effect.fn('ChildRuns.reserve')(function* (
     readonly parentRunId: RunId
     readonly budget: Encoded<typeof ChildBudget>
     readonly state: Encoded<typeof ChildRunState>
+    readonly turn: Encoded<typeof ChildTurn>
     readonly requestedAt: number
   },
 ) {
@@ -398,6 +447,7 @@ const spawner = (deps: Deps): ChildRunsService['spawn'] => {
       parentRunId,
       budget: yield* encodeBudget(request.budget),
       state: yield* encodeState(ChildRunState.cases.Reserved.make({})),
+      turn: yield* encodeTurn(ChildTurn.cases.Brief.make({})),
       requestedAt: now,
     }
     const row = yield* deps.database.transaction((tx) => reserve(tx, reporter, request, fixed))
@@ -449,20 +499,21 @@ const settler = (
         .where(and(eq(childRuns.id, row.id), sql`${childRuns.state}->>'_tag' = 'Reserved'`)),
     )
   })
+  /** Only the report of the helper's current round ends it; an earlier round's comes late. */
   const ended = Effect.fn('ChildRuns.ended')(function* (
     row: Row,
-    ending: ChildEnding,
-    parentWaiting: boolean,
+    report: Extract<ChildReport, { readonly _tag: 'Ended' }>,
     now: number,
   ) {
     const state = yield* decodeState(row.state)
     if (!ChildRunState.isAnyOf(ACTIVE)(state)) return
-    const next = endingState(state, ending, now)
+    if (roundOf(yield* decodeTurn(row.turn)) !== report.round) return
+    const next = endingState(state, report.ending, now)
     const changed = yield* database.run(
       database
         .update(childRuns)
-        .set({ state: yield* encodeState(next), wake: wakeAfter(row.wake, next, parentWaiting) })
-        .where(and(eq(childRuns.id, row.id), active))
+        .set({ state: yield* encodeState(next), wake: wakeAfter(row.wake, next, report.wake) })
+        .where(and(eq(childRuns.id, row.id), active, sql`${storedRound} = ${report.round}`))
         .returning({ wake: childRuns.wake }),
     )
     if (changed[0] !== undefined && changed[0].wake === 'due') yield* wake(row.id)
@@ -472,7 +523,7 @@ const settler = (
     const now = yield* Clock.currentTimeMillis
     yield* ChildReport.match(report, {
       Started: ({ receipt }) => started(row, receipt, now),
-      Ended: ({ ending, wake: parentWaiting }) => ended(row, ending, parentWaiting, now),
+      Ended: (end) => ended(row, end, now),
     })
     yield* announce(row.threadId)
     return yield* toChildRun(Option.getOrElse(yield* rowOf(id), () => row))
@@ -569,6 +620,119 @@ const stoppers = (deps: Deps, wake: (id: RunId) => Effect.Effect<void>) => {
   return { cancel, stopThread }
 }
 
+/** Why a helper takes no follow-up in this state. */
+const notNow = (state: ChildRunState) =>
+  new Conflict({
+    message: ChildRunState.guards.Reserved(state)
+      ? 'This helper has not started yet. Try again in a moment.'
+      : 'This helper was stopped. Start a new one instead.',
+  })
+
+/**
+ * Records a helper's next round inside one transaction, the Thread row locked first as a spawn
+ * locks it. A helper at work stays `Working` (the follow-up steers it); one whose round ended
+ * works again. A result nobody heard yet stays owed; any other is settled, so the new round's
+ * ending is heard on its own. A helper that drives the computer may not start again while
+ * another one does. Answers the row as it now stands, unchanged for a repeat of the same key.
+ */
+const reopen = Effect.fn('ChildRuns.reopen')(function* (
+  tx: Transaction,
+  run: ChildRun,
+  followUp: FollowUp,
+  now: number,
+) {
+  yield* tx
+    .select({ id: threads.id })
+    .from(threads)
+    .where(eq(threads.id, run.threadId))
+    .for('update')
+  const [row] = yield* tx.select().from(childRuns).where(eq(childRuns.id, run.id)).for('update')
+  if (row === undefined) return yield* new NotFound({ message: 'Helper not found.' })
+  const turn = yield* decodeTurn(row.turn)
+  if (ChildTurn.guards.FollowUp(turn) && turn.key === followUp.key) return row
+  const state = yield* decodeState(row.state)
+  if (!ChildRunState.isAnyOf(['Working', 'Completed', 'Failed'])(state)) return yield* notNow(state)
+  if (row.kind === 'ComputerUse' && !ChildRunState.guards.Working(state)) {
+    const driving = yield* tx
+      .select({ id: childRuns.id })
+      .from(childRuns)
+      .innerJoin(runs, eq(runs.id, childRuns.parentRunId))
+      .where(
+        and(
+          active,
+          eq(childRuns.kind, 'ComputerUse'),
+          eq(
+            runs.personId,
+            sql`(select ${runs.personId} from ${runs} where ${runs.id} = ${row.parentRunId})`,
+          ),
+        ),
+      )
+    if (driving.length > 0)
+      return yield* new Conflict({
+        message: 'A helper is already using the computer. Wait for it to finish.',
+      })
+  }
+  const next = ChildTurn.cases.FollowUp.make({
+    round: roundOf(turn) + 1,
+    message: followUp.message,
+    by: followUp.by,
+    key: followUp.key,
+    sentAt: now,
+  })
+  const working = ChildRunState.guards.Working(state)
+    ? state
+    : ChildRunState.cases.Working.make({ startedAt: now })
+  const [updated] = yield* tx
+    .update(childRuns)
+    .set({
+      turn: yield* encodeTurn(next),
+      state: yield* encodeState(working),
+      wake: row.wake === 'due' ? 'due' : 'held',
+    })
+    .where(eq(childRuns.id, run.id))
+    .returning()
+  if (updated === undefined) return yield* new NotFound({ message: 'Helper not found.' })
+  return updated
+})
+
+/**
+ * Sending a helper a follow-up: its next round is recorded, then the runtime starts it in the
+ * helper's own conversation (`children.ts` in the runtime). A round the runtime has nothing to
+ * continue for ends at once as a fault, so no helper reads `Working` with nothing at work.
+ */
+const followUpper = (deps: Deps): ChildRunsService['followUp'] => {
+  const { database, runtime } = deps
+  const rowOf = rowReader(database)
+  const announce = announcer(deps)
+  return Effect.fn('ChildRuns.followUp')(function* (run, followUp) {
+    const now = yield* Clock.currentTimeMillis
+    const row = yield* database.transaction((tx) => reopen(tx, run, followUp, now))
+    const reopened = yield* toChildRun(row)
+    yield* announce(run.threadId)
+    if (!ChildTurn.guards.FollowUp(reopened.turn)) return reopened
+    const turn = reopened.turn
+    const messaged = yield* runtime.messageChild(run.threadId, run.id, {
+      round: turn.round,
+      message: turn.message,
+      by: turn.by,
+      budget: reopened.budget,
+    })
+    if (RuntimeChildMessaged.guards.Started(messaged)) return reopened
+    const failed = ChildRunState.cases.Failed.make({
+      finishedAt: now,
+      reason: ChildFailure.cases.Delivery.make({}),
+    })
+    yield* database.run(
+      database
+        .update(childRuns)
+        .set({ state: yield* encodeState(failed) })
+        .where(and(eq(childRuns.id, run.id), active, sql`${storedRound} = ${turn.round}`)),
+    )
+    yield* announce(run.threadId)
+    return yield* toChildRun(Option.getOrElse(yield* rowOf(run.id), () => row))
+  })
+}
+
 /** Reading helpers: a Thread's, one by id, and one with its result once it ended. */
 const readers = (deps: Deps) => {
   const { database, runtime } = deps
@@ -619,6 +783,7 @@ const makeChildRuns = Effect.fn('ChildRuns.make')(function* () {
   return ChildRuns.of({
     spawn: spawner(deps),
     settle: settler(deps, wake),
+    followUp: followUpper(deps),
     actingFor: actingReader(deps.database),
     ...readers(deps),
     ...stoppers(deps, wake),

@@ -19,6 +19,8 @@ import {
   RuntimeAttachmentPath,
   RuntimeChildAnswer,
   RuntimeChildPath,
+  RuntimeChildMessage,
+  RuntimeChildMessaged,
   RuntimeRefusal,
   RuntimeSettlement,
   RuntimeStopped,
@@ -305,6 +307,19 @@ const stopChild = Effect.fn('Runtime.stopChild')(function* () {
   return yield* HttpServerResponse.schemaJson(RuntimeStopped)({ aborted })
 })
 
+/**
+ * Hands one helper its next round, recorded by the server first, and answers once its task was
+ * created in the Thread's conversation. The Thread's own work is untouched.
+ */
+const messageChild = Effect.fn('Runtime.messageChild')(function* () {
+  yield* authorize()
+  const path = yield* HttpRouter.schemaPathParams(RuntimeChildPath)
+  const body = yield* HttpServerRequest.schemaBodyJson(RuntimeChildMessage)
+  const person = yield* bound(path)
+  const messaged = yield* person.helpers.message(path.threadId, path.runId, body)
+  return yield* HttpServerResponse.schemaJson(RuntimeChildMessaged)(messaged)
+})
+
 /** Open to anyone, as it has been: a liveness answer that names the selected model and no secret. */
 const health = Effect.fn('Runtime.health')(function* () {
   const models = yield* Models
@@ -453,5 +468,6 @@ export const routes = Layer.mergeAll(
   HttpRouter.add('GET', `${THREAD}/attachments/:attachmentId`, answered(attachment())),
   HttpRouter.add('GET', `${THREAD}/children/:runId`, answered(child())),
   HttpRouter.add('POST', `${THREAD}/children/:runId/abort`, answered(stopChild())),
+  HttpRouter.add('POST', `${THREAD}/children/:runId/messages`, answered(messageChild())),
   HttpRouter.add('*', '/*', answered(authorize().pipe(Effect.andThen(refuse('NotFound', 404))))),
 )

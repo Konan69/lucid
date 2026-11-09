@@ -41,6 +41,7 @@ export const ToolName = Schema.Literals([
   'list_todos',
   'list_watches',
   'make_integration',
+  'message_run',
   'notify_person',
   'plan_forget',
   'post',

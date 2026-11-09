@@ -90,6 +90,7 @@ import {
   Settlement,
   runtimeLayer,
 } from '../runtime/client.ts'
+import { ChildRuns } from '../runs/store.ts'
 import { deliveryRunId } from '../threads/key.ts'
 import {
   Conversation,
@@ -233,6 +234,7 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
     stop: Effect.fn('Delivery.test.stop')(() => Effect.succeed(false)),
     child: () => Effect.die('Delivery tests start no helpers'),
     stopChild: () => Effect.succeed(false),
+    messageChild: () => Effect.die('This fake follows up no helpers'),
     watch: () => Stream.never,
     read: Effect.fn('Delivery.test.read')(function* () {
       yield* Ref.update(reads, (count) => count + 1)
@@ -316,6 +318,8 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
       }),
     ),
     Layer.mock(ThreadTitles, { afterRun: () => Effect.void }),
+    // These Threads start no helpers, so a Stop has none to stop.
+    Layer.mock(ChildRuns, { stopThread: () => Effect.void }),
     Layer.succeed(
       Notifier,
       Notifier.of({
@@ -355,6 +359,7 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
     ),
   )
   const devices = yield* DeviceRegistry.pipe(Effect.provideContext(context))
+  const helpers = yield* ChildRuns.pipe(Effect.provideContext(sending))
   /** Completion is observed through the real conditional SQL settlement before another Person sends. */
   const finish = Effect.fn('Delivery.test.settle')(function* (id: RunId) {
     yield* runtime.finish(id)
@@ -371,6 +376,7 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
     ...recorded,
     conversation,
     devices,
+    helpers,
     finish,
     services,
     sending,
@@ -1828,7 +1834,10 @@ layer(
               result: WindowResult.cases.Windows.make({ windows: [] }),
             }),
           })
-          .pipe(Effect.provideService(Runtime, test.runtime))
+          .pipe(
+            Effect.provideService(Runtime, test.runtime),
+            Effect.provideService(ChildRuns, test.helpers),
+          )
         yield* Fiber.join(running)
         yield* test.finish(admitted.runId)
         expect(yield* Queue.take(ends)).toBe(admitted.runId)
