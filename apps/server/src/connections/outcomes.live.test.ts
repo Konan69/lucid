@@ -33,19 +33,18 @@ const realExecutor = Layer.mergeAll(executorLayer, executorMembersLayer).pipe(
   Layer.provideMerge(settings),
 )
 
-/** The authored provider returns explicit acceptance answers; its completed tool first saves a
- * record in Executor's real SQLite database, so that answer names a result that exists. */
+/** The authored provider returns acceptance answers and a completed resource. The Vivid journal
+ * below records those real beta.23 replies in disposable PostgreSQL. */
 const request = {
   name: 'Outcome proof',
   files: [
     {
       path: 'index.ts',
-      content: `import { mutation, defineApp, defineDatabase, table, object, string, json } from "apps";
-const database = defineDatabase({ records: table({ subject: string() }) });
-export default defineApp({ accounts: {}, database }, async () => ({ tools: {
+      content: `import { mutation, defineApp, router, object, string, json } from "apps";
+export default defineApp({}, async () => ({ tools: router({
   accept: mutation({ description: "Accept work without confirming completion", input: object({ answer: json() }), output: json() }, async (_, input) => input.answer),
-  complete: mutation({ description: "Save a result before confirming completion", input: object({ subject: string() }), output: json() }, async ({ db }, input) => ({ id: await db.records.insert(input) }))
-} }));`,
+  complete: mutation({ description: "Return the completed resource", input: object({ subject: string() }), output: json() }, async (_, input) => ({ id: "created-resource", subject: input.subject }))
+}) }));`,
     },
   ],
 }
@@ -70,7 +69,7 @@ const decodeReceipt = Schema.decodeUnknownEffect(ActionReceipt)
 describe.skipIf(!enabled || !testDatabaseConfigured)('Integration acceptance receipts', () => {
   layer(connectionTestLayer, { excludeTestServices: true, timeout: 240_000 })((it) => {
     it.effect(
-      'keeps accepted work unfinished in the journal and model words, and completes a saved result',
+      'keeps accepted work unfinished in the journal and model words, and preserves a completed result',
       () =>
         Effect.gen(function* () {
           const { personalActor, threadId } = yield* fixture()
@@ -133,11 +132,15 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration acceptance rec
               })
               expect(JSON.stringify(toolOutcome(repeated).output)).not.toContain('already done')
             }
-            const result = yield* send('complete', { subject: 'A saved result' })
+            const result = yield* send('complete', { subject: 'A completed result' })
             expect(result.outcome._tag).toBe('Completed')
             if (!ToolOutcome.guards.Completed(result.outcome) || result.outcome.receipt === null)
               return expect.fail('Expected journaled completion')
             expect(result.outcome.receipt._tag).toBe('Completed')
+            expect(result.outcome.output).toEqual({
+              id: 'created-resource',
+              subject: 'A completed result',
+            })
             const [saved] = yield* database.run(
               database
                 .select()
