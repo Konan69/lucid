@@ -16,6 +16,7 @@ import {
   ExecutorCallOutcome,
   ExecutorStatus,
   executorLayer,
+  installationCaller,
 } from './executor.ts'
 import { googleAppsVersion } from './google.ts'
 import { encodeReferences } from './records.ts'
@@ -131,8 +132,8 @@ export const proofConnection = Effect.fn('ThreadProof.connection')(function* (
   })
   const context = yield* Layer.build(executorLayer)
   const executor = yield* Executor.pipe(Effect.provideContext(context))
-  expect((yield* executor.status(references))._tag).toBe('Ready')
-  const tools = yield* executor.tools(references)
+  expect((yield* executor.as(installationCaller).status(references))._tag).toBe('Ready')
+  const tools = yield* executor.as(installationCaller).tools(references)
   expect(tools.map((tool) => tool.name)).toEqual(
     expect.arrayContaining(['queries.records', 'mutations.save']),
   )
@@ -158,7 +159,9 @@ export const proofConnection = Effect.fn('ThreadProof.connection')(function* (
   )
   /** Observe real storage through Executor, not Vivid's action receipt or a copied mock value. */
   const records = Effect.fn('ThreadProof.records')(function* () {
-    const result = yield* executor.call({ references, tool: 'queries.records', input: {} })
+    const result = yield* executor
+      .as(installationCaller)
+      .call({ references, tool: 'queries.records', input: {} })
     if (!ExecutorCallOutcome.guards.Completed(result))
       return expect.fail('Executor record read did not complete')
     return yield* decodeRecords(result.value)
@@ -265,8 +268,10 @@ export const proofAccounts = Effect.fn('ThreadProof.accounts')(function* (
       service,
       account: account.id,
     })
-    expect(ExecutorStatus.guards.Ready(yield* executor.status(references))).toBe(true)
-    const identity = yield* executor.identity(references)
+    expect(
+      ExecutorStatus.guards.Ready(yield* executor.as(installationCaller).status(references)),
+    ).toBe(true)
+    const identity = yield* executor.as(installationCaller).identity(references)
     if (Option.isNone(identity))
       return yield* Effect.sync(() => expect.fail('Executor did not say who the account is'))
     const now = yield* Clock.currentTimeMillis
@@ -297,7 +302,7 @@ export const proofAccounts = Effect.fn('ThreadProof.accounts')(function* (
     const pages = yield* Effect.forEach(
       [first, second],
       Effect.fnUntraced(function* (connection) {
-        const result = yield* executor.call({
+        const result = yield* executor.as(installationCaller).call({
           references: connection.references,
           tool: 'records',
           input: { subject },

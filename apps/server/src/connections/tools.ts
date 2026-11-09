@@ -49,7 +49,6 @@ import {
   settle,
 } from '../actions/journal.ts'
 import {
-  Executor,
   ExecutorCallOutcome,
   ExecutorTool,
   ExecutorResourceMissing,
@@ -57,6 +56,7 @@ import {
   connectionSetupMessage,
   resourceReason,
 } from './executor.ts'
+import { operationsOf } from './members.ts'
 import { callableTool, discoveredTool } from '../code/signatures.ts'
 import { executorFailure } from './errors.ts'
 import { ConnectionStore, ToolDiscovery } from './store.ts'
@@ -390,8 +390,7 @@ export const runConnection = Effect.fn('Connections.run')(
     const { effect, operation } = call
     const refusal = yield* permissionRefusal(row)
     if (Option.isSome(refusal)) return yield* notRead(refusal.value)
-    const executor = yield* Executor
-    const outcome = yield* executor
+    const outcome = yield* (yield* operationsOf(row))
       .call({ references: row.references, tool: target.tool, input: target.input })
       .pipe(
         Effect.mapError((error) =>

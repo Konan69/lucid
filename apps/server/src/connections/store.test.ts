@@ -28,6 +28,7 @@ import {
   ExecutorSignInRequired,
   ExecutorServiceEntry,
   connectionSetupMessage,
+  installationCaller,
 } from './executor.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
@@ -141,10 +142,13 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         )
         const failed = Executor.of({
           ...executor,
-          remove: () =>
-            Effect.fail(
-              new ServiceUnavailable({ service: 'connections', message: 'Cleanup failed' }),
-            ),
+          as: (caller) => ({
+            ...executor.as(caller),
+            remove: () =>
+              Effect.fail(
+                new ServiceUnavailable({ service: 'connections', message: 'Cleanup failed' }),
+              ),
+          }),
         })
         const failure = yield* Effect.gen(function* () {
           // Capture the failing compensation adapter while retaining the real rejected insert.
@@ -196,10 +200,13 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const executor = yield* Executor
         const renewed = Executor.of({
           ...executor,
-          reauthorize: (input) => {
-            expect(input.subject).toBe(admin.person.id)
-            return executor.reauthorize(input)
-          },
+          as: (caller) => ({
+            ...executor.as(caller),
+            reauthorize: (input) => {
+              expect(input.subject).toBe(admin.person.id)
+              return executor.as(installationCaller).reauthorize(input)
+            },
+          }),
         })
         yield* Effect.gen(function* () {
           // Use the callback recorder that checks both admin and initiating-Person targets.
@@ -313,17 +320,20 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const entered = yield* Deferred.make<void>()
         const release = yield* Deferred.make<void>()
         const calls = yield* Ref.make(0)
-        const controlled = Executor.of({
+        const controlled = {
           ...executor,
-          reauthorize: Effect.fn('Executor.Test.blockResume')(function* (input) {
-            if (input.connectionId === first.connection.id) {
-              yield* Ref.update(calls, (count) => count + 1)
-              yield* Deferred.succeed(entered, undefined)
-              yield* Deferred.await(release)
-            }
-            return yield* executor.reauthorize(input)
+          as: (caller) => ({
+            ...executor.as(caller),
+            reauthorize: Effect.fn('Executor.Test.blockResume')(function* (input) {
+              if (input.connectionId === first.connection.id) {
+                yield* Ref.update(calls, (count) => count + 1)
+                yield* Deferred.succeed(entered, undefined)
+                yield* Deferred.await(release)
+              }
+              return yield* executor.as(installationCaller).reauthorize(input)
+            }),
           }),
-        })
+        } satisfies Executor['Service']
         yield* Effect.gen(function* () {
           // Connection locking is measured through this case's controlled resume adapter.
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
@@ -863,16 +873,19 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const probe = yield* ConnectionProbe
         yield* Ref.set(probe.step, 'OpenSignIn')
         const executor = yield* Executor
-        const blocked = Executor.of({
+        const blocked = {
           ...executor,
-          begin: Effect.fn('Executor.Test.signInRequired')(function* (input) {
-            const step = yield* executor.begin(input)
-            return yield* ExecutorSignInRequired.make({
-              references: step.references,
-              message: 'Sign-in could not start.',
-            })
+          as: (caller) => ({
+            ...executor.as(caller),
+            begin: Effect.fn('Executor.Test.signInRequired')(function* (input) {
+              const step = yield* executor.as(installationCaller).begin(input)
+              return yield* ExecutorSignInRequired.make({
+                references: step.references,
+                message: 'Sign-in could not start.',
+              })
+            }),
           }),
-        })
+        } satisfies Executor['Service']
         const before = yield* Ref.get(probe.removals)
         const events = yield* Ref.get(probe.events)
         const failure = yield* Effect.gen(function* () {
@@ -901,21 +914,24 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const executor = yield* Executor
         const probe = yield* ConnectionProbe
         yield* Ref.set(probe.step, 'OpenSignIn')
-        const blocked = Executor.of({
+        const blocked = {
           ...executor,
-          begin: Effect.fn('Executor.Test.signInRequiredAgain')(function* (input) {
-            const step = yield* executor.begin(input)
-            return yield* ExecutorSignInRequired.make({
-              references: step.references,
-              message: 'Sign-in could not start.',
-            })
-          }),
-          remove: Effect.fn('Executor.Test.cleanupUnavailable')(() =>
-            Effect.fail(
-              ServiceUnavailable.make({ service: 'connections', message: 'Cleanup unavailable' }),
+          as: (caller) => ({
+            ...executor.as(caller),
+            begin: Effect.fn('Executor.Test.signInRequiredAgain')(function* (input) {
+              const step = yield* executor.as(installationCaller).begin(input)
+              return yield* ExecutorSignInRequired.make({
+                references: step.references,
+                message: 'Sign-in could not start.',
+              })
+            }),
+            remove: Effect.fn('Executor.Test.cleanupUnavailable')(() =>
+              Effect.fail(
+                ServiceUnavailable.make({ service: 'connections', message: 'Cleanup unavailable' }),
+              ),
             ),
-          ),
-        })
+          }),
+        } satisfies Executor['Service']
         const failure = yield* Effect.gen(function* () {
           // Capture both failures so unavailable cleanup cannot replace the sign-in failure.
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))

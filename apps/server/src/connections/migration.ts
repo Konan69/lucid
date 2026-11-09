@@ -14,6 +14,7 @@ import {
 import { ApprovalInvalidation, Conflict } from '@vivid/contracts'
 import { Database } from '../database/client.ts'
 import { executorFailure, ConnectionReclamationBlocked } from './errors.ts'
+import { callerOf } from './members.ts'
 import {
   Executor,
   ExecutorAppId,
@@ -52,6 +53,7 @@ function refused(legacy: typeof LegacyExecutorReferences.Type, failure: Executor
   return Match.value(failure).pipe(
     Match.tag(
       'ExecutorTransportFailure',
+      'ExecutorRateLimited',
       'ExecutorExecutionUncertain',
       'ExecutorConflict',
       'ServiceUnavailable',
@@ -401,14 +403,18 @@ export const removeConnection = Effect.fn('Connections.removeResources')(functio
   row: ConnectionRecord,
 ) {
   const database = yield* Database
-  const executor = yield* Executor
+  // A member's app and personal account are removed with that member's own key: the owner may
+  // delete a member's app but not the account the member connected (`members.ts`). Its Watches
+  // were subscribed as that member, so they are unsubscribed as it too.
+  const caller = yield* callerOf(row)
+  const executor = (yield* Executor).as(caller)
   if (
     ExecutorReferences.isAnyOf(['Public', 'Authorized'])(row.references) &&
     ExecutorAppOwnership.guards.Dedicated(row.references.appOwnership)
   ) {
     yield* executor.remove(row.references).pipe(Effect.mapError(executorFailure))
     const stopped = yield* database.transaction((tx) => removeRow(tx, row))
-    yield* unsubscribeWatches(stopped)
+    yield* unsubscribeWatches(caller, stopped)
     return yield* Effect.void
   }
   let references = row.references
@@ -479,5 +485,5 @@ export const removeConnection = Effect.fn('Connections.removeResources')(functio
       return yield* removeRow(tx, { ...target, updatedAt: revision })
     }),
   )
-  yield* unsubscribeWatches(stopped)
+  yield* unsubscribeWatches(caller, stopped)
 })

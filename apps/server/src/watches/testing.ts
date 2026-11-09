@@ -40,6 +40,7 @@ import {
 import { connections } from '../connections/tables.ts'
 import { encodeReferences } from '../connections/records.ts'
 import { watchesLayer } from './lifecycle.ts'
+import { testMembersLayer, unansweredOperations } from '../connections/testing.ts'
 import { owedStoreLayer } from '../owed/store.ts'
 import { watchStoreLayer } from './store.ts'
 
@@ -187,8 +188,8 @@ export const executorLayer = Layer.effectContext(
     const unsubscribed = yield* Ref.make<ReadonlyArray<string>>([])
     const lost = yield* Queue.unbounded<string>()
     const events = ExecutorEvents.of({
-      list: Effect.succeed(definitions),
-      subscribe: Effect.fn('Test.Executor.subscribe')(function* (input) {
+      list: () => Effect.succeed(definitions),
+      subscribe: Effect.fn('Test.Executor.subscribe')(function* (_caller, input) {
         yield* Queue.offer(subscribed, input)
         const answer = yield* Queue.take(answers)
         if ('lost' in answer) {
@@ -197,7 +198,8 @@ export const executorLayer = Layer.effectContext(
         }
         return 'refreshBefore' in answer ? answer : yield* answer
       }),
-      unsubscribe: (input) => Ref.update(unsubscribed, (previous) => [...previous, input.name]),
+      unsubscribe: (_caller, input) =>
+        Ref.update(unsubscribed, (previous) => [...previous, input.name]),
     })
     return Context.make(ExecutorEvents, events).pipe(
       Context.add(Executor, { subscribed, answers, unsubscribed, lost }),
@@ -249,7 +251,10 @@ export const appsLayer = Layer.effect(
         Layer.provide(
           Layer.mergeAll(
             Layer.succeed(Database, database),
-            Layer.mock(ConnectionExecutor, { appSlug: () => Effect.succeed('mail') }),
+            Layer.mock(ConnectionExecutor, {
+              as: () => ({ ...unansweredOperations, appSlug: () => Effect.succeed('mail') }),
+            }),
+            testMembersLayer,
           ),
         ),
       ),
@@ -278,6 +283,7 @@ export const testLayer = watchesLayer.pipe(
       threadStoreLayer,
       appsLayer,
       executorLayer,
+      testMembersLayer,
       conversationLayer,
       silentChangesLayer,
     ),

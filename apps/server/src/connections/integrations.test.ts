@@ -27,6 +27,7 @@ import {
   ExecutorPublicAddressRequired,
   ExecutorTool,
   connectionSetupMessage,
+  installationCaller,
 } from './executor.ts'
 import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
@@ -408,9 +409,12 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
         const executor = yield* Executor
         const refused = Executor.of({
           ...executor,
-          add: Effect.fn('Test.refusedImport')(() =>
-            Effect.fail(new ExecutorPublicAddressRequired({})),
-          ),
+          as: (caller) => ({
+            ...executor.as(caller),
+            add: Effect.fn('Test.refusedImport')(() =>
+              Effect.fail(new ExecutorPublicAddressRequired({})),
+            ),
+          }),
         })
         const addresses = ConnectionAddress.of({
           inspect: Effect.fn('Test.serverAddress')(() =>
@@ -660,16 +664,19 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
             const executor = yield* Executor
             const submissions = yield* Ref.make(0)
             const secret = 'KEY-MUST-NEVER-ENTER-AUDIT'
-            const keyed = Executor.of({
+            const keyed = {
               ...executor,
-              complete: Effect.fn('IntegrationTest.complete')(function* (input) {
-                const key = input.fields['key']
-                if (key === undefined) return yield* Effect.die('Missing test key')
-                expect(Redacted.value(key)).toBe(secret)
-                yield* Ref.update(submissions, (count) => count + 1)
-                return yield* executor.complete(input)
+              as: (caller) => ({
+                ...executor.as(caller),
+                complete: Effect.fn('IntegrationTest.complete')(function* (input) {
+                  const key = input.fields['key']
+                  if (key === undefined) return yield* Effect.die('Missing test key')
+                  expect(Redacted.value(key)).toBe(secret)
+                  yield* Ref.update(submissions, (count) => count + 1)
+                  return yield* executor.as(installationCaller).complete(input)
+                }),
               }),
-            })
+            } satisfies Executor['Service']
             const address = ConnectionAddress.of({
               inspect: Effect.fn('IntegrationTest.address')((value) =>
                 Effect.succeed(

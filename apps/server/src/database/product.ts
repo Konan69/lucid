@@ -22,7 +22,12 @@ export {
   devices,
   deviceRequests,
 } from '../computers/tables.ts'
-export { connections, connectionPermissions, credentials } from '../connections/tables.ts'
+export {
+  connections,
+  connectionPermissions,
+  credentials,
+  executorMembers,
+} from '../connections/tables.ts'
 export { draftGenerations, drafts } from '../drafts/tables.ts'
 export { feedCards } from '../feed/tables.ts'
 export { memoryForgets } from '../forget/tables.ts'

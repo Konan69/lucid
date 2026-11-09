@@ -102,6 +102,10 @@ const executorAccess = ({ executor }: InfrastructureEnvironment) => ({
   VIVID_EXECUTOR_URL: privateUrl(serviceNames.executor, ports.executor),
   VIVID_EXECUTOR_KEY: executor.key,
   VIVID_EXECUTOR_ORGANIZATION: executor.organization,
+  /** Each Person's own Executor member is invited by the owner and its key sealed with this. */
+  VIVID_EXECUTOR_OWNER_EMAIL: executor.ownerEmail,
+  VIVID_EXECUTOR_OWNER_PASSWORD: executor.ownerPassword,
+  VIVID_EXECUTOR_SEAL_KEY: executor.sealKey,
   /** Lets a Person add an Integration by address; true only with the Executor settings above. */
   VIVID_EXECUTOR_PUBLIC_ONLY: 'true',
 })

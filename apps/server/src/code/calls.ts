@@ -19,6 +19,7 @@ import { ToolEffects } from '../connections/effects.ts'
 import type { Actor } from '../auth/access.ts'
 import { Gate } from '../approvals/gate.ts'
 import { Executor } from '../connections/executor.ts'
+import { ExecutorMembers } from '../connections/members.ts'
 import { ConnectionStore } from '../connections/store.ts'
 import { findTools, resolveTool, useUnkeyedTool, useQueryTool } from '../connections/tools.ts'
 import { DeviceRegistry } from '../computers/device.ts'
@@ -336,6 +337,7 @@ export const codeCallsLayer = Layer.effect(
       CodeAuthority,
       Gate,
       Executor,
+      ExecutorMembers,
       ConnectionStore,
       ToolEffects,
       DecisionModel.DecisionModel,
@@ -348,6 +350,7 @@ export const codeCallsLayer = Layer.effect(
         | CodeAuthority
         | Gate
         | Executor
+        | ExecutorMembers
         | ConnectionStore
         | ToolEffects
         | DecisionModel.DecisionModel

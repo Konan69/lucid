@@ -14,6 +14,7 @@ import { actingRun, requestRuns } from '../threads/runs.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
 import { WatchedApps } from './apps.ts'
 import { ExecutorEvents } from './events.ts'
+import type { Subscribe } from './lifecycle.ts'
 import { WatchStore, subscriptionOf, type WatchRecord } from './store.ts'
 
 /** The Actor has no live Watch by this name. */
@@ -24,9 +25,7 @@ export class WatchMissing extends Schema.TaggedError<WatchMissing>()(
 ) {}
 
 /** Completion and authorization progress share the persisted Watch and admitted Run authority. */
-export const watchProgress = Effect.fn('Watches.watchProgress')(function* (
-  subscribe: (record: WatchRecord) => ReturnType<ExecutorEvents['Service']['subscribe']>,
-) {
+export const watchProgress = Effect.fn('Watches.watchProgress')(function* (subscribe: Subscribe) {
   const store = yield* WatchStore
   const apps = yield* WatchedApps
   const events = yield* ExecutorEvents
@@ -75,7 +74,10 @@ export const watchProgress = Effect.fn('Watches.watchProgress')(function* (
     const completed = yield* store.complete(found.value.watch.id, run.value.runId, evidence)
     if (Option.isNone(completed)) return yield* new WatchMissing({})
     yield* publish(completed.value)
-    yield* events.unsubscribe(subscriptionOf(completed.value)).pipe(Effect.ignore)
+    yield* apps.callerOf(completed.value.connectionId).pipe(
+      Effect.flatMap((caller) => events.unsubscribe(caller, subscriptionOf(completed.value))),
+      Effect.ignore,
+    )
     return Watch.make({ ...completed.value.watch, account: found.value.watch.account })
   })
 
@@ -95,7 +97,11 @@ export const watchProgress = Effect.fn('Watches.watchProgress')(function* (
     if (!WatchState.guards.Paused(record.watch.state)) return
     const connection = record.watch.state.connectionId
     if (!(yield* apps.isReady(connection))) return
-    const grant = yield* Effect.result(subscribe(record))
+    const grant = yield* Effect.result(
+      apps
+        .callerOf(record.connectionId)
+        .pipe(Effect.flatMap((caller) => subscribe(caller, record))),
+    )
     if (Result.isFailure(grant)) return
     if (!(yield* apps.isReady(connection))) return
     const resumed = yield* store.resume(

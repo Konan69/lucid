@@ -26,6 +26,7 @@ import { Database } from '../database/client.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { OwedStore } from '../owed/store.ts'
 import { requireThread } from '../threads/access.ts'
+import { WatchedApps } from './apps.ts'
 import { ExecutorEvents } from './events.ts'
 import { WatchStore, type WatchRecord } from './store.ts'
 
@@ -150,6 +151,7 @@ export const watchCheckins = Effect.fn('Watches.checkins')(function* () {
   const database = yield* Database
   const changes = yield* Changes
   const events = yield* ExecutorEvents
+  const apps = yield* WatchedApps
   const publish = (record: WatchRecord) => changes.publish([Topic.person(record.personId)])
 
   /** Validate ownership before persisting a source identity supplied over RPC. */
@@ -219,13 +221,16 @@ export const watchCheckins = Effect.fn('Watches.checkins')(function* () {
     })
     if (Option.isNone(completed)) return
     yield* publish(completed.value)
-    yield* events
-      .unsubscribe({
-        name: record.subscribedName,
-        arguments: record.watch.arguments,
-        url: record.callbackUrl,
-      })
-      .pipe(Effect.ignore)
+    yield* apps.callerOf(record.connectionId).pipe(
+      Effect.flatMap((caller) =>
+        events.unsubscribe(caller, {
+          name: record.subscribedName,
+          arguments: record.watch.arguments,
+          url: record.callbackUrl,
+        }),
+      ),
+      Effect.ignore,
+    )
   })
   return {
     planCheckin: plan,
