@@ -5,7 +5,9 @@ import {
   BackgroundWork,
   ChildRunState,
   InvalidRequest,
+  ShellSnapshot,
   NotFound,
+  type WorkNotStopped,
   type WorkRef,
   WorkStopReport,
   WorkStopResult,
@@ -13,9 +15,12 @@ import {
   stopsWith,
   type ConnectionId,
   type RunId,
+  type ShellHandle,
   type WatchId,
 } from '@vivid/contracts'
 import { requirePerson, type Actor } from '../auth/access.ts'
+import { markStopping, unmarkStopping } from '../computers/background.ts'
+import { observeCommand, shellRefusals } from '../computers/commands.ts'
 import { connectionOrigin, listRecords } from '../connections/records.ts'
 import { ConnectionStore } from '../connections/store.ts'
 import { ChildRuns } from '../runs/store.ts'
@@ -83,6 +88,41 @@ const stopHelper = (actor: Actor, helper: RunId) =>
     )
   })
 
+/** What the Computer's answer to a stop says about the command. */
+const commandStopped = (receipt: ShellSnapshot): WorkStopResult => {
+  const notStopped = (reason: WorkNotStopped) => WorkStopResult.cases.NotStopped.make({ reason })
+  return ShellSnapshot.match(receipt, {
+    Stopped: (): WorkStopResult => stopped(),
+    // It ended on its own first; its result still wakes its Thread.
+    Completed: (): WorkStopResult => alreadyEnded(),
+    Unknown: (): WorkStopResult => alreadyEnded(),
+    Missing: (): WorkStopResult => alreadyEnded(),
+    Running: (): WorkStopResult => notStopped('StillRunning'),
+    // A stop never answers Queued; it is the Computer not having the command yet.
+    Queued: (): WorkStopResult => notStopped('ComputerUnreachable'),
+    Unavailable: (): WorkStopResult => notStopped('ComputerUnreachable'),
+  })
+}
+
+/**
+ * Stop a background command through its handle, as `stop_shell` does: the Computer's supervisor
+ * kills the process group it started and is waited on for up to thirty seconds. The command is
+ * marked first (`background.ts` `markStopping`), so the queue's next read spares its Thread the
+ * wake; a Stop that did not end it takes the mark back, so it is listed and owed again.
+ */
+const stopCommand = (actor: Actor, handle: ShellHandle) =>
+  Effect.gen(function* () {
+    const person = actor.person.id
+    if (!(yield* markStopping(person, handle))) return alreadyEnded()
+    const receipt = yield* observeCommand(person, 'stop', { handle, seconds: 30 }).pipe(
+      Effect.catchTags(shellRefusals),
+      Effect.tapError(() => unmarkStopping(person, handle)),
+    )
+    const result = commandStopped(receipt)
+    if (!WorkStopResult.guards.Stopped(result)) yield* unmarkStopping(person, handle)
+    return result
+  })
+
 /**
  * Remove an Integration Vivid made for itself. Only a Person removes one, and only a made one:
  * this call is never a way round Settings to remove an account the Person connected.
@@ -108,6 +148,7 @@ export const stopWork = Effect.fn('Work.stop')(function* (actor: Actor, work: Wo
   return yield* Match.valueTags(work, {
     Run: ({ run }) => stopRun(actor, run),
     Helper: ({ helper }) => stopHelper(actor, helper),
+    Command: ({ handle }) => stopCommand(actor, handle),
     Watch: ({ watch }) => stopWatch(actor, watch),
     MadeIntegration: ({ connection }) => removeMade(actor, connection),
   })
@@ -129,13 +170,18 @@ const reaches = (actor: Actor) => (work: BackgroundWork) =>
 /**
  * Watches go first, so no event starts a new Run while the Runs are being stopped; helpers before
  * the Runs that started them, so each is stopped and reported on its own rather than swept up by
- * its parent's Thread Stop. Within each, the order the list gave.
+ * its parent's Thread Stop; background commands next, each through its own handle. Within each,
+ * the order the list gave.
  */
 const watchesFirst = (all: ReadonlyArray<BackgroundWork>) => [
   ...all.filter(BackgroundWork.guards.Watch),
   ...all.filter(BackgroundWork.guards.Helper),
+  ...all.filter(BackgroundWork.guards.Command),
   ...all.filter(
-    (work) => !BackgroundWork.guards.Watch(work) && !BackgroundWork.guards.Helper(work),
+    (work) =>
+      !BackgroundWork.guards.Watch(work) &&
+      !BackgroundWork.guards.Helper(work) &&
+      !BackgroundWork.guards.Command(work),
   ),
 ]
 
