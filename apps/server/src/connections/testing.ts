@@ -1,3 +1,4 @@
+import { IntegrationAnswers } from '../connections/answers.ts'
 import { discordServiceId } from './discord.ts'
 import { ExecutorEvents } from '../watches/events.ts'
 import * as NodeHttp from 'node:http'
@@ -161,6 +162,7 @@ const makeOperations = (
   caller: ExecutorCaller,
 ): ExecutorConnectionOperations => {
   return {
+    resume: () => Effect.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({})),
     appSlug: (app) => Effect.succeed(`slug-${app}`),
     prepareRetirement: Effect.fn('Executor.Test.prepareRetirement')((resources) =>
       Effect.succeed(resources),
@@ -346,6 +348,7 @@ export const unansweredOperations: ExecutorConnectionOperations = {
   remove: unanswered,
   tools: unanswered,
   call: unanswered,
+  resume: unanswered,
   prepareRetirement: unanswered,
   retire: unanswered,
 }
@@ -367,6 +370,7 @@ export const testMembersLayer = Layer.succeed(
 )
 
 const dependencies = Layer.mergeAll(
+  Layer.mock(IntegrationAnswers, {}),
   Layer.mock(ExecutorEvents, { unsubscribe: () => Effect.void }),
   testMembersLayer,
   testDatabaseLayer,

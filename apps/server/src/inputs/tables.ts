@@ -22,6 +22,8 @@ export const inputRequests = pgTable(
     runId: text('run_id'),
     personId: personColumn().notNull(),
     questions: jsonb('questions').notNull(),
+    integration: jsonb('integration'),
+    integrationOutcome: jsonb('integration_outcome'),
     status: text('status').notNull(),
     answeredBy: text('answered_by').references(() => personTable.id, { onDelete: 'set null' }),
     answers: jsonb('answers'),

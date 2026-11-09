@@ -1,3 +1,4 @@
+import { IntegrationAnswers } from './answers.ts'
 import { Array as Arr, Clock, Duration, Effect, Option, Order, Result, Schema } from 'effect'
 import {
   ActionReceipt,
@@ -28,6 +29,7 @@ import {
   type Service,
   type UseDisplayToolRequest,
   type UseToolRequest,
+  InputRequestMessage,
   DisplayCallPolicy,
   displayCallPolicy,
   displayCallRefusal,
@@ -81,6 +83,7 @@ const NamedTool = ExecutorTool.pipe(
   }),
 )
 
+const isInputRequestMessage = Schema.is(InputRequestMessage)
 const isResourceMissing = Schema.is(ExecutorResourceMissing)
 const isApprovalUnsupported = Schema.is(ExecutorApprovalUnsupported)
 
@@ -382,6 +385,62 @@ const exposureOf = Effect.fn('Connections.exposure')(function* (
  * answer is `Unknown`. Unjournaled calls (reads,
  * a Person's display press) carry no receipt.
  */
+/** A dispatch without a conclusive result remains held by the original operation, including a lost question write. */
+const unknownConnection = Effect.fn('Connections.unknown')(function* (
+  operation: Option.Option<ActionOperationId>,
+  call: {
+    readonly service: Service['id']
+    readonly target: typeof ActionTarget.cases.Connection.Type
+    readonly effect: ActionEffect
+  },
+) {
+  const observedAt = yield* Clock.currentTimeMillis
+  const receipt = Option.map(operation, (operationId) =>
+    ActionReceipt.cases.Unknown.make({ operationId, observedAt }),
+  )
+  return yield* observedResult(
+    ToolOutcome.cases.OutcomeUnknown.make({ receipt: Option.getOrNull(receipt) }),
+    call,
+  )
+})
+
+const pauseConnection = Effect.fn('Connections.pause')(function* (
+  actor: Actor,
+  row: ConnectionRecord,
+  target: typeof ActionTarget.cases.Connection.Type,
+  input: {
+    readonly effect: ActionEffect
+    readonly operation: Option.Option<ActionOperationId>
+    readonly pause: import('@vivid/contracts').IntegrationPause
+  },
+) {
+  if (Option.isNone(input.operation))
+    return yield* ExecutorApprovalUnsupported.make({ tool: target.tool })
+  const lostQuestion = () =>
+    unknownConnection(input.operation, { service: row.service, target, effect: input.effect })
+  return yield* (yield* IntegrationAnswers)
+    .pause(
+      actor,
+      ProposedAction.make({
+        summary: `The Integration asks to run ${target.tool}`,
+        rationale: input.pause.form.message,
+        effect: input.effect,
+        target,
+        continuation: { pause: input.pause, operation: input.operation.value },
+      }),
+    )
+    .pipe(
+      Effect.catchTags({
+        // The remote call already paused. Losing its product question must never release the operation for another send.
+        NotFound: lostQuestion,
+        InvalidRequest: lostQuestion,
+        DatabaseUnavailable: lostQuestion,
+        DatabaseConstraintViolation: lostQuestion,
+        DatabaseFailure: lostQuestion,
+      }),
+    )
+})
+
 export const runConnection = Effect.fn('Connections.run')(
   function* (
     actor: Actor,
@@ -410,9 +469,11 @@ export const runConnection = Effect.fn('Connections.run')(
         | ExecutorApprovalUnsupported
         | import('@vivid/contracts').Conflict
         | import('../database/client.ts').DatabaseInfrastructureError,
-        ConnectionStore
+        ConnectionStore | IntegrationAnswers
       >
     >(outcome, {
+      Paused: ({ pause }) => pauseConnection(actor, row, target, { effect, operation, pause }),
+      Expired: () => notRead(ToolOutcome.cases.OutcomeUnknown.make({ receipt: null })),
       Accepted: Effect.fnUntraced(function* ({ value }) {
         const acceptedAt = yield* Clock.currentTimeMillis
         const receipt = Option.map(operation, (operationId) =>
@@ -446,16 +507,7 @@ export const runConnection = Effect.fn('Connections.run')(
           effect,
         })
       }),
-      OutcomeUnknown: Effect.fnUntraced(function* () {
-        const observedAt = yield* Clock.currentTimeMillis
-        const receipt = Option.map(operation, (operationId) =>
-          ActionReceipt.cases.Unknown.make({ operationId, observedAt }),
-        )
-        return yield* observedResult(
-          ToolOutcome.cases.OutcomeUnknown.make({ receipt: Option.getOrNull(receipt) }),
-          { service: row.service, target, effect },
-        )
-      }),
+      OutcomeUnknown: () => unknownConnection(operation, { service: row.service, target, effect }),
       NotReady: () => markNotReady(actor, row),
     })
   },
@@ -853,10 +905,10 @@ const useToolAs = Effect.fn('Connections.useTool')(function* (
     effect: tool.effect,
     target,
   })
-  const journaled = Option.filter(
-    Option.map(actor.threadId, (threadId) => ({ id: operation(threadId), threadId })),
-    () => tool.effect !== 'read',
-  )
+  const journaled = Option.map(actor.threadId, (threadId) => ({
+    id: operation(threadId),
+    threadId,
+  }))
   if (Option.isSome(journaled)) {
     const answer = yield* answerBefore({ ...journaled.value, target })
     if (Option.isSome(answer)) return yield* notRead(answeredOutcome(answer.value))
@@ -992,7 +1044,9 @@ const actionOutcome = (result: IntegrationResult) =>
         result: 'The service accepted the action; its result is not confirmed yet.',
       }),
     Completed: ({ output }) =>
-      ActionOutcome.cases.Succeeded.make({ result: JSON.stringify(output).slice(0, 4000) }),
+      isInputRequestMessage(output)
+        ? ActionOutcome.cases.Waiting.make({})
+        : ActionOutcome.cases.Succeeded.make({ result: JSON.stringify(output).slice(0, 4000) }),
     Rejected: ({ message }) => ActionOutcome.cases.Failed.make({ reason: message }),
     ScopeRequired: () =>
       ActionOutcome.cases.Failed.make({ reason: 'Additional Integration access is required.' }),
@@ -1008,8 +1062,7 @@ const actionOutcome = (result: IntegrationResult) =>
         result: 'This exact action was already sent. Its receipt says whether it finished.',
       }),
     Blocked: ({ rule }) => ActionOutcome.cases.Failed.make({ reason: rule }),
-    ApprovalRequired: () =>
-      ActionOutcome.cases.Failed.make({ reason: 'This action requires a new Approval.' }),
+    ApprovalRequired: () => ActionOutcome.cases.Waiting.make({}),
   })
 
 /** Both admission absence and access failure retain the pre-recording approved reason. */

@@ -1,3 +1,4 @@
+import { IntegrationAnswers } from '../connections/answers.ts'
 import {
   ActionApplied,
   BrowseOutcome,
@@ -348,6 +349,7 @@ export const codeCallsLayer = Layer.effect(
     // future dispatch requirements fail typecheck and the Run's Scope and parent span stay local.
     const context = Context.pick(
       CodeAuthority,
+      IntegrationAnswers,
       Gate,
       Executor,
       ExecutorMembers,
@@ -361,6 +363,7 @@ export const codeCallsLayer = Layer.effect(
     )(
       yield* Effect.context<
         | CodeAuthority
+        | IntegrationAnswers
         | Gate
         | Executor
         | ExecutorMembers

@@ -1,3 +1,13 @@
+import * as SchemaRepresentation from 'effect/SchemaRepresentation'
+import {
+  IntegrationAnswerOutcome,
+  type AnswerIntegrationInputRequest,
+  type AnswerIntegrationInputResponse,
+  ProposedAction,
+  InvalidRequest,
+} from '@vivid/contracts'
+import { IntegrationAnswers } from '../connections/answers.ts'
+import { integrationAnswerText } from '../connections/asks.ts'
 import * as NodeCrypto from 'node:crypto'
 import { and, asc, eq } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
@@ -88,11 +98,20 @@ const fields = createSelectSchema(inputRequests, {
   personId: PersonId,
   questions: Schema.NonEmptyArray(InputQuestion),
   signal: Signal,
+  integration: Schema.NullOr(ProposedAction),
+  integrationOutcome: Schema.NullOr(IntegrationAnswerOutcome),
 }).fields
 const Row = Schema.Union([
   Schema.Struct({
     ...fields,
     status: Schema.Literal('waiting'),
+    answeredBy: Schema.Null,
+    answers: Schema.Null,
+    settledAt: Schema.Null,
+  }),
+  Schema.Struct({
+    ...fields,
+    status: Schema.Literal('answering'),
     answeredBy: Schema.Null,
     answers: Schema.Null,
     settledAt: Schema.Null,
@@ -134,6 +153,7 @@ const stateOf = (
 ): Effect.Effect<InputRequestState, DatabaseFailure> =>
   Row.match(row, {
     waiting: () => Effect.succeed(InputRequestState.cases.Waiting.make({})),
+    answering: () => Effect.succeed(InputRequestState.cases.Waiting.make({})),
     answered: (value) =>
       personSummary(people, value.answeredBy).pipe(
         Effect.map((answeredBy) =>
@@ -164,6 +184,8 @@ const view = Effect.fn('Inputs.view')(function* (
         threadId: row.threadId,
         runId: row.runId,
         questions: row.questions,
+        integration: row.integration,
+        integrationOutcome: row.integrationOutcome,
         askedOf: yield* personSummary(people, row.personId),
         state: yield* stateOf(row, people),
         createdAt: row.createdAt,
@@ -197,6 +219,18 @@ export interface InputStoreService {
     actor: Actor,
     request: AskInputRequest,
   ) => Effect.Effect<InputRequest, NotFound | DatabaseInfrastructureError>
+  readonly askIntegration: (
+    actor: Actor,
+    action: ProposedAction,
+  ) => Effect.Effect<InputRequest, NotFound | InvalidRequest | DatabaseInfrastructureError>
+  readonly answerIntegration: (
+    actor: Actor,
+    request: AnswerIntegrationInputRequest,
+  ) => Effect.Effect<
+    AnswerIntegrationInputResponse,
+    NotFound | InvalidRequest | Conflict | DatabaseInfrastructureError,
+    IntegrationAnswers
+  >
   readonly answer: (
     actor: Actor,
     request: AnswerInputRequest,
@@ -225,7 +259,11 @@ const noticeBody = (request: AskInputRequest) => {
 }
 
 /** Vivid asks only in its authenticated Thread and addresses the acting Person. */
-const ask = Effect.fn('Inputs.ask')(function* (actor: Actor, request: AskInputRequest) {
+const ask = Effect.fn('Inputs.ask')(function* (
+  actor: Actor,
+  request: AskInputRequest,
+  integration: ProposedAction | null,
+) {
   if (actor.by !== 'vivid' || Option.isNone(actor.threadId))
     return yield* new NotFound({ message: 'Input request needs a Vivid Thread' })
   const threadId = actor.threadId.value
@@ -244,6 +282,10 @@ const ask = Effect.fn('Inputs.ask')(function* (actor: Actor, request: AskInputRe
           personId: actor.person.id,
           runId: null,
           questions,
+          integration:
+            integration === null
+              ? null
+              : yield* encodeStored(ProposedAction, 'Integration input')(integration),
           status: 'waiting',
           createdAt: yield* Clock.currentTimeMillis,
         })
@@ -283,6 +325,8 @@ const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: Answ
   if (value === undefined) return yield* new NotFound({ message: 'Input request not found' })
   const row = yield* decodeRow(value.request)
   yield* requireThread(row.threadId, actor.person.id)
+  if (row.integration !== null)
+    return yield* new Conflict({ message: 'Answer this Integration using its typed form.' })
   const body = yield* answerText(row.questions, request)
   const answers = yield* encodeAnswers(request.answers)
   const now = yield* Clock.currentTimeMillis
@@ -354,13 +398,148 @@ export const withdrawWaiting = Effect.fn('Inputs.withdrawWaiting')(function* (
 }, Effect.uninterruptible)
 
 /** Stores own the conditional transition; handlers share it with Vivid's tool entry point. */
+/** A tool's form remains attached to the existing Input request, with its ordinary delivery. */
+const askIntegration = Effect.fn('Inputs.askIntegration')(function* (
+  actor: Actor,
+  action: ProposedAction,
+) {
+  if (action.continuation === null)
+    return yield* new InvalidRequest({ message: 'Integration question has no saved call.' })
+  return yield* ask(
+    actor,
+    {
+      questions: [
+        {
+          question: action.continuation.pause.form.message,
+          options: [],
+          selection: 'One',
+          allowsOwnAnswer: true,
+        },
+      ],
+    },
+    action,
+  )
+})
+
+/** Invalid typed answers leave the Input request answerable and never reach Executor. */
+const validateIntegrationAnswer = Effect.fn('Inputs.validateIntegrationAnswer')(function* (
+  action: ProposedAction,
+  request: AnswerIntegrationInputRequest,
+) {
+  if (action.continuation === null || request.response.action !== 'accept') return
+  const requestedSchema = action.continuation.pause.form.requestedSchema
+  const decoder = yield* Effect.try({
+    try: () =>
+      SchemaRepresentation.fromJsonSchemaDocument({
+        dialect: 'draft-2020-12',
+        schema: requestedSchema,
+        definitions: {},
+      }),
+    catch: () => new InvalidRequest({ message: 'The Integration form schema could not be read.' }),
+  })
+  const formSchema = Schema.toEncoded(decoder)
+  yield* Schema.decodeEffect(formSchema)(request.response.content).pipe(
+    Effect.mapError(
+      () =>
+        new InvalidRequest({
+          message: 'Complete the Integration form with values matching its fields.',
+        }),
+    ),
+  )
+})
+
+/** Claim before resuming. A duplicate answer never resends the continuation, even after response loss. */
+const answerIntegration = Effect.fn('Inputs.answerIntegration')(function* (
+  actor: Actor,
+  request: AnswerIntegrationInputRequest,
+) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .select({ request: inputRequests })
+      .from(inputRequests)
+      .innerJoin(threads, eq(threads.id, inputRequests.threadId))
+      .where(and(eq(inputRequests.id, request.id), inWorkspace(threads, actor)))
+      .limit(1),
+  )
+  const value = rows[0]
+  if (value === undefined) return yield* new NotFound({ message: 'Input request not found' })
+  const row = yield* decodeRow(value.request)
+  yield* requireThread(row.threadId, actor.person.id)
+  if (row.personId !== actor.person.id || row.integration === null)
+    return yield* new NotFound({ message: 'Integration input request not found' })
+  yield* validateIntegrationAnswer(row.integration, request)
+  const claimed = yield* database.run(
+    database
+      .update(inputRequests)
+      .set({
+        status: 'answering',
+        integrationOutcome: yield* encodeStored(
+          IntegrationAnswerOutcome,
+          'Integration answer',
+        )(IntegrationAnswerOutcome.cases.Uncertain.make({})),
+      })
+      .where(and(eq(inputRequests.id, request.id), eq(inputRequests.status, 'waiting')))
+      .returning(),
+  )
+  if (claimed.length === 0)
+    return yield* new Conflict({
+      message: 'Integration question already answered or being answered.',
+    })
+  const addressed: Actor = { ...actor, by: 'vivid', threadId: Option.some(row.threadId) }
+  const outcome = yield* (yield* IntegrationAnswers).answer(
+    addressed,
+    row.integration,
+    request.response,
+  )
+  const body = integrationAnswerText(outcome)
+  const now = yield* Clock.currentTimeMillis
+  const signal = Signal.cases.Owed.make({
+    idempotencyKey: answerKey(request.id),
+    deciderId: actor.person.id,
+    message: DeliveryMessage.cases.Signal.make({ cue: SignalCue.cases.Answer.make({ body }) }),
+  })
+  const updated = yield* database.transaction((tx) =>
+    Effect.gen(function* () {
+      const written = yield* tx
+        .update(inputRequests)
+        .set({
+          status: 'answered',
+          answeredBy: actor.person.id,
+          answers: yield* encodeAnswers([InputAnswer.cases.Written.make({ words: body })]),
+          settledAt: now,
+          integrationOutcome: yield* encodeStored(
+            IntegrationAnswerOutcome,
+            'Integration answer',
+          )(outcome),
+          signal: yield* encodeSignal(signal),
+          signalDueAt: now,
+        })
+        .where(and(eq(inputRequests.id, request.id), eq(inputRequests.status, 'answering')))
+        .returning()
+      yield* announceFeed(tx, [row.threadId])
+      return written
+    }),
+  )
+  yield* changed(actor, Topic.thread(row.threadId))
+  yield* replaySignals(signalWriter, Option.some([request.id])).pipe(
+    Effect.catch(() =>
+      Effect.logError('Integration answer delivery failed', { requestId: request.id }),
+    ),
+  )
+  return { request: yield* returned(yield* view(updated), 'Input request'), outcome }
+}, Effect.uninterruptible)
+
 export const inputStoreLayer = Layer.effect(
   InputStore,
   Effect.gen(function* () {
     const database = yield* Database
-    const context = yield* Effect.context<Database | Changes | Notifier | Conversation>()
-    const run = <A, E>(effect: Effect.Effect<A, E, Database | Changes | Notifier | Conversation>) =>
-      Effect.provide(effect, context)
+    const context = Context.omit(IntegrationAnswers)(
+      yield* Effect.context<Database | Changes | Notifier | Conversation>(),
+    )
+    const run = <A, E, R>(
+      effect: Effect.Effect<A, E, R | Database | Changes | Notifier | Conversation>,
+    ) => Effect.provide(effect, context)
     return InputStore.of({
       /** ThreadStore already checked access before loading complete oldest-first request history. */
       inThread: (threadId) => run(inThread(threadId)),
@@ -386,7 +565,9 @@ export const inputStoreLayer = Layer.effect(
         )
         return yield* run(view(rows.map((row) => row.request)))
       }),
-      ask: (actor, request) => run(ask(actor, request)),
+      ask: (actor, request) => run(ask(actor, request, null)),
+      askIntegration: (actor, action) => run(askIntegration(actor, action)),
+      answerIntegration: (actor, request) => run(answerIntegration(actor, request)),
       answer: (actor, request) => run(answer(actor, request)),
       // A finished handoff owes its signal the way an answer does; both are retried together.
       replay: run(
