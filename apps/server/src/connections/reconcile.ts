@@ -14,6 +14,7 @@ import { Database } from '../database/client.ts'
 import { Executor, ExecutorCallOutcome } from './executor.ts'
 import { ExecutorMembers, operationsOf } from './members.ts'
 import { decodeRow, type ConnectionRecord } from './records.ts'
+import { gmailAttachmentSend } from './google.ts'
 import { connections } from './tables.ts'
 
 const Fields = Schema.Record(Schema.String, Schema.Json)
@@ -55,6 +56,11 @@ const CalendarResult = Schema.Struct({
   items: Schema.Array(Schema.Struct({ id: Schema.NonEmptyString })),
   nextPageToken: Schema.optionalKey(Schema.NonEmptyString),
 })
+const AttachmentMail = Schema.StructWithRest(
+  Schema.Struct({ messageId: Schema.optionalKey(Schema.String) }),
+  [Fields],
+)
+const decodeAttachmentMail = Schema.decodeUnknownOption(AttachmentMail)
 const decodeMail = Schema.decodeUnknownOption(Mail)
 const decodeCalendar = Schema.decodeUnknownOption(Calendar)
 const decodeMailResult = Schema.decodeUnknownEffect(MailResult)
@@ -95,7 +101,11 @@ export const prepareReconciliation = Effect.fn('Connections.prepareReconciliatio
 ) {
   const marker = markerOf(operation)
   let input: Schema.Json = target.input
-  if (row.service === 'google/gmail' && target.tool === mailSend) {
+  if (row.service === 'google/gmail' && target.tool === gmailAttachmentSend) {
+    const parsed = decodeAttachmentMail(target.input)
+    if (Option.isNone(parsed)) return target
+    input = { ...parsed.value, messageId: `vivid-${marker}@actions.vivid.invalid` }
+  } else if (row.service === 'google/gmail' && target.tool === mailSend) {
     const parsed = decodeMail(target.input)
     if (Option.isNone(parsed)) return target
     const raw = markMail(parsed.value.body.raw, marker)
@@ -131,9 +141,26 @@ export const prepareReconciliation = Effect.fn('Connections.prepareReconciliatio
 /** Gmail searches only the server-authored Message-ID retained in the journal's MIME. */
 const mailQuery = (operation: ActionOperation): Option.Option<Search> => {
   if (!ActionTarget.guards.Connection(operation.target)) return Option.none()
+  const marker = markerOf(operation.id)
+  if (operation.target.tool === gmailAttachmentSend) {
+    const parsed = decodeAttachmentMail(operation.target.input)
+    if (Option.isNone(parsed) || parsed.value.messageId !== `vivid-${marker}@actions.vivid.invalid`)
+      return Option.none()
+    return Option.some(
+      Search.cases.Mail.make({
+        input: {
+          path: { userId: 'me' },
+          query: {
+            q: `rfc822msgid:<vivid-${marker}@actions.vivid.invalid>`,
+            includeSpamTrash: true,
+            maxResults: 1,
+          },
+        },
+      }),
+    )
+  }
   const parsed = decodeMail(operation.target.input)
   if (Option.isNone(parsed)) return Option.none()
-  const marker = markerOf(operation.id)
   const mime = NodeBuffer.Buffer.from(parsed.value.body.raw, 'base64url').toString('latin1')
   const headers = mime.split(/\r?\n\r?\n/u, 1)[0]
   if (
@@ -185,7 +212,10 @@ const calendarQuery = (operation: ActionOperation): Option.Option<Search> => {
 /** Legacy unmarked requests cannot prove absence. Only curated provider/tool pairs opt in. */
 const queryFor = (operation: ActionOperation, row: ConnectionRecord): Option.Option<Search> => {
   if (!ActionTarget.guards.Connection(operation.target)) return Option.none()
-  if (row.service === 'google/gmail' && operation.target.tool === mailSend)
+  if (
+    row.service === 'google/gmail' &&
+    (operation.target.tool === mailSend || operation.target.tool === gmailAttachmentSend)
+  )
     return mailQuery(operation)
   if (row.service === 'google/calendar' && operation.target.tool === eventCreate)
     return calendarQuery(operation)
