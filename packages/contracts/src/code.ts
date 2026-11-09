@@ -85,6 +85,7 @@ export interface DisplayProgramWaiting extends Schema.Schema.Type<typeof Display
 
 /** How one call the program made ended. A call that needed a decision ended the program. */
 export const CodeCallEnd = Schema.Literals([
+  'accepted',
   'completed',
   'refused',
   'needs approval',
