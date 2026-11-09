@@ -1,8 +1,6 @@
+import { appsVersion } from './framework.ts'
 import { Schema } from 'effect'
 
-/** Versions proven together on executor-selfhost:2.0.0-beta.8 in
- * artifacts/research/github-token-proof.md, Route 2. Upgrading needs another real token proof. */
-export const keyedAppsVersion = '0.0.1-beta.19'
 export const keyedMcpVersion = '1.30.0'
 
 /** Public transport policy is data; secrets never enter this source-generation boundary. */
@@ -29,10 +27,14 @@ function literal(value: string) {
 }
 
 export function keyedFiles(input: typeof KeyedApp.Type) {
-  const source = `import { defineApp, defineProvider, secrets, object, string } from "apps";
+  const source = `import { defineApp, defineProvider, secrets, object, string, router } from "apps";
 import { mcpRouter } from "apps/mcp";
 const service = defineProvider({ name: ${literal(input.name)}, hosts: [${literal(input.host)}], auth: { pat: secrets({ label: "Personal access token", fields: object({ token: string() }) }) } });
-export default defineApp({ accounts: { service } }, async ({ accounts, signal, cache }) => ({ tools: await mcpRouter({ url: ${literal(input.address.href)}, headers: { [${literal(input.header)}]: ${literal(input.prefix)} + accounts.service.fields.token }, accountId: accounts.service.id, cache: cache.forAccount(accounts.service), signal }) }));
+export default defineApp({ user: { accounts: { service: service.many() } } }, async ({ user, signal, cache }) => {
+if (user === undefined) return { tools: router({}) };
+const [account] = user.accounts.service;
+if (account === undefined) return { tools: router({}) };
+return { tools: await mcpRouter({ url: ${literal(input.address.href)}, headers: { [${literal(input.header)}]: ${literal(input.prefix)} + account.fields.token }, accountId: account.id, cache: cache.forAccount(account), signal }) }; });
 `
   return [
     { path: 'index.ts', content: source },
@@ -42,7 +44,7 @@ export default defineApp({ accounts: { service } }, async ({ accounts, signal, c
         name: 'vivid-keyed-mcp',
         private: true,
         type: 'module',
-        dependencies: { apps: keyedAppsVersion, '@modelcontextprotocol/sdk': keyedMcpVersion },
+        dependencies: { apps: appsVersion, '@modelcontextprotocol/sdk': keyedMcpVersion },
       }),
     },
   ]

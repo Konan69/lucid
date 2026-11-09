@@ -1,7 +1,5 @@
+import { appsVersion } from './framework.ts'
 import { ServiceId, type MakeIntegrationRequest } from '@vivid/contracts'
-
-/** Executor 26d03a48, refs/executor/packages/apps/package.json, ships this framework in beta.23. */
-export const madeAppsVersion = '0.0.1-beta.92'
 
 /** Authored services are distinct from catalogue entries and address imports. */
 export const MADE = 'made:'
@@ -22,7 +20,7 @@ export function madeFiles(request: MakeIntegrationRequest) {
         name: 'vivid-made-integration',
         private: true,
         type: 'module',
-        dependencies: { apps: madeAppsVersion },
+        dependencies: { apps: appsVersion },
       }),
     },
   ]
