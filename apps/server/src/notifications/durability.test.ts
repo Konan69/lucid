@@ -9,9 +9,11 @@ import { fixture, pushTestLayer, PushProbe } from '../push/testing.ts'
 import { PushTargets } from '../push/targets.ts'
 import { pushDeliveries } from '../push/tables.ts'
 import { threads } from '../threads/tables.ts'
-import { notificationDelivery, takeNotification } from './delivery.ts'
+import { NotificationDelivery, notificationDelivery, takeNotification } from './delivery.ts'
 import { oweNotice } from './notifier.ts'
 import { notifications } from './tables.ts'
+import { CHANNEL, Topic } from '../live/changes.ts'
+import { payload, silent } from '../live/testing.ts'
 
 class Abandoned extends Schema.TaggedError<Abandoned>()(
   'Abandoned',
@@ -33,6 +35,34 @@ const deliveryLayer = PersistedQueue.layer.pipe(
 
 describe.skipIf(!testDatabaseConfigured)('durable notification delivery', () => {
   layer(deliveryLayer)((it) => {
+    it.effect('announces a notice once across producer and Publish replays', () =>
+      Effect.gen(function* () {
+        const owner = yield* fixture()
+        const id = NotificationId.make(crypto.randomUUID())
+        const notice = {
+          personId: owner.person.id,
+          companyId: null,
+          kind: 'needs-you' as const,
+          title: 'One announcement',
+          body: 'Review it.',
+          threadId: owner.threadId,
+        }
+        const heard = yield* (yield* PgClient).listen(CHANNEL)
+        yield* oweNotice({ id, notice })
+        yield* takeNotification()
+        yield* payload(heard, [Topic.part('notifications')(Topic.person(owner.person.id))])
+        const queue = yield* notificationDelivery
+        // A distinct queue receipt simulates losing acknowledgement after a successful publish.
+        yield* queue.offer(
+          NotificationDelivery.cases.Publish.make({ personId: owner.person.id, notificationId: id }),
+          { id: `${id}:replay` },
+        )
+        yield* takeNotification()
+        yield* oweNotice({ id, notice })
+        yield* silent(heard)
+      }),
+    )
+
     it.effect(
       'rolls back product and obligations together, then replays devices independently',
       () =>

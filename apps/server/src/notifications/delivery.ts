@@ -1,13 +1,15 @@
-import { Cause, Effect, Layer, Schedule, Schema } from 'effect'
+import { and, eq, isNull } from 'drizzle-orm'
+import { Cause, Clock, Effect, Layer, Schedule, Schema } from 'effect'
 import * as PersistedQueue from 'effect/persistence/PersistedQueue'
 import { NotificationId, PersonId, PushTargetId } from '@vivid/contracts'
 import { Database } from '../database/client.ts'
 import { announce, Topic } from '../live/changes.ts'
+import { notifications } from './tables.ts'
 import { deliverTarget } from '../push/delivery.ts'
 
 /** Each client publication and device has independent SQL ownership, retries and acknowledgement. */
 export const NotificationDelivery = Schema.TaggedUnion({
-  Publish: { personId: PersonId },
+  Publish: { notificationId: NotificationId, personId: PersonId },
   Push: { notificationId: NotificationId, personId: PersonId, targetId: PushTargetId },
 })
 
@@ -24,15 +26,24 @@ export const notificationDelivery = PersistedQueue.make({
   retrySchedule: Schedule.min([Schedule.exponential('1 second'), Schedule.spaced('5 minutes')]),
 })
 
-/** Publication uses the transaction connection so an SQL failure remains owed, never ignored. */
+/** The publication receipt and NOTIFY share one commit, including across queue replays. */
 export const takeNotification = Effect.fn('Notifications.take')(function* () {
   const queue = yield* notificationDelivery
   const database = yield* Database
   return yield* queue.take((job) =>
     NotificationDelivery.match(job, {
-      Publish: ({ personId }) =>
+      Publish: ({ notificationId, personId }) =>
         database.transaction((tx) =>
-          announce(tx, [Topic.part('notifications')(Topic.person(personId))]),
+          Effect.gen(function* () {
+            const now = yield* Clock.currentTimeMillis
+            const claimed = yield* tx
+              .update(notifications)
+              .set({ publishedAt: now })
+              .where(and(eq(notifications.id, notificationId), isNull(notifications.publishedAt)))
+              .returning({ id: notifications.id })
+            if (claimed.length === 0) return
+            yield* announce(tx, [Topic.part('notifications')(Topic.person(personId))])
+          }),
         ),
       Push: (target) => deliverTarget(target),
     }),
