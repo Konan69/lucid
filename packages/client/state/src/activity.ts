@@ -161,7 +161,7 @@ const STEPS = {
     said: {
       running: 'Using an integration',
       done: 'Used an integration',
-      failed: 'The integration did not do it',
+      failed: 'The integration failed',
     },
     // The account is the subject of the line, so the detail is only what was done with it.
     named: (asked) =>
@@ -220,7 +220,7 @@ const STEPS = {
     said: {
       running: 'Working on its computer',
       done: 'Worked on its computer',
-      failed: 'The computer did not do it',
+      failed: 'Couldn’t use its computer',
     },
     detail: (asked) => [said(asked.command)],
   },
@@ -268,7 +268,7 @@ const STEPS = {
     said: {
       running: 'Using its browser',
       done: 'Used its browser',
-      failed: 'The browser did not do it',
+      failed: 'Couldn’t use its browser',
     },
     detail: (asked) => [said(asked.summary)],
   },
@@ -276,7 +276,7 @@ const STEPS = {
     said: {
       running: 'Looking on its computer',
       done: 'Used its computer',
-      failed: 'The computer did not do it',
+      failed: 'Couldn’t use its computer',
     },
     detail: (asked) => [said(asked.summary)],
   },
@@ -310,7 +310,7 @@ const STEPS = {
     said: {
       running: 'Working on your computer',
       done: 'Worked on your computer',
-      failed: 'Your computer did not do it',
+      failed: 'Couldn’t use your computer',
     },
     detail: (asked) => [said(asked.summary)],
   },

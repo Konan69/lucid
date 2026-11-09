@@ -410,7 +410,7 @@ function OwedRow({
     >
       {standing === 'failed' && (
         <Label size="label" tone="status-danger" style={{ paddingBottom: 6, paddingHorizontal: 4 }}>
-          That did not reach Vivid. Press it again.
+          That didn’t reach Vivid. Tap it again.
         </Label>
       )}
       <HoldMenu
@@ -501,7 +501,7 @@ function TodoRow({
     >
       {standing === 'failed' && (
         <Label size="label" tone="status-danger" style={{ paddingBottom: 6, paddingHorizontal: 4 }}>
-          That did not reach Vivid. Press it again.
+          That didn’t reach Vivid. Tap it again.
         </Label>
       )}
       <HoldMenu
@@ -699,7 +699,7 @@ function Waiting({
     >
       {feed.failed(item, press) && (
         <Label size="label" tone="status-danger" style={{ paddingBottom: 8 }}>
-          That did not reach Vivid. Press it again.
+          That didn’t reach Vivid. Tap it again.
         </Label>
       )}
       <Card

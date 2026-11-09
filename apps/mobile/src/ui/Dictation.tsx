@@ -121,12 +121,12 @@ const wordsOf = (reading: dictating.Reading): Option.Option<{ text: string; fail
 /** A failure in the Person's words. A refused microphone never reaches here (`isDictating`). */
 const failureOf = (why: dictating.Why): string =>
   dictating.Why.match(why, {
-    Unavailable: () => 'This phone cannot write down speech in its language.',
+    Unavailable: () => 'This phone can’t transcribe speech in its language.',
     NoMicrophone: () => 'Vivid needs the microphone to hear you.',
     Unprepared: () => 'The microphone could not start.',
     Interrupted: () => 'The recording was cut off.',
     Unheard: () => 'Nothing was heard.',
-    Untranscribed: () => 'What you said could not be written down.',
+    Untranscribed: () => 'Couldn’t transcribe what you said.',
   })
 
 /** The row while dictating: cancel, the recording, and the tick. */
@@ -139,7 +139,7 @@ export function DictationBar({ dictation }: { dictation: Dictating }) {
   const failed = dictating.Reading.guards.Refused(reading)
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', height: TARGET }}>
-      <Plain label={failed ? 'Dismiss' : 'Throw away the recording'} onPress={onDrop}>
+      <Plain label={failed ? 'Dismiss' : 'Discard recording'} onPress={onDrop}>
         <Glyph name="xmark" fallback={X} size={18} color={c.foreground} />
       </Plain>
       <View style={{ flex: 1, minWidth: 0, height: TARGET, justifyContent: 'center' }}>

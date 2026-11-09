@@ -33,7 +33,7 @@ export function fileThread(thread: Thread, projectId: ProjectId | null) {
             ),
           })),
       ),
-      `“${thread.title}” could not be moved just now. Try again.`,
+      `“${thread.title}” couldn’t be moved. Try again.`,
     ),
   )
 }
@@ -106,7 +106,7 @@ export function MoveThread({ thread, onClose }: { thread: Thread; onClose: () =>
           {thread.projectId !== null && (
             <div className="-mx-2.5 mt-2 border-t border-line-1 pt-2">
               <button type="button" onClick={() => move(null)} className={CHOICE}>
-                <span className="min-w-0 flex-1 truncate pl-8">Remove from its project</span>
+                <span className="min-w-0 flex-1 truncate pl-8">Remove from project</span>
               </button>
             </div>
           )}

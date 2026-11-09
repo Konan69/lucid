@@ -79,7 +79,7 @@ const prepare =
       ).pipe(
         Effect.withErrorReporting,
         Effect.as(attaching.Item.cases.Document.make({ file })),
-        Effect.orElseSucceed(() => refused(file, 'It did not upload. Take it off and try again.')),
+        Effect.orElseSucceed(() => refused(file, 'It didn’t upload. Remove it and try again.')),
       )
     }
     if (shared)
@@ -92,10 +92,10 @@ const prepare =
       }),
     ).pipe(
       Effect.withErrorReporting,
-      Effect.mapError(() => refused(file, 'It could not be read. Try another file.')),
+      Effect.mapError(() => refused(file, 'That file couldn’t be read. Try another one.')),
       Effect.flatMap((image) =>
         Option.match(Option.fromUndefinedOr(image.base64), {
-          onNone: () => Effect.fail(refused(file, 'It could not be read. Try another file.')),
+          onNone: () => Effect.fail(refused(file, 'That file couldn’t be read. Try another one.')),
           onSome: (data64) =>
             Effect.succeed(
               attaching.Item.cases.Picture.make({

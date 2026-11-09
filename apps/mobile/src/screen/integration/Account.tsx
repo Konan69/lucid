@@ -250,7 +250,7 @@ function Rename({
         />
       </Labelled>
       <Label size="label" tone="ink-2">
-        Your own name for this account, such as Work. Vivid uses it too. Leave it empty to remove
+        Your name for this account, such as Work. Vivid uses this name too. Leave it empty to remove
         the name.
       </Label>
       {taken && <Notice message={TAKEN} />}

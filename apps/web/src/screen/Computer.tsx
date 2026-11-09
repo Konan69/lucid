@@ -286,8 +286,8 @@ const mark = (name: string, Icon: LucideIcon) => (
 
 /** What going beside the Thread is called from each view: from two of them it is the way back. */
 const DOCK_NAME = {
-  docked: 'Beside the Thread',
-  popout: 'Dock beside the Thread (Esc)',
+  docked: 'Beside the thread',
+  popout: 'Dock beside the thread (Esc)',
   full: 'Exit full screen (Esc)',
 } as const
 
@@ -308,7 +308,7 @@ function Views({ view, canSplit }: { view: View; canSplit: boolean }) {
   ]
   return (
     <Segmented<View>
-      label="How Vivid’s computer is shown"
+      label="Vivid’s computer view"
       value={view}
       options={canSplit ? [beside, ...others] : others}
       onChange={show}
@@ -381,8 +381,8 @@ export const hold = (held: boolean) =>
     orSay(
       changing((client) => client.HoldComputer({ held })),
       held
-        ? 'Vivid still has control: taking over did not go through. Try again.'
-        : 'You still have control: handing back did not go through. Try again.',
+        ? 'Couldn’t take over. Vivid still has control. Try again.'
+        : 'Couldn’t hand back. You still have control. Try again.',
     ),
   )
 
@@ -724,10 +724,10 @@ function Display({
     return (
       <Note
         title="Can’t see the screen"
-        detail="Vivid’s computer is still running. Its screen did not reach this window."
+        detail="Vivid’s computer is still running. Its screen couldn’t load here."
         action={
           <Button variant="outline" onClick={() => hear('asked')}>
-            Look again
+            Try again
           </Button>
         }
       />

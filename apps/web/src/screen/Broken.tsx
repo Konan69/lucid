@@ -14,7 +14,7 @@ export function Broken() {
       <Face size={40} mood="neutral" />
       <h1 className="text-title font-title text-ink">This screen could not be shown</h1>
       <p className="max-w-xs text-label text-pretty text-ink-3">
-        Something went wrong while drawing it. Your threads and what you were writing are safe.
+        Something went wrong while showing it. Your threads and what you were writing are safe.
       </p>
       <div className="mt-1 flex gap-2">
         <Button variant="outline" onClick={again}>

@@ -23,7 +23,7 @@ export class DocumentUnavailable extends Schema.TaggedError<DocumentUnavailable>
 ) {}
 
 const UNAVAILABLE = 'That file could not be opened. Try again.'
-const NOWHERE = 'This device has nowhere to open that file.'
+const NOWHERE = 'No app on this device can open that file.'
 
 /** A name the device's file system accepts, keeping the extension other apps choose by. */
 const safeName = (name: string) => name.replace(/[^a-zA-Z0-9._-]/gu, '_')
@@ -112,7 +112,7 @@ export interface Chosen {
   readonly uri: string
 }
 
-const UNPICKABLE = 'This device could not open its files. Try again.'
+const UNPICKABLE = 'The file picker didn’t open. Try again.'
 const TOO_LARGE = 'Choose a file smaller than 10 MB.'
 const UNSENT = 'That file did not reach Vivid. Check your connection and try again.'
 

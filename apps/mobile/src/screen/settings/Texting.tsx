@@ -278,7 +278,7 @@ function NotConnected({
   return (
     <>
       <Head channel={channel} words={words}>
-        Give the number of the phone you will text from.
+        Enter the number of the phone you’ll text from.
       </Head>
       <Labelled label="Your phone number, with its country code">
         <Field
@@ -401,7 +401,7 @@ function Confirming({
       <Figure name="Text this number" value={standing.textTo} spent={false} />
       <Figure name="This code" value={standing.code} spent={ended} />
       <Label accessibilityLiveRegion="polite" size="label" tone="ink-2">
-        {ended ? `This code ended at ${at}. Get a new one.` : `The code works until ${at}.`}
+        {ended ? `This code expired at ${at}. Get a new one.` : `The code works until ${at}.`}
       </Label>
       {!ended && (
         <Button

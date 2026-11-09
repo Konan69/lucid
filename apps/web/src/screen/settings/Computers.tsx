@@ -22,9 +22,8 @@ import { Empty, Refusal, Row, Section } from './Parts'
  */
 const QUIET = {
   Loading: 'Looking…',
-  Failed: 'Vivid could not list your computers just now. Open this again in a moment.',
-  Ready:
-    'No computer yet. Open the Vivid desktop app on your computer and sign in, and it appears here.',
+  Failed: 'Couldn’t load your computers. Try again in a moment.',
+  Ready: 'No computers yet. Sign in to the Vivid desktop app on your computer to add it here.',
 } satisfies Record<LiveState<unknown>['_tag'], string>
 
 const when = makeWhen(thisReader())

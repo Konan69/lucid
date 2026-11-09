@@ -676,7 +676,7 @@ function Launcher() {
         </button>
       </div>
       <p className="text-label font-meta text-ink-3">
-        Or type an address, or a few words to search for, in the bar above.
+        Or type an address or search in the bar above.
       </p>
     </div>
   )

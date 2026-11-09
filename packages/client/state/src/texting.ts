@@ -93,7 +93,7 @@ const SAID = {
   ChannelUnavailable: (channel) => `Vivid cannot text on ${channel} yet.`,
   ChannelAddressInvalid: (channel) =>
     KNOWN_BY[channel] === 'number'
-      ? `That is not a phone number ${channel} can reach. Write it with its country code, like +234 801 234 5678.`
+      ? `${channel} can’t reach that number. Enter it with its country code, like +234 801 234 5678.`
       : `Vivid could not start connecting ${channel}. Try again.`,
   ChannelAddressTaken: (channel) =>
     KNOWN_BY[channel] === 'number'

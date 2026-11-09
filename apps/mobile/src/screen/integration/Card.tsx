@@ -225,7 +225,7 @@ const rowOf = (card: {
       // device), where no press here was waiting for it; a press here carries on by itself.
       action: card.current
         ? Option.some({
-            label: 'Carry on',
+            label: 'Continue',
             kind: 'primary',
             disabled: false,
             onPress: card.onCarryOn,
@@ -241,7 +241,7 @@ const rowOf = (card: {
       tone: 'ink-2',
       action: card.current
         ? Option.some({
-            label: Option.getOrElse(button, () => 'Carry on'),
+            label: Option.getOrElse(button, () => 'Continue'),
             kind: 'primary',
             disabled: false,
             onPress: () => card.onGiveUp(carryOn.value),

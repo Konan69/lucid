@@ -78,7 +78,7 @@ export const decidingAfter = (deciding: Deciding, happened: Tried): Deciding =>
   })
 
 /** What is said when a decision did not go through. The record on screen is already the newer. */
-const REFUSED = 'This was already decided, or it changed. Look again.'
+const REFUSED = 'This was already decided or has changed. Check it again.'
 
 /**
  * What the banner over the composer is doing: nothing, showing the Approval that is up, or

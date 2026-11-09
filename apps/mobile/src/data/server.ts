@@ -20,7 +20,7 @@ export class ServerAddressRefused extends Schema.TaggedError<ServerAddressRefuse
   { title: 'Server address refused' },
 ) {}
 
-const NOT_AN_ADDRESS = 'That is not an address. It looks like http://192.168.1.20:5178.'
+const NOT_AN_ADDRESS = 'That isn’t a valid address. Use one like http://192.168.1.20:5178.'
 const NOT_PLAIN =
   'Use an http or https address with no sign-in details, question mark or hash in it.'
 

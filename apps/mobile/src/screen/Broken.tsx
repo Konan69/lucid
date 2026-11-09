@@ -31,7 +31,7 @@ export function Broken() {
         This screen could not be shown
       </Label>
       <Label size="label" tone="ink-2" style={{ textAlign: 'center', maxWidth: 300 }}>
-        Something went wrong while drawing it. Your threads and what you were writing are safe.
+        Something went wrong while showing it. Your threads and what you were writing are safe.
       </Label>
       <View style={{ marginTop: 14 }}>
         <Button kind="primary" label="Try again" onPress={again} />

@@ -143,7 +143,7 @@ function Machine({ computer, onOpen }: { computer: Computer; onOpen: Option.Opti
       </Shot>
     ),
     Failed: () => (
-      <Shot note={Option.some(<Note>It did not start. Press the screen to try again.</Note>)}>
+      <Shot note={Option.some(<Note>It didn’t start. Click the screen to try again.</Note>)}>
         <Off />
       </Shot>
     ),

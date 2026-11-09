@@ -535,7 +535,7 @@ function ProjectThreads({
     <>
       {filed.length === 0 && hidden === 0 && (
         <p className="px-1 text-label font-meta text-ink-3">
-          No threads here yet. Start one and it is filed in this project.
+          No threads yet. Threads you start here are filed in this project.
         </p>
       )}
       {filed.length > 0 && (

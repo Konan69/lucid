@@ -63,7 +63,7 @@ const read = (data: LiveData, id: InvitationId): Promise<Reading> =>
  */
 const REFUSALS = {
   unconfirmed:
-    'This Vivid cannot confirm the email address of an account with a password yet, so you cannot join with this account.',
+    'This Vivid can’t verify email addresses for password accounts yet, so you can’t join with this account.',
   refused: 'This invitation is for a different email address, or it was already used.',
   failed: 'Could not join right now. Try again.',
 } as const
@@ -76,8 +76,8 @@ const REFUSALS = {
 const SHARED = [
   'Threads you start for everyone or share',
   'The company’s Library and Projects',
-  'Integrations an admin sets up for all',
-  'Rules its admins write',
+  'Integrations an admin sets up for everyone',
+  'Rules set by its admins',
 ]
 const YOURS = [
   'Your private threads',
@@ -139,7 +139,7 @@ function Shown({ asked }: { asked: Promise<Reading> }) {
     Missing: () => (
       <View style={{ gap: 6 }}>
         <Label accessibilityRole="header" size="title">
-          This invitation is not here
+          Invitation not found
         </Label>
         <Label tone="ink-2">
           It may have been withdrawn. Ask whoever invited you for a new link.
@@ -175,11 +175,7 @@ function Offer({ preview }: { preview: InvitationPreview }) {
         )}
       </View>
       <Boundary title={`Shared with ${preview.company.name}`} lines={SHARED} note={Option.none()} />
-      <Boundary
-        title="Still only yours"
-        lines={YOURS}
-        note={Option.some('Admins cannot read these.')}
-      />
+      <Boundary title="Stays yours" lines={YOURS} note={Option.some('Admins cannot read these.')} />
     </>
   )
 }

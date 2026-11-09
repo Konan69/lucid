@@ -68,7 +68,7 @@ const KIND = {
 const QUIET = {
   Loading: 'Looking…',
   Failed: 'Vivid can’t reach your notifications right now.',
-  Ready: 'You’re all caught up. Vivid will tell you here.',
+  Ready: 'You’re all caught up. New notifications from Vivid appear here.',
 } satisfies Record<LiveState<unknown>['_tag'], string>
 
 /**

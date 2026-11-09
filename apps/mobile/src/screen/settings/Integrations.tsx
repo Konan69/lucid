@@ -251,10 +251,10 @@ function Whose({
         tone="ink-2"
         style={{ paddingHorizontal: 4 }}
       >
-        Who the next integration is for
+        Who new integrations are for
       </Label>
       <Segmented
-        label="Who the next integration is for"
+        label="Who new integrations are for"
         value={forCompany ? 'company' : 'you'}
         onChange={(value) => onChange(value === 'company')}
         options={[

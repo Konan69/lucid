@@ -81,8 +81,8 @@ function patchThread(
           })),
       ),
       patch.title === undefined
-        ? 'That thread could not be moved just now. Try again.'
-        : 'That thread could not be renamed just now. Try again.',
+        ? 'Couldn’t move that thread. Try again.'
+        : 'Couldn’t rename that thread. Try again.',
     ),
   )
 }
@@ -103,10 +103,7 @@ function useRetitling() {
     setWaiting((now) => new Set(now).add(id))
     const settle = () => setWaiting((now) => new Set([...now].filter((other) => other !== id)))
     void act(
-      orSay(
-        running(regenerateThreadTitle(id)),
-        'Vivid could not think of a better title just now.',
-      ),
+      orSay(running(regenerateThreadTitle(id)), 'Vivid couldn’t come up with a better title.'),
     ).then(settle, settle)
   }
   return { waiting, retitle }

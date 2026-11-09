@@ -39,9 +39,9 @@ const COPY = {
 /** What Vivid does, said the way it would say it. Shown beside the form on a wide window. */
 const PROMISES = [
   'Remembers what matters to you, and forgets what you tell it to.',
-  'Follows up on its own, so nothing waits on you to chase it.',
+  'Follows up on its own, so you don’t have to chase anything.',
   'Works in the tools you already use, on a computer of its own.',
-  'Asks first before anything that sends, spends or deletes.',
+  'Asks before it sends, spends or deletes anything.',
 ] as const
 
 /** What the form says back: a fault in the danger ink, or a quiet word about what the Person chose. */
