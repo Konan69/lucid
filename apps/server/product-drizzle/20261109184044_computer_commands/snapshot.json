@@ -1,9 +1,9 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "3e6642d1-2141-4b08-bc11-85b3442392fa",
+  "id": "2ba01534-9ec4-436d-be9c-dd308f4de793",
   "prevIds": [
-    "2f8c2141-fa9b-4082-a3b6-76e59f94f18d"
+    "f144d33f-de11-4d9c-9aac-9a5ee81e42ad"
   ],
   "ddl": [
     {
@@ -3835,6 +3835,19 @@
       "generated": null,
       "identity": null,
       "name": "read_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_notifications"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "published_at",
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_notifications"
