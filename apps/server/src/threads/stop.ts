@@ -11,10 +11,16 @@ import { Clock, Effect, Option } from 'effect'
 import { Database } from '../database/client.ts'
 import { announceFeed } from '../feed/changes.ts'
 import { Runtime } from '../runtime/client.ts'
+import { ChildRuns } from '../runs/store.ts'
 import { runs, threads } from './tables.ts'
 
-/** Thread Stop and a computer Stop use the same runtime abort adapter. */
+/**
+ * Thread Stop, a device's Stop and a Run's Stop from the list of work all end here. Helpers go
+ * first: their results are dropped and their work ends before the Thread's own abort, so no late
+ * result starts the Thread again after the Stop.
+ */
 export const abortThread = Effect.fn('Threads.abort')(function* (threadId: ThreadId) {
+  yield* (yield* ChildRuns).stopThread(threadId)
   yield* (yield* Runtime).stop(threadId)
 })
 

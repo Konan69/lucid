@@ -31,6 +31,7 @@ import { inputRequests } from '../inputs/tables.ts'
 import { CHANNEL } from '../live/changes.ts'
 import { payload, silent } from '../live/testing.ts'
 import { Runtime } from '../runtime/client.ts'
+import { ChildRuns } from '../runs/store.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
 import type { ThreadPlace } from '../threads/place.ts'
 import { RunEnding, RunStore, runStoreLayer, TurnReservation } from '../threads/runs.ts'
@@ -54,6 +55,7 @@ const testLayer = Layer.mergeAll(
   runStoreLayer,
   threadStoreLayer,
   Layer.mock(Runtime, { stop: () => Effect.succeed(false) }),
+  Layer.mock(ChildRuns, { stopThread: () => Effect.void }),
 ).pipe(Layer.provideMerge(testDatabaseLayer))
 
 const now = 1_800_000_000_000
