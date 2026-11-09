@@ -111,7 +111,7 @@ function Row({
       <div>
         {standing === 'failed' && (
           <p className="px-3 pt-2 text-label text-danger">
-            That didn’t reach Vivid. Click it again.
+            Not sent. Try again.
           </p>
         )}
         <ContextMenu>

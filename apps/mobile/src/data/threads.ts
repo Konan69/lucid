@@ -32,7 +32,7 @@ export class Undelivered extends Schema.TaggedError<Undelivered>()(
 
 /** What a Person is told when a message left the phone and is not known to have arrived. */
 export const UNDELIVERED =
-  'That message did not reach Vivid. Check your connection and send it again.'
+  'Not sent. Check your connection and try again.'
 
 /** A card resumes Vivid as an internal signal, with one key shared by its retry. */
 export const carryOn = (data: LiveData, thread: ThreadId, body: string) => {

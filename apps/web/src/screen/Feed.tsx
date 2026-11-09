@@ -269,7 +269,7 @@ function Waiting({
     <div data-folded={folded ? '' : undefined} inert={folded} className="motion-fold">
       <div className="pb-3">
         {feed.failed(item, press) && (
-          <p className="pb-2 text-label text-danger">That didn’t reach Vivid. Click it again.</p>
+          <p className="pb-2 text-label text-danger">Not sent. Try again.</p>
         )}
         <Card
           card={item.card}

@@ -8,7 +8,7 @@ import {
 } from '@vivid/contracts'
 import { allowing, feed, makeWhen, owed, thisReader, todos, type DeviceWaiting } from '@vivid/state'
 import { Check } from 'lucide-react-native'
-import { Data, Option } from 'effect'
+import { Array, Data, Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { FlatList, Pressable, View, type ViewToken } from 'react-native'
 import Animated, { LinearTransition, ReduceMotion } from 'react-native-reanimated'
@@ -19,6 +19,7 @@ import { closeTodo, useTodoStandings } from '../data/todos'
 import { LiveState, useLive, useLiveData, useLiveValue } from '../data/live'
 import { Computer } from './chat/Device'
 import { Decide } from './feed/Decide'
+import { Swipe, type Side, type Sides } from './feed/Swipe'
 import { Display } from '../parts/display'
 import { HoldMenu } from '../t3/Menu'
 import { useTheme } from '../theme'
@@ -410,7 +411,7 @@ function OwedRow({
     >
       {standing === 'failed' && (
         <Label size="label" tone="status-danger" style={{ paddingBottom: 6, paddingHorizontal: 4 }}>
-          That didn’t reach Vivid. Tap it again.
+          Not sent. Try again.
         </Label>
       )}
       <HoldMenu
@@ -501,7 +502,7 @@ function TodoRow({
     >
       {standing === 'failed' && (
         <Label size="label" tone="status-danger" style={{ paddingBottom: 6, paddingHorizontal: 4 }}>
-          That didn’t reach Vivid. Tap it again.
+          Not sent. Try again.
         </Label>
       )}
       <HoldMenu
@@ -699,33 +700,80 @@ function Waiting({
     >
       {feed.failed(item, press) && (
         <Label size="label" tone="status-danger" style={{ paddingBottom: 8 }}>
-          That didn’t reach Vivid. Tap it again.
+          Not sent. Try again.
         </Label>
       )}
-      <Card
-        card={item.card}
-        at={item.at}
-        post={post}
-        ask={{ title: item.from, words: feed.askedWords(item) }}
-        asked={Option.map(asked, (approval) => (
-          <Decide approval={approval} />
-        ))}
-        reply={Option.some({
-          // Only a send for this very post holds its buttons: an older post's send still on its
-          // way does not stop the Person answering the one now shown.
-          held: Option.exists(
-            press,
-            (held) => feed.Press.$is('Sending')(held) && held.revision === feed.revisionOf(item),
-          ),
-          onSay: onAnswer,
-          onDone,
-        })}
-        now={now}
-        remember={Option.some({ post: feed.revisionOf(item) })}
-        onOpen={onOpen}
-      />
+      <Swipe
+        // A send that did not get through brings the card back where it was, not where it was thrown.
+        key={feed.failed(item, press) ? 'again' : 'first'}
+        sides={sidesOf(post, asked, { onSay: onAnswer, onDone })}
+        held={Option.exists(press, feed.Press.$is('Sending'))}
+      >
+        <Card
+          card={item.card}
+          at={item.at}
+          post={post}
+          ask={{ title: item.from, words: feed.askedWords(item) }}
+          asked={Option.map(asked, (approval) => (
+            <Decide approval={approval} />
+          ))}
+          reply={Option.some({
+            // Only a send for this very post holds its buttons: an older post's send still on its
+            // way does not stop the Person answering the one now shown.
+            held: Option.exists(
+              press,
+              (held) => feed.Press.$is('Sending')(held) && held.revision === feed.revisionOf(item),
+            ),
+            onSay: onAnswer,
+            onDone,
+          })}
+          now={now}
+          remember={Option.some({ post: feed.revisionOf(item) })}
+          onOpen={onOpen}
+        />
+      </Swipe>
     </Animated.View>
   )
+}
+
+/**
+ * What a swipe does on a waiting card, from what the card already offers (9 November 2026: swipe
+ * the Feed's cards like a deck of cards). Right is the answer, left the way out, each in the card's
+ * own words, so a swipe never does anything its buttons do not say:
+ *
+ * - Said with two buttons or more: right says the last (the answer), left the first (the way out).
+ * - Said with one button: right says it, left puts the card away ("Done").
+ * - Drawn, or nothing posted: its answers live in the drawing, so right puts it away and left is
+ *   closed.
+ * - An Approval to decide: no swipe. A consequential yes is pressed, never flung.
+ */
+function sidesOf(
+  post: Option.Option<FeedPost>,
+  asked: Option.Option<Approval>,
+  reply: Pick<Reply, 'onSay' | 'onDone'>,
+): Sides {
+  const done: Side = { words: 'Done', run: reply.onDone }
+  const say = (words: FeedAction): Side => ({ words, run: () => reply.onSay(words) })
+  if (Option.isSome(asked)) return { answer: Option.none(), away: Option.none() }
+  return Option.match(post, {
+    onNone: () => ({ answer: Option.some(done), away: Option.none() }),
+    onSome: FeedPost.match({
+      Drawn: () => ({ answer: Option.some(done), away: Option.none() }),
+      Said: ({ actions }) =>
+        Option.match(Array.last(actions), {
+          onNone: () => ({ answer: Option.some(done), away: Option.none() }),
+          onSome: (last) => ({
+            answer: Option.some(say(last)),
+            away: Option.some(
+              Array.head(actions).pipe(
+                Option.filter(() => actions.length > 1),
+                Option.match({ onNone: () => done, onSome: say }),
+              ),
+            ),
+          }),
+        }),
+    }),
+  })
 }
 
 /** How the Person answers a waiting card. A card Vivid is still working on takes no answer. */
