@@ -1,5 +1,5 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { Layer, Effect, Ref } from 'effect'
+import { Layer, Effect, Ref, Option } from 'effect'
 import {
   ActionTarget,
   DatabaseConstraintViolation,
@@ -94,6 +94,7 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
               // The store captures this phase-specific database failure before approved execution.
               const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
               return yield* connectionRunner({
+                operation: Option.none(),
                 person: ownerActor.person,
                 workspace: ownerActor.workspace,
                 target: ActionTarget.cases.Connection.make({
@@ -144,6 +145,7 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
             }),
           } satisfies Executor['Service']
           const input = {
+            operation: Option.none(),
             person: ownerActor.person,
             workspace: ownerActor.workspace,
             target: ActionTarget.cases.Connection.make({
@@ -185,6 +187,7 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
           database.delete(membershipTable).where(eq(membershipTable.userId, ownerActor.person.id)),
         )
         const outcome = yield* connectionRunner({
+          operation: Option.none(),
           person: ownerActor.person,
           workspace: ownerActor.workspace,
           target: ActionTarget.cases.Connection.make({
