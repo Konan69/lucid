@@ -24,6 +24,12 @@ import { Label } from '../../ui/ui'
 export interface Side {
   readonly words: string
   readonly run: () => void
+  /**
+   * Where the card goes once released past the line: `away` off the screen, as the list then folds
+   * it (an answer, Done); `back` home, for a side that leaves the card where it is (opening its
+   * Thread).
+   */
+  readonly ends: 'away' | 'back'
 }
 
 /** What each direction does: right is the card's answer, left its way out. Either may be absent. */
@@ -120,6 +126,9 @@ function useSwipe(sides: Sides, held: boolean): Motion {
   const fill = useSharedValue(0)
   const right = Option.isSome(sides.answer)
   const left = Option.isSome(sides.away)
+  // Plain booleans for the worklets, which cannot read the Sides' functions.
+  const rightBack = Option.exists(sides.answer, ({ ends }) => ends === 'back')
+  const leftBack = Option.exists(sides.away, ({ ends }) => ends === 'back')
   const act = (side: number) => Option.map(side > 0 ? sides.answer : sides.away, ({ run }) => run())
 
   // The tick is felt on the frame the line is crossed, both ways, and never per frame.
@@ -162,6 +171,13 @@ function useSwipe(sides: Sides, held: boolean): Motion {
         return
       }
       scheduleOnRN(commit)
+      if (side > 0 ? rightBack : leftBack) {
+        x.set(withSpring(0, { duration: 400, dampingRatio: 0.8, velocity: event.velocityX }))
+        y.set(withSpring(0, { duration: 400, dampingRatio: 0.8 }))
+        speed.set(withTiming(0, { duration: 200 }))
+        scheduleOnRN(act, side)
+        return
+      }
       const throwSpeed = side * Math.max(Math.abs(event.velocityX), 1500)
       y.set(withSpring(y.get() - 80, { duration: 500, dampingRatio: 1 }))
       x.set(

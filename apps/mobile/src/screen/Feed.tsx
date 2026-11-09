@@ -706,7 +706,7 @@ function Waiting({
       <Swipe
         // A send that did not get through brings the card back where it was, not where it was thrown.
         key={feed.failed(item, press) ? 'again' : 'first'}
-        sides={sidesOf(post, asked, { onSay: onAnswer, onDone })}
+        sides={sidesOf(post, asked, { onSay: onAnswer, onDone, onOpen })}
         held={Option.exists(press, feed.Press.$is('Sending'))}
       >
         <Card
@@ -743,20 +743,22 @@ function Waiting({
  *
  * - Said with two buttons or more: right says the last (the answer), left the first (the way out).
  * - Said with one button: right says it, left puts the card away ("Done").
- * - Drawn, or nothing posted: its answers live in the drawing, so right puts it away and left is
- *   closed.
+ * - Drawn: its answers live in the drawing, so right puts it away and left is closed.
+ * - Nothing posted (an ask read from its Thread, with no card row the server can mark): right
+ *   opens the Thread, where it is answered, and the card settles back.
  * - An Approval to decide: no swipe. A consequential yes is pressed, never flung.
  */
 function sidesOf(
   post: Option.Option<FeedPost>,
   asked: Option.Option<Approval>,
-  reply: Pick<Reply, 'onSay' | 'onDone'>,
+  reply: Pick<Reply, 'onSay' | 'onDone'> & { readonly onOpen: () => void },
 ): Sides {
-  const done: Side = { words: 'Done', run: reply.onDone }
-  const say = (words: FeedAction): Side => ({ words, run: () => reply.onSay(words) })
+  const done: Side = { words: 'Done', run: reply.onDone, ends: 'away' }
+  const open: Side = { words: 'Open', run: reply.onOpen, ends: 'back' }
+  const say = (words: FeedAction): Side => ({ words, run: () => reply.onSay(words), ends: 'away' })
   if (Option.isSome(asked)) return { answer: Option.none(), away: Option.none() }
   return Option.match(post, {
-    onNone: () => ({ answer: Option.some(done), away: Option.none() }),
+    onNone: () => ({ answer: Option.some(open), away: Option.none() }),
     onSome: FeedPost.match({
       Drawn: () => ({ answer: Option.some(done), away: Option.none() }),
       Said: ({ actions }) =>
