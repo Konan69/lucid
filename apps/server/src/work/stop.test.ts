@@ -8,6 +8,9 @@ import {
   CreateWatchRequest,
   RunId,
   RUN_WORKING_LONG_MS,
+  SessionId,
+  ShellHandle,
+  ShellSnapshot,
   ThreadId,
   WorkFailure,
   WorkRef,
@@ -20,9 +23,19 @@ import {
   type WatchId,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
-import { Clock, Context, Effect, Layer, Option, Queue, Ref, Schema } from 'effect'
+import { Clock, Context, Effect, Layer, Option, Queue, Ref, Schema, Stream } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
+import { eq } from 'drizzle-orm'
 import type { Actor } from '../auth/access.ts'
+import {
+  noteRunning,
+  noteUnreachable,
+  owesWake,
+  recordCommand,
+  type StartedCommand,
+} from '../computers/background.ts'
+import { ComputerStore } from '../computers/store.ts'
+import { computerCommands } from '../computers/tables.ts'
 import {
   ExecutorAppId,
   ExecutorAppOwnership,
@@ -68,11 +81,67 @@ const runtimeLayer = Layer.effectContext(
   }),
 )
 
+/** The commands the Computer was given, in order: each is the supervisor's action and its handle. */
+class Given extends Context.Service<Given, Ref.Ref<ReadonlyArray<string>>>()('test/WorkGiven') {}
+
+/** A command the Computer's supervisor will not stop: its stop answers it still running. */
+const stubborn = ShellHandle.make('ffffffff-0000-4000-8000-000000000000')
+
+/** A receipt's output part, as the supervisor writes it (`computers/command.py` `snapshot`). */
+const outputOf = (handle: ShellHandle) => ({
+  handle,
+  stdout: '',
+  stderr: '',
+  truncated: false,
+  outputDirectory: `/home/vivid/.vivid/commands/${handle}`,
+})
+const runningReceipt = (handle: ShellHandle) => ShellSnapshot.cases.Running.make(outputOf(handle))
+const stoppedReceipt = (handle: ShellHandle) => ShellSnapshot.cases.Stopped.make(outputOf(handle))
+
+/**
+ * The Person's Computer, which lies outside this server: it answers the supervisor's `stop` with
+ * the receipt a stopped command leaves (`computers/command.py`), except for `stubborn`, and records
+ * every command it was given. Nothing else of the Computer is reached by listing or stopping.
+ */
+const computerLayer = Layer.effectContext(
+  Effect.gen(function* () {
+    const given = yield* Ref.make<ReadonlyArray<string>>([])
+    const computer = Layer.mock(ComputerStore, {
+      attach: () =>
+        Effect.succeed({
+          write: () => Effect.void,
+          converse: ({ command }) =>
+            Effect.gen(function* () {
+              yield* Ref.update(given, (all) => [...all, command])
+              // The work view's Stop reads only the receipt's tag, so its handle is the one asked.
+              const receipt = command.includes(stubborn)
+                ? runningReceipt(stubborn)
+                : stoppedReceipt(handleIn(command))
+              return {
+                output: Stream.make(JSON.stringify(receipt)),
+                say: () => Effect.void,
+                ended: Effect.succeed({ exitCode: 0, timedOut: false }),
+              }
+            }),
+        }),
+    })
+    return (yield* Layer.build(computer)).pipe(Context.add(Given, given))
+  }),
+)
+
+/** The handle a supervisor invocation names: its one quoted UUID (`computers/commands.ts` `word`). */
+const handleIn = (command: string) => {
+  const [, handle] = /'([a-f0-9-]{36})'/u.exec(command) ?? []
+  if (handle === undefined) throw new Error('No handle in the command')
+  return ShellHandle.make(handle)
+}
+
 // The helper store is the real one; only the runtime's abort under it stands in.
 const workLayer = childRunsLayer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       runtimeLayer,
+      computerLayer,
       // Removal of a made Integration goes through Executor; these tests never press Remove.
       Layer.mock(ConnectionStore, { discordPeople: new Set<string>() }),
     ),
@@ -205,6 +274,45 @@ const grantedWatch = Effect.fn('WorkTest.grantedWatch')(function* (actor: Actor)
   return watch.id
 })
 
+/** The Person pressing Stop in their own work view. */
+const asPerson = (actor: Actor) =>
+  Effect.provideService(
+    AuthContext,
+    AuthState.Person({
+      person: actor.person,
+      sessionId: SessionId.make('session-work-test'),
+      workspace: actor.workspace,
+    }),
+  )
+
+/** A command Vivid left running in a Thread of the Actor's, as `start_shell` records it. */
+const backgroundCommand = Effect.fn('WorkTest.backgroundCommand')(function* (
+  actor: Actor,
+  thread: ThreadId,
+  handle: ShellHandle,
+) {
+  const started: StartedCommand = {
+    handle,
+    personId: actor.person.id,
+    threadId: thread,
+    command: 'pnpm build --filter web\necho built',
+  }
+  yield* recordCommand(started)
+  return started
+})
+
+/** The stored row of one command: whether a Stop from the work view marked it. */
+const stoppedAt = Effect.fn('WorkTest.stoppedAt')(function* (handle: ShellHandle) {
+  const database = yield* Database
+  const [row] = yield* database.run(
+    database
+      .select({ stoppedAt: computerCommands.stoppedAt })
+      .from(computerCommands)
+      .where(eq(computerCommands.handle, handle)),
+  )
+  return Option.map(Option.fromUndefinedOr(row), ({ stoppedAt: at }) => at)
+})
+
 const watchOrigin = (watch: WatchId) =>
   StoredRunOrigin.cases.Watch.make({
     watchId: watch,
@@ -277,6 +385,8 @@ describe.skipIf(!testDatabaseConfigured)('Background work', () => {
           origin: StoredRunOrigin.cases.Message.make({}),
         })
         const helper = yield* workingHelper(other)
+        const build = ShellHandle.make(crypto.randomUUID())
+        yield* backgroundCommand(owner, other.thread, build)
         const actor: Actor = { ...owner, threadId: Option.some(calling.thread) }
         const asVivid = Effect.provideService(
           AuthContext,
@@ -291,8 +401,10 @@ describe.skipIf(!testDatabaseConfigured)('Background work', () => {
         expect(report.map(({ work, result }) => [work._tag, result._tag])).toEqual([
           ['Watch', 'Stopped'],
           ['Helper', 'Stopped'],
+          ['Command', 'Stopped'],
           ['Run', 'Stopped'],
         ])
+        expect(yield* Ref.get(yield* Given)).toEqual([expect.stringContaining(` stop '${build}' `)])
         // Helpers before the Runs that started them, so each is stopped and reported on its own.
         expect(yield* Ref.get(yield* Aborted)).toEqual([helper, other.thread])
         expect(yield* Ref.get((yield* Executor).unsubscribed)).toContain('mail.message.received')
@@ -309,6 +421,90 @@ describe.skipIf(!testDatabaseConfigured)('Background work', () => {
         expect(again).toEqual(WorkStopResult.cases.AlreadyEnded.make({}))
         const watchAgain = yield* stopWork(actor, WorkRef.cases.Watch.make({ watch })).pipe(asVivid)
         expect(watchAgain).toEqual(WorkStopResult.cases.AlreadyEnded.make({}))
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('lists a running background command from its record and stops it by its handle', () =>
+      Effect.gen(function* () {
+        const actor = yield* person()
+        const { thread } = yield* threadWithRun(actor, {
+          title: 'Ship the web build',
+          state: 'failed',
+          origin: StoredRunOrigin.cases.Message.make({}),
+        })
+        const handle = ShellHandle.make(crypto.randomUUID())
+        // The layer's clock and Computer are shared with the tests before this one.
+        const start = yield* Clock.currentTimeMillis
+        yield* Ref.set(yield* Given, [])
+        const started = yield* backgroundCommand(actor, thread, handle)
+        yield* noteRunning(started, runningReceipt(handle))
+        // Twenty minutes with the same output: it has gone quiet.
+        yield* TestClock.adjust(RUN_WORKING_LONG_MS + 1)
+        yield* noteRunning(started, runningReceipt(handle))
+        const [listed, ...rest] = yield* listWork(actor)
+        expect(rest).toEqual([])
+        if (!BackgroundWork.guards.Command(listed)) return expect.fail('Command not listed')
+        expect(listed).toMatchObject({
+          handle,
+          thread,
+          title: 'Ship the web build',
+          command: 'pnpm build --filter web',
+          startedAt: start,
+          unreachable: null,
+        })
+        const now = yield* Clock.currentTimeMillis
+        expect(standingOf(listed, now)).toEqual(
+          WorkStanding.cases.Stalled.make({ stall: WorkStall.cases.Quiet.make({ since: start }) }),
+        )
+        // A read that cannot reach the Computer turns it failing, from that read on.
+        yield* noteUnreachable(started, 'the Person is using the Computer')
+        const [unreachable] = yield* listWork(actor)
+        if (unreachable === undefined) return expect.fail('Command not listed')
+        expect(standingOf(unreachable, now)).toEqual(
+          WorkStanding.cases.Failing.make({
+            failure: WorkFailure.cases.ComputerUnreachable.make({
+              since: now,
+              reason: 'the Person is using the Computer',
+            }),
+          }),
+        )
+        // Listing never reached the Computer.
+        expect(yield* Ref.get(yield* Given)).toEqual([])
+        const result = yield* stopWork(actor, WorkRef.cases.Command.make({ handle })).pipe(
+          asPerson(actor),
+        )
+        expect(result).toEqual(WorkStopResult.cases.Stopped.make({}))
+        expect(yield* Ref.get(yield* Given)).toEqual([
+          expect.stringContaining(` stop '${handle}' `),
+        ])
+        expect(yield* stoppedAt(handle)).toEqual(Option.some(now))
+        expect(yield* listWork(actor)).toEqual([])
+        // Its Stopped receipt does not wake the Thread; a result it reached on its own would.
+        expect(yield* owesWake(handle, stoppedReceipt(handle))).toBe(false)
+        const again = yield* stopWork(actor, WorkRef.cases.Command.make({ handle })).pipe(
+          asPerson(actor),
+        )
+        expect(again).toEqual(WorkStopResult.cases.AlreadyEnded.make({}))
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('lists a command again when its Computer would not stop it', () =>
+      Effect.gen(function* () {
+        const actor = yield* person()
+        const { thread } = yield* threadWithRun(actor, {
+          title: 'Serve the preview',
+          state: 'failed',
+          origin: StoredRunOrigin.cases.Message.make({}),
+        })
+        yield* backgroundCommand(actor, thread, stubborn)
+        const result = yield* stopWork(
+          actor,
+          WorkRef.cases.Command.make({ handle: stubborn }),
+        ).pipe(asPerson(actor))
+        expect(result).toEqual(WorkStopResult.cases.NotStopped.make({ reason: 'StillRunning' }))
+        expect(yield* stoppedAt(stubborn)).toEqual(Option.some(null))
+        expect((yield* listWork(actor)).map((one) => one._tag)).toEqual(['Command'])
+        expect(yield* owesWake(stubborn, stoppedReceipt(stubborn))).toBe(true)
       }).pipe(Effect.scoped),
     )
   })
