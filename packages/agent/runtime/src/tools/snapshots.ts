@@ -67,8 +67,12 @@ export const VividContext = Schema.Struct({
    * The latest place the acting Person shared, with the instant this context read it so its age
    * can be said (`asOf` is locked to the hour and too coarse for "12 minutes ago"). Absent while
    * they do not share it, before any device has sent one, and when Settings could not be read.
+   * Encoded as an optional key: a context saved before this field existed (a delivery retried
+   * across the deploy that added it) decodes as no known place instead of failing the Run.
    */
-  location: Schema.Option(Schema.Struct({ reading: LocationReading, readAt: Schema.Finite })),
+  location: Schema.OptionFromOptionalKey(
+    Schema.Struct({ reading: LocationReading, readAt: Schema.Finite }),
+  ),
 })
 export interface VividContext extends Schema.Schema.Type<typeof VividContext> {}
 
