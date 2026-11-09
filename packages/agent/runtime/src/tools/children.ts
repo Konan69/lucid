@@ -203,7 +203,7 @@ const waitTool = (wiring: Wiring) =>
         const results = yield* Effect.forEach(
           found,
           ({ number, found: helper }: { readonly number: number; readonly found: Named }) =>
-            pi(() => api.waitForTask(helper.anchor, context)).pipe(
+            pi(() => api.waitForTask(helper.current, context)).pipe(
               Effect.andThen(helpers.answer(helper)),
               Effect.map((answer) => view(number, answer)),
             ),
@@ -258,6 +258,52 @@ const checkTool = (wiring: Wiring) =>
       }),
   })
 
+/**
+ * `message_run`: more instructions, a correction or a new direction for a helper already started,
+ * which keeps its context instead of a new helper starting from nothing (Grok Bot
+ * `MessageSubagent` and Task `resume`, `grok-bot/grok-bot.md:134`, `:2477`; Codex
+ * `collaboration.followup_task`). The server records the round and hands it to the helper's own
+ * conversation; its result comes back as a new message, as the first one did.
+ */
+const messageTool = (wiring: Wiring) =>
+  defineTool({
+    name: Tool.message_run,
+    description:
+      'Send a helper you started more instructions, a correction or a new direction. It keeps everything it already knows: a helper at work takes it after its current step, and one that finished starts again from where it stopped. Use this for related work instead of starting a new helper. Its new result comes back to you on its own. A stopped helper takes none.',
+    // The server keys the follow-up by this call and Pi keys its round, so a rerun after a restart
+    // sends nothing twice.
+    replay: 'safe',
+    input: v.object({
+      helper: helperNumber,
+      message: v.pipe(
+        v.string(),
+        v.minLength(1),
+        v.maxLength(8000),
+        v.description('What the helper should do now, with every detail it needs.'),
+      ),
+    }),
+    run: ({ data, toolCallId, api }) =>
+      Effect.gen(function* () {
+        const authority = yield* parent(wiring, api)
+        const [target] = yield* named(wiring, api, [data.helper])
+        if (target === undefined) return yield* nobody(`There is no helper ${data.helper}.`)
+        const run = yield* asActing(wiring.product, Option.some(authority.acting), (client) =>
+          client.FollowUpChildRun({
+            id: target.found.runId,
+            message: data.message,
+            key: toolCallId,
+          }),
+        )
+        return {
+          output: {
+            helper: run.number,
+            status: stateWord(run),
+            message: `Helper ${run.number} has it. Its result comes back to you on its own.`,
+          },
+        }
+      }),
+  })
+
 /** `cancel_run`: stop one helper; what it already did stays done. */
 const cancelTool = (wiring: Wiring) =>
   defineTool({
@@ -284,5 +330,11 @@ const cancelTool = (wiring: Wiring) =>
  * committed delivery, never from arguments.
  */
 export function childTools(wiring: Wiring) {
-  return [spawnTool(wiring), checkTool(wiring), waitTool(wiring), cancelTool(wiring)] as const
+  return [
+    spawnTool(wiring),
+    checkTool(wiring),
+    waitTool(wiring),
+    messageTool(wiring),
+    cancelTool(wiring),
+  ] as const
 }
