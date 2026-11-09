@@ -181,6 +181,12 @@ jobs:
           restore-keys: |
             turbo-${{ runner.os }}-test-${{ hashFiles('pnpm-lock.yaml') }}-
 
+      # The desktop suites start a real Electron under xvfb. Ubuntu 24.04 runners forbid the
+      # unprivileged user namespaces Chromium's sandbox needs, and Electron exits before the
+      # proof reports (`browser.test.ts`, NativeProofFailed with an empty message).
+      - name: Allow Electron's sandbox on the runner
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Run the test stage
         run: node scripts/gate.mjs full --here --only test
 
