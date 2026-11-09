@@ -12,11 +12,14 @@
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "VividKeychainGroup": "$(AppIdentifierPrefix)work.vivid.mobile.awareness",
-        "NSSupportsLiveActivities": true
+        "NSSupportsLiveActivities": true,
+        "VividAppGroup": "group.work.vivid.mobile",
+        "NSSupportsLiveActivitiesFrequentUpdates": true
       },
       "entitlements": {
         "com.apple.developer.usernotifications.communication": true,
-        "keychain-access-groups": ["$(AppIdentifierPrefix)work.vivid.mobile.awareness"]
+        "keychain-access-groups": ["$(AppIdentifierPrefix)work.vivid.mobile.awareness"],
+        "com.apple.security.application-groups": ["group.work.vivid.mobile"]
       }
     },
     "android": {
@@ -72,8 +75,7 @@
           "enableBackgroundRemoteNotifications": false
         }
       ],
-      "expo-quick-actions",
-      "@bacons/apple-targets"
+      "expo-quick-actions"
     ],
     "web": {
       "bundler": "metro"

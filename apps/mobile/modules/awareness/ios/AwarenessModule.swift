@@ -1,5 +1,6 @@
 import ActivityKit
 import ExpoModulesCore
+import WidgetKit
 
 /// ActivityKit delivers native token changes even for activities started while JavaScript was suspended.
 public final class AwarenessModule: Module {
@@ -9,6 +10,13 @@ public final class AwarenessModule: Module {
     Events("token")
     AsyncFunction("configure") { (server: String, token: String) in
       try NativeAuthority.write(.init(server: server, token: token))
+    }
+    AsyncFunction("updateWidget") { (snapshot: String) in
+      guard let group = Bundle.main.object(forInfoDictionaryKey: "VividAppGroup") as? String,
+        let data = snapshot.data(using: .utf8) else { throw CocoaError(.fileWriteNoPermission) }
+      _ = try JSONDecoder().decode(VividHomeSnapshot.self, from: data)
+      UserDefaults(suiteName: group)?.set(data, forKey: "vivid.widget")
+      WidgetCenter.shared.reloadTimelines(ofKind: "VividHome")
     }
     AsyncFunction("clear") {
       try NativeAuthority.clear()

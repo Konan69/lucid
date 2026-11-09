@@ -57,3 +57,14 @@ enum NativeAuthority {
     return try JSONDecoder().decode(Session.self, from: data)
   }
 }
+
+/// The native module and Home Screen extension share one decoded projection of readable Threads.
+struct VividHomeSnapshot: Codable {
+  struct Row: Codable, Identifiable {
+    let id: String
+    let title: String
+    let status: String
+    let updatedAt: Double
+  }
+  let rows: [Row]
+}

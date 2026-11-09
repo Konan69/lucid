@@ -1,25 +1,13 @@
+import { awareness } from './awareness'
 import { VividRpcClient } from '@vivid/client-runtime'
 import { ActivityRegistration, ActivityToken } from '@vivid/contracts'
 import type { makeLive } from '@vivid/state'
 import { Effect, Option, Redacted, Result, Schema } from 'effect'
-import { requireOptionalNativeModule } from 'expo'
 import { randomUUID } from 'expo-crypto'
-import { Platform } from 'react-native'
 import { launch } from './app'
 import type { SignedIn } from './session'
 import { keepFile, recallFile, forgetFile } from './storage'
 
-interface NativeTokenEvent {
-  readonly kind: 'Start' | 'Update'
-  readonly token: string
-}
-interface Awareness {
-  addListener(name: 'token', listener: (value: NativeTokenEvent) => void): { remove(): void }
-  configure(server: string, token: string): Promise<void>
-  clear(): Promise<void>
-}
-const native =
-  Platform.OS === 'ios' ? requireOptionalNativeModule<Awareness>('VividAwareness') : null
 const TokenEvent = Schema.Struct({
   kind: Schema.Literals(['Start', 'Update']),
   token: ActivityToken,
@@ -29,8 +17,8 @@ const decodeToken = Schema.decodeEffect(TokenEvent)
 
 /** Native ActivityKit owns observation and buttons. JavaScript only binds its rotating addresses. */
 export const followActivities = (engine: ReturnType<typeof makeLive>, session: SignedIn) => {
-  if (native === null) return () => {}
-  const bridge = native
+  if (awareness === null) return () => {}
+  const bridge = awareness
   const stop: Array<() => void> = []
   const fresh = randomUUID()
   const installation = recallFile('vivid.activity.installation').pipe(

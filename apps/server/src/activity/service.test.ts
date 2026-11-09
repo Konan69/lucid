@@ -11,7 +11,6 @@ import { activityTargets } from './tables.ts'
 
 const signing = NodeCrypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
 const testing = activitiesLayer.pipe(
-  Layer.provideMerge(testDatabaseLayer),
   Layer.provide(
     ConfigProvider.layer(
       ConfigProvider.fromUnknown({
@@ -23,6 +22,7 @@ const testing = activitiesLayer.pipe(
       }),
     ),
   ),
+  Layer.provideMerge(testDatabaseLayer),
 )
 
 /** PostgreSQL proves that token rotation preserves ownership and session revocation removes delivery authority. */

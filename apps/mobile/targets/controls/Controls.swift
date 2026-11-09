@@ -15,7 +15,7 @@ struct VividControl: ControlWidget {
 
 @main
 struct VividControls: WidgetBundle {
-  var body: some Widget { VividControl(); VividRunActivity() }
+  var body: some Widget { VividControl(); VividRunActivity(); VividHome() }
 }
 
 /// Approval decisions remain bound to the exact digest shown on this Lock Screen card.

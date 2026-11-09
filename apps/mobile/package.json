@@ -58,7 +58,6 @@
     "expo-system-ui": "catalog:",
     "expo-updates": "catalog:",
     "expo-web-browser": "catalog:",
-    "expo-widgets": "catalog:",
     "lucide-react-native": "catalog:",
     "punycode": "^2.3.1",
     "react": "catalog:",
