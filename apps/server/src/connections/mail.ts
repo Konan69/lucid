@@ -11,7 +11,7 @@ import { Effect, Option, Schema } from 'effect'
 import { canonical, contentDigest } from '../approvals/action.ts'
 import { ExecutorCallOutcome } from './executor.ts'
 import { operationsOf } from './members.ts'
-import { gmailServiceId } from './google.ts'
+import { gmailAttachmentSend, gmailServiceId } from './google.ts'
 import type { ConnectionRecord } from './records.ts'
 
 // Names and inputs follow google-gmail.json and Executor beta.23's openapi-names/request source.
@@ -104,6 +104,14 @@ export const inspectMail = Effect.fn('Mail.inspect')(function* (
   target: typeof ActionTarget.cases.Connection.Type,
 ) {
   if (row.service !== gmailServiceId) return []
+  if (target.tool === gmailAttachmentSend)
+    return [
+      ApprovalPrecondition.cases.MailEnvelope.make({
+        // File binding happens before admission, so this binds audience, body and exact attachment bytes.
+        mimeDigest: ApprovalContentDigest.make(contentDigest(canonical(target.input))),
+        thread: null,
+      }),
+    ]
   if (target.tool === `${send}Media` || target.tool === `${sendDraft}Media`)
     return yield* new InvalidRequest({
       message: 'Use Gmail JSON raw MIME sending so the envelope can be approved.',

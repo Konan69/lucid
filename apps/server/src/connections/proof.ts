@@ -18,7 +18,7 @@ import {
   executorLayer,
   installationCaller,
 } from './executor.ts'
-import { googleAppsVersion } from './google.ts'
+import { appsVersion } from './framework.ts'
 import { encodeReferences } from './records.ts'
 import { connections } from './tables.ts'
 
@@ -27,12 +27,11 @@ import { connections } from './tables.ts'
  * mutation outputs omit row handles; polling still uses stable provider ids behind the server.
  * This service is a real Executor fixture, not evidence of a third-party OAuth connection.
  */
-const source = `import { query, mutation, defineApp, defineDatabase, table, object, string } from "apps";
-const database = defineDatabase({ records: table({ subject: string() }) });
-export default defineApp({ accounts: {}, database }, async () => ({
-  queries: { records: query({ description: "Read saved proof records in creation order", input: object({}) }, async ({ db }) => db.records.withIndex("by_creation").collect()) },
-  mutations: { save: mutation({ description: "Save a proof record", input: object({ subject: string() }) }, async ({ db }, value) => { await db.records.insert(value); return { saved: true, subject: value.subject }; }) }
-}));`
+const source = `import { query, mutation, defineApp, object, string, router } from "apps";
+export default defineApp({}, { tools: router({
+  queries: router({ records: query({ description: "Read saved proof records in creation order", input: object({}) }, async ({ sql }) => sql.exec("SELECT id, subject FROM records ORDER BY rowid").toArray()) }),
+  mutations: router({ save: mutation({ description: "Save a proof record", input: object({ subject: string() }) }, async ({ sql }, value) => { sql.exec("INSERT INTO records (id, subject) VALUES (?, ?)", crypto.randomUUID(), value.subject); return { saved: true, subject: value.subject }; }) })
+}) });`
 
 const Deployment = Schema.Struct({ id: ExecutorAppId })
 export const ProofRecords = Schema.Array(
@@ -112,11 +111,15 @@ export const proofConnection = Effect.fn('ThreadProof.connection')(function* (
       files: [
         { path: 'index.ts', content: source },
         {
+          path: 'migrations/0001_records.sql',
+          content: 'CREATE TABLE records (id TEXT PRIMARY KEY, subject TEXT NOT NULL);',
+        },
+        {
           path: 'package.json',
           content: JSON.stringify({
             private: true,
             type: 'module',
-            dependencies: { apps: '0.0.1-beta.19' },
+            dependencies: { apps: appsVersion },
           }),
         },
       ],
@@ -177,16 +180,20 @@ export const proofConnection = Effect.fn('ThreadProof.connection')(function* (
  * an identity to give when it is asked. `save` records which account saved each record, because
  * each app has its own data: that field also proves the account a call went
  * through. A package manifest names the `apps` version the hosted build requires, and the tools
- * sit in a router under `tools`, which that version requires too (its `storage.md`); the older
- * `queries`/`mutations` shape of `source` above no longer loads there.
+ * sit in a router under `tools`. Both proof apps use beta.92 SQLite handlers and retain their
+ * existing tool paths.
  */
-const accountsSource = `import { query, mutation, defineApp, defineDatabase, defineProvider, secrets, plain, table, json, object, string, router } from "apps";
+const accountsSource = `import { query, mutation, defineApp, defineProvider, secrets, plain, json, object, string, router } from "apps";
 const service = defineProvider({ name: "Proof Accounts", auth: { key: secrets({ label: "Key", fields: object({ who: plain(string()), token: string() }) }) }, async health({ account }) { return { accountInfo: { email: account.fields.who } }; } });
-const database = defineDatabase({ records: table({ subject: string(), by: string() }).index("by_subject", ["subject"]) });
-const requirements = { accounts: { service }, database };
-const records = query({ description: "Read the saved proof records that have one subject", input: object({ subject: string() }), output: json() }, async ({ db }, { subject }) => db.records.withIndex("by_subject", (q) => q.eq("subject", subject)).take(50));
-const save = mutation({ description: "Save a proof record through this account", input: object({ subject: string() }), output: json() }, async ({ db, accounts }, { subject }) => { await db.records.insert({ subject, by: accounts.service.fields.who }); return { saved: true, subject }; });
-export default defineApp(requirements, { tools: router({ records, save }) });`
+export default defineApp({ user: { accounts: { service: service.many() } } }, async ({ user }) => {
+  if (user === undefined) return { tools: router({}) };
+  const [account] = user.accounts.service;
+  if (account === undefined) return { tools: router({}) };
+  return { tools: router({
+    records: query({ description: "Read the saved proof records that have one subject", input: object({ subject: string() }), output: json() }, async ({ sql }, { subject }) => sql.exec('SELECT subject, "by" FROM records WHERE subject = ? LIMIT 50', subject).toArray()),
+    save: mutation({ description: "Save a proof record through this account", input: object({ subject: string() }), output: json() }, async ({ sql }, { subject }) => { sql.exec('INSERT INTO records (subject, "by") VALUES (?, ?)', subject, account.fields.who); return { saved: true, subject }; })
+  }) };
+});`
 
 const Authorization = Schema.Struct({ id: Schema.NonEmptyString })
 const Account = Schema.Struct({ id: ExecutorAccountId })
@@ -237,12 +244,16 @@ export const proofAccounts = Effect.fn('ThreadProof.accounts')(function* (
         files: [
           { path: 'index.ts', content: accountsSource },
           {
+            path: 'migrations/0001_records.sql',
+            content: 'CREATE TABLE records (subject TEXT NOT NULL, "by" TEXT NOT NULL);',
+          },
+          {
             path: 'package.json',
             content: JSON.stringify({
               name: 'vivid-proof-accounts',
               private: true,
               type: 'module',
-              dependencies: { apps: googleAppsVersion },
+              dependencies: { apps: appsVersion },
             }),
           },
         ],
