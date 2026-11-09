@@ -71,6 +71,34 @@ export const ExecutorAuthorizationId = Schema.NonEmptyString.pipe(
 )
 
 /**
+ * Which Executor user a Connection's app and account belong to, stored on its row
+ * (`executor_principal` in `tables.ts`).
+ *
+ * `installation`: the user whose key is `VIVID_EXECUTOR_KEY`, the installation's owner. Every
+ * Connection made before Persons had members, and every Company-shared one, is this: those apps
+ * and accounts exist in Executor under that user and cannot be moved to another.
+ *
+ * `member`: the row's Person's own Executor member (`members.ts`). Executor's access rules then
+ * keep the app and its personal account to that member: another member's key, and the owner's,
+ * are refused its tools (executor@2.0.0-beta.23 `concepts/organizations-and-access.md`), so a
+ * mistake in Vivid's own mapping cannot reach another Person's account.
+ */
+export const ExecutorPrincipal = Schema.Literals(['installation', 'member'])
+export type ExecutorPrincipal = typeof ExecutorPrincipal.Type
+
+/**
+ * The credential one request to Executor is sent with, decided from a Connection's principal.
+ * `Member` carries that Person's member key, read from its sealed copy (`members.ts`).
+ */
+export const ExecutorCaller = Schema.TaggedUnion({
+  Installation: {},
+  Member: { key: Schema.Redacted(Schema.String) },
+})
+export type ExecutorCaller = typeof ExecutorCaller.Type
+/** The installation owner, for installation resources and for Connections it owns. */
+export const installationCaller: ExecutorCaller = ExecutorCaller.cases.Installation.make({})
+
+/**
  * Who a service says an account is: an address, else a username, else a display name. It names
  * the account on every screen and to Vivid, inside the account's whole name ("Gmail (…)"), which
  * the runtime accepts up to 200 characters, so one that is longer than 120, empty, padded or on
@@ -483,7 +511,18 @@ export class ExecutorOAuthClientAmbiguous extends Schema.TaggedError<ExecutorOAu
   { title: 'Select one OAuth client' },
 ) {}
 
+/**
+ * Executor's sign-in limit refused a member's provisioning (Better Auth answers 429 on its
+ * sign-in routes). Nothing was changed; the same call later continues where it stopped.
+ */
+export class ExecutorRateLimited extends Schema.TaggedError<ExecutorRateLimited>()(
+  'ExecutorRateLimited',
+  errorContext,
+  { title: 'Executor rate limited' },
+) {}
+
 export type ExecutorFailure =
+  | ExecutorRateLimited
   | ExecutorRequirementChanged
   | ExecutorConnectionRefused
   | ExecutorAccountChoiceUnsupported
@@ -541,33 +580,17 @@ const SignInInput = Schema.Struct({
   callbackAddress: Schema.Redacted(Schema.String),
 })
 
-/** Vivid owns Person attribution. Hosted account ownership comes from the authenticated Executor
- * user, so a dedicated app and exact requirement link isolate each Connection under that user.
+/**
+ * Everything Vivid does with one Connection's app and account, sent as one Executor caller.
+ *
+ * Vivid owns Person attribution; Executor owns who may use an app and an account, decided by the
+ * user the request is authenticated as. Each Connection has a dedicated app and an exact
+ * requirement link, and the caller (`ExecutorCaller`) says whose they are: the installation owner,
+ * or the Person's own member, whose app and personal account no other key can call.
  */
-export interface ExecutorService {
+export interface ExecutorConnectionOperations {
   /** Read the event namespace through the same authenticated app transport as Connection setup. */
   readonly appSlug: (app: typeof ExecutorAppId.Type) => Effect.Effect<string, ExecutorFailure>
-  /** Inspect public service setup without issuing an account grant or starting sign-in. */
-  readonly authorization: (input: {
-    readonly service: ServiceId
-    readonly returnAddress: string
-  }) => Effect.Effect<ServiceAuthorization, ExecutorFailure>
-  /** One decoded organization snapshot is shared by all rows in a migration pass. */
-  readonly inventory: Effect.Effect<typeof ExecutorInventory.Type, ExecutorFailure>
-  readonly reconcile: (
-    legacy: typeof LegacyExecutorReferences.Type,
-    inventory: typeof ExecutorInventory.Type,
-  ) => Effect.Effect<ExecutorReferences, ExecutorFailure>
-  /** Reclaim only resources the Connection store proved unreferenced under its database lock. */
-  readonly prepareRetirement: (
-    resources: typeof ExecutorRetired.Type,
-  ) => Effect.Effect<typeof ExecutorRetired.Type, ExecutorFailure>
-  readonly retire: (input: {
-    readonly resources: typeof ExecutorRetired.Type
-    readonly retainedApps: ReadonlyArray<typeof ExecutorAppId.Type>
-    readonly retainedAccounts: ReadonlyArray<typeof ExecutorAccountId.Type>
-  }) => Effect.Effect<void, ExecutorFailure>
-  readonly catalog: Effect.Effect<readonly (typeof ExecutorServiceEntry.Type)[], ExecutorFailure>
   readonly begin: (
     input: typeof BeginInput.Type,
   ) => Effect.Effect<typeof ExecutorStep.Type, ExecutorFailure>
@@ -609,6 +632,7 @@ export interface ExecutorService {
   readonly identity: (
     references: ExecutorReferences,
   ) => Effect.Effect<Option.Option<AccountIdentity>, ExecutorFailure>
+  /** A member's personal account can be removed only with that member's own key. */
   readonly remove: (references: ExecutorReferences) => Effect.Effect<void, ExecutorFailure>
   readonly tools: (
     references: ExecutorReferences,
@@ -616,6 +640,37 @@ export interface ExecutorService {
   readonly call: (
     input: typeof CallInput.Type,
   ) => Effect.Effect<typeof ExecutorCallOutcome.Type, ExecutorFailure>
+  /** Reclaim only resources the Connection store proved unreferenced under its database lock. */
+  readonly prepareRetirement: (
+    resources: typeof ExecutorRetired.Type,
+  ) => Effect.Effect<typeof ExecutorRetired.Type, ExecutorFailure>
+  readonly retire: (input: {
+    readonly resources: typeof ExecutorRetired.Type
+    readonly retainedApps: ReadonlyArray<typeof ExecutorAppId.Type>
+    readonly retainedAccounts: ReadonlyArray<typeof ExecutorAccountId.Type>
+  }) => Effect.Effect<void, ExecutorFailure>
+}
+
+/**
+ * The Executor adapter. Installation-wide reads run as the installation owner; anything on one
+ * Connection's app or account, its removal and reclamation included, runs as the caller the Connection's principal names,
+ * passed explicitly to `as` so no request can fall back to another credential.
+ */
+export interface ExecutorService {
+  /** Inspect public service setup without issuing an account grant or starting sign-in. */
+  readonly authorization: (input: {
+    readonly service: ServiceId
+    readonly returnAddress: string
+  }) => Effect.Effect<ServiceAuthorization, ExecutorFailure>
+  /** One decoded organization snapshot is shared by all rows in a migration pass. */
+  readonly inventory: Effect.Effect<typeof ExecutorInventory.Type, ExecutorFailure>
+  readonly reconcile: (
+    legacy: typeof LegacyExecutorReferences.Type,
+    inventory: typeof ExecutorInventory.Type,
+  ) => Effect.Effect<ExecutorReferences, ExecutorFailure>
+  readonly catalog: Effect.Effect<readonly (typeof ExecutorServiceEntry.Type)[], ExecutorFailure>
+  /** The operations on one Connection's app and account, each sent as `caller`. */
+  readonly as: (caller: ExecutorCaller) => ExecutorConnectionOperations
 }
 /** Only the server holds this installation-wide authority; product permission belongs above it. */
 export class Executor extends Context.Service<Executor, ExecutorService>()('vivid/Executor') {}
@@ -3036,7 +3091,7 @@ function makeRetire(http: ExecutorHttp) {
    */
   const unlink = Effect.fn('Executor.unlinkRetired')(function* (
     app: typeof ExecutorAppId.Type,
-    input: Parameters<ExecutorService['retire']>[0],
+    input: Parameters<ExecutorConnectionOperations['retire']>[0],
     selected: Effect.Success<ReturnType<typeof links>>,
   ) {
     const { resources, retainedApps, retainedAccounts } = input
@@ -3055,7 +3110,7 @@ function makeRetire(http: ExecutorHttp) {
     resources,
     retainedApps,
     retainedAccounts,
-  }: Parameters<ExecutorService['retire']>[0]) {
+  }: Parameters<ExecutorConnectionOperations['retire']>[0]) {
     const inventory = yield* http.readInventory(
       Effect.succeed(HttpClientRequest.get('/inventory')),
       null,
@@ -3176,6 +3231,120 @@ const keyedCatalog = keyedServices.map((entry) =>
   }),
 )
 
+/**
+ * Every operation on one Connection's app and account over one authenticated client. Each caller
+ * gets its own set, so its tool snapshots and install locks are never served to another caller:
+ * a snapshot warmed with one member's key cannot answer for another key that Executor would refuse.
+ * Setup inspection (`availability`) describes the installation's catalogue and is shared.
+ */
+const makeConnectionOperations = Effect.fn('Executor.connectionOperations')(function* (
+  http: ExecutorHttp,
+  availability: Effect.Success<ReturnType<typeof makeAuthorization>>,
+  publicOnly: boolean,
+) {
+  const toolCache = yield* makeToolCache(http)
+  const complete = makeComplete(http)
+  const completeSignIn = makeCompleteSignIn(http)
+  const remove = makeRemove(http)
+  const call = makeCall(http, toolCache.discover)
+  const install = yield* makeInstall(http)
+  const registration = makeBegin(http, availability, install)
+  const operations: ExecutorConnectionOperations = {
+    appSlug: makeAppSlug(http),
+    begin: registration.begin,
+    add: Effect.fn('Executor.addPublic')((input) =>
+      publicOnly ? registration.add(input) : Effect.fail(ExecutorPublicAddressRequired.make({})),
+    ),
+    make: registration.make,
+    readMade: makeReadMade(http),
+    /** Deploy by ID preserves app data, schedules, event names, and every existing Watch. */
+    reviseMade: Effect.fn('Executor.reviseMade')(function* (app, files) {
+      yield* http.readDeploy(post('/apps/deploy', { app, files }))
+    }),
+    reauthorize: makeReauthorize(http, availability),
+    complete: Effect.fn('Executor.completeCached')(function* (input: typeof CompleteInput.Type) {
+      const references = yield* complete(input)
+      yield* Cache.invalidate(toolCache.snapshots, input.references)
+      return references
+    }),
+    completeSignIn: Effect.fn('Executor.completeSignInCached')(function* (
+      input: typeof SignInInput.Type,
+    ) {
+      const references = yield* completeSignIn(input)
+      yield* Cache.invalidate(toolCache.snapshots, input.references)
+      return references
+    }),
+    status: makeStatus(http),
+    identity: makeIdentity(http),
+    remove: Effect.fn('Executor.removeCached')(function* (references: ExecutorReferences) {
+      yield* remove(references)
+      yield* Cache.invalidate(toolCache.snapshots, references)
+    }),
+    tools: makeTools(toolCache.discover),
+    retire: makeRetire(http),
+    prepareRetirement: makePrepareRetirement(http),
+    call: Effect.fn('Executor.callCached')((input: typeof CallInput.Type) =>
+      call(input).pipe(
+        Effect.catchTag('ExecutorConflict', () =>
+          Cache.invalidate(toolCache.snapshots, input.references).pipe(
+            Effect.as(
+              ExecutorCallOutcome.cases.Rejected.make({
+                message: 'The integration changed; discover its tools again.',
+              }),
+            ),
+          ),
+        ),
+        Effect.tap((outcome) =>
+          ExecutorCallOutcome.guards.NotReady(outcome)
+            ? Cache.invalidate(toolCache.snapshots, input.references)
+            : Effect.void,
+        ),
+        Effect.tapError(() => Cache.invalidate(toolCache.snapshots, input.references)),
+      ),
+    ),
+  }
+  return operations
+})
+
+/** A member's operations outlive one request so its tool snapshots stay warm between calls.
+ * Source: unmeasured; matches the tool snapshot lifetime, after which a reload is needed anyway. */
+const MEMBER_OPERATIONS_IDLE = TOOL_SNAPSHOT_TTL
+
+/**
+ * Operations on one Connection's app and account, run with the caller's own set. A member's set is
+ * built on first use and keyed by the member's key itself (`Redacted` compares by value), so the
+ * credential a set sends is exactly the one it was looked up by.
+ */
+function connectionOperationsFor(
+  installation: ExecutorConnectionOperations,
+  members: RcMap.RcMap<Redacted.Redacted<string>, ExecutorConnectionOperations, never>,
+) {
+  return (caller: ExecutorCaller): ExecutorConnectionOperations => {
+    if (ExecutorCaller.guards.Installation(caller)) return installation
+    const run = <A, E>(use: (operations: ExecutorConnectionOperations) => Effect.Effect<A, E>) =>
+      RcMap.get(members, caller.key).pipe(Effect.flatMap(use), Effect.scoped)
+    return {
+      appSlug: (app) => run((operations) => operations.appSlug(app)),
+      begin: (input) => run((operations) => operations.begin(input)),
+      add: (input) => run((operations) => operations.add(input)),
+      make: (input) => run((operations) => operations.make(input)),
+      readMade: (app) => run((operations) => operations.readMade(app)),
+      reviseMade: (app, files) => run((operations) => operations.reviseMade(app, files)),
+      reauthorize: (input) => run((operations) => operations.reauthorize(input)),
+      complete: (input) => run((operations) => operations.complete(input)),
+      completeSignIn: (input) => run((operations) => operations.completeSignIn(input)),
+      status: (references) => run((operations) => operations.status(references)),
+      identity: (references) => run((operations) => operations.identity(references)),
+      remove: (references) => run((operations) => operations.remove(references)),
+      tools: (references) => run((operations) => operations.tools(references)),
+      call: (input) => run((operations) => operations.call(input)),
+      prepareRetirement: (resources) =>
+        run((operations) => operations.prepareRetirement(resources)),
+      retire: (input) => run((operations) => operations.retire(input)),
+    }
+  }
+}
+
 /** Acquire transport once and start the scoped catalog writer; tool discovery remains keyed. */
 const makeExecutor = Effect.fn('Executor.make')(function* (
   url: string,
@@ -3186,16 +3355,21 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
     Config.withDefault(false),
   )
   const transport = yield* HttpClient.HttpClient
-  const client = HttpClient.mapRequest(transport, (request) =>
-    request.pipe(
-      HttpClientRequest.prependUrl(
-        `${url.replace(/\/$/u, '')}/api/organizations/${query(organization)}`,
+  const google = yield* loadGoogleClient()
+  /** The one place a credential is put on a request: every client, the installation's and each
+   * member's, is built here and differs only in the bearer it sends. */
+  const httpWith = (bearer: Redacted.Redacted) =>
+    makeHttp(
+      HttpClient.mapRequest(transport, (request) =>
+        request.pipe(
+          HttpClientRequest.prependUrl(`${url}/api/organizations/${query(organization)}`),
+          HttpClientRequest.bearerToken(bearer),
+          HttpClientRequest.acceptJson,
+        ),
       ),
-      HttpClientRequest.bearerToken(key),
-      HttpClientRequest.acceptJson,
-    ),
-  )
-  const http = makeHttp(client, yield* loadGoogleClient())
+      google,
+    )
+  const http = httpWith(key)
   const remoteCatalog = yield* retainCatalog(makeCatalog(http)())
   const catalog = Effect.fn('Executor.installedCatalog')(function* () {
     const remote = yield* remoteCatalog().pipe(
@@ -3223,70 +3397,18 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
     ]
   })
   const availability = yield* makeAuthorization(http, catalog)
-  const toolCache = yield* makeToolCache(http)
-  const complete = makeComplete(http)
-  const completeSignIn = makeCompleteSignIn(http)
-  const remove = makeRemove(http)
-  const call = makeCall(http, toolCache.discover)
-  const install = yield* makeInstall(http)
-  const registration = makeBegin(http, availability, install)
+  const installation = yield* makeConnectionOperations(http, availability, publicOnly)
+  const members = yield* RcMap.make({
+    lookup: (member: Redacted.Redacted<string>) =>
+      makeConnectionOperations(httpWith(member), availability, publicOnly),
+    idleTimeToLive: MEMBER_OPERATIONS_IDLE,
+  })
   return Executor.of({
-    appSlug: makeAppSlug(http),
     catalog: availability.catalog,
     authorization: availability.authorization,
-    begin: registration.begin,
-    add: Effect.fn('Executor.addPublic')((input) =>
-      publicOnly ? registration.add(input) : Effect.fail(ExecutorPublicAddressRequired.make({})),
-    ),
-    make: registration.make,
-    readMade: makeReadMade(http),
-    /** Deploy by ID preserves app data, schedules, event names, and every existing Watch. */
-    reviseMade: Effect.fn('Executor.reviseMade')(function* (app, files) {
-      yield* http.readDeploy(post('/apps/deploy', { app, files }))
-    }),
-    reauthorize: makeReauthorize(http, availability),
     inventory: http.readInventory(Effect.succeed(HttpClientRequest.get('/inventory')), null),
     reconcile: makeLegacyReconciliation(http),
-    retire: makeRetire(http),
-    prepareRetirement: makePrepareRetirement(http),
-    complete: Effect.fn('Executor.completeCached')(function* (input: typeof CompleteInput.Type) {
-      const references = yield* complete(input)
-      yield* Cache.invalidate(toolCache.snapshots, input.references)
-      return references
-    }),
-    completeSignIn: Effect.fn('Executor.completeSignInCached')(function* (
-      input: typeof SignInInput.Type,
-    ) {
-      const references = yield* completeSignIn(input)
-      yield* Cache.invalidate(toolCache.snapshots, input.references)
-      return references
-    }),
-    status: makeStatus(http),
-    identity: makeIdentity(http),
-    remove: Effect.fn('Executor.removeCached')(function* (references: ExecutorReferences) {
-      yield* remove(references)
-      yield* Cache.invalidate(toolCache.snapshots, references)
-    }),
-    tools: makeTools(toolCache.discover),
-    call: Effect.fn('Executor.callCached')((input: typeof CallInput.Type) =>
-      call(input).pipe(
-        Effect.catchTag('ExecutorConflict', () =>
-          Cache.invalidate(toolCache.snapshots, input.references).pipe(
-            Effect.as(
-              ExecutorCallOutcome.cases.Rejected.make({
-                message: 'The integration changed; discover its tools again.',
-              }),
-            ),
-          ),
-        ),
-        Effect.tap((outcome) =>
-          ExecutorCallOutcome.guards.NotReady(outcome)
-            ? Cache.invalidate(toolCache.snapshots, input.references)
-            : Effect.void,
-        ),
-        Effect.tapError(() => Cache.invalidate(toolCache.snapshots, input.references)),
-      ),
-    ),
+    as: connectionOperationsFor(installation, members),
   })
 })
 
@@ -3299,26 +3421,34 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
  * refusing or timing out is a different fact: it stays a typed failure on the call that met it
  * (`ExecutorFailure`), and the next call tries Executor again.
  */
+/**
+ * Where Executor answers and which organization every request names. The address is prefixed
+ * onto request paths as text, so it is checked to be an absolute URL and kept as supplied. The
+ * member provisioning in `members.ts` reads the same two.
+ */
+export const executorAddress = Effect.gen(function* () {
+  const url = yield* requiredSetting(
+    'VIVID_EXECUTOR_URL',
+    Schema.NonEmptyString.check(
+      Schema.makeFilter((value) => URL.canParse(value) || 'an absolute URL'),
+    ),
+    "Executor's absolute URL",
+  )
+  // Every request path is scoped to one Executor organization; there is no default one.
+  const organization = yield* requiredSetting(
+    'VIVID_EXECUTOR_ORGANIZATION',
+    ExecutorOrganizationId,
+    'the Executor organization id',
+  )
+  return { url: url.replace(/\/$/u, ''), organization }
+})
+
 export const executorLayer = Layer.effect(
   Executor,
   Effect.gen(function* () {
-    // The address every Executor request is sent to. It is prefixed onto request paths as text, so
-    // it is checked to be an absolute URL here and kept as the string that was supplied.
-    const url = yield* requiredSetting(
-      'VIVID_EXECUTOR_URL',
-      Schema.NonEmptyString.check(
-        Schema.makeFilter((value) => URL.canParse(value) || 'an absolute URL'),
-      ),
-      "Executor's absolute URL",
-    )
-    // The bearer credential for that address; without it every Executor call is refused.
+    const { url, organization } = yield* executorAddress
+    // The installation owner's credential; without it every installation call is refused.
     const key = yield* requiredSetting('VIVID_EXECUTOR_KEY', settingSecret, 'the Executor API key')
-    // Every request path is scoped to one Executor organization; there is no default one.
-    const organization = yield* requiredSetting(
-      'VIVID_EXECUTOR_ORGANIZATION',
-      ExecutorOrganizationId,
-      'the Executor organization id',
-    )
     return yield* makeExecutor(url, key, organization)
   }),
 )

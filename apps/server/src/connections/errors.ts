@@ -7,6 +7,7 @@ import {
   mcpQueryUnsupportedMessage,
 } from '@vivid/contracts'
 import { connectionSetupMessage, resourceReason, type ExecutorFailure } from './executor.ts'
+import type { MemberFailure } from './members.ts'
 
 /** Provider internals never cross RPC; unavailable authority remains distinct from bad user input. */
 export const executorFailure = Match.type<ExecutorFailure>().pipe(
@@ -60,8 +61,25 @@ export const executorFailure = Match.type<ExecutorFailure>().pipe(
         message: 'This Integration action needs an approval Vivid cannot give yet.',
       }),
     ExecutorTransportFailure: unavailable,
+    ExecutorRateLimited: unavailable,
     ExecutorResponseInvalid: unavailable,
     ExecutorExecutionUncertain: unavailable,
+  }),
+)
+
+/**
+ * A Person's Executor member could not be made or read: Executor's refusals and outages answer as
+ * any other Executor failure does, and a database fault stays one.
+ */
+export const memberFailure = Match.type<MemberFailure>().pipe(
+  Match.tagsExhaustive({
+    ExecutorTransportFailure: executorFailure,
+    ExecutorRateLimited: executorFailure,
+    ExecutorAccessDenied: executorFailure,
+    ExecutorResponseInvalid: executorFailure,
+    DatabaseUnavailable: (error) => error,
+    DatabaseConstraintViolation: (error) => error,
+    DatabaseFailure: (error) => error,
   }),
 )
 

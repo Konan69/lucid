@@ -25,6 +25,7 @@ import { observeFailures } from '../observability/failure.ts'
 import { untraced } from '../observability/quiet.ts'
 import { WatchedApps, WatchConnectionRemoved } from './apps.ts'
 import { ExecutorEvents, type EventDefinition, type ExecutorEventsFailure } from './events.ts'
+import type { ExecutorCaller } from '../connections/executor.ts'
 import { secretFor } from './signature.ts'
 import { WatchStore, subscriptionOf, type WatchRecord } from './store.ts'
 import { watchProgress, WatchMissing } from './progress.ts'
@@ -41,6 +42,12 @@ import { owedStoreLayer } from '../owed/store.ts'
  * `packages/sdk/src/implementation/events.ts` subscribe). Vivid asks for the longest lifetime and
  * renews each Watch once it is within six hours of expiry.
  */
+
+/** Subscribe or renew one Watch at Executor, as the caller that owns its app. */
+export type Subscribe = (
+  caller: ExecutorCaller,
+  record: WatchRecord,
+) => ReturnType<ExecutorEvents['Service']['subscribe']>
 
 /** The lifetime asked for: Executor's maximum. */
 export const TTL_MS = 7 * 24 * 60 * 60_000
@@ -147,10 +154,11 @@ function makeRevision(input: {
   readonly store: WatchStore['Service']
   readonly events: ExecutorEvents['Service']
   readonly publish: (record: WatchRecord) => Effect.Effect<void>
-  readonly subscribe: (record: WatchRecord) => ReturnType<ExecutorEvents['Service']['subscribe']>
+  readonly subscribe: Subscribe
+  readonly callerOf: WatchedApps['Service']['callerOf']
   readonly base: string
 }) {
-  const { store, events, publish, subscribe, base } = input
+  const { store, events, publish, subscribe, callerOf, base } = input
   /** Grant the revised filters before committing; a failed grant leaves the saved Watch intact.
    * A fresh callback rejects deliveries from the old subscription even if unsubscribe is lost. */
   const revise = Effect.fn('Watches.revise')(function* (actor: Actor, request: ReviseWatchFilters) {
@@ -163,7 +171,8 @@ function makeRevision(input: {
       callbackUrl,
       watch: { ...previous.watch, arguments: request.arguments },
     }
-    const grant = yield* subscribe(proposed)
+    const caller = yield* callerOf(previous.connectionId)
+    const grant = yield* subscribe(caller, proposed)
     const revised = yield* store.revise(
       previous,
       request,
@@ -172,7 +181,7 @@ function makeRevision(input: {
     )
     if (Option.isNone(revised)) return yield* new WatchMissing({})
     yield* events
-      .unsubscribe({
+      .unsubscribe(caller, {
         name: previous.subscribedName,
         arguments: previous.watch.arguments,
         url: previous.callbackUrl,
@@ -204,8 +213,8 @@ const make = Effect.fn('Watches.make')(function* () {
 
   /** The exact key Executor knows this Watch's subscription by, and the secret it signs with. */
 
-  const subscribe = (record: WatchRecord) =>
-    events.subscribe({
+  const subscribe: Subscribe = (caller, record) =>
+    events.subscribe(caller, {
       ...subscriptionOf(record),
       secret: secretFor(config.AUTH_SECRET, record.watch.id),
       ttlMs: TTL_MS,
@@ -239,7 +248,7 @@ const make = Effect.fn('Watches.make')(function* () {
    */
   const create = Effect.fn('Watches.create')(function* (actor: Actor, request: CreateWatchRequest) {
     const app = yield* apps.appOf(actor, request.account)
-    const declared = eventsOfApp(yield* events.list, app.appSlug)
+    const declared = eventsOfApp(yield* events.list(app.caller), app.appSlug)
     if (!declared.some((event) => event.event === request.event))
       return yield* new WatchEventUnknown({ known: declared.map((event) => event.event) })
     const purpose = yield* checks.planCheckin(actor, request.purpose)
@@ -259,7 +268,7 @@ const make = Effect.fn('Watches.make')(function* () {
       purpose,
       callbackUrl: `${base}/api/watches/${id}`,
     })
-    const granted = yield* Effect.result(subscribe(pending))
+    const granted = yield* Effect.result(subscribe(app.caller, pending))
     if (Result.isFailure(granted)) {
       if (outcomeUnknown(granted.failure)) {
         yield* publish(pending)
@@ -276,7 +285,7 @@ const make = Effect.fn('Watches.make')(function* () {
   /** The events an account's app declares, in words. */
   const find = Effect.fn('Watches.find')(function* (actor: Actor, account: string) {
     const app = yield* apps.appOf(actor, account)
-    return eventsOfApp(yield* events.list, app.appSlug)
+    return eventsOfApp(yield* events.list(app.caller), app.appSlug)
   })
 
   /**
@@ -289,7 +298,8 @@ const make = Effect.fn('Watches.make')(function* () {
     if (Option.isNone(found)) return yield* new WatchMissing({})
     const stopped = yield* store.stop(found.value.watch.id, 'removed')
     if (Option.isNone(stopped)) return yield* new WatchMissing({})
-    yield* events.unsubscribe(subscriptionOf(found.value)).pipe(
+    yield* apps.callerOf(found.value.connectionId).pipe(
+      Effect.flatMap((caller) => events.unsubscribe(caller, subscriptionOf(found.value))),
       Effect.tapError((failure) =>
         Effect.logWarning('Watch unsubscribe did not reach Executor', failure._tag),
       ),
@@ -306,7 +316,8 @@ const make = Effect.fn('Watches.make')(function* () {
    * says it can never be subscribed; anything else is tried again on the next pass.
    */
   const renewOne = Effect.fn('Watches.renewOne')(function* (record: WatchRecord) {
-    const renewed = yield* Effect.result(subscribe(record))
+    const caller = yield* apps.callerOf(record.connectionId)
+    const renewed = yield* Effect.result(subscribe(caller, record))
     if (Result.isSuccess(renewed)) {
       if (WatchState.guards.Paused(record.watch.state)) {
         yield* store.renewPaused(record.watch.id, renewed.success.refreshBefore.getTime())
@@ -340,7 +351,7 @@ const make = Effect.fn('Watches.make')(function* () {
   return {
     create,
     ...checks,
-    revise: makeRevision({ store, events, publish, subscribe, base }),
+    revise: makeRevision({ store, events, publish, subscribe, callerOf: apps.callerOf, base }),
     find,
     stop,
     complete: progress.complete,

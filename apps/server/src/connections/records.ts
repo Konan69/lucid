@@ -29,6 +29,7 @@ import {
   AccountIdentity,
   ExecutorReferences,
   ExecutorAppId,
+  ExecutorPrincipal,
   LegacyExecutorReferences,
   migrationPending,
   executorMigrationMessage,
@@ -54,6 +55,7 @@ export const storedRowSchema = createSelectSchema(connections, {
   returnsTo: SignInSurface,
   grantObservation: Schema.NullOr(GrantObservation),
   status: Schema.Literals(['ready', 'needs-authorization', 'failed']),
+  executorPrincipal: ExecutorPrincipal,
 }).mapFields(({ label: _retired, ...fields }) => fields)
 const rowSchema = storedRowSchema.mapFields((fields) => ({
   ...fields,
