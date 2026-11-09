@@ -36,6 +36,7 @@ import {
   ExecutorReferences,
   ExecutorSetupRequired,
   connectionSetupMessage,
+  installationCaller,
 } from './executor.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import { connections } from './tables.ts'
@@ -392,6 +393,7 @@ describe.skipIf(!testDatabaseConfigured)('made Integrations through real adapter
             }),
           )
           const failure = yield* made.executor
+            .as(installationCaller)
             .make({
               connectionId: ConnectionId.make('setup-required'),
               service: ServiceId.make('made:setup-required'),

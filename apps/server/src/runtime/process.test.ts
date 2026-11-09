@@ -1,3 +1,7 @@
+import { PgClient } from '@effect/sql-pg/PgClient'
+import { pushTestLayer } from '../push/testing.ts'
+import { takeNotification } from '../notifications/delivery.ts'
+import { notifications } from '../notifications/tables.ts'
 import * as TestClock from 'effect/testing/TestClock'
 import { readThreadHistory } from './history.ts'
 import { ChannelReplies } from '../channels/replies.ts'
@@ -387,7 +391,7 @@ layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)), { excludeTestServi
         }).pipe(Effect.scoped),
     )
 
-    it.effect('a Run whose notice cannot be owed still settles as Completed', () =>
+    it.effect('a failed notice owe leaves a settled Run and a durable retry that repays it', () =>
       Effect.gen(function* () {
         const test = yield* fixture('Kept', 'Unowed')
         const answer = yield* held('Finished without a notice')
@@ -397,6 +401,24 @@ layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)), { excludeTestServi
         yield* answer.release
         expect(yield* Queue.take(test.reported)).toBe('Completed')
         expect((yield* test.store.get(run.id)).state._tag).toBe('Completed')
+        const sql = yield* PgClient
+        expect(yield* sql`SELECT state FROM vivid_work WHERE id = ${`${run.id}:notice`}`).toEqual([
+          { state: 'pending' },
+        ])
+        const deliveryContext = yield* Layer.build(pushTestLayer)
+        yield* takeNotification().pipe(Effect.provideContext(deliveryContext))
+        const database = yield* Database
+        const recorded = yield* database.run(
+          database
+            .select()
+            .from(notifications)
+            .where(eq(notifications.conversationId, test.threadId)),
+        )
+        expect(recorded).toMatchObject([{ body: 'Finished without a notice', kind: 'finished' }])
+        expect((yield* test.store.get(run.id)).state._tag).toBe('Completed')
+        expect(yield* sql`SELECT state FROM vivid_work WHERE id = ${`${run.id}:notice`}`).toEqual([
+          { state: 'completed' },
+        ])
       }).pipe(Effect.scoped),
     )
 

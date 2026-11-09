@@ -9,6 +9,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
 import { companyColumn, epoch, personColumn } from '../database/owner.ts'
+import type { ExecutorPrincipal } from './executor.ts'
 
 /**
  * One row per Connection: an authorized relationship with an external account.
@@ -16,8 +17,14 @@ import { companyColumn, epoch, personColumn } from '../database/owner.ts'
  * A row with no `company_id` is its `person_id`'s own and only ever acts for them. A row with a
  * `company_id` is shared: an admin added it and every Member's Vivid may use it. `references` is
  * the encoded set of identifiers the Connection layer needs to find the account again; no
- * credential is ever stored here or anywhere in this database. `status` is `ready`,
- * `needs-authorization` or `failed`, and `reason` explains `failed`.
+ * credential is ever stored here. `status` is `ready`, `needs-authorization` or `failed`, and
+ * `reason` explains `failed`.
+ *
+ * `executor_principal` says whose Executor user the app and account belong to
+ * (`ExecutorPrincipal` in `executor.ts`): `installation` for every row made before Persons had
+ * Executor members and for every shared row, `member` for a Person's own Connection made since.
+ * The default is the fact about rows that existed when the column was added; new rows always name
+ * it.
  *
  * One Person may hold several rows for one `service`: each is one more account, and nothing here
  * makes a service unique. Two columns tell such rows apart and are never mixed. `name` is what the
@@ -56,6 +63,10 @@ export const connections = pgTable(
     // back; this only rises.
     authorizationGeneration: integer('authorization_generation').notNull().default(0),
     grantObservation: jsonb('grant_observation'),
+    executorPrincipal: text('executor_principal')
+      .$type<ExecutorPrincipal>()
+      .notNull()
+      .default('installation'),
     createdAt: epoch('created_at').notNull(),
     updatedAt: epoch('updated_at').notNull(),
   },
@@ -65,6 +76,28 @@ export const connections = pgTable(
     index('vivid_connections_company').on(table.companyId),
   ],
 )
+
+/**
+ * One row per Person who has an Executor member of their own (`members.ts`).
+ *
+ * `email` is the member's Executor sign-in: random, so it names neither the Person nor their real
+ * address, and fixed from the first write so a retry signs in as the member already made rather
+ * than making a second. `state` is `Provisioning`, written before the first Executor call, or
+ * `Ready` with the member's Executor user id and its API key.
+ *
+ * The key is the one credential this database holds. Executor issues a member's key only to that
+ * member's own session, and a session needs the member's password, which is never stored: it is
+ * derived again from `VIVID_EXECUTOR_SEAL_KEY` and the email. Keeping the key saves a sign-in on
+ * every call, and Executor limits sign-ins to a few per window. It is sealed with AES-256-GCM
+ * under the same setting (`seal.ts`), so a copy of this table alone cannot call Executor.
+ */
+export const executorMembers = pgTable('vivid_executor_members', {
+  personId: personColumn().primaryKey(),
+  email: text('email').notNull().unique(),
+  state: jsonb('state').notNull(),
+  createdAt: epoch('created_at').notNull(),
+  updatedAt: epoch('updated_at').notNull(),
+})
 
 /** Class decisions belong to one account and disappear with its Connection. */
 export const connectionPermissions = pgTable(

@@ -6,6 +6,7 @@ import { Database } from '../database/client.ts'
 import { BrowseAuthority, DeviceRegistry } from '../computers/device.ts'
 import { ComputerStore, computerRunner, inspectBrowser } from '../computers/store.ts'
 import { Executor } from '../connections/executor.ts'
+import { ExecutorMembers } from '../connections/members.ts'
 import { ToolEffects } from '../connections/effects.ts'
 import { ConnectionStore } from '../connections/store.ts'
 import { connectionRunner } from '../connections/tools.ts'
@@ -25,7 +26,14 @@ export const actionRunnerLayer = Layer.effect(
   ActionRunner,
   Effect.gen(function* () {
     const services = yield* Effect.context<
-      Database | ConnectionStore | Executor | ComputerStore | ToolEffects | DeviceRegistry | Watches
+      | Database
+      | ConnectionStore
+      | Executor
+      | ExecutorMembers
+      | ComputerStore
+      | ToolEffects
+      | DeviceRegistry
+      | Watches
     >()
     const connections = yield* ConnectionStore
     return ActionRunner.of({

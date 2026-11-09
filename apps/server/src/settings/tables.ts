@@ -1,5 +1,5 @@
 import { boolean, jsonb, pgTable, text, timestamp } from 'drizzle-orm/pg-core'
-import { DEFAULT_APPEARANCE } from '@vivid/contracts'
+import { DEFAULT_APPEARANCE, LocationSharing } from '@vivid/contracts'
 import { personTable } from '../auth/tables.ts'
 
 export const settingsTable = pgTable('settings', {
@@ -14,6 +14,12 @@ export const settingsTable = pgTable('settings', {
    * (`computers/egress/`). Off until the Person turns it on. Issue 61 removes the choice.
    */
   egress: boolean().notNull().default(false),
+  /**
+   * Whether this Person shares where they are, and their latest reading: an encoded
+   * `LocationSharing` (`packages/contracts/src/location.ts`). One column holds both, so turning
+   * sharing off and forgetting the reading are one write, and a reading can never outlive it.
+   */
+  location: jsonb().notNull().default(LocationSharing.cases.Off.make({})),
   /**
    * What this Person calls Vivid in their personal space, and how its face is drawn there: an
    * `Appearance` (`packages/contracts/src/appearance.ts`). The defaults are Vivid as it ships, so

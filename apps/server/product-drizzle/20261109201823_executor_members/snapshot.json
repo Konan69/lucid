@@ -1,9 +1,9 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "899b7c2c-cf46-485a-9ec4-25b560b3b164",
+  "id": "495aa405-c668-470d-b44e-67009ba2cd95",
   "prevIds": [
-    "2f8c2141-fa9b-4082-a3b6-76e59f94f18d"
+    "0d1039a1-ae48-4564-b79c-fdeb2bc9af87"
   ],
   "ddl": [
     {
@@ -20,12 +20,6 @@
     {
       "isRlsEnabled": false,
       "name": "vivid_actions",
-      "entityType": "tables",
-      "schema": "public"
-    },
-    {
-      "isRlsEnabled": false,
-      "name": "vivid_activity_targets",
       "entityType": "tables",
       "schema": "public"
     },
@@ -97,6 +91,12 @@
     },
     {
       "isRlsEnabled": false,
+      "name": "vivid_computer_commands",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "isRlsEnabled": false,
       "name": "vivid_computer_recoveries",
       "entityType": "tables",
       "schema": "public"
@@ -146,6 +146,12 @@
     {
       "isRlsEnabled": false,
       "name": "vivid_drafts",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "vivid_executor_members",
       "entityType": "tables",
       "schema": "public"
     },
@@ -410,84 +416,6 @@
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_actions"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "installation",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "vivid_activity_targets"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "person_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "vivid_activity_targets"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "session_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "vivid_activity_targets"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "start_token",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "vivid_activity_targets"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "update_token",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "vivid_activity_targets"
-    },
-    {
-      "type": "boolean",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "false",
-      "generated": null,
-      "identity": null,
-      "name": "started",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "vivid_activity_targets"
     },
     {
       "type": "text",
@@ -1636,6 +1564,19 @@
     {
       "type": "jsonb",
       "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'{\"_tag\":\"Brief\"}'",
+      "generated": null,
+      "identity": null,
+      "name": "turn",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_child_runs"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
       "notNull": false,
       "dimensions": 0,
       "default": null,
@@ -1658,6 +1599,123 @@
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_child_runs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "handle",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_computer_commands"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "person_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_computer_commands"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "thread_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_computer_commands"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "command",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_computer_commands"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "started_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_computer_commands"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "output_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_computer_commands"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "output_digest",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_computer_commands"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "unreachable",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_computer_commands"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stopped_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_computer_commands"
     },
     {
       "type": "text",
@@ -2071,6 +2129,19 @@
       "generated": null,
       "identity": null,
       "name": "grant_observation",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_connections"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'installation'",
+      "generated": null,
+      "identity": null,
+      "name": "executor_principal",
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_connections"
@@ -2587,6 +2658,71 @@
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_drafts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "person_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_executor_members"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "email",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_executor_members"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "state",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_executor_members"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_executor_members"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_executor_members"
     },
     {
       "type": "text",
@@ -3769,20 +3905,7 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "preview_url",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "vivid_notifications"
-    },
-    {
-      "type": "jsonb",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "approval",
+      "name": "conversation_id",
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_notifications"
@@ -3795,7 +3918,7 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "conversation_id",
+      "name": "approval_id",
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_notifications"
@@ -3822,6 +3945,19 @@
       "generated": null,
       "identity": null,
       "name": "read_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_notifications"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "published_at",
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_notifications"
@@ -5174,27 +5310,6 @@
       "entityType": "indexes",
       "schema": "public",
       "table": "vivid_actions"
-    },
-    {
-      "nameExplicit": true,
-      "columns": [
-        {
-          "value": "person_id",
-          "isExpression": false,
-          "asc": true,
-          "nullsFirst": false,
-          "opclass": null
-        }
-      ],
-      "isUnique": false,
-      "where": null,
-      "with": "",
-      "method": "btree",
-      "concurrently": false,
-      "name": "vivid_activity_targets_person",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "vivid_activity_targets"
     },
     {
       "nameExplicit": true,
@@ -6735,40 +6850,6 @@
     {
       "nameExplicit": false,
       "columns": [
-        "person_id"
-      ],
-      "schemaTo": "public",
-      "tableTo": "user",
-      "columnsTo": [
-        "id"
-      ],
-      "onUpdate": "NO ACTION",
-      "onDelete": "CASCADE",
-      "name": "vivid_activity_targets_person_id_user_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "vivid_activity_targets"
-    },
-    {
-      "nameExplicit": false,
-      "columns": [
-        "session_id"
-      ],
-      "schemaTo": "public",
-      "tableTo": "session",
-      "columnsTo": [
-        "id"
-      ],
-      "onUpdate": "NO ACTION",
-      "onDelete": "CASCADE",
-      "name": "vivid_activity_targets_session_id_session_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "vivid_activity_targets"
-    },
-    {
-      "nameExplicit": false,
-      "columns": [
         "thread_id"
       ],
       "schemaTo": "public",
@@ -7103,6 +7184,23 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
+      "name": "vivid_computer_commands_person_id_user_id_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "vivid_computer_commands"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "person_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "user",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
       "name": "vivid_computer_recoveries_person_id_user_id_fkey",
       "entityType": "fks",
       "schema": "public",
@@ -7294,6 +7392,23 @@
       "entityType": "fks",
       "schema": "public",
       "table": "vivid_drafts"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "person_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "user",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "name": "vivid_executor_members_person_id_user_id_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "vivid_executor_members"
     },
     {
       "nameExplicit": false,
@@ -8172,16 +8287,6 @@
     },
     {
       "columns": [
-        "installation"
-      ],
-      "nameExplicit": false,
-      "name": "vivid_activity_targets_pkey",
-      "schema": "public",
-      "table": "vivid_activity_targets",
-      "entityType": "pks"
-    },
-    {
-      "columns": [
         "id"
       ],
       "nameExplicit": false,
@@ -8238,6 +8343,16 @@
       "name": "vivid_child_runs_pkey",
       "schema": "public",
       "table": "vivid_child_runs",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "handle"
+      ],
+      "nameExplicit": false,
+      "name": "vivid_computer_commands_pkey",
+      "schema": "public",
+      "table": "vivid_computer_commands",
       "entityType": "pks"
     },
     {
@@ -8308,6 +8423,16 @@
       "name": "vivid_draft_generations_pkey",
       "schema": "public",
       "table": "vivid_draft_generations",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "person_id"
+      ],
+      "nameExplicit": false,
+      "name": "vivid_executor_members_pkey",
+      "schema": "public",
+      "table": "vivid_executor_members",
       "entityType": "pks"
     },
     {
@@ -8509,6 +8634,17 @@
       "name": "vivid_channel_replies_response_id_key",
       "schema": "public",
       "table": "vivid_channel_replies",
+      "entityType": "uniques"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "email"
+      ],
+      "nullsNotDistinct": false,
+      "name": "vivid_executor_members_email_key",
+      "schema": "public",
+      "table": "vivid_executor_members",
       "entityType": "uniques"
     },
     {

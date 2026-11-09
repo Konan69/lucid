@@ -37,6 +37,7 @@ import {
   ExecutorSetupRequired,
   ExecutorStep,
   executorLayer,
+  installationCaller,
 } from './executor.ts'
 import { ConnectionSource } from './address.ts'
 import { executorFailure } from './errors.ts'
@@ -215,7 +216,9 @@ describe('Executor hosted transport', () => {
             }),
           })
           const executor = yield* Executor
-          const outcome = yield* executor.call({ references, tool: 'read', input: {} })
+          const outcome = yield* executor
+            .as(installationCaller)
+            .call({ references, tool: 'read', input: {} })
           expect(ExecutorCallOutcome.guards.Rejected(outcome)).toBe(true)
           expect(outcome).toMatchObject({
             problems: ['Input did not match the tool schema'],
@@ -224,7 +227,7 @@ describe('Executor hosted transport', () => {
             /private-value|short-private|internal-app|internal-deployment/,
           )
           yield* Ref.set(remote.replies, new Map())
-          const retry = yield* executor.call({
+          const retry = yield* executor.as(installationCaller).call({
             references,
             tool: 'read',
             input: { repoName: 'facebook/react' },
@@ -244,7 +247,9 @@ describe('Executor hosted transport', () => {
           inputInvalidReply.make({ problems: 'invalid' }),
         ]) {
           yield* failRoute(remote, 'POST /apps/app/tools/call', { status: 422, body })
-          expect(yield* executor.call({ references, tool: 'read', input: {} })).toEqual(
+          expect(
+            yield* executor.as(installationCaller).call({ references, tool: 'read', input: {} }),
+          ).toEqual(
             ExecutorCallOutcome.cases.Rejected.make({
               message:
                 'Input did not match the tool schema. Inspect the current tool and correct its input.',
@@ -271,7 +276,7 @@ describe('Executor hosted transport', () => {
               ],
             }),
           })
-          const outcome = yield* (yield* Executor).call({
+          const outcome = yield* (yield* Executor).as(installationCaller).call({
             references: authorized,
             tool: 'read',
             input: {},
@@ -292,9 +297,9 @@ describe('Executor hosted transport', () => {
     scenario((remote) =>
       Effect.gen(function* () {
         const executor = yield* Executor
-        const first = yield* executor.begin(begin)
-        expect(yield* executor.begin(begin)).toEqual(first)
-        const second = yield* executor.begin({
+        const first = yield* executor.as(installationCaller).begin(begin)
+        expect(yield* executor.as(installationCaller).begin(begin)).toEqual(first)
+        const second = yield* executor.as(installationCaller).begin({
           ...begin,
           connectionId: ConnectionId.make('second'),
           owner: ExecutorOwnerId.make('other-owner'),
@@ -306,13 +311,15 @@ describe('Executor hosted transport', () => {
           requests.filter((request) => request.path === `POST ${hostedPrefix}/apps/install`),
         ).toHaveLength(2)
         expect(requests.some((request) => request.path.includes('/profiles'))).toBe(false)
-        yield* executor.remove(first.references)
+        yield* executor.as(installationCaller).remove(first.references)
         expect(
           (yield* Ref.get(remote.requests))
             .filter((request) => request.path.startsWith('DELETE'))
             .map((request) => request.path),
         ).toEqual([`DELETE ${hostedPrefix}/apps/${first.references.app}`])
-        expect((yield* executor.status(second.references))._tag).toBe('Ready')
+        expect((yield* executor.as(installationCaller).status(second.references))._tag).toBe(
+          'Ready',
+        )
       }),
     ),
   )
@@ -347,9 +354,9 @@ describe('Executor hosted transport', () => {
           }),
         )
         const executor = yield* Executor
-        const first = yield* executor.begin(begin).pipe(Effect.forkChild)
+        const first = yield* executor.as(installationCaller).begin(begin).pipe(Effect.forkChild)
         yield* Deferred.await(entered)
-        const second = yield* executor.begin({
+        const second = yield* executor.as(installationCaller).begin({
           ...begin,
           service: other,
           connectionId: ConnectionId.make('second'),
@@ -381,7 +388,7 @@ describe('Executor hosted transport', () => {
           status: 409,
           body: Schema.TaggedStruct('AppNameTaken', {}).make({}),
         })
-        expect((yield* (yield* Executor).begin(begin))._tag).toBe('Done')
+        expect((yield* (yield* Executor).as(installationCaller).begin(begin))._tag).toBe('Done')
         const requests = yield* Ref.get(remote.requests)
         expect(
           requests.filter((request) => request.path === `GET ${hostedPrefix}/inventory`),
@@ -400,12 +407,14 @@ describe('Executor hosted transport', () => {
     scenario((remote) =>
       Effect.gen(function* () {
         const executor = yield* Executor
-        const first = yield* executor.begin(begin)
-        const second = yield* executor.begin({
+        const first = yield* executor.as(installationCaller).begin(begin)
+        const second = yield* executor.as(installationCaller).begin({
           ...begin,
           connectionId: ConnectionId.make('second'),
         })
-        const third = yield* executor.begin({ ...begin, connectionId: ConnectionId.make('third') })
+        const third = yield* executor
+          .as(installationCaller)
+          .begin({ ...begin, connectionId: ConnectionId.make('third') })
         expect(
           new Set([first.references.app, second.references.app, third.references.app]).size,
         ).toBe(3)
@@ -422,7 +431,7 @@ describe('Executor hosted transport', () => {
     scenario((remote) =>
       Effect.gen(function* () {
         const executor = yield* Executor
-        const first = yield* executor.begin(begin)
+        const first = yield* executor.as(installationCaller).begin(begin)
         const installed = yield* Ref.get(remote.apps)
         yield* failRoute(remote, 'GET /inventory', {
           status: 200,
@@ -449,7 +458,7 @@ describe('Executor hosted transport', () => {
             ],
           },
         })
-        const second = yield* executor.begin({
+        const second = yield* executor.as(installationCaller).begin({
           ...begin,
           connectionId: ConnectionId.make('second'),
         })
@@ -480,23 +489,27 @@ describe('Executor hosted transport', () => {
           }),
         )
         const executor = yield* Executor
-        const first = yield* executor.add({
+        const first = yield* executor.as(installationCaller).add({
           ...begin,
           service: ServiceId.make(`url:${source.address}`),
           source,
         })
-        const second = yield* executor.add({
+        const second = yield* executor.as(installationCaller).add({
           ...begin,
           connectionId: ConnectionId.make('second'),
           service: ServiceId.make(`url:${source.address}`),
           source,
         })
         expect(second.references.app).not.toBe(first.references.app)
-        yield* executor.remove(first.references)
-        expect((yield* executor.status(second.references))._tag).toBe('Ready')
-        expect((yield* executor.tools(second.references)).map((tool) => tool.name)).toEqual([
-          'read',
-        ])
+        yield* executor.as(installationCaller).remove(first.references)
+        expect((yield* executor.as(installationCaller).status(second.references))._tag).toBe(
+          'Ready',
+        )
+        expect(
+          (yield* executor.as(installationCaller).tools(second.references)).map(
+            (tool) => tool.name,
+          ),
+        ).toEqual(['read'])
         const requests = yield* Ref.get(remote.requests)
         const imports = requests.filter(
           (request) => request.path === `POST ${hostedPrefix}/apps/import`,
@@ -518,7 +531,10 @@ describe('Executor hosted transport', () => {
         const source = ConnectionSource.cases.OpenApi.make({
           address: 'https://example.test/openapi.json',
         })
-        const error = yield* (yield* Executor).add({ ...begin, source }).pipe(Effect.flip)
+        const error = yield* (yield* Executor)
+          .as(installationCaller)
+          .add({ ...begin, source })
+          .pipe(Effect.flip)
         expect(error).toHaveProperty('_tag', 'ExecutorSourceUnsupported')
         expect(executorFailure(error)).toEqual(
           new InvalidRequest({
@@ -540,7 +556,10 @@ describe('Executor hosted transport', () => {
           address: 'https://example.test/mcp?token=private-value',
           authorization: 'auto',
         })
-        const failure = yield* (yield* Executor).add({ ...begin, source }).pipe(Effect.flip)
+        const failure = yield* (yield* Executor)
+          .as(installationCaller)
+          .add({ ...begin, source })
+          .pipe(Effect.flip)
         expect(failure._tag).toBe('ExecutorImportQueryUnsupported')
         expect(executorFailure(failure)).toHaveProperty(
           'message',
@@ -563,7 +582,10 @@ describe('Executor hosted transport', () => {
           address: 'https://example.test/mcp',
           authorization: 'auto',
         })
-        const failure = yield* (yield* Executor).add({ ...begin, source }).pipe(Effect.flip)
+        const failure = yield* (yield* Executor)
+          .as(installationCaller)
+          .add({ ...begin, source })
+          .pipe(Effect.flip)
         expect(executorFailure(failure)).toHaveProperty(
           'message',
           'The Integration management request was refused.',
@@ -590,8 +612,8 @@ describe('Executor hosted transport', () => {
             const executor = yield* Executor
             const action =
               operation === 'reauthorize'
-                ? executor.reauthorize({ ...begin, references: key })
-                : executor[operation](key)
+                ? executor.as(installationCaller).reauthorize({ ...begin, references: key })
+                : executor.as(installationCaller)[operation](key)
             const failure = yield* action.pipe(Effect.flip)
             expect(failure).toBeInstanceOf(ExecutorResponseInvalid)
             expect(
@@ -607,12 +629,14 @@ describe('Executor hosted transport', () => {
       Effect.gen(function* () {
         yield* Ref.set(remote.paginated, true)
         const executor = yield* Executor
-        const tools = yield* executor.tools(references)
+        const tools = yield* executor.as(installationCaller).tools(references)
         expect(tools.map((tool) => [tool.name, tool.effect])).toEqual([
           ['read', 'read'],
           ['write', 'write'],
         ])
-        yield* executor.call({ references, tool: 'write', input: { value: 1 } })
+        yield* executor
+          .as(installationCaller)
+          .call({ references, tool: 'write', input: { value: 1 } })
         const requests = yield* Ref.get(remote.requests)
         const pages = requests.filter(
           (request) => request.path === `GET ${hostedPrefix}/apps/app/tools`,
@@ -649,9 +673,9 @@ describe('Executor hosted transport', () => {
             next: 'repeated',
           },
         })
-        expect(yield* (yield* Executor).tools(references).pipe(Effect.flip)).toBeInstanceOf(
-          ExecutorResponseInvalid,
-        )
+        expect(
+          yield* (yield* Executor).as(installationCaller).tools(references).pipe(Effect.flip),
+        ).toBeInstanceOf(ExecutorResponseInvalid)
         expect(
           (yield* Ref.get(remote.requests)).filter((request) => request.path.endsWith('/tools')),
         ).toHaveLength(2)
@@ -676,9 +700,11 @@ describe('Executor hosted transport', () => {
         Effect.gen(function* () {
           const result = yield* decodeJson(value.result)
           yield* Ref.set(remote.result, result)
-          expect(yield* (yield* Executor).call({ references, tool: 'read', input: {} })).toEqual(
-            ExecutorCallOutcome.cases.Completed.make({ value: result }),
-          )
+          expect(
+            yield* (yield* Executor)
+              .as(installationCaller)
+              .call({ references, tool: 'read', input: {} }),
+          ).toEqual(ExecutorCallOutcome.cases.Completed.make({ value: result }))
         }),
       ),
     )
@@ -693,7 +719,9 @@ describe('Executor hosted transport', () => {
             content: [{ type: 'text', text: 'Bearer sensitive-provider-value' }],
             isError: true,
           })
-          const result = yield* (yield* Executor).call({ references, tool: 'read', input: {} })
+          const result = yield* (yield* Executor)
+            .as(installationCaller)
+            .call({ references, tool: 'read', input: {} })
           expect(ExecutorCallOutcome.guards.Rejected(result)).toBe(true)
           if (ExecutorCallOutcome.guards.Rejected(result))
             expect(result.message).toContain('sensitive diagnostics were removed')
@@ -714,6 +742,7 @@ describe('Executor hosted transport', () => {
           }),
         })
         const error = yield* (yield* Executor)
+          .as(installationCaller)
           .call({ references, tool: 'read', input: {} })
           .pipe(Effect.flip)
         expect(error).toBeInstanceOf(ExecutorApprovalUnsupported)
@@ -735,11 +764,11 @@ describe('Executor hosted transport', () => {
         Effect.gen(function* () {
           yield* Ref.set(remote.accounts, keyRequirement)
           const executor = yield* Executor
-          const step = yield* executor.begin(begin)
+          const step = yield* executor.as(installationCaller).begin(begin)
           if (!ExecutorStep.guards.EnterKey(step)) throw new Error('Expected key fields')
           expect(step.fields).toEqual([{ name: 'token', label: 'Access token' }])
           expect(step.references.method).toBe('providerKey')
-          const result = yield* executor.complete({
+          const result = yield* executor.as(installationCaller).complete({
             references: step.references,
             fields: { token: Redacted.make('fixture-key') },
           })
@@ -785,7 +814,7 @@ describe('Executor hosted transport', () => {
             },
           },
         })
-        const step = yield* (yield* Executor).begin(begin)
+        const step = yield* (yield* Executor).as(installationCaller).begin(begin)
         expect(step._tag).toBe('OpenSignIn')
         expect(
           (yield* Ref.get(remote.requests)).find(
@@ -806,7 +835,9 @@ describe('Executor hosted transport', () => {
           body: { clients: [], mode: 'client-required' },
         })
         const executor = yield* Executor
-        expect(yield* executor.begin(begin).pipe(Effect.flip)).toBeInstanceOf(ExecutorSetupRequired)
+        expect(
+          yield* executor.as(installationCaller).begin(begin).pipe(Effect.flip),
+        ).toBeInstanceOf(ExecutorSetupRequired)
         expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
           'authorization._tag',
           'SetupRequired',
@@ -851,7 +882,7 @@ describe('Executor hosted transport', () => {
             request.path.endsWith('/oauth/oauth/setup'),
           ),
         ).toHaveLength(reads + 1)
-        expect((yield* executor.begin(begin))._tag).toBe('OpenSignIn')
+        expect((yield* executor.as(installationCaller).begin(begin))._tag).toBe('OpenSignIn')
       }),
     ),
   )
@@ -865,10 +896,9 @@ describe('Executor hosted transport', () => {
           body: oauthClientUnavailableReply.make({}),
         })
         const executor = yield* Executor
-        expect(yield* executor.begin(begin).pipe(Effect.flip)).toHaveProperty(
-          '_tag',
-          'ExecutorSignInRequired',
-        )
+        expect(
+          yield* executor.as(installationCaller).begin(begin).pipe(Effect.flip),
+        ).toHaveProperty('_tag', 'ExecutorSignInRequired')
         expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
           'authorization._tag',
           'SetupRequired',
@@ -911,7 +941,7 @@ describe('Executor hosted transport', () => {
         Effect.gen(function* () {
           yield* Ref.set(remote.accounts, signInRequirement)
           const executor = yield* Executor
-          yield* executor.begin(begin)
+          yield* executor.as(installationCaller).begin(begin)
           const entered = yield* Deferred.make<void>()
           const release = yield* Deferred.make<void>()
           yield* Ref.set(
@@ -983,10 +1013,9 @@ describe('Executor hosted transport', () => {
           status: 200,
           body: { clients: [], mode: 'client-required' },
         })
-        expect(yield* executor.begin(begin).pipe(Effect.flip)).toHaveProperty(
-          '_tag',
-          'ExecutorSetupRequired',
-        )
+        expect(
+          yield* executor.as(installationCaller).begin(begin).pipe(Effect.flip),
+        ).toHaveProperty('_tag', 'ExecutorSetupRequired')
         expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
           'authorization._tag',
           'SetupRequired',
@@ -1000,7 +1029,7 @@ describe('Executor hosted transport', () => {
       Effect.gen(function* () {
         yield* Ref.set(remote.accounts, signInRequirement)
         const executor = yield* Executor
-        yield* executor.begin(begin)
+        yield* executor.as(installationCaller).begin(begin)
         yield* TestClock.adjust('9 minutes')
         const signInEntered = yield* Deferred.make<void>()
         const signInRelease = yield* Deferred.make<void>()
@@ -1030,7 +1059,10 @@ describe('Executor hosted transport', () => {
           status: 409,
           body: oauthClientUnavailableReply.make({}),
         })
-        const pendingSignIn = yield* executor.begin(begin).pipe(Effect.flip, Effect.forkScoped)
+        const pendingSignIn = yield* executor
+          .as(installationCaller)
+          .begin(begin)
+          .pipe(Effect.flip, Effect.forkScoped)
         yield* Deferred.await(signInEntered)
         yield* Ref.set(blockSetup, true)
         yield* TestClock.adjust('1 minute')
@@ -1064,7 +1096,7 @@ describe('Executor hosted transport', () => {
       Effect.gen(function* () {
         yield* Ref.set(remote.accounts, signInRequirement)
         const executor = yield* Executor
-        yield* executor.begin(begin)
+        yield* executor.as(installationCaller).begin(begin)
         yield* TestClock.adjust('9 minutes')
         const signInEntered = yield* Deferred.make<void>()
         const signInRelease = yield* Deferred.make<void>()
@@ -1094,7 +1126,10 @@ describe('Executor hosted transport', () => {
           status: 409,
           body: oauthClientUnavailableReply.make({}),
         })
-        const pendingSignIn = yield* executor.begin(begin).pipe(Effect.flip, Effect.forkScoped)
+        const pendingSignIn = yield* executor
+          .as(installationCaller)
+          .begin(begin)
+          .pipe(Effect.flip, Effect.forkScoped)
         yield* Deferred.await(signInEntered)
         yield* Ref.set(blockSetup, true)
         yield* TestClock.adjust('1 minute')
@@ -1167,7 +1202,7 @@ describe('Executor hosted transport', () => {
             .set(`DELETE ${hostedPrefix}/apps/app`, { status: 200, body: { app: 'app' } })
             .set(`POST ${hostedPrefix}/apps/deploy`, { status: 200, body: deployed }),
         )
-        const step = yield* (yield* Executor).add(input)
+        const step = yield* (yield* Executor).as(installationCaller).add(input)
         expect(ExecutorStep.guards.EnterKey(step)).toBe(true)
         if (!ExecutorStep.guards.EnterKey(step)) return expect.fail('Expected personal key')
         expect(step.references).toMatchObject({
@@ -1211,7 +1246,7 @@ describe('Executor hosted transport', () => {
           body: oauthClientUnavailableReply.make({}),
         })
         const executor = yield* Executor
-        yield* executor.begin(begin).pipe(Effect.flip)
+        yield* executor.as(installationCaller).begin(begin).pipe(Effect.flip)
         yield* Ref.set(remote.replies, new Map())
         for (const service of otherServices) {
           yield* executor.authorization({ service, returnAddress: hostedReturnAddress })
@@ -1230,7 +1265,7 @@ describe('Executor hosted transport', () => {
     scenario((remote) =>
       Effect.gen(function* () {
         yield* Ref.set(remote.accounts, signInRequirement)
-        const step = yield* (yield* Executor).begin(begin)
+        const step = yield* (yield* Executor).as(installationCaller).begin(begin)
         expect(ExecutorStep.guards.OpenSignIn(step)).toBe(true)
         if (ExecutorStep.guards.OpenSignIn(step))
           expect(step.address).toBe(
@@ -1257,7 +1292,7 @@ describe('Executor hosted transport', () => {
   it.effect('completes OAuth without issuing any removed profile route', () =>
     scenario((remote) =>
       Effect.gen(function* () {
-        const result = yield* (yield* Executor).completeSignIn({
+        const result = yield* (yield* Executor).as(installationCaller).completeSignIn({
           references: signingIn,
           callbackAddress: Redacted.make(
             'https://vivid.example.test/api/connections/return?code=secret',
@@ -1276,7 +1311,7 @@ describe('Executor hosted transport', () => {
     scenario((remote) =>
       Effect.gen(function* () {
         yield* Ref.set(remote.selections, new Map([['app', { slot: ['someone-else'] }]]))
-        const result = yield* (yield* Executor).call({
+        const result = yield* (yield* Executor).as(installationCaller).call({
           references: authorized,
           tool: 'read',
           input: {},
@@ -1310,7 +1345,7 @@ describe('Executor hosted transport', () => {
                 )
               : Effect.void,
           )
-          yield* (yield* Executor).remove(authorized)
+          yield* (yield* Executor).as(installationCaller).remove(authorized)
           expect(
             (yield* Ref.get(remote.requests))
               .filter((request) => request.path.startsWith('DELETE'))
@@ -1331,7 +1366,7 @@ describe('Executor hosted transport', () => {
           status: 404,
           body: Schema.TaggedStruct('AppNotFound', {}).make({}),
         })
-        yield* (yield* Executor).remove(signingIn)
+        yield* (yield* Executor).as(installationCaller).remove(signingIn)
         expect(
           (yield* Ref.get(remote.requests))
             .filter((request) => request.path.startsWith('DELETE'))
@@ -1357,9 +1392,10 @@ describe('Executor hosted transport', () => {
           status: 409,
           body: Schema.TaggedStruct('AppWebhooksActive', {}).make({}),
         })
-        expect((yield* (yield* Executor).remove(authorized).pipe(Effect.flip))._tag).toBe(
-          'ExecutorConflict',
-        )
+        expect(
+          (yield* (yield* Executor).as(installationCaller).remove(authorized).pipe(Effect.flip))
+            ._tag,
+        ).toBe('ExecutorConflict')
         expect(
           (yield* Ref.get(remote.requests)).filter((request) => request.path.startsWith('DELETE')),
         ).toHaveLength(1)
@@ -1384,7 +1420,9 @@ describe('Executor hosted transport', () => {
             status,
             body: { _tag: tag, message: 'secret-provider-diagnostic' },
           })
-          const operation = (yield* Executor).call({ references, tool: 'read', input: {} })
+          const operation = (yield* Executor)
+            .as(installationCaller)
+            .call({ references, tool: 'read', input: {} })
           const outcome =
             failure === 'ExecutorAccessDenied'
               ? yield* operation.pipe(Effect.flip)
@@ -1481,7 +1519,10 @@ it.effect('releases an unread Executor 401 before returning access denied', () =
     yield* Effect.gen(function* () {
       const context = yield* Layer.build(remote.configured)
       return yield* Effect.gen(function* () {
-        const result = yield* (yield* Executor).status(references).pipe(Effect.result)
+        const result = yield* (yield* Executor)
+          .as(installationCaller)
+          .status(references)
+          .pipe(Effect.result)
         expect(Result.isFailure(result) && result.failure._tag).toBe('ExecutorAccessDenied')
         // Catalogue receipts use other paths and sockets; only this operation's port proves ownership.
         let received = yield* Queue.take(remote.receipts)

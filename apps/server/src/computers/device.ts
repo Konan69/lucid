@@ -55,6 +55,7 @@ import {
 import { NoActingRun, admittedRunState } from '../threads/runs.ts'
 import { stopPersonRun } from '../threads/stop.ts'
 import { Runtime } from '../runtime/client.ts'
+import type { ChildRuns } from '../runs/store.ts'
 import { keyedPermits, type KeyedPermits } from '../runtime/keyed.ts'
 import { DeviceReceipt, DeviceSubscriptionId, receiptOf } from './receipt.ts'
 import { deviceRequests, devices } from './tables.ts'
@@ -183,7 +184,7 @@ export interface DeviceService {
     | Forbidden
     | DatabaseInfrastructureError
     | import('@vivid/contracts').RuntimeUnavailable,
-    Runtime
+    Runtime | ChildRuns
   >
   readonly answer: (
     personId: PersonId,
@@ -195,7 +196,7 @@ export interface DeviceService {
     | DatabaseInfrastructureError
     | NotFound
     | import('@vivid/contracts').RuntimeUnavailable,
-    Runtime
+    Runtime | ChildRuns
   >
 }
 

@@ -251,9 +251,12 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
           const executor = yield* Executor
           const lost = Executor.of({
             ...executor,
-            reauthorize: Effect.fn('Executor.Test.lostRenewal')(() =>
-              Effect.fail(ExecutorAuthorizationUnavailable.make({ references: pending })),
-            ),
+            as: (caller) => ({
+              ...executor.as(caller),
+              reauthorize: Effect.fn('Executor.Test.lostRenewal')(() =>
+                Effect.fail(ExecutorAuthorizationUnavailable.make({ references: pending })),
+              ),
+            }),
           })
           const topics = yield* Ref.make<readonly Topic[]>([])
           const changes = yield* Changes
@@ -397,11 +400,17 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         const calls = yield* Ref.get(probe.calls)
         const unavailable = Executor.of({
           ...executor,
-          tools: Effect.fn('Executor.Test.discoveryUnavailable')(() =>
-            Effect.fail(
-              ServiceUnavailable.make({ service: 'connections', message: 'Discovery unavailable' }),
+          as: (caller) => ({
+            ...executor.as(caller),
+            tools: Effect.fn('Executor.Test.discoveryUnavailable')(() =>
+              Effect.fail(
+                ServiceUnavailable.make({
+                  service: 'connections',
+                  message: 'Discovery unavailable',
+                }),
+              ),
             ),
-          ),
+          }),
         })
         const outcome = yield* Effect.gen(function* () {
           // The approved action store must retain the failing discovery adapter.
@@ -594,15 +603,18 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
           const executor = yield* Executor
           const missing = Executor.of({
             ...executor,
-            call: Effect.fn('Executor.Test.missing')(() =>
-              Effect.fail(
-                ExecutorResourceMissing.make({
-                  service: 'connections',
-                  tool: 'read',
-                  resource: 'App',
-                }),
+            as: (caller) => ({
+              ...executor.as(caller),
+              call: Effect.fn('Executor.Test.missing')(() =>
+                Effect.fail(
+                  ExecutorResourceMissing.make({
+                    service: 'connections',
+                    tool: 'read',
+                    resource: 'App',
+                  }),
+                ),
               ),
-            ),
+            }),
           })
           const { outcome } = yield* connectionHandlers
             .UseTool(toolRequest(step.connection.id, 'read'))
@@ -636,9 +648,12 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
           })
           const denied = Executor.of({
             ...executor,
-            call: Effect.fn('Executor.Test.denied')(() =>
-              Effect.fail(ExecutorAccessDenied.make({ service: 'connections', tool: 'read' })),
-            ),
+            as: (caller) => ({
+              ...executor.as(caller),
+              call: Effect.fn('Executor.Test.denied')(() =>
+                Effect.fail(ExecutorAccessDenied.make({ service: 'connections', tool: 'read' })),
+              ),
+            }),
           })
           const failure = yield* connectionHandlers
             .UseTool(toolRequest(ready.connection.id, 'read'))
@@ -671,7 +686,10 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         const executor = yield* Executor
         const refused = Executor.of({
           ...executor,
-          call: () => Effect.fail(new ExecutorApprovalUnsupported({ tool: 'write' })),
+          as: (caller) => ({
+            ...executor.as(caller),
+            call: () => Effect.fail(new ExecutorApprovalUnsupported({ tool: 'write' })),
+          }),
         })
         const failure = yield* connectionHandlers
           .UseTool(toolRequest(step.connection.id, 'write'))

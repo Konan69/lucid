@@ -1,6 +1,6 @@
 import { Option, Schema } from 'effect'
 import { ConnectionState } from './connections.js'
-import { ConnectionId, RunId, ThreadId } from './identity.js'
+import { ConnectionId, RunId, ShellHandle, ThreadId } from './identity.js'
 import { ChildBudget, ChildRunState, RunFailure, WorkerKind } from './runs.js'
 import { RunOrigin, RunState } from './threads.js'
 import { Watch, WatchId, WatchState } from './watches.js'
@@ -15,6 +15,7 @@ import { Watch, WatchId, WatchState } from './watches.js'
  * every worker at once and its result says, for each, whether it was stopped, had already
  * finished, or could not be stopped and why. Here the workers are the things that act for a
  * Person without them: Runs still working, the helpers those Runs handed narrower work to,
+ * commands Vivid left running in the background on the Person's Computer (`start_shell`),
  * Watches (check-ins are Watches too), and Integrations Vivid made for itself. A new kind of background work is one more case of `BackgroundWork` and
  * of `WorkRef`; `standingOf` and `stopsWith` then fail to typecheck until it is placed.
  */
@@ -35,6 +36,14 @@ export const LiveHelperState = Schema.Union([
 ])
 export type LiveHelperState = typeof LiveHelperState.Type
 
+/**
+ * The last time the server could not read a background command's receipt from the Computer, and
+ * why, in a sentence the Person can read (`computers/store.ts` `executionReason`). The command may
+ * still be running there; the server cannot say.
+ */
+export const CommandUnreachable = Schema.Struct({ since: Schema.Finite, reason: Schema.String })
+export interface CommandUnreachable extends Schema.Schema.Type<typeof CommandUnreachable> {}
+
 /** The last Run a Watch's event started, as much of it as says whether the Watch is working. */
 export const WatchFiring = Schema.Struct({ run: RunId, startedAt: Schema.Finite, state: RunState })
 export interface WatchFiring extends Schema.Schema.Type<typeof WatchFiring> {}
@@ -46,6 +55,8 @@ export interface WatchFiring extends Schema.Schema.Type<typeof WatchFiring> {}
  *
  * - `Run`: a Run acting for this Person that is still working, in the Thread it is advancing.
  * - `Helper`: a helper Run (`ChildRun`) one of those Runs started and that has not ended.
+ * - `Command`: a command Vivid started in the background on the Person's Computer that has not
+ *   ended, as the server last read its receipt (`apps/server/src/computers/background.ts`).
  * - `Watch`: a live Watch, with its Integration's state and the last Run one of its events started;
  *   `purpose` says whether it waits on an event or is a check-in Vivid timed for itself.
  * - `MadeIntegration`: an Integration Vivid wrote for itself (`make_integration`), with how many
@@ -73,6 +84,19 @@ export const BackgroundWork = Schema.TaggedUnion({
     state: LiveHelperState,
     requestedAt: Schema.Finite,
   },
+  Command: {
+    handle: ShellHandle,
+    thread: ThreadId,
+    /** The title of the Thread that started it, which is what the command is for. */
+    title: Schema.String,
+    /** The opening of the command line: its first line, cut at `COMMAND_SHOWN` characters. */
+    command: Schema.String,
+    startedAt: Schema.Finite,
+    /** When its output was last seen to change, to the minute; `startedAt` until it prints. */
+    outputAt: Schema.Finite,
+    /** Null while the server's last read of its receipt reached the Computer. */
+    unreachable: Schema.NullOr(CommandUnreachable),
+  },
   Watch: {
     watch: WatchId,
     name: Watch.fields.name,
@@ -96,7 +120,13 @@ export const BackgroundWork = Schema.TaggedUnion({
 })
 export type BackgroundWork = typeof BackgroundWork.Type
 
-/** A Person's background work, newest first within each kind: Runs, helpers, Watches, made Integrations. */
+/**
+ * How much of a command line is listed: enough to know it by, never a 100 000-character script
+ * on every reload of the list.
+ */
+export const COMMAND_SHOWN = 160
+
+/** A Person's background work, newest first within each kind: Runs, helpers, commands, Watches, made Integrations. */
 export const WorkListResponse = Schema.Struct({ work: Schema.Array(BackgroundWork) })
 export interface WorkListResponse extends Schema.Schema.Type<typeof WorkListResponse> {}
 
@@ -111,9 +141,13 @@ export interface WorkListResponse extends Schema.Schema.Type<typeof WorkListResp
  * - `NotRenewed`: a Watch's subscription ran out at `since` and renewal has not got through, so
  *   events since then may not have reached Vivid (`apps/server/src/watches/lifecycle.ts` keeps
  *   trying; it does not stop a Watch for an unreachable Executor).
+ * - `Quiet`: a background command has printed nothing new since `since`, for longer than
+ *   `RUN_WORKING_LONG_MS`. Grok Bot's rule (`grok-bot/grok-bot.md:136`): "If recent actions stop
+ *   or repeat, treat it as stalled." A command's output is the only action the server sees.
  */
 export const WorkStall = Schema.TaggedUnion({
   WorkingLong: { since: Schema.Finite },
+  Quiet: { since: Schema.Finite },
   Paused: { since: Schema.Finite },
   NotConfirmed: { since: Schema.Finite },
   NotRenewed: { since: Schema.Finite },
@@ -126,11 +160,13 @@ export type WorkStall = typeof WorkStall.Type
  * - `LastRunFailed`: the last Run a Watch's event started failed, for `reason`.
  * - `IntegrationNeedsSignIn`: its Integration's sign-in lapsed or was never finished.
  * - `IntegrationFailed`: its Integration failed for `reason`, the provider's own words.
+ * - `ComputerUnreachable`: a background command's Computer has not answered since `since`.
  */
 export const WorkFailure = Schema.TaggedUnion({
   LastRunFailed: { at: Schema.Finite, reason: RunFailure },
   IntegrationNeedsSignIn: {},
   IntegrationFailed: { reason: Schema.String },
+  ComputerUnreachable: CommandUnreachable.fields,
 })
 export type WorkFailure = typeof WorkFailure.Type
 
@@ -199,6 +235,21 @@ const watchStanding = (
 }
 
 /**
+ * A background command's standing: a Computer that does not answer first, because then nothing
+ * about the command is known; then a command that has gone quiet.
+ */
+const commandStanding = (
+  command: Extract<BackgroundWork, { _tag: 'Command' }>,
+  now: number,
+): WorkStanding => {
+  if (command.unreachable !== null)
+    return failing(WorkFailure.cases.ComputerUnreachable.make(command.unreachable))
+  return now - command.outputAt > RUN_WORKING_LONG_MS
+    ? stalled(WorkStall.cases.Quiet.make({ since: command.outputAt }))
+    : going()
+}
+
+/**
  * Where a piece of work stands at `now`. Every surface and the model's tool read it through this
  * one function, so "stalled" means the same thing on the phone, the web and in Vivid's words.
  */
@@ -214,6 +265,7 @@ export const standingOf = (work: BackgroundWork, now: number): WorkStanding =>
         ? stalled(WorkStall.cases.WorkingLong.make({ since }))
         : going()
     },
+    Command: (command) => commandStanding(command, now),
     Watch: (watch) => watchStanding(watch, now),
     MadeIntegration: ({ state }) =>
       Option.match(integrationFailure(state), { onNone: going, onSome: failing }),
@@ -223,6 +275,7 @@ export const standingOf = (work: BackgroundWork, now: number): WorkStanding =>
 export const WorkRef = Schema.TaggedUnion({
   Run: { run: RunId },
   Helper: { helper: RunId },
+  Command: { handle: ShellHandle },
   Watch: { watch: WatchId },
   MadeIntegration: { connection: ConnectionId },
 })
@@ -233,6 +286,7 @@ export const refOf = (work: BackgroundWork): WorkRef =>
   BackgroundWork.match(work, {
     Run: ({ run }): WorkRef => WorkRef.cases.Run.make({ run }),
     Helper: ({ helper }): WorkRef => WorkRef.cases.Helper.make({ helper }),
+    Command: ({ handle }): WorkRef => WorkRef.cases.Command.make({ handle }),
     Watch: ({ watch }): WorkRef => WorkRef.cases.Watch.make({ watch }),
     MadeIntegration: ({ connection }): WorkRef =>
       WorkRef.cases.MadeIntegration.make({ connection }),
@@ -250,6 +304,7 @@ export const stopsWith = (work: BackgroundWork): WorkStop =>
   BackgroundWork.match(work, {
     Run: (): WorkStop => 'Stop',
     Helper: (): WorkStop => 'Stop',
+    Command: (): WorkStop => 'Stop',
     Watch: (): WorkStop => 'Stop',
     MadeIntegration: (): WorkStop => 'Remove',
   })
@@ -257,9 +312,16 @@ export const stopsWith = (work: BackgroundWork): WorkStop =>
 /**
  * Why a Stop did not take. `RuntimeUnreachable`: the Run is marked stopped but the runtime did not
  * answer the interrupt, so it may still be working. `IntegrationsUnreachable`: Executor could not
- * remove a made Integration right now.
+ * remove a made Integration right now. `ComputerUnreachable`: the Computer a background command
+ * runs on could not be reached to stop it. `StillRunning`: the Computer was told to stop the
+ * command and it had not ended thirty seconds later.
  */
-export const WorkNotStopped = Schema.Literals(['RuntimeUnreachable', 'IntegrationsUnreachable'])
+export const WorkNotStopped = Schema.Literals([
+  'RuntimeUnreachable',
+  'IntegrationsUnreachable',
+  'ComputerUnreachable',
+  'StillRunning',
+])
 export type WorkNotStopped = typeof WorkNotStopped.Type
 
 /**

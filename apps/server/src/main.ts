@@ -40,6 +40,7 @@ import { computerStoreLayer } from './computers/store.ts'
 import { egressLayer } from './computers/egress/relay.ts'
 import { loadServerConfig, ServerConfig } from './config.ts'
 import { executorLayer } from './connections/executor.ts'
+import { executorMembersLayer } from './connections/members.ts'
 import { toolEffectsLayer } from './connections/effects.ts'
 import { connectionStoreLayer } from './connections/store.ts'
 import { workLayer } from './database/work.ts'
@@ -130,6 +131,7 @@ const serverProgram = Effect.gen(function* () {
     skillStoreLayer,
     libraryStoreLayer,
     executorLayer,
+    executorMembersLayer,
     executorEventsLayer,
     boatMachineLayer,
     publicPageLayer,

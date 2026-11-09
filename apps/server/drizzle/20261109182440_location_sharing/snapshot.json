@@ -1,7 +1,7 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "24cc4b77-efd7-4c86-ad99-3d88a2d307c1",
+  "id": "12252394-2ab1-4376-a08d-431890be04aa",
   "prevIds": [
     "44531b59-9617-4690-a7e9-56c9e63e44fd"
   ],
@@ -884,10 +884,36 @@
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
+      "default": "true",
+      "generated": null,
+      "identity": null,
+      "name": "notify",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "settings"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
       "default": "false",
       "generated": null,
       "identity": null,
       "name": "egress",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "settings"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'{\"_tag\":\"Off\"}'",
+      "generated": null,
+      "identity": null,
+      "name": "location",
       "entityType": "columns",
       "schema": "public",
       "table": "settings"

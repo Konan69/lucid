@@ -1,5 +1,6 @@
 import { useAtomSet } from '@effect/atom-react'
 import {
+  LocationSharing,
   PatchSettingsRequest,
   Settings as SettingsRecord,
   ChannelStanding,
@@ -8,7 +9,7 @@ import {
   type Theme,
   mayChangeAppearance,
 } from '@vivid/contracts'
-import { channelWords, naming, notifying } from '@vivid/state'
+import { channelWords, locating, naming, notifying } from '@vivid/state'
 import { Data, Effect, Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { Linking, ScrollView, Switch, View } from 'react-native'
@@ -18,6 +19,7 @@ import { door } from '../data/door'
 import { warn } from '../data/haptics'
 import { refusalOf, useLive, useLiveData, useLiveValue, type LiveData } from '../data/live'
 import { turnNotificationsOff, turnNotificationsOn, useNotifying } from '../data/notifying'
+import { turnLocationOff, turnLocationOn, useLocating } from '../data/locating'
 import { running, version, writeMoment } from '../data/running'
 import { serverName } from '../data/server'
 import { openNaming, useNaming } from '../data/name'
@@ -372,6 +374,7 @@ const saveSettings = (data: LiveData, edit: PatchSettingsRequest) =>
             timezone: edit.timezone === undefined ? current.timezone : edit.timezone,
             // Not a phone setting: carried through as the server has it.
             egress: current.egress,
+            location: current.location,
           }),
       ),
   )
@@ -413,6 +416,7 @@ function Preferences({ settings, onZone }: { settings: SettingsRecord; onZone: (
           <Themes />
         </Setting>
         <Away />
+        <Whereabouts location={settings.location} />
         <Row
           title="Time zone"
           detail={`${settings.timezone.replaceAll('_', ' ')}. Times like “tomorrow at 9” use this.`}
@@ -496,6 +500,60 @@ function Away() {
           }
           trackColor={{ true: c.primary, false: c['subtle-strong'] }}
           onValueChange={(on) => (on ? turnNotificationsOn(data) : turnNotificationsOff(data))}
+        />
+      }
+    />
+  )
+}
+
+const OPEN_ONLY = 'Read only while Vivid is open.'
+
+/**
+ * The row's words: why the last press did not finish, else what the Person shares now. A place
+ * the phone named is said back, so they can see what Vivid is told.
+ */
+const sharingDetail = (reading: locating.Reading, location: LocationSharing): string =>
+  Option.match(locating.refusalOf(reading), {
+    onSome: (reason) =>
+      ({
+        Blocked: 'Location is off for Vivid in this phone’s settings. Open them to allow.',
+        Dismissed: 'The question was closed without an answer. Turn it on to be asked again.',
+        Unavailable: 'This phone could not say where it is. Try again.',
+        Unreachable: 'Vivid could not be reached. Try again.',
+      })[reason],
+    onNone: () =>
+      LocationSharing.match(location, {
+        Off: () => `For things near you, travel times and bookings. ${OPEN_ONLY}`,
+        Waiting: () => `On. ${OPEN_ONLY}`,
+        Known: ({ reading: last }) =>
+          last.place === null ? `On. ${OPEN_ONLY}` : `Near ${last.place}. ${OPEN_ONLY}`,
+      }),
+  })
+
+/**
+ * Whether Vivid is told where the Person is (`data/locating.ts`). Off until they turn it on, and
+ * the phone's own question is asked only then. The switch is held while the phone or the server
+ * is being waited on. Once the Person refused the question, only the phone's settings can allow
+ * it, so the row opens them.
+ */
+function Whereabouts({ location }: { location: LocationSharing }) {
+  const data = useLiveData()
+  const { colors: c } = useTheme()
+  const reading = useLocating()
+  const blocked = Option.contains(locating.refusalOf(reading), 'Blocked')
+  return (
+    <Row
+      title="Share my location"
+      detail={sharingDetail(reading, location)}
+      wrap
+      onPress={blocked ? () => void Linking.openSettings() : undefined}
+      trailing={
+        <Switch
+          accessibilityLabel="Share my location"
+          value={locating.shows(reading, !LocationSharing.guards.Off(location))}
+          disabled={locating.isWaiting(reading)}
+          trackColor={{ true: c.primary, false: c['subtle-strong'] }}
+          onValueChange={(on) => (on ? turnLocationOn(data) : turnLocationOff(data))}
         />
       }
     />

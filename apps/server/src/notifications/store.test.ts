@@ -116,6 +116,7 @@ describe.skipIf(!testDatabaseConfigured)('recipient notifications', () => {
           title: 'Review the report',
           body: 'A decision is waiting.',
           threadId: null,
+          approvalId: null,
         }
         yield* notifier.notify(notice)
         const own = yield* store.list(owner)

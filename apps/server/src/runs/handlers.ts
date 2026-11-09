@@ -5,6 +5,7 @@ import {
   NotFound,
   type ChildRun,
   type ChildRunRequest,
+  type FollowUpChildRunRequest,
   type SettleChildRunRequest,
   type SpawnChildRunRequest,
 } from '@vivid/contracts'
@@ -63,5 +64,28 @@ export const childHandlers = {
     const person = yield* helpers.actingFor(id)
     if (!Option.contains(person, auth.person.id)) return yield* missing()
     return yield* helpers.cancel(run, 'Vivid')
+  }),
+}
+
+/**
+ * Following up a helper, in its own RPC group (`rpc/server.ts`): any Person who may stop the
+ * Thread may send its helper a follow-up, and Vivid may for the Person its own Runs act for. A
+ * helper may not follow up helpers.
+ */
+export const followUpHandlers = {
+  FollowUpChildRun: Effect.fn('Rpc.FollowUpChildRun')(function* ({
+    id,
+    message,
+    key,
+  }: FollowUpChildRunRequest) {
+    const { auth, run } = yield* visible(id)
+    const helpers = yield* ChildRuns
+    if (AuthState.$is('Person')(auth))
+      return yield* helpers.followUp(run, { message, key, by: 'Person' })
+    if (!AuthState.$is('Vivid')(auth))
+      return yield* new Forbidden({ message: 'A helper cannot follow up helpers.' })
+    const person = yield* helpers.actingFor(id)
+    if (!Option.contains(person, auth.person.id)) return yield* missing()
+    return yield* helpers.followUp(run, { message, key, by: 'Vivid' })
   }),
 }

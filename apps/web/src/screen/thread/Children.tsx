@@ -3,15 +3,22 @@ import { helpers, LiveState } from '@vivid/state'
 import { Option } from 'effect'
 import { ChevronRight } from 'lucide-react'
 import { useState } from 'react'
-import { stopHelper, useHelperResult, useHelperStop } from '../../data/children'
+import {
+  followUpHelper,
+  stopHelper,
+  useHelperFollowUp,
+  useHelperResult,
+  useHelperStop,
+} from '../../data/children'
 import { Button } from '../../ui/button'
+import { Input } from '../../ui/input'
 import { cn } from '../../ui/cn'
 import { Markdown } from '../../ui/Markdown'
 
 /**
  * The helpers one step of Vivid's reply started, under that step: a quiet line naming them, then
  * one row each with what it was asked to do and where it stands. A row opens to the helper's
- * answer, or why it has none; while it works it has a Stop of its own. It is drawn in the reply's
+ * answer, or why it has none, and a field to send it more; while it works it has a Stop of its own. It is drawn in the reply's
  * own quiet voice (`AskedFirst`, `Cards.tsx`): no card, no box around the rows.
  */
 export function Children({ runs }: { runs: ReadonlyArray<ChildRun> }) {
@@ -78,6 +85,7 @@ function Helper({ run, stop }: { run: ChildRun; stop: helpers.Reading }) {
         </p>
       )}
       {open && <Opened run={run} />}
+      {open && helpers.followable(run) && <More key={helpers.roundIn(run)} run={run} />}
     </li>
   )
 }
@@ -121,4 +129,50 @@ function Answer({ result }: { result: ChildRunResult }) {
       </p>
     ),
   })
+}
+
+/**
+ * A field to send an opened helper more: more to do, a correction or a new direction, which it
+ * takes as its next turn with everything it knew (`FollowUpChildRun`). It is keyed by the helper's
+ * round, so once the follow-up lands the field starts empty; a refused one keeps the words.
+ */
+function More({ run }: { run: ChildRun }) {
+  const [draft, setDraft] = useState('')
+  const sending = useHelperFollowUp()
+  const refusal = helpers.followRefusalFor(sending, run.id)
+  const words = draft.trim()
+  return (
+    <form
+      className="ps-6.5 pb-2"
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (words.length > 0) followUpHelper(run.id, words)
+      }}
+    >
+      <div className="flex items-center gap-2">
+        <Input
+          compact
+          name={`helper-${run.id}`}
+          aria-label="Tell this helper more"
+          placeholder="Tell this helper more"
+          maxLength={8000}
+          value={draft}
+          onChange={(event) => setDraft(event.currentTarget.value)}
+        />
+        <Button
+          type="submit"
+          variant="ghost"
+          size="xs"
+          disabled={words.length === 0 || helpers.isSending(sending)}
+        >
+          Send
+        </Button>
+      </div>
+      {Option.isSome(refusal) && (
+        <p role="alert" className="pt-1 text-label text-danger">
+          {refusal.value}
+        </p>
+      )}
+    </form>
+  )
 }

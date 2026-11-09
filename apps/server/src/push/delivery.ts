@@ -1,21 +1,25 @@
 import * as NodeCrypto from 'node:crypto'
-import { and, asc, eq, lte, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, lte, sql } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import { Clock, Context, Effect, Layer, Option, Schedule, Schema } from 'effect'
 import {
+  ApprovalId,
   CompanyId,
+  draftOf,
   NotFound,
   NotificationId,
-  NotificationApproval,
   NotificationKind,
   NotificationOpens,
   PersonId,
+  ProposedAction,
+  PushAsk,
   PushOutcome,
   PushPayload,
   type PushSound,
   ThreadId,
   type PushTarget,
 } from '@vivid/contracts'
+import { approvals } from '../approvals/tables.ts'
 import { Database, decodeStored, encodeStored, returned } from '../database/client.ts'
 import { notifications } from '../notifications/tables.ts'
 import { observeFailures } from '../observability/failure.ts'
@@ -29,14 +33,15 @@ import { PushTargets } from './targets.ts'
 import { untraced } from '../observability/quiet.ts'
 
 const NoticeRow = createSelectSchema(notifications, {
-  approval: Schema.NullOr(NotificationApproval),
   id: NotificationId,
   kind: NotificationKind,
   personId: PersonId,
   companyId: Schema.NullOr(CompanyId),
   conversationId: Schema.NullOr(ThreadId),
+  approvalId: Schema.NullOr(ApprovalId),
 })
 const decodeNotice = decodeStored(NoticeRow, 'push Notification')
+const decodeAction = decodeStored(ProposedAction, 'push Approval action')
 const decodeReceipt = decodeStored(PushReceipt, 'push receipt')
 const encodeReceipt = encodeStored(PushReceipt, 'push receipt')
 /** The body as it is sent: the claim row stores its hash and length, so one that will not encode cannot be claimed. */
@@ -78,6 +83,35 @@ const opensOf = Effect.fn('Push.opensOf')(function* (notice: typeof NoticeRow.Ty
   if (Option.isNone(thread) || !(yield* canSee(thread.value.id, notice.personId)))
     return Option.none<NotificationOpens>()
   return Option.some(opensAt(thread.value))
+})
+
+/**
+ * What the Person can answer from the push itself: the Approval the notice asks them to decide,
+ * read as it stands now. One no longer pending (answered on another device, run out, changed)
+ * asks nothing, so a late push never offers a decision the server would refuse. A send is a draft
+ * the Person may edit first (`draftOf`), so its push opens it rather than allowing it blind.
+ */
+const asksOf = Effect.fn('Push.asksOf')(function* (notice: typeof NoticeRow.Type) {
+  if (notice.approvalId === null) return PushAsk.cases.Nothing.make({})
+  const database = yield* Database
+  const now = yield* Clock.currentTimeMillis
+  const [row] = yield* database.run(
+    database
+      .select({ action: approvals.action, digest: approvals.digest })
+      .from(approvals)
+      .where(
+        and(
+          eq(approvals.id, notice.approvalId),
+          eq(approvals.status, 'pending'),
+          gt(approvals.expiresAt, now),
+        ),
+      ),
+  )
+  if (row === undefined) return PushAsk.cases.Nothing.make({})
+  const ask = { approvalId: notice.approvalId, digest: row.digest }
+  return Option.isSome(draftOf(yield* decodeAction(row.action)))
+    ? PushAsk.cases.Draft.make(ask)
+    : PushAsk.cases.Approval.make(ask)
 })
 
 interface DeliveryServices {
@@ -218,11 +252,11 @@ const makePush = Effect.fn('Push.make')(function* () {
     const payload = PushPayload.make({
       notificationId,
       previewUrl: notice.previewUrl,
-      approval: notice.approval,
       title: notice.title.slice(0, 180),
       body: notice.body.replace(/\s+/gu, ' ').trim().slice(0, 280),
       opens: opens.value,
       sound: SOUND[notice.kind],
+      asks: yield* asksOf(notice).pipe(Effect.provideService(Database, database)),
     })
     return summarize(yield* Effect.forEach(active, (target) => send(notice, payload, target)))
   })
@@ -258,12 +292,12 @@ export const deliverTarget = Effect.fn('Push.deliverTarget')(function* (input: {
   const payload = PushPayload.make({
     notificationId: input.notificationId,
     previewUrl: notice.previewUrl,
-    approval: notice.approval,
     title: notice.title.slice(0, 180),
     body: notice.body.replace(/\s+/gu, ' ').trim().slice(0, 280),
     opens: opens.value,
     // The owed job sounds exactly as a direct delivery would: by the notice's kind.
     sound: SOUND[notice.kind],
+    asks: yield* asksOf(notice),
   })
   yield* makeSend({ database, adapter, targets, presence })(notice, payload, target)
 })

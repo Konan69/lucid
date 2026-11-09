@@ -23,6 +23,7 @@ import {
   ExecutorNotReady,
   ExecutorResourceMissing,
   ExecutorTool,
+  installationCaller,
 } from './executor.ts'
 import { ConnectionStore, ToolDiscovery, connectionStoreLayer } from './store.ts'
 import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
@@ -131,14 +132,17 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
               Executor,
               Executor.of({
                 ...executor,
-                call: () =>
-                  Effect.fail(
-                    new ExecutorResourceMissing({
-                      service: 'connections',
-                      tool: 'read',
-                      resource: 'App',
-                    }),
-                  ),
+                as: (caller) => ({
+                  ...executor.as(caller),
+                  call: () =>
+                    Effect.fail(
+                      new ExecutorResourceMissing({
+                        service: 'connections',
+                        tool: 'read',
+                        resource: 'App',
+                      }),
+                    ),
+                }),
               }),
             ),
           )
@@ -198,14 +202,17 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
                 Executor,
                 Executor.of({
                   ...executor,
-                  tools: () =>
-                    Effect.fail(
-                      new ExecutorResourceMissing({
-                        service: 'connections',
-                        tool: 'read',
-                        resource: 'App',
-                      }),
-                    ),
+                  as: (caller) => ({
+                    ...executor.as(caller),
+                    tools: () =>
+                      Effect.fail(
+                        new ExecutorResourceMissing({
+                          service: 'connections',
+                          tool: 'read',
+                          resource: 'App',
+                        }),
+                      ),
+                  }),
                 }),
               ),
             )
@@ -615,10 +622,13 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
                 Executor,
                 Executor.of({
                   ...executor,
-                  tools: (references) =>
-                    JSON.stringify(references) === lapsedReferences
-                      ? Effect.fail(ExecutorNotReady.make({ service: 'connections', tool: null }))
-                      : executor.tools(references),
+                  as: (caller) => ({
+                    ...executor.as(caller),
+                    tools: (references) =>
+                      JSON.stringify(references) === lapsedReferences
+                        ? Effect.fail(ExecutorNotReady.make({ service: 'connections', tool: null }))
+                        : executor.as(installationCaller).tools(references),
+                  }),
                 }),
               ),
             )

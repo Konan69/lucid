@@ -7,6 +7,7 @@ import {
   ActivityUnavailable,
   ApprovalId,
   ProposedAction,
+  draftOf,
   ThreadId,
   type PersonId,
   type SessionId,
@@ -19,6 +20,8 @@ import { canSee } from '../threads/access.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { sendActivity, type Credentials } from './apns.ts'
 import { activityTargets } from './tables.ts'
+
+const decodeApprovalAction = decodeStored(ProposedAction, 'activity approval')
 
 /** APNs signing authority stays server-side and is absent from unsigned development stacks. */
 const credentials = Effect.fn('Activities.credentials')(function* () {
@@ -175,12 +178,14 @@ const refreshFor = (database: Database['Service'], signing: Option.Option<Creden
         Effect.provideService(Database, database),
       ))
         ? null
-        : {
-            id: ApprovalId.make(proposal.id),
-            digest: proposal.digest,
-            summary: (yield* decodeStored(ProposedAction, 'activity approval')(proposal.action))
-              .summary,
-          }
+        : yield* decodeApprovalAction(proposal.action).pipe(
+            Effect.map((action) => ({
+              id: ApprovalId.make(proposal.id),
+              digest: proposal.digest,
+              summary: action.summary,
+              review: Option.isSome(draftOf(action)),
+            })),
+          )
     const ongoing = first !== undefined || approval !== null
     const snapshot = ActivitySnapshot.make({
       approval,

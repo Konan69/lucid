@@ -9,7 +9,8 @@ import {
 } from '@vivid/contracts'
 import { Effect, Option, Schema } from 'effect'
 import { canonical, contentDigest } from '../approvals/action.ts'
-import { Executor, ExecutorCallOutcome } from './executor.ts'
+import { ExecutorCallOutcome } from './executor.ts'
+import { operationsOf } from './members.ts'
 import { gmailServiceId } from './google.ts'
 import type { ConnectionRecord } from './records.ts'
 
@@ -47,9 +48,10 @@ const read = Effect.fn('Mail.read')(function* (
   tool: string,
   input: Schema.Json,
 ) {
-  const result = yield* (yield* Executor)
-    .call({ references: row.references, tool, input })
-    .pipe(Effect.mapError(unverifiable))
+  const result = yield* operationsOf(row).pipe(
+    Effect.flatMap((operations) => operations.call({ references: row.references, tool, input })),
+    Effect.mapError(unverifiable),
+  )
   if (!ExecutorCallOutcome.guards.Completed(result)) return yield* unverifiable()
   return result.value
 })

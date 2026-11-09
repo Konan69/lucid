@@ -21,6 +21,7 @@ struct VividControls: WidgetBundle {
 /// Approval decisions remain bound to the exact digest shown on this Lock Screen card.
 struct DecideVividApproval: LiveActivityIntent {
   static var title: LocalizedStringResource = "Answer Vivid"
+  static var isDiscoverable = false
   static var authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
   @Parameter(title: "Approval") var id: String
   @Parameter(title: "Digest") var digest: String
@@ -57,7 +58,9 @@ struct VividRunActivity: Widget {
           Text(approval.summary).font(.subheadline).lineLimit(2)
           HStack {
             Button("Don’t allow", intent: DecideVividApproval(approval, allow: false))
-            Button("Allow once", intent: DecideVividApproval(approval, allow: true))
+            if approval.review {
+              if let url = URL(string: "vivid://") { Link("Review", destination: url) }
+            } else { Button("Allow once", intent: DecideVividApproval(approval, allow: true)) }
           }.buttonStyle(.bordered)
         }
       }.padding().widgetURL(URL(string: "vivid://"))
@@ -70,7 +73,9 @@ struct VividRunActivity: Widget {
               Text(approval.summary).lineLimit(2)
               HStack {
                 Button("Don’t allow", intent: DecideVividApproval(approval, allow: false))
-                Button("Allow once", intent: DecideVividApproval(approval, allow: true))
+                if approval.review {
+              if let url = URL(string: "vivid://") { Link("Review", destination: url) }
+            } else { Button("Allow once", intent: DecideVividApproval(approval, allow: true)) }
               }
             }
           } else { Text(context.state.snapshot.status) }

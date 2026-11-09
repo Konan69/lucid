@@ -355,13 +355,6 @@ function usePressedNotifications(
           Feed: () => show('Feed'),
           Notifications: () => show('Notifications'),
         }),
-        (request) => {
-          void data.run(
-            Effect.gen(function* () {
-              return yield* (yield* VividRpcClient).DecideApproval(request)
-            }),
-          )
-        },
         ({ threadId, text, key }) => {
           void data.run(
             Effect.gen(function* () {

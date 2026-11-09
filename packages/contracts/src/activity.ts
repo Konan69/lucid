@@ -19,7 +19,12 @@ export const ActivitySnapshot = Schema.Struct({
   updatedAt: Schema.Finite,
   startedAt: Schema.NullOr(Schema.Finite),
   approval: Schema.NullOr(
-    Schema.Struct({ id: ApprovalId, digest: Schema.String, summary: Schema.String }),
+    Schema.Struct({
+      id: ApprovalId,
+      digest: Schema.String,
+      summary: Schema.String,
+      review: Schema.Boolean,
+    }),
   ),
 })
 export type ActivitySnapshot = typeof ActivitySnapshot.Type

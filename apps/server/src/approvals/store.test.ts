@@ -2,7 +2,9 @@ import { unbound } from './action.ts'
 import { scopedCase } from '../../tests/case.ts'
 import * as NodeCrypto from 'node:crypto'
 import * as Schema from 'effect/Schema'
-import { RunId } from '@vivid/contracts'
+import { RunId, SessionId } from '@vivid/contracts'
+import { AuthContext, AuthState } from '@vivid/contracts/auth'
+import { approvalHandlers } from './handlers.ts'
 import * as Logger from 'effect/Logger'
 import { Message } from '../observability/messages.ts'
 import { runs } from '../threads/tables.ts'
@@ -17,6 +19,7 @@ import * as Ref from 'effect/Ref'
 import * as Result from 'effect/Result'
 import * as TestClock from 'effect/testing/TestClock'
 import {
+  ApprovalDecided,
   ApprovalDecision,
   ApprovalExpired,
   ApprovalState,
@@ -200,7 +203,66 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
       ),
     )
 
-    it.effect('two concurrent decisions execute once and the loser gets Conflict', () =>
+    it.effect(
+      'notification decisions use the notice’s Approval and report already answered or expired',
+      () =>
+        scopedCase(
+          trustTestServices,
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const store = yield* ApprovalStore
+            const approval = yield* store.raise(test.vivid, desktopAction, unbound)
+            // The notice names the Approval its push answers (`push/delivery.ts` reads it).
+            const [notice] = yield* Ref.get((yield* Observation).notices)
+            if (notice === undefined || notice.approvalId === null)
+              expect.fail('Expected a notice that names its Approval')
+            expect(notice.approvalId).toBe(approval.id)
+            const auth = AuthState.Person({
+              person: test.personal.person,
+              workspace: test.personal.workspace,
+              sessionId: SessionId.make('notification-action'),
+            })
+            // Push buttons and the Notifications screen share this authenticated handler.
+            const declined = yield* approvalHandlers
+              .DecideApproval({
+                id: notice.approvalId,
+                digest: approval.digest,
+                decision: ApprovalDecision.cases.Deny.make({}),
+              })
+              .pipe(Effect.provideService(AuthContext, auth))
+            expect(declined.approval.state._tag).toBe('Denied')
+            // Allow pressed afterwards, on another device's copy of the same push.
+            const late = yield* approvalHandlers
+              .DecideApproval({
+                id: notice.approvalId,
+                digest: approval.digest,
+                decision: once,
+              })
+              .pipe(Effect.provideService(AuthContext, auth), Effect.flip)
+            expect(late).toEqual(new ApprovalDecided({ id: approval.id }))
+            const expired = yield* store.raise(test.vivid, desktopAction, unbound)
+            const database = yield* Database
+            yield* database.run(
+              database
+                .update(approvals)
+                .set({ expiresAt: yield* Clock.currentTimeMillis })
+                .where(eq(approvals.id, expired.id)),
+            )
+            const refused = yield* approvalHandlers
+              .DecideApproval({
+                id: expired.id,
+                digest: expired.digest,
+                decision: once,
+              })
+              .pipe(Effect.provideService(AuthContext, auth), Effect.flip)
+            expect(refused).toEqual(new ApprovalExpired({ id: expired.id }))
+            expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
+          }),
+          'fresh',
+        ),
+    )
+
+    it.effect('two concurrent decisions execute once and the loser gets ApprovalDecided', () =>
       scopedCase(
         trustTestServices,
         Effect.gen(function* () {
@@ -217,7 +279,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           )
           expect(results.filter(Result.isSuccess)).toHaveLength(1)
           const failures = results.filter(Result.isFailure)
-          expect(failures.map((result) => result.failure)).toEqual([expect.any(Conflict)])
+          expect(failures.map((result) => result.failure)).toEqual([expect.any(ApprovalDecided)])
           const observed = yield* Observation
           expect(yield* Ref.get(observed.actions)).toEqual([test.connectionAction])
           const deliveries = yield* Ref.get(observed.deliveries)
@@ -513,7 +575,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             (yield* store
               .decide(test.personal, request)
               .pipe(Effect.flip, Effect.provideService(Logger.CurrentLoggers, loggers)))._tag,
-          ).toBe('Conflict')
+          ).toBe('ApprovalDecided')
           yield* store
             .inThread(test.personalId)
             .pipe(Effect.provideService(Logger.CurrentLoggers, loggers))
@@ -627,7 +689,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             yield* Ref.set(observed.runnerDefect, false)
             const again = yield* Effect.result(store.decide(test.member, request))
             expect(Result.isFailure(again)).toBe(true)
-            if (Result.isFailure(again)) expect(again.failure).toBeInstanceOf(Conflict)
+            if (Result.isFailure(again)) expect(again.failure).toBeInstanceOf(ApprovalDecided)
             yield* store.expire
             expect(yield* Ref.get(observed.actions)).toHaveLength(1)
             expect(yield* Ref.get(observed.deliveries)).toHaveLength(1)
@@ -866,7 +928,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           const request = { id: initial.id, digest: initial.digest, decision: once }
           expect((yield* store.decide(test.personal, request)).state._tag).toBe('Succeeded')
           expect((yield* store.decide(test.personal, request).pipe(Effect.flip))._tag).toBe(
-            'Conflict',
+            'ApprovalDecided',
           )
           expect(yield* Ref.get((yield* Observation).actions)).toEqual([desktopAction])
         }),

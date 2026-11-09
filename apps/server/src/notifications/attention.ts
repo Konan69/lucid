@@ -54,6 +54,7 @@ export const notifyPerson = Effect.fn('Notifications.notifyPerson')(function* (i
       title,
       body,
       threadId: thread.id,
+      approvalId: null,
     },
   })
 })
@@ -89,6 +90,7 @@ export const notifyPosted = Effect.fn('Notifications.notifyPosted')(function* (i
       title: input.post.title,
       body: input.post.body,
       threadId: input.thread.id,
+      approvalId: null,
     },
   })
 })

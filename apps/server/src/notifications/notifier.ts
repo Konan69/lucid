@@ -3,17 +3,16 @@ import * as Effect from 'effect/Effect'
 import * as Clock from 'effect/Clock'
 import * as Layer from 'effect/Layer'
 import {
+  type ApprovalId,
   DatabaseFailure,
   NotifyPersonOutcome,
   NotificationId,
-  type NotificationApproval,
   type CompanyId,
   type NotificationKind,
   type PersonId,
   type ThreadId,
 } from '@vivid/contracts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
-import { announce, Topic } from '../live/changes.ts'
 import { notifications } from '../notifications/tables.ts'
 import { Push } from '../push/delivery.ts'
 import { PushTargets } from '../push/targets.ts'
@@ -43,17 +42,23 @@ export const oweNotice = Effect.fn('Notifier.owe')(function* (input: {
             title: notice.title,
             body: notice.body,
             previewUrl: notice.previewUrl,
-            approval: notice.approval,
             conversationId: notice.threadId,
+            approvalId: notice.approvalId,
             createdAt: now,
             readAt: null,
           })
           .onConflictDoNothing({ target: notifications.id })
           .returning({ id: notifications.id })
         if (inserted.length === 0) return true
-        yield* queue.offer(NotificationDelivery.cases.Publish.make({ personId: notice.personId }), {
-          id: `${input.id}:publish`,
-        })
+        yield* queue.offer(
+          NotificationDelivery.cases.Publish.make({
+            personId: notice.personId,
+            notificationId: input.id,
+          }),
+          {
+            id: `${input.id}:publish`,
+          },
+        )
         for (const target of yield* targets.active(notice.personId)) {
           yield* queue.offer(
             NotificationDelivery.cases.Push.make({
@@ -64,7 +69,6 @@ export const oweNotice = Effect.fn('Notifier.owe')(function* (input: {
             { id: `${input.id}:push:${target.id}` },
           )
         }
-        yield* announce(tx, [Topic.part('notifications')(Topic.person(notice.personId))])
         return true
       }),
     )
@@ -99,9 +103,10 @@ export interface Notice {
   readonly kind: typeof NotificationKind.Type
   readonly title: string
   readonly body: string
-  readonly approval?: NotificationApproval
   readonly previewUrl?: string
   readonly threadId: ThreadId | null
+  /** The Approval the notice asks the Person to decide; null when it asks nothing of its own. */
+  readonly approvalId: ApprovalId | null
 }
 
 export interface NotifierService {

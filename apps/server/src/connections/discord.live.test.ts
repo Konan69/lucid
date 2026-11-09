@@ -4,7 +4,13 @@ import { ConnectionId } from '@vivid/contracts'
 import { ConfigProvider, Effect, Layer, Redacted } from 'effect'
 import * as FetchHttpClient from 'effect/http/FetchHttpClient'
 import { discordFiles, discordServiceId } from './discord.ts'
-import { Executor, ExecutorOwnerId, ExecutorStep, executorLayer } from './executor.ts'
+import {
+  Executor,
+  ExecutorOwnerId,
+  ExecutorStep,
+  executorLayer,
+  installationCaller,
+} from './executor.ts'
 
 const liveLayer = executorLayer.pipe(
   Layer.provide(FetchHttpClient.layer),
@@ -29,7 +35,7 @@ describe.skipIf(NodeProcess.env['VIVID_LIVE_DISCORD'] !== '1')('Discord on Execu
         Effect.gen(function* () {
           const executor = yield* Executor
           yield* Effect.acquireUseRelease(
-            executor.begin({
+            executor.as(installationCaller).begin({
               connectionId: ConnectionId.make(crypto.randomUUID()),
               service: discordServiceId,
               owner: ExecutorOwnerId.make(`discord-proof-${crypto.randomUUID()}`),
@@ -41,12 +47,12 @@ describe.skipIf(NodeProcess.env['VIVID_LIVE_DISCORD'] !== '1')('Discord on Execu
               Effect.gen(function* () {
                 if (!ExecutorStep.guards.EnterKey(step)) expect.fail('Discord requires a token')
                 const token = 'disposable-discord-token'
-                const references = yield* executor.complete({
+                const references = yield* executor.as(installationCaller).complete({
                   references: step.references,
                   fields: { token: Redacted.make(token) },
                 })
                 expect(JSON.stringify(discordFiles())).not.toContain(token)
-                const tools = yield* executor.tools(references)
+                const tools = yield* executor.as(installationCaller).tools(references)
                 expect(
                   tools
                     .map(({ name, effect }) => ({ name, effect }))
@@ -60,7 +66,7 @@ describe.skipIf(NodeProcess.env['VIVID_LIVE_DISCORD'] !== '1')('Discord on Execu
                   { name: 'users.listMyGuilds', effect: 'read' },
                 ])
               }),
-            (step) => executor.remove(step.references),
+            (step) => executor.as(installationCaller).remove(step.references),
           )
         }),
       { timeout: 240_000 },

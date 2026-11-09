@@ -72,8 +72,11 @@ these, and the failure names the variable (`requiredSetting` in `src/config.ts`)
 - **Computer:** Boat. `VIVID_BOAT_API_KEY` and `VIVID_BOAT_TEMPLATE` (`src/computers/README.md`).
   No SSH key is configured: each connection to a Computer makes its own.
 - **Memory:** the acting Person's cell, reached through the runtime client. Settings reads and edits the same memory Vivid uses.
-- **Integrations:** Executor. `VIVID_EXECUTOR_URL`, `VIVID_EXECUTOR_KEY` and
-  `VIVID_EXECUTOR_ORGANIZATION`. Account references are in PostgreSQL; Executor holds credentials.
+- **Integrations:** Executor. `VIVID_EXECUTOR_URL`, `VIVID_EXECUTOR_KEY`,
+  `VIVID_EXECUTOR_ORGANIZATION`, and for each Person's own Executor member
+  `VIVID_EXECUTOR_OWNER_EMAIL`, `VIVID_EXECUTOR_OWNER_PASSWORD` and `VIVID_EXECUTOR_SEAL_KEY`.
+  Account references are in PostgreSQL; Executor holds credentials. The one exception is each
+  member's own Executor key, sealed (`src/connections/seal.ts`).
 - **Texting:** Photon. `VIVID_PHOTON_PROJECT_ID` and `VIVID_PHOTON_PROJECT_SECRET`.
 - **Away notifications:** `VIVID_PUSH_VAPID_PUBLIC`, `VIVID_PUSH_VAPID_PRIVATE` and
   `VIVID_PUSH_SUBJECT`.

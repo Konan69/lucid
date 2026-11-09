@@ -15,6 +15,7 @@ import { Effect, Layer, Option } from 'effect'
 import { heldConversations } from './conversation'
 import { live } from './live'
 import { engine } from './runtime'
+import { shareLocation } from './locating'
 
 /**
  * A Thread's conversation and what is sent into it, as this page holds them.
@@ -147,11 +148,14 @@ export const sayAgain = (id: ThreadId): void => {
  * travelling wait behind them. A new Thread's first words are said this way too, once their
  * Thread has been made (`data/threads.ts`): they are a delivery like any other.
  */
-export const say = (delivery: sending.Delivery): void =>
+export const say = (delivery: sending.Delivery): void => {
+  // Vivid is about to answer: where the Person is now, while they share it (`locating.ts`).
+  shareLocation()
   sending.send(engine.registry, machines(delivery.thread), {
     delivery,
     seen: drawnNow(delivery.thread).seen,
   })
+}
 
 /**
  * Tells a Thread's sending that the Person stopped Vivid: nothing that was waiting to be sent
@@ -160,5 +164,7 @@ export const say = (delivery: sending.Delivery): void =>
 export const halted = (id: ThreadId): void => sending.stopped(engine.registry, machines(id))
 
 /** Start creation with first words already in their Thread's ordered sending owner. */
-export const beginThread = (first: Parameters<typeof sending.begin>[2]): void =>
+export const beginThread = (first: Parameters<typeof sending.begin>[2]): void => {
+  shareLocation()
   sending.begin(engine.registry, machines(first.delivery.thread), first)
+}

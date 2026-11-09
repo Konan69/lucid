@@ -9,6 +9,7 @@ struct VividActivityAttributes: ActivityAttributes {
     let id: String
     let digest: String
     let summary: String
+    let review: Bool
   }
   struct Snapshot: Codable, Hashable {
     let title: String
