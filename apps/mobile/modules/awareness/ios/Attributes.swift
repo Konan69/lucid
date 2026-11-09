@@ -1,1 +1,1 @@
-../../../targets/controls/Attributes.swift
+../../../targets/controls/_shared/Attributes.swift

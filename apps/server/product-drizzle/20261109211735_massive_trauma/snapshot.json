@@ -1,7 +1,7 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "c0153149-78fd-4a50-b2db-886ef71a63ff",
+  "id": "a2c55bd3-a1e5-4348-a151-284f9aa8c767",
   "prevIds": [
     "495aa405-c668-470d-b44e-67009ba2cd95"
   ],
@@ -489,14 +489,14 @@
       "table": "vivid_activity_targets"
     },
     {
-      "type": "boolean",
+      "type": "text",
       "typeSchema": null,
-      "notNull": true,
+      "notNull": false,
       "dimensions": 0,
-      "default": "false",
+      "default": null,
       "generated": null,
       "identity": null,
-      "name": "started",
+      "name": "start_key",
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_activity_targets"

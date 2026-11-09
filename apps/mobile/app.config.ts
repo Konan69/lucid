@@ -220,7 +220,7 @@ const withSigning = (config: ExpoConfig): ExpoConfig => {
   const app = ios.bundleIdentifier
   return LEAN
     ? withoutPaidTeamCapabilities(withShareTarget(config, app))
-    : withPlugins(withShareTarget(config, app), [['@bacons/apple-targets']])
+    : withPlugins(withShareTarget(config, app), ['@bacons/apple-targets'])
 }
 
 export default ({ config }: ConfigContext): Partial<ExpoConfig> => {

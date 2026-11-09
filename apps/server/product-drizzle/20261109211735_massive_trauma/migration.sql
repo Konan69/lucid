@@ -4,7 +4,7 @@ CREATE TABLE "vivid_activity_targets" (
 	"session_id" text NOT NULL,
 	"start_token" text,
 	"update_token" text,
-	"started" boolean DEFAULT false NOT NULL
+	"start_key" text
 );
 --> statement-breakpoint
 ALTER TABLE "vivid_notifications" ADD COLUMN "preview_url" text;--> statement-breakpoint

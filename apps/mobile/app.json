@@ -14,13 +14,15 @@
         "VividKeychainGroup": "$(AppIdentifierPrefix)work.vivid.mobile.awareness",
         "NSSupportsLiveActivities": true,
         "VividAppGroup": "group.work.vivid.mobile",
-        "NSSupportsLiveActivitiesFrequentUpdates": true
+        "NSSupportsLiveActivitiesFrequentUpdates": true,
+        "NSUserActivityTypes": ["INSendMessageIntent"]
       },
       "entitlements": {
         "com.apple.developer.usernotifications.communication": true,
         "keychain-access-groups": ["$(AppIdentifierPrefix)work.vivid.mobile.awareness"],
         "com.apple.security.application-groups": ["group.work.vivid.mobile"]
-      }
+      },
+      "appleTeamId": "4Q5T56FN73"
     },
     "android": {
       "package": "work.vivid.mobile",

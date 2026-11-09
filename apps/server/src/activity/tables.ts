@@ -1,6 +1,10 @@
-import { boolean, index, pgTable, text } from 'drizzle-orm/pg-core'
+import type { ApprovalId, RunId } from '@vivid/contracts'
+import { index, pgTable, text } from 'drizzle-orm/pg-core'
 import { sessionTable } from '../auth/tables.ts'
 import { personColumn } from '../database/owner.ts'
+
+/** Claims belong to one work unit; an ambiguous send cannot disable future Runs. */
+export type ActivityStartKey = `run:${RunId}` | `approval:${ApprovalId}`
 
 /** One aggregate activity per installation. Session deletion removes its sending authority. */
 export const activityTargets = pgTable(
@@ -13,7 +17,7 @@ export const activityTargets = pgTable(
       .references(() => sessionTable.id, { onDelete: 'cascade' }),
     startToken: text('start_token'),
     updateToken: text('update_token'),
-    started: boolean('started').notNull().default(false),
+    startKey: text('start_key').$type<ActivityStartKey>(),
   },
   (table) => [index('vivid_activity_targets_person').on(table.personId)],
 )

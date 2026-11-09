@@ -1,6 +1,6 @@
 import * as NodeCrypto from 'node:crypto'
 import * as NodeHttp2 from 'node:http2'
-import { Clock, Effect, Redacted } from 'effect'
+import { Clock, Context, Effect, Layer, Redacted } from 'effect'
 import type { ActivitySnapshot } from '@vivid/contracts'
 import { PushRejected, PushTargetGone, PushUncertain } from '../push/receipts.ts'
 
@@ -94,4 +94,11 @@ export const sendActivity = Effect.fn('Activity.send')(function* (
   )
   if (status === 410) return yield* new PushTargetGone({})
   if (status !== 200) return yield* new PushRejected({})
-})
+}, Effect.asVoid)
+
+/** APNs owns external delivery authority; tests replace only this network boundary. */
+export class ActivityPush extends Context.Service<
+  ActivityPush,
+  { readonly send: typeof sendActivity }
+>()('vivid/ActivityPush') {}
+export const activityPushLayer = Layer.succeed(ActivityPush, { send: sendActivity })
