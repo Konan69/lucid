@@ -55,12 +55,15 @@ export const oweNotice = Effect.fn('Notifier.owe')(function* (input: {
           .onConflictDoNothing({ target: notifications.id })
           .returning({ id: notifications.id })
         if (inserted.length === 0) return true
-        yield* queue.offer(NotificationDelivery.cases.Publish.make({
+        yield* queue.offer(
+          NotificationDelivery.cases.Publish.make({
             personId: notice.personId,
             notificationId: input.id,
-          }), {
-          id: `${input.id}:publish`,
-        })
+          }),
+          {
+            id: `${input.id}:publish`,
+          },
+        )
         for (const target of yield* targets.active(notice.personId)) {
           yield* queue.offer(
             NotificationDelivery.cases.Push.make({

@@ -51,7 +51,10 @@ describe.skipIf(!testDatabaseConfigured)('durable notification delivery', () => 
         const queue = yield* notificationDelivery
         // A distinct queue receipt simulates losing acknowledgement after a successful publish.
         yield* queue.offer(
-          NotificationDelivery.cases.Publish.make({ personId: owner.person.id, notificationId: id }),
+          NotificationDelivery.cases.Publish.make({
+            personId: owner.person.id,
+            notificationId: id,
+          }),
           { id: `${id}:replay` },
         )
         yield* takeNotification()
@@ -92,8 +95,9 @@ describe.skipIf(!testDatabaseConfigured)('durable notification delivery', () => 
           ),
         ).toHaveLength(1)
         const sql = yield* PgClient
-        expect(yield* sql`SELECT id FROM ${sql(noticeTable)} WHERE id = ${`${id}:publish`}`)
-          .toHaveLength(1)
+        expect(
+          yield* sql`SELECT id FROM ${sql(noticeTable)} WHERE id = ${`${id}:publish`}`,
+        ).toHaveLength(1)
         expect(yield* Ref.get((yield* PushProbe).sent)).toHaveLength(1)
         yield* takeNotification()
         yield* takeNotification()
@@ -108,7 +112,8 @@ describe.skipIf(!testDatabaseConfigured)('durable notification delivery', () => 
         const id = NotificationId.make(crypto.randomUUID())
         const constraint = `poison_${crypto.randomUUID().replaceAll('-', '')}`
         yield* Effect.addFinalizer(() =>
-          sql.unsafe(`ALTER TABLE vivid_notifications DROP CONSTRAINT IF EXISTS ${constraint}`)
+          sql
+            .unsafe(`ALTER TABLE vivid_notifications DROP CONSTRAINT IF EXISTS ${constraint}`)
             .pipe(Effect.orDie),
         )
         // Only this UUID fails the real publication write; other suites keep their own rows.
@@ -132,7 +137,8 @@ describe.skipIf(!testDatabaseConfigured)('durable notification delivery', () => 
         const rows = yield* sql`SELECT state, attempts, last_failure FROM ${sql(noticeTable)}
           WHERE id = ${`${id}:publish`}`
         expect(rows).toMatchObject([{ state: 'failed', attempts: 10 }])
-        expect(rows[0]?.last_failure).toBeTruthy()
+        expect(rows).toHaveLength(1)
+        for (const row of rows) expect(row.last_failure).toBeTruthy()
       }),
     )
 

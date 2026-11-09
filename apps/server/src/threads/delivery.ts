@@ -5,6 +5,8 @@ import * as Predicate from 'effect/Predicate'
 import * as Schedule from 'effect/Schedule'
 import {
   Conflict,
+  DatabaseFailure,
+  NotificationId,
   NotFound,
   RuntimeUnavailable,
   ThreadAudience,
@@ -16,11 +18,18 @@ import {
 import { findPerson } from '../auth/access.ts'
 import { DeviceRegistry, deviceLayer } from '../computers/device.ts'
 import { ChannelReplies } from '../channels/replies.ts'
-import { Database } from '../database/client.ts'
+import { workLayer } from '../database/work.ts'
+import { Notifier } from '../notifications/notifier.ts'
+import { Presence } from './presence.ts'
+import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
 import { claimWithdrawalsFor } from '../inputs/handoff.ts'
 import { withdrawWaiting } from '../inputs/store.ts'
 import { Changes, Topic } from '../live/changes.ts'
-import { Notifier } from '../notifications/notifier.ts'
+import {
+  NotificationDelivery,
+  notificationDelivery,
+  oweRunNotice,
+} from '../notifications/delivery.ts'
 import { deliveryRunId } from '../threads/key.ts'
 import { recordRunFailure } from '../runtime/failure.ts'
 import { Runtime, Settlement } from '../runtime/client.ts'
@@ -37,15 +46,7 @@ import {
 } from './conversation.ts'
 import { keyedPermits } from '../runtime/keyed.ts'
 import { runtimeMessage } from './message.ts'
-import { notifiesFrom } from './place.ts'
-import { Presence } from './presence.ts'
-import {
-  RunStore,
-  RunEnding,
-  TurnReservation,
-  automaticallyNotifies,
-  type WorkingRun,
-} from './runs.ts'
+import { RunStore, RunEnding, TurnReservation, type WorkingRun } from './runs.ts'
 import { ThreadTitles } from './generation.ts'
 import { ThreadStore } from './store.ts'
 
@@ -85,74 +86,57 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
   const threads = yield* ThreadStore
   const runs = yield* RunStore
   const changes = yield* Changes
-  const notifier = yield* Notifier
-  const presence = yield* Presence
   const titles = yield* ThreadTitles
   const channels = yield* ChannelReplies
   const devices = yield* DeviceRegistry
   const scope = yield* Effect.scope
+  const queue = yield* notificationDelivery
+  const noticeContext = yield* Effect.context<Database | Notifier | Presence>()
 
-  /**
-   * Tells the Person Vivid worked for that it is done, unless they are watching it happen or it
-   * happened in a Background Thread, which speaks to them only through the Feed (`place.ts`).
-   */
-  const announce = Effect.fn('Conversation.announce')(function* (
-    thread: StoredThread,
-    personId: PersonId,
-    settlement: Settlement,
+  /** A savepoint failure leaves a durable notice retry in the Run ending's outer transaction. */
+  const deferNotice = Effect.fn('Conversation.deferNotice')(function* (
+    notice: Parameters<typeof oweRunNotice>[0],
+    error: DatabaseInfrastructureError,
   ) {
-    if (Settlement.guards.Stopped(settlement)) return
-    if (!notifiesFrom(thread.place)) return
-    if (yield* presence.watching(thread.id, personId)) return
-    // A Run can outlast its Person's place in the Thread. The notice quotes the title and the
-    // reply, so it is only written for someone who may still read them.
-    const reach = canSee(thread.id, personId).pipe(Effect.provideService(Database, database))
-    if (!(yield* reach)) return
-    yield* notifier.notify({
-      personId,
-      companyId: thread.companyId,
-      kind: 'finished',
-      title: thread.title,
-      body: Settlement.guards.Completed(settlement)
-        ? settlement.reply.slice(0, 240)
-        : 'Vivid could not finish this.',
-      threadId: thread.id,
+    yield* queue
+      .offer(
+        NotificationDelivery.cases.OweRun.make({
+          notificationId: NotificationId.make(`${notice.runId}:finished`),
+          run: notice,
+        }),
+        { id: `${notice.runId}:notice` },
+      )
+      .pipe(
+        Effect.catchTag(['PersistedQueueError', 'SchemaError'], () =>
+          Effect.fail(new DatabaseFailure({ message: 'Run notice retry could not be owed.' })),
+        ),
+      )
+    yield* Effect.logError('A settled Run could not owe its notice; retry recorded', {
+      runId: notice.runId,
+      reason: error._tag,
     })
-  })
-
-  /** Owes the notice a settled Run earns; a completion whose origin is quiet (`automaticallyNotifies`) earns none. */
-  const owe = Effect.fn('Conversation.owe')(function* (
-    run: Followed,
-    settlement: Settlement,
-    thread: StoredThread,
-  ) {
-    const quiet =
-      Settlement.guards.Completed(settlement) &&
-      !(yield* automaticallyNotifies(run.id).pipe(Effect.provideService(Database, database)))
-    if (!quiet) yield* announce(thread, run.person.id, settlement)
   })
 
   /**
    * The conditional Run ending and its notice debt commit together, so a notice is owed exactly
    * when the Run ends. Owing runs in its own savepoint: a notice that cannot be owed rolls back to
-   * it and is logged, and the Run still ends. Without the savepoint a failed owe rolled back the
-   * ending too, and the Run stayed Working through every restart that tried again.
+   * it and records a queue retry alongside the ending, so the Run still ends. Without the savepoint
+   * a failed owe rolled back the ending too, and the Run stayed Working through every restart that tried again.
    */
   const end = Effect.fn('Conversation.end')(function* (run: Followed, settlement: Settlement) {
     const changed = yield* runs.end(run.id, endingOf(settlement))
     if (!changed) return false
-    const thread = yield* findThread(run.threadId).pipe(Effect.provideService(Database, database))
-    if (Option.isNone(thread)) return true
+    const notice = {
+      runId: run.id,
+      threadId: run.threadId,
+      personId: run.person.id,
+      settlement,
+    }
     yield* database
-      .transaction(() => owe(run, settlement, thread.value))
+      .transaction(() => oweRunNotice(notice).pipe(Effect.provideContext(noticeContext)))
       .pipe(
         Effect.withErrorReporting,
-        Effect.catch((error) =>
-          Effect.logError('A settled Run could not owe its notice', {
-            runId: run.id,
-            reason: error._tag,
-          }),
-        ),
+        Effect.catch((error) => deferNotice(notice, error)),
       )
     return true
   })
@@ -403,5 +387,6 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
 
 /** Needs a `Scope`: the Runs it observes live as long as the server does. */
 export const conversationLayer = Layer.effect(Conversation, makeConversation()).pipe(
+  Layer.provide(workLayer),
   Layer.provideMerge(deviceLayer),
 )
