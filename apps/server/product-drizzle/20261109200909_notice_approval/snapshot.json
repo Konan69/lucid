@@ -1,9 +1,9 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "ae01c348-2681-429d-bdcf-1d9acf5e328b",
+  "id": "0b6a45d5-af04-44f1-bb90-7911d8513f6d",
   "prevIds": [
-    "2f8c2141-fa9b-4082-a3b6-76e59f94f18d"
+    "2ba01534-9ec4-436d-be9c-dd308f4de793"
   ],
   "ddl": [
     {
@@ -86,6 +86,12 @@
     {
       "isRlsEnabled": false,
       "name": "vivid_child_runs",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "vivid_computer_commands",
       "entityType": "tables",
       "schema": "public"
     },
@@ -1574,6 +1580,123 @@
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_child_runs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "handle",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_computer_commands"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "person_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_computer_commands"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "thread_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_computer_commands"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "command",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_computer_commands"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "started_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_computer_commands"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "output_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_computer_commands"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "output_digest",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_computer_commands"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "unreachable",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_computer_commands"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stopped_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_computer_commands"
     },
     {
       "type": "text",
@@ -3725,6 +3848,19 @@
       "generated": null,
       "identity": null,
       "name": "read_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_notifications"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "published_at",
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_notifications"
@@ -6951,6 +7087,23 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
+      "name": "vivid_computer_commands_person_id_user_id_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "vivid_computer_commands"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "person_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "user",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
       "name": "vivid_computer_recoveries_person_id_user_id_fkey",
       "entityType": "fks",
       "schema": "public",
@@ -8076,6 +8229,16 @@
       "name": "vivid_child_runs_pkey",
       "schema": "public",
       "table": "vivid_child_runs",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "handle"
+      ],
+      "nameExplicit": false,
+      "name": "vivid_computer_commands_pkey",
+      "schema": "public",
+      "table": "vivid_computer_commands",
       "entityType": "pks"
     },
     {

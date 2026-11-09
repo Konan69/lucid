@@ -2,7 +2,9 @@ import { unbound } from './action.ts'
 import { scopedCase } from '../../tests/case.ts'
 import * as NodeCrypto from 'node:crypto'
 import * as Schema from 'effect/Schema'
-import { RunId } from '@vivid/contracts'
+import { RunId, SessionId } from '@vivid/contracts'
+import { AuthContext, AuthState } from '@vivid/contracts/auth'
+import { approvalHandlers } from './handlers.ts'
 import * as Logger from 'effect/Logger'
 import { Message } from '../observability/messages.ts'
 import { runs } from '../threads/tables.ts'
@@ -202,7 +204,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
     )
 
     it.effect(
-      'a notification answer decides by the notice’s Approval, and a second is told it was answered',
+      'notification decisions use the notice’s Approval and report already answered or expired',
       () =>
         scopedCase(
           trustTestServices,
@@ -215,22 +217,45 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             if (notice === undefined || notice.approvalId === null)
               expect.fail('Expected a notice that names its Approval')
             expect(notice.approvalId).toBe(approval.id)
-            // Decline from the notification: DecideApproval by that id and the pushed digest.
-            const declined = yield* store.decide(test.personal, {
-              id: notice.approvalId,
-              digest: approval.digest,
-              decision: ApprovalDecision.cases.Deny.make({}),
+            const auth = AuthState.Person({
+              person: test.personal.person,
+              workspace: test.personal.workspace,
+              sessionId: SessionId.make('notification-action'),
             })
-            expect(declined.state._tag).toBe('Denied')
+            // Push buttons and the Notifications screen share this authenticated handler.
+            const declined = yield* approvalHandlers
+              .DecideApproval({
+                id: notice.approvalId,
+                digest: approval.digest,
+                decision: ApprovalDecision.cases.Deny.make({}),
+              })
+              .pipe(Effect.provideService(AuthContext, auth))
+            expect(declined.approval.state._tag).toBe('Denied')
             // Allow pressed afterwards, on another device's copy of the same push.
-            const late = yield* store
-              .decide(test.personal, {
+            const late = yield* approvalHandlers
+              .DecideApproval({
                 id: notice.approvalId,
                 digest: approval.digest,
                 decision: once,
               })
-              .pipe(Effect.flip)
+              .pipe(Effect.provideService(AuthContext, auth), Effect.flip)
             expect(late).toEqual(new ApprovalDecided({ id: approval.id }))
+            const expired = yield* store.raise(test.vivid, desktopAction, unbound)
+            const database = yield* Database
+            yield* database.run(
+              database
+                .update(approvals)
+                .set({ expiresAt: yield* Clock.currentTimeMillis })
+                .where(eq(approvals.id, expired.id)),
+            )
+            const refused = yield* approvalHandlers
+              .DecideApproval({
+                id: expired.id,
+                digest: expired.digest,
+                decision: once,
+              })
+              .pipe(Effect.provideService(AuthContext, auth), Effect.flip)
+            expect(refused).toEqual(new ApprovalExpired({ id: expired.id }))
             expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
           }),
           'fresh',

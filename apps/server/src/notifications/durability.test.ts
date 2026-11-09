@@ -43,6 +43,7 @@ describe.skipIf(!testDatabaseConfigured)('durable notification delivery', () => 
           title: 'One announcement',
           body: 'Review it.',
           threadId: owner.threadId,
+          approvalId: null,
         }
         const heard = yield* (yield* PgClient).listen(CHANNEL)
         yield* oweNotice({ id, notice })
@@ -83,6 +84,7 @@ describe.skipIf(!testDatabaseConfigured)('durable notification delivery', () => 
             title: 'Concurrent notice',
             body: 'Review it.',
             threadId: owner.threadId,
+            approvalId: null,
           },
         }
         const results = yield* Effect.all([recordNotice(input), recordNotice(input)], {
@@ -129,6 +131,7 @@ describe.skipIf(!testDatabaseConfigured)('durable notification delivery', () => 
             title: 'Poisoned publication',
             body: 'Review it.',
             threadId: owner.threadId,
+            approvalId: null,
           },
         })
         // Persist nine prior claims, as a restarted worker would find them, without waiting out backoff.
