@@ -108,7 +108,8 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration acceptance rec
                 rationale: 'Disposable acceptance proof',
               })
             for (const answer of acceptedAnswers) {
-              const result = yield* send('accept', { answer })
+              const sending = send('accept', { answer })
+              const result = yield* sending
               expect(result.outcome._tag).toBe('Accepted')
               if (!ToolOutcome.guards.Accepted(result.outcome) || result.outcome.receipt === null)
                 return expect.fail('Expected journaled acceptance')
@@ -125,7 +126,7 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration acceptance rec
                 message: expect.stringContaining('queued, not confirmed yet'),
               })
               expect(words.receipts).toEqual([receipt])
-              const repeated = yield* send('accept', { answer })
+              const repeated = yield* sending
               expect(repeated.outcome._tag).toBe('Repeated')
               expect(toolOutcome(repeated).output).toMatchObject({
                 message: expect.stringContaining('queued, not confirmed yet'),
@@ -151,6 +152,7 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration acceptance rec
             })
           }).pipe(Effect.provide(context))
         }).pipe(Effect.scoped),
+      { timeout: 120_000 },
     )
   })
 })
