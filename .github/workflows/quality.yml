@@ -117,7 +117,7 @@ jobs:
       # cancellation logs depend on whether the runner lets the shell handle its signal.
       - name: Run the gate stages
         run: |
-          trap 'status=$?; cat .cache/gate/runs/*/*.log || true; exit $status' EXIT
+          trap 'status=$?; cat .cache/gate/runs/*/*.log .turbo/*.log || true; exit $status' EXIT
           node scripts/gate.mjs full --here --only ${{ matrix.stages }} --ceilings-base "$CEILINGS_BASE"
           trap - EXIT
 
@@ -167,6 +167,13 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # Electron refuses to start when its installed setuid sandbox has pnpm's user ownership.
+      - name: Configure Electron sandbox
+        run: |
+          electron_sandbox=$(pnpm --dir apps/desktop exec node --input-type=module -e 'import path from "node:path"; import electron from "electron"; process.stdout.write(path.join(path.dirname(electron), "chrome-sandbox"))')
+          sudo chown root:root "$electron_sandbox"
+          sudo chmod 4755 "$electron_sandbox"
 
       # pnpm's cache contains downloads, not successful check results. Task hashes decide reuse
       # after restoring the latest cache for this lockfile; each job keeps its own, so a job
