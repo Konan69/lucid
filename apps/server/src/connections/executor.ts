@@ -3426,7 +3426,7 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
  * onto request paths as text, so it is checked to be an absolute URL and kept as supplied. The
  * member provisioning in `members.ts` reads the same two.
  */
-export const executorAddress = Effect.gen(function* () {
+export const executorAddress = Effect.fn('Executor.address')(function* () {
   const url = yield* requiredSetting(
     'VIVID_EXECUTOR_URL',
     Schema.NonEmptyString.check(
@@ -3446,7 +3446,7 @@ export const executorAddress = Effect.gen(function* () {
 export const executorLayer = Layer.effect(
   Executor,
   Effect.gen(function* () {
-    const { url, organization } = yield* executorAddress
+    const { url, organization } = yield* executorAddress()
     // The installation owner's credential; without it every installation call is refused.
     const key = yield* requiredSetting('VIVID_EXECUTOR_KEY', settingSecret, 'the Executor API key')
     return yield* makeExecutor(url, key, organization)

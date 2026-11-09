@@ -9,6 +9,7 @@ import * as HttpClientResponse from 'effect/http/HttpClientResponse'
 import type { Actor } from '../auth/access.ts'
 import {
   Executor,
+  installationCaller,
   ExecutorAccountId,
   ExecutorAppId,
   ExecutorAppOwnership,
@@ -192,11 +193,13 @@ describe.skipIf(!testDatabaseConfigured)('Watched apps', () => {
         expect(yield* apps.appOf(ada, 'mail')).toEqual({
           connectionId: connectionA,
           appSlug: `slug-${appA}`,
+          caller: installationCaller,
         })
         expect(yield* Ref.get(asked)).toEqual([appA])
         expect(yield* apps.appOf(ben, 'Mail')).toEqual({
           connectionId: connectionB,
           appSlug: `slug-${appB}`,
+          caller: installationCaller,
         })
         expect(yield* Ref.get(asked)).toEqual([appA, appB])
 
@@ -226,7 +229,11 @@ describe.skipIf(!testDatabaseConfigured)('Watched apps', () => {
         const asked = yield* Ref.make<ReadonlyArray<string>>([])
         const apps = yield* appsFor(asked)
 
-        expect(yield* apps.appOf(ben, 'Mail')).toEqual({ connectionId: id, appSlug: `slug-${app}` })
+        expect(yield* apps.appOf(ben, 'Mail')).toEqual({
+          connectionId: id,
+          appSlug: `slug-${app}`,
+          caller: installationCaller,
+        })
         expect((yield* Effect.flip(apps.appOf(ada, 'Mail')))._tag).toBe('WatchAccountUnknown')
         expect(yield* apps.accountsOf(ada)).toEqual([])
         expect(yield* apps.accountsOf(ben)).toEqual(['Mail'])
@@ -261,10 +268,12 @@ describe.skipIf(!testDatabaseConfigured)('Watched apps', () => {
         expect(yield* apps.appOf(ada, 'Mail (2)')).toEqual({
           connectionId: personalId,
           appSlug: `slug-${personal}`,
+          caller: installationCaller,
         })
         expect(yield* apps.appOf(ada, 'mail (3)')).toEqual({
           connectionId: companyId,
           appSlug: `slug-${companys}`,
+          caller: installationCaller,
         })
         // "Mail" is Ben's, shown to Ada too, and not hers to watch.
         expect((yield* Effect.flip(apps.appOf(ada, 'Mail')))._tag).toBe('WatchAccountUnknown')

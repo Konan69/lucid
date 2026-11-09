@@ -664,7 +664,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
             const executor = yield* Executor
             const submissions = yield* Ref.make(0)
             const secret = 'KEY-MUST-NEVER-ENTER-AUDIT'
-            const keyed = Executor.of({
+            const keyed = {
               ...executor,
               as: (caller) => ({
                 ...executor.as(caller),
@@ -676,7 +676,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
                   return yield* executor.as(installationCaller).complete(input)
                 }),
               }),
-            })
+            } satisfies Executor['Service']
             const address = ConnectionAddress.of({
               inspect: Effect.fn('IntegrationTest.address')((value) =>
                 Effect.succeed(

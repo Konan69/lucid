@@ -199,6 +199,14 @@ function makeRevision(input: {
   return revise
 }
 
+/** The events an account's app declares, read with its owner's credential. */
+function findEvents(apps: WatchedApps['Service'], events: ExecutorEvents['Service']) {
+  return Effect.fn('Watches.find')(function* (actor: Actor, account: string) {
+    const app = yield* apps.appOf(actor, account)
+    return eventsOfApp(yield* events.list(app.caller), app.appSlug)
+  })
+}
+
 /** Build the service over its stores, Executor and the server's address and secret. */
 const make = Effect.fn('Watches.make')(function* () {
   const store = yield* WatchStore
@@ -282,12 +290,6 @@ const make = Effect.fn('Watches.make')(function* () {
     return (yield* store.present(actor, active)).watch
   })
 
-  /** The events an account's app declares, in words. */
-  const find = Effect.fn('Watches.find')(function* (actor: Actor, account: string) {
-    const app = yield* apps.appOf(actor, account)
-    return eventsOfApp(yield* events.list(app.caller), app.appSlug)
-  })
-
   /**
    * Stop a Watch by name. It stops for the Person first, whatever Executor then says: an
    * unsubscribe that does not get through leaves a subscription that expires within its lifetime,
@@ -352,7 +354,7 @@ const make = Effect.fn('Watches.make')(function* () {
     create,
     ...checks,
     revise: makeRevision({ store, events, publish, subscribe, callerOf: apps.callerOf, base }),
-    find,
+    find: findEvents(apps, events),
     stop,
     complete: progress.complete,
     connectionChanged: progress.connectionChanged,

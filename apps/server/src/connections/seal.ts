@@ -15,7 +15,7 @@ import { requiredSetting, settingSecret } from '../config.ts'
  * it with HKDF-SHA256, one for sealing and one for passwords, so neither use can be turned against
  * the other.
  */
-export const sealSecret = Effect.gen(function* () {
+export const sealSecret = Effect.fn('ExecutorMembers.secret')(function* () {
   const encoded = yield* requiredSetting(
     'VIVID_EXECUTOR_SEAL_KEY',
     settingSecret.check(
@@ -35,7 +35,7 @@ export const sealSecret = Effect.gen(function* () {
     passwords: Redacted.make(derive('vivid executor member password')),
   }
 })
-export type SealSecret = Effect.Success<typeof sealSecret>
+export type SealSecret = Effect.Success<ReturnType<typeof sealSecret>>
 
 const NONCE_BYTES = 12
 const TAG_BYTES = 16

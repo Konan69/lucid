@@ -79,7 +79,7 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
             const database = yield* Database
             const executor = yield* Executor
             const calls = yield* Ref.get(probe.calls)
-            const dispatch = Executor.of({
+            const dispatch = {
               ...executor,
               as: (caller) => ({
                 ...executor.as(caller),
@@ -89,7 +89,7 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
                   return ExecutorCallOutcome.cases.NotReady.make({})
                 }),
               }),
-            })
+            } satisfies Executor['Service']
             const outcome = yield* Effect.gen(function* () {
               // The store captures this phase-specific database failure before approved execution.
               const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
@@ -130,7 +130,7 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
           })
           const executor = yield* Executor
           const calls = yield* Ref.get(probe.calls)
-          const unavailable = Executor.of({
+          const unavailable = {
             ...executor,
             as: (caller) => ({
               ...executor.as(caller),
@@ -142,7 +142,7 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
                 })
               }),
             }),
-          })
+          } satisfies Executor['Service']
           const input = {
             person: ownerActor.person,
             workspace: ownerActor.workspace,

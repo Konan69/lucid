@@ -320,7 +320,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const entered = yield* Deferred.make<void>()
         const release = yield* Deferred.make<void>()
         const calls = yield* Ref.make(0)
-        const controlled = Executor.of({
+        const controlled = {
           ...executor,
           as: (caller) => ({
             ...executor.as(caller),
@@ -333,7 +333,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
               return yield* executor.as(installationCaller).reauthorize(input)
             }),
           }),
-        })
+        } satisfies Executor['Service']
         yield* Effect.gen(function* () {
           // Connection locking is measured through this case's controlled resume adapter.
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
@@ -873,7 +873,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const probe = yield* ConnectionProbe
         yield* Ref.set(probe.step, 'OpenSignIn')
         const executor = yield* Executor
-        const blocked = Executor.of({
+        const blocked = {
           ...executor,
           as: (caller) => ({
             ...executor.as(caller),
@@ -885,7 +885,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
               })
             }),
           }),
-        })
+        } satisfies Executor['Service']
         const before = yield* Ref.get(probe.removals)
         const events = yield* Ref.get(probe.events)
         const failure = yield* Effect.gen(function* () {
@@ -914,7 +914,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const executor = yield* Executor
         const probe = yield* ConnectionProbe
         yield* Ref.set(probe.step, 'OpenSignIn')
-        const blocked = Executor.of({
+        const blocked = {
           ...executor,
           as: (caller) => ({
             ...executor.as(caller),
@@ -931,7 +931,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
               ),
             ),
           }),
-        })
+        } satisfies Executor['Service']
         const failure = yield* Effect.gen(function* () {
           // Capture both failures so unavailable cleanup cannot replace the sign-in failure.
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))

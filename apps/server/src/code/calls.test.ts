@@ -1246,7 +1246,7 @@ describe.skipIf(!testDatabaseConfigured)(
               })
               const executor = yield* Executor
               const inputs = yield* Ref.make<readonly import('effect/Schema').Json[]>([])
-              const provider = Executor.of({
+              const provider = {
                 ...executor,
                 as: (caller) => ({
                   ...executor.as(caller),
@@ -1260,7 +1260,7 @@ describe.skipIf(!testDatabaseConfigured)(
                     })
                   }),
                 }),
-              })
+              } satisfies Executor['Service']
               const storedComputer = yield* ComputerStore
               const computer = ComputerStore.of({
                 ...storedComputer,
@@ -1427,7 +1427,7 @@ describe.skipIf(!testDatabaseConfigured)(
                 const started = yield* Deferred.make<void>()
                 const release = yield* Deferred.make<void>()
                 const executor = yield* Executor
-                const controlled = Executor.of({
+                const controlled = {
                   ...executor,
                   as: (caller) => ({
                     ...executor.as(caller),
@@ -1437,7 +1437,7 @@ describe.skipIf(!testDatabaseConfigured)(
                       return ExecutorCallOutcome.cases.Completed.make({ value: { read: true } })
                     }),
                   }),
-                })
+                } satisfies Executor['Service']
                 const program = withCalls(
                   run(
                     test.member,

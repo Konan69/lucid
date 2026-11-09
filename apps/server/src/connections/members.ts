@@ -183,7 +183,7 @@ function makeAuth(transport: HttpClient.HttpClient, url: string) {
     ) {
       const answer = yield* post(
         '/organization/invite-member',
-        { organizationId: organization, email, role: 'member' },
+        { organizationId: organization, email, role: 'member', resend: true },
         Option.some(owner),
       )
       if (answer.status === 401) return Option.none<string>()
@@ -259,7 +259,7 @@ const memberLock = (person: PersonId) =>
 
 const makeMembers = Effect.fn('ExecutorMembers.make')(function* () {
   const database = yield* Database
-  const { url, organization } = yield* executorAddress
+  const { url, organization } = yield* executorAddress()
   const ownerEmail = yield* requiredSetting(
     'VIVID_EXECUTOR_OWNER_EMAIL',
     settingText,
@@ -270,7 +270,7 @@ const makeMembers = Effect.fn('ExecutorMembers.make')(function* () {
     settingSecret,
     "the Executor owner's password",
   )
-  const secret = yield* sealSecret
+  const secret = yield* sealSecret()
   const auth = makeAuth(yield* HttpClient.HttpClient, url)
   const invite = yield* makeOwner(
     auth,
@@ -293,21 +293,7 @@ const makeMembers = Effect.fn('ExecutorMembers.make')(function* () {
     // Executor calls run inside the lock's transaction so a second process waits for this one's
     // member instead of making another; the Provisioning row they continue from is already
     // committed, so a failure here leaves it for the next attempt.
-    const ready = yield* database.transaction((tx) =>
-      Effect.gen(function* () {
-        yield* tx.execute(memberLock(person))
-        const current = yield* readMember(tx, person)
-        if (Option.isSome(current) && MemberState.guards.Ready(current.value.state))
-          return current.value.state
-        const state = yield* provision(person, claimed)
-        const now = yield* Clock.currentTimeMillis
-        yield* tx
-          .update(executorMembers)
-          .set({ state: yield* encodeState(state), updatedAt: now })
-          .where(eq(executorMembers.personId, person))
-        return state
-      }),
-    )
+    const ready = yield* completeMember(database, person, () => provision(person, claimed))
     return yield* keyOf(person, ready)
   })
 
@@ -315,6 +301,29 @@ const makeMembers = Effect.fn('ExecutorMembers.make')(function* () {
     caller: ({ principal, personId }) =>
       principal === 'installation' ? Effect.succeed(installationCaller) : member(personId),
   })
+})
+
+/** Hold the per-Person lock until Executor's result and its sealed key commit together. */
+const completeMember = Effect.fn('ExecutorMembers.complete')(function* (
+  database: Database['Service'],
+  person: PersonId,
+  provision: () => Effect.Effect<Extract<MemberState, { readonly _tag: 'Ready' }>, MemberFailure>,
+) {
+  return yield* database.transaction((tx) =>
+    Effect.gen(function* () {
+      yield* tx.execute(memberLock(person))
+      const current = yield* readMember(tx, person)
+      if (Option.isSome(current) && MemberState.guards.Ready(current.value.state))
+        return current.value.state
+      const state = yield* provision()
+      const now = yield* Clock.currentTimeMillis
+      yield* tx
+        .update(executorMembers)
+        .set({ state: yield* encodeState(state), updatedAt: now })
+        .where(eq(executorMembers.personId, person))
+      return state
+    }),
+  )
 })
 
 type Reader = Pick<Database['Service'], 'select'>
