@@ -3,6 +3,7 @@ import * as Arr from 'effect/Array'
 import * as Cause from 'effect/Cause'
 import * as Data from 'effect/Data'
 import * as Effect from 'effect/Effect'
+import * as ErrorReporter from 'effect/ErrorReporter'
 import * as Option from 'effect/Option'
 import * as PlatformError from 'effect/PlatformError'
 import * as Predicate from 'effect/Predicate'
@@ -598,4 +599,6 @@ const record = Effect.fnUntraced(function* (
 export const observeFailures =
   (boundary: Boundary) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-    Effect.tapCause(effect, (cause) => record(boundary, failuresOf(cause)))
+    Effect.tapCause(effect, (cause) =>
+      Effect.andThen(record(boundary, failuresOf(cause)), ErrorReporter.report(cause)),
+    )

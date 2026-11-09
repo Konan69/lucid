@@ -9,6 +9,7 @@ import * as ImagePicker from 'expo-image-picker'
 import { AssetField, MediaType, Query, requestPermissionsAsync } from 'expo-media-library'
 import { chooseAttachments, uploadDocument, type Attached } from './documents'
 import type { LiveData } from './live'
+import { telemetryLayer } from './tracing'
 
 /**
  * The phone's side of attaching files to a message (`attaching` in `@vivid/state`): the system's
@@ -76,21 +77,22 @@ const prepare =
           folderId: null,
         },
       ).pipe(
+        Effect.withErrorReporting,
         Effect.as(attaching.Item.cases.Document.make({ file })),
         Effect.orElseSucceed(() => refused(file, 'It did not upload. Take it off and try again.')),
       )
     }
     if (shared)
       return Effect.succeed(refused(file, 'Pictures can only be sent in a private thread for now.'))
-    return Effect.tryPromise({
-      try: () =>
-        manipulateAsync(file.uri, [{ resize: { width: LONGEST_SIDE } }], {
-          compress: 0.8,
-          format: SaveFormat.JPEG,
-          base64: true,
-        }),
-      catch: () => refused(file, 'It could not be read. Try another file.'),
-    }).pipe(
+    return Effect.tryPromise(() =>
+      manipulateAsync(file.uri, [{ resize: { width: LONGEST_SIDE } }], {
+        compress: 0.8,
+        format: SaveFormat.JPEG,
+        base64: true,
+      }),
+    ).pipe(
+      Effect.withErrorReporting,
+      Effect.mapError(() => refused(file, 'It could not be read. Try another file.')),
       Effect.flatMap((image) =>
         Option.match(Option.fromUndefinedOr(image.base64), {
           onNone: () => Effect.fail(refused(file, 'It could not be read. Try another file.')),
@@ -145,14 +147,14 @@ const choose = (source: attaching.Source): Effect.Effect<ReadonlyArray<attaching
         allowsMultipleSelection: true,
         selectionLimit: attaching.MOST_PICTURES,
       }),
-    ).pipe(Effect.map(pickedOf), Effect.catch(nothing))
+    ).pipe(Effect.map(pickedOf), Effect.withErrorReporting, Effect.catch(nothing))
   return Effect.gen(function* () {
     const allowed = yield* Effect.tryPromise(() => ImagePicker.requestCameraPermissionsAsync())
     if (!allowed.granted) return []
     return pickedOf(
       yield* Effect.tryPromise(() => ImagePicker.launchCameraAsync({ mediaTypes: ['images'] })),
     )
-  }).pipe(Effect.catch(nothing))
+  }).pipe(Effect.withErrorReporting, Effect.catch(nothing))
 }
 
 const services = (data: LiveData, shared: boolean) =>
@@ -163,7 +165,7 @@ const services = (data: LiveData, shared: boolean) =>
  * library the first time; a library that is not allowed is no photos, and the sheet keeps its
  * Photos tile, which needs no access.
  */
-export const recentPhotos = Atom.make(
+export const recentPhotos = Atom.runtime(telemetryLayer).atom(
   Effect.gen(function* () {
     const allowed = yield* Effect.tryPromise(() => requestPermissionsAsync(false, ['photo']))
     if (!allowed.granted) return []
@@ -188,7 +190,10 @@ export const recentPhotos = Atom.make(
         })),
       ),
     )
-  }).pipe(Effect.orElseSucceed((): ReadonlyArray<attaching.Chosen> => [])),
+  }).pipe(
+    Effect.withErrorReporting,
+    Effect.orElseSucceed((): ReadonlyArray<attaching.Chosen> => []),
+  ),
 )
 
 /** This Thread's tray machine, made on first use. */

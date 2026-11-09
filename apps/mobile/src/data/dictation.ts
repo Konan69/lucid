@@ -105,17 +105,21 @@ const openSession = Effect.fn('Dictation.openSession')(function* () {
     }),
   )
   yield* Effect.tryPromise(() => setIsAudioActiveAsync(true))
-})
+}, Effect.withErrorReporting)
 
 /**
  * Lets the audio session go. Expo does not deactivate it when recording stops, and only an
  * explicit deactivation lets the music the recording paused carry on (T3's
  * `releaseVoiceRecordingAudio`).
  */
-const closeSession = Effect.fn('Dictation.closeSession')(function* () {
-  yield* Effect.tryPromise(() => setAudioModeAsync({ allowsRecording: false }))
-  yield* Effect.tryPromise(() => setIsAudioActiveAsync(false))
-}, Effect.ignore)
+const closeSession = Effect.fn('Dictation.closeSession')(
+  function* () {
+    yield* Effect.tryPromise(() => setAudioModeAsync({ allowsRecording: false }))
+    yield* Effect.tryPromise(() => setIsAudioActiveAsync(false))
+  },
+  Effect.withErrorReporting,
+  Effect.ignore,
+)
 
 const start = Effect.fn('Dictation.start')(function* () {
   const locale = language()
@@ -124,16 +128,19 @@ const start = Effect.fn('Dictation.start')(function* () {
     Effect.mapError(() => why.Unavailable.make({})),
   )
   const allowed = yield* Effect.tryPromise(() => requestRecordingPermissionsAsync()).pipe(
+    Effect.withErrorReporting,
     Effect.mapError(() => why.Unprepared.make({})),
   )
   if (!allowed.granted)
     return yield* Effect.fail(why.NoMicrophone.make({ settings: !allowed.canAskAgain }))
   yield* Effect.tryPromise(() => system.prepare(locale)).pipe(
+    Effect.withErrorReporting,
     Effect.mapError(() => why.Unavailable.make({})),
   )
   yield* openSession().pipe(Effect.mapError(() => why.Unprepared.make({})))
   const microphone = recorder()
   yield* Effect.tryPromise(() => microphone.prepareToRecordAsync()).pipe(
+    Effect.withErrorReporting,
     Effect.mapError(() => why.Unprepared.make({})),
   )
   Option.map(Option.fromNullishOr(microphone.uri), (uri) => held.files.add(uri))
@@ -237,12 +244,14 @@ const finish = Effect.fn('Dictation.finish')(function* (locale: string) {
   )
   held.files.add(uri)
   const audio = yield* Effect.tryPromise(() => new File(uri).arrayBuffer()).pipe(
+    Effect.withErrorReporting,
     Effect.mapError(() => why.Untranscribed.make({})),
   )
   const system = yield* Effect.fromOption(transcriber).pipe(
     Effect.mapError(() => why.Untranscribed.make({})),
   )
   const heard = yield* Effect.tryPromise(() => system.transcribe(audio, locale)).pipe(
+    Effect.withErrorReporting,
     Effect.mapError(() => why.Untranscribed.make({})),
   )
   return heard.segments

@@ -25,6 +25,7 @@
     "@effect/platform-node": "catalog:",
     "@effect/sql-pg": "catalog:",
     "@openuidev/lang-core": "1.0.0",
+    "@sentry/effect": "10.75.2",
     "@vivid/contracts": "workspace:*",
     "@vivid/skills": "workspace:*",
     "alchemy": "catalog:",

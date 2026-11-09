@@ -256,6 +256,10 @@ async function launch() {
   const env = {
     ...cleanEnv,
     ...provider,
+    SENTRY_DSN: provider.VIVID_VERIFY_SENTRY_DSN,
+    VIVID_OTLP_URL: provider.VIVID_VERIFY_OTLP_URL,
+    VIVID_OTLP_HEADERS: provider.VIVID_VERIFY_OTLP_HEADERS,
+    VIVID_ENVIRONMENT: 'verification',
     DATABASE_URL: databaseUrl(),
     VIVID_TEST_DATABASE_URL: databaseUrl(),
     AUTH_SECRET: authSecret,

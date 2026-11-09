@@ -23,6 +23,7 @@ export const phoneEnvironment = {
   ANDROID_SDK_ROOT: sdk,
   ANDROID_ADB_SERVER_PORT: '15037',
   VIVID_SERVER: phoneOrigin,
+  EXPO_PUBLIC_VIVID_ENVIRONMENT: 'verification',
   EXPO_NO_TYPESCRIPT_SETUP: '1',
   CI: '1',
 }

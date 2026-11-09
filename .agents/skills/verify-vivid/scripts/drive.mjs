@@ -31,6 +31,7 @@ import { offer } from './offer.mjs'
 import { discordProof, discordBlocked } from './discord.mjs'
 import { githubProof, githubBlocked } from './github.mjs'
 import { library } from './library.mjs'
+import { monitoring } from './monitoring.mjs'
 import { capture, computerFile } from './computers.mjs'
 import { pushProof } from './push.mjs'
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
@@ -71,6 +72,7 @@ export const features = [
   'procedure',
   'discord',
   'github',
+  'monitoring',
   'push',
   'texting-discord',
   'helpers',
@@ -575,6 +577,7 @@ async function code(state, id, directory) {
   await ranProgram(state, page, asked, directory)
 }
 const recipes = {
+  monitoring,
   capabilities,
   computer,
   first,

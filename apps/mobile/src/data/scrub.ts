@@ -9,6 +9,8 @@ import type {
   Exception,
   StackFrame,
   Transport,
+  TransactionEvent,
+  SessionEnvelope,
 } from '@sentry/core'
 import { Option, Schema } from 'effect'
 
@@ -56,6 +58,9 @@ const named = Schema.optionalKey(Schema.Struct({ name: text, version: text }))
  * other one behind. A part that does not decode is left out whole.
  */
 const Tags = Schema.Struct({
+  'vivid.operation': Schema.optionalKey(
+    Schema.String.check(Schema.isPattern(/^[A-Za-z_$][A-Za-z0-9_$.]{0,119}$/)),
+  ),
   'event.process': text,
   'event.origin': text,
   'event.environment': text,
@@ -70,6 +75,12 @@ const Tags = Schema.Struct({
  * fields that describe a model or a version.
  */
 const Contexts = Schema.Struct({
+  trace: Schema.optionalKey(
+    Schema.Struct({
+      trace_id: Schema.String.check(Schema.isPattern(/^[0-9a-f]{32}$/)),
+      span_id: Schema.String.check(Schema.isPattern(/^[0-9a-f]{16}$/)),
+    }),
+  ),
   os: Schema.optionalKey(
     Schema.Struct({ name: text, version: text, build: text, kernel_version: text }),
   ),
@@ -312,8 +323,7 @@ const image = (from: DebugImage): ReadonlyArray<DebugImage> => {
  * made. The user, the extras, the message, the request's body, cookies and headers, and anything
  * this function does not name are not copied, so they are gone.
  *
- * It takes any event and always returns an error report, because `guarded` runs it again over
- * whatever reaches the transport.
+ * Only error items use this projection. Transactions and session health have their own schemas.
  */
 export const scrub = (event: Event): ErrorEvent => ({
   type: undefined,
@@ -356,32 +366,132 @@ export const scrub = (event: Event): ErrorEvent => ({
   request: event.request === undefined ? undefined : request(event.request),
 })
 
-/** Whether an envelope is the kind that carries a report: only that kind has an `event` item. */
+/** Whether an envelope carries an SDK error event with its typed payload. */
 const carriesEvent = (envelope: Envelope): envelope is EventEnvelope =>
   envelope[1].some(([header]) => header.type === 'event')
 
-/** Whether one item of such an envelope is the report itself. */
+/** Narrow the SDK's envelope union before reading its event payload. */
 const isEvent = (item: EventEnvelope[1][number]): item is EventItem => item[0].type === 'event'
 
-/**
- * What of an envelope may leave: the error reports in it, each through `scrub` once more, under a
- * header cut to its id, its time and where it is going. None when it carries no report.
- *
- * An envelope is how the SDK sends everything, not only errors: sessions, its own counts of what
- * it dropped, replays, profiles, feedback, check-ins, transactions, and the attachments (a
- * screenshot, a view hierarchy) that ride beside a report. All of those are other item types and
- * are left behind here, whatever switched them on. The header's `trace` goes too: it names the
- * screen a trace started on, and Vivid sends no traces.
- */
+/** Performance payloads are decoded independently; error scrubbing must not erase their type. */
+const Trace = Schema.Struct({
+  trace_id: Schema.String.check(Schema.isPattern(/^[0-9a-f]{32}$/)),
+  span_id: Schema.String.check(Schema.isPattern(/^[0-9a-f]{16}$/)),
+  parent_span_id: Schema.optionalKey(Schema.String),
+  op: Schema.optionalKey(Schema.String),
+  status: Schema.optionalKey(Schema.String),
+})
+const Span = Schema.Struct({
+  ...Trace.fields,
+  start_timestamp: Schema.Finite,
+  timestamp: Schema.Finite,
+  description: Schema.optionalKey(Schema.String),
+})
+const Transaction = Schema.Struct({
+  type: Schema.Literal('transaction'),
+  event_id: Schema.String,
+  transaction: Schema.String,
+  start_timestamp: Schema.Finite,
+  timestamp: Schema.Finite,
+  release: Schema.optionalKey(Schema.String),
+  dist: Schema.optionalKey(Schema.String),
+  environment: Schema.optionalKey(Schema.String),
+  contexts: Schema.Struct({ trace: Trace }),
+  spans: Schema.optionalKey(Schema.Array(Span)),
+  measurements: Schema.optionalKey(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        value: Schema.Finite,
+        unit: Schema.Literals(['millisecond', 'second', 'none', 'byte', 'ratio', 'percent', '']),
+      }),
+    ),
+  ),
+})
+const transaction = Schema.decodeUnknownOption(Transaction)
+const Session = Schema.Struct({
+  sid: Schema.String,
+  init: Schema.Boolean,
+  started: Schema.String,
+  timestamp: Schema.String,
+  status: Schema.Literals(['ok', 'exited', 'crashed', 'abnormal']),
+  errors: Schema.Finite,
+  duration: Schema.optionalKey(Schema.Finite),
+  attrs: Schema.Struct({ release: Schema.String, environment: text }),
+})
+const session = Schema.decodeUnknownOption(Session)
+
+/** Names describe code or static screens; URLs, parameters and arbitrary prose are excluded. */
+const operation = (name: string) =>
+  /^[A-Za-z_$][A-Za-z0-9_$.]{0,119}$/.test(name) ? name : 'Mobile.operation'
+
+/** Retain numeric performance measurements and causal IDs while excluding span payload data. */
+const performance = (value: typeof Transaction.Type): TransactionEvent => ({
+  ...value,
+  transaction: operation(value.transaction),
+  contexts: {
+    trace: {
+      ...value.contexts.trace,
+      op: value.contexts.trace.op === undefined ? undefined : operation(value.contexts.trace.op),
+    },
+  },
+  spans:
+    value.spans === undefined
+      ? undefined
+      : value.spans.map((span) => ({
+          ...span,
+          op: span.op === undefined ? undefined : operation(span.op),
+          description: span.description === undefined ? undefined : operation(span.description),
+          data: {},
+        })),
+})
+
+/** Invalid SDK payloads are dropped rather than coerced into error events. */
+export const scrubTransaction = (event: TransactionEvent): TransactionEvent | null =>
+  Option.match(transaction(event), {
+    onNone: () => null,
+    onSome: performance,
+  })
+
+const eventHeaders = Schema.decodeUnknownOption(
+  Schema.Struct({
+    event_id: Schema.String,
+    sent_at: Schema.String,
+    dsn: text,
+  }),
+)
+const sessionHeaders = Schema.decodeUnknownOption(
+  Schema.Struct({ sent_at: Schema.String, dsn: text }),
+)
+
+/** Rebuild error and performance events independently; attachment and private scope data never leave. */
 export const outbound = (envelope: Envelope): Option.Option<EventEnvelope> => {
-  if (!carriesEvent(envelope)) return Option.none()
   const [headers, items] = envelope
   const reports: Array<EventItem> = []
-  for (const item of items) if (isEvent(item)) reports.push([{ type: 'event' }, scrub(item[1])])
-  return Option.some([
-    { event_id: headers.event_id, sent_at: headers.sent_at, dsn: headers.dsn, sdk: headers.sdk },
-    reports,
-  ])
+  if (carriesEvent(envelope))
+    for (const item of envelope[1])
+      if (isEvent(item)) reports.push([{ type: 'event' }, scrub(item[1])])
+  for (const [header, payload] of items) {
+    if (header.type === 'transaction')
+      Option.map(transaction(payload), (event) => {
+        reports.push([{ type: 'transaction' }, performance(event)])
+      })
+  }
+  if (reports.length === 0) return Option.none()
+  const decoded = eventHeaders(headers)
+  if (Option.isNone(decoded)) return Option.none()
+  return Option.some([decoded.value, reports])
+}
+
+/** Session health carries random session identity, counts and build metadata, never person identity. */
+const outboundSessions = (envelope: Envelope): Option.Option<SessionEnvelope> => {
+  const headers = sessionHeaders(envelope[0])
+  if (Option.isNone(headers)) return Option.none()
+  const items: SessionEnvelope[1] = []
+  for (const [header, payload] of envelope[1])
+    if (header.type === 'session')
+      Option.map(session(payload), (value) => items.push([{ type: 'session' }, value]))
+  return items.length === 0 ? Option.none() : Option.some([headers.value, items])
 }
 
 /**
@@ -390,10 +500,12 @@ export const outbound = (envelope: Envelope): Option.Option<EventEnvelope> => {
  * no reply, so the SDK neither retries it nor counts a failure.
  */
 export const guarded = (inner: Transport): Transport => ({
-  send: (envelope) =>
-    Option.match(outbound(envelope), {
-      onNone: () => Promise.resolve({}),
-      onSome: (kept) => inner.send(kept),
-    }),
+  send: (envelope) => {
+    const sends = [
+      ...Option.toArray(outbound(envelope)).map((kept) => inner.send(kept)),
+      ...Option.toArray(outboundSessions(envelope)).map((kept) => inner.send(kept)),
+    ]
+    return Promise.all(sends).then((responses) => responses[0] ?? {})
+  },
   flush: (timeout) => inner.flush(timeout),
 })

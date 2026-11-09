@@ -13,7 +13,7 @@ const fixtures = NodePath.join(repository, 'apps/mobile/scripts/fixtures')
  * with recorded SDK output. No bundle is built and the upload executable is inert, so this
  * proves parsing and map retention without credentials, a provider request, or product state.
  */
-function publish(runtime: string) {
+function publish(runtime: string, uploadExit = 0) {
   const scratch = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-publishing-'))
   onTestFinished(() => NodeFS.rmSync(scratch, { recursive: true, force: true }))
   const scripts = NodePath.join(scratch, 'apps/mobile/scripts')
@@ -34,7 +34,10 @@ function publish(runtime: string) {
     NodePath.join(scratch, 'metadata.json'),
   )
   NodeFS.writeFileSync(NodePath.join(scratch, 'runtime.json'), runtime)
-  NodeFS.writeFileSync(NodePath.join(scratch, 'scripts/sentry-upload.mjs'), '')
+  NodeFS.writeFileSync(
+    NodePath.join(scratch, 'scripts/sentry-upload.mjs'),
+    `process.exit(${uploadExit})`,
+  )
   NodeFS.writeFileSync(
     NodePath.join(bin, 'pnpm'),
     `#!/usr/bin/env node
@@ -91,7 +94,15 @@ it('publishes the SDK runtime and metadata samples through the production decode
   expect(files).toContain('_expo/static/js/ios/launch.hbc')
   expect(files).toContain('_expo/static/js/android/launch.hbc')
   expect(files).toContain('assets/0123456789abcdef')
-  expect(files.some((file) => String(file).endsWith('.map'))).toBe(false)
+  expect(files.some((file) => String(file).endsWith('.map'))).toBe(true)
+})
+
+it('fails publication when the source-map uploader fails', () => {
+  const { result } = publish(
+    NodeFS.readFileSync(NodePath.join(fixtures, 'runtime.json'), 'utf8'),
+    7,
+  )
+  expect(result.status).toBe(7)
 })
 
 /** A legitimate unset SDK result and malformed answers must fail before any export is written. */

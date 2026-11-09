@@ -589,7 +589,7 @@ it.effect('exports the type of a failure whose message is private prose, and no 
         span === undefined ? [] : span.events.filter(({ name }) => name === 'exception')
       expect(thrown.map((event) => valuesOf(event.attributes))).toEqual([{}])
       expect(span === undefined ? {} : span.status).toEqual({ code: 2 })
-      expect(lines.map((line) => line.body.stringValue)).toContain(OMITTED)
+      expect(lines.map((line) => line.body.stringValue)).not.toContain(OMITTED)
       expect(text).not.toContain('Marsh Lane')
       expect(text).not.toContain('Ada')
       expect(text).not.toContain('Probe.echo (')
@@ -1655,7 +1655,7 @@ it.effect('gives the exporter no object to walk, wherever one is attached', () =
       }
       expect(bodies('Probe.annotation')).toEqual([[Message.failure, []]])
       // A message that is not one of the fixed ones is the placeholder, whatever it was.
-      expect(bodies('Probe.message')).toEqual([[OMITTED, []]])
+      expect(bodies('Probe.message')).toEqual([])
       expect(bodies('Probe.neighbour').map(([body]) => body)).toEqual([Message.refusal])
     }),
   ),

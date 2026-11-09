@@ -124,6 +124,7 @@ export const threadTitlesLayer = Layer.effect(
       },
       (effect, thread) =>
         effect.pipe(
+          Effect.withErrorReporting,
           Effect.catchCause((cause) =>
             Effect.logWarning('Thread title generation failed', {
               thread,

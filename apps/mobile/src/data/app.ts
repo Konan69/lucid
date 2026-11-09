@@ -1,4 +1,8 @@
-import { Effect, Fiber } from 'effect'
+import { Effect, Fiber, ManagedRuntime } from 'effect'
+import { telemetryLayer } from './tracing'
+
+/** One application-owned reporting runtime preserves reporter identity across raw entry points. */
+const runtime = ManagedRuntime.make(telemetryLayer)
 
 /**
  * The mobile application's Effect runtime boundary: the one place a described program is started
@@ -10,14 +14,15 @@ import { Effect, Fiber } from 'effect'
  * 4.0.2 `internal/effect.ts` `runForkWith`), so what it does before its first wait happens during
  * the press, as it did when these flows were async functions.
  */
-export const start = <Value>(program: Effect.Effect<Value>) => Effect.runPromise(program)
+export const start = <Value>(program: Effect.Effect<Value>) =>
+  runtime.runPromise(program.pipe(Effect.withErrorReporting))
 
 /**
  * Starts a program that goes on until it ends by itself or is stopped, and hands back the way to
  * stop it: a draft resting before it is saved (`drafts.ts`), which newer words call off.
  */
 export const launch = (program: Effect.Effect<void>) => {
-  const fiber = Effect.runFork(program)
+  const fiber = runtime.runFork(program.pipe(Effect.withErrorReporting))
   return () => {
     Effect.runFork(Fiber.interrupt(fiber))
   }

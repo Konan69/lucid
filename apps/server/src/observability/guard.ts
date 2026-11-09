@@ -581,6 +581,8 @@ export const exportingLogger = (
 ): Logger.Logger<unknown, void> =>
   Logger.make(({ fiber, logLevel, message }) => {
     contained(() => {
+      const body = bodyOf(message)
+      if (body === OMITTED) return
       const now = String(clock.currentTimeNanosUnsafe())
       const span = Option.flatMap(Option.fromUndefinedOr(fiber.cache.span), spanOf)
       push({
@@ -588,7 +590,7 @@ export const exportingLogger = (
         observedTimeUnixNano: now,
         severityNumber: SEVERITY[logLevel],
         severityText: logLevel,
-        body: { stringValue: bodyOf(message) },
+        body: { stringValue: body },
         attributes: Object.entries(
           keptOf(keys, fiber.getRef(References.CurrentLogAnnotations)),
         ).map(([key, value]) => ({ key, value: anyValue(value) })),
