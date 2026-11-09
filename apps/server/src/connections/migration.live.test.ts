@@ -8,8 +8,14 @@ import { eq } from 'drizzle-orm'
 import { executorEventsLayer } from '../watches/events.ts'
 import { testDatabaseLayer } from '../database/testdb.ts'
 import { Database } from '../database/client.ts'
-import { Executor, ExecutorAccountId, ExecutorReferences, executorLayer } from './executor.ts'
-import { connectionTestLayer, fixture } from './testing.ts'
+import {
+  Executor,
+  ExecutorAccountId,
+  ExecutorReferences,
+  executorLayer,
+  installationCaller,
+} from './executor.ts'
+import { connectionTestLayer, fixture, testMembersLayer } from './testing.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import { proofAccounts } from './proof.ts'
 import { connections } from './tables.ts'
@@ -32,7 +38,8 @@ const Receipt = Schema.Struct({
 })
 const decodeReceipt = Schema.decodeUnknownEffect(Schema.fromJsonString(Receipt))
 
-const configured = Layer.mergeAll(executorLayer, executorEventsLayer).pipe(
+// Every row here predates members, so each is the installation's and no member is made.
+const configured = Layer.mergeAll(executorLayer, executorEventsLayer, testMembersLayer).pipe(
   Layer.provide(NodeHttpClient.layerUndici),
   Layer.provide(
     ConfigProvider.layer(
@@ -231,18 +238,20 @@ describe.skipIf(mode !== 'verify')('beta.23 persisted Connection migration', () 
             expect(row.executorApp).toBe(row.references.app)
             expect(row.personId).toBe(receipt.person)
             expect(JSON.stringify(row.references)).not.toContain('profile')
-            expect((yield* executor.status(row.references))._tag).toBe('Ready')
-            const identity = yield* executor.identity(row.references)
+            expect((yield* executor.as(installationCaller).status(row.references))._tag).toBe(
+              'Ready',
+            )
+            const identity = yield* executor.as(installationCaller).identity(row.references)
             expect(identity).toEqual(Option.some(target.identity))
             const subject = `migration-${target.id}`
             expect(
-              (yield* executor.call({
+              (yield* executor.as(installationCaller).call({
                 references: row.references,
                 tool: 'save',
                 input: { subject },
               }))._tag,
             ).toBe('Completed')
-            const read = yield* executor.call({
+            const read = yield* executor.as(installationCaller).call({
               references: row.references,
               tool: 'records',
               input: { subject },
@@ -265,7 +274,9 @@ describe.skipIf(mode !== 'verify')('beta.23 persisted Connection migration', () 
           if (!ExecutorReferences.guards.EnteringKey(row.references))
             expect.fail('EnteringKey must survive migration')
           expect(row.references.app).toBe(receipt.pendingApp)
-          expect((yield* executor.status(row.references))._tag).toBe('NeedsAuthorization')
+          expect((yield* executor.as(installationCaller).status(row.references))._tag).toBe(
+            'NeedsAuthorization',
+          )
           NodeProcess.stdout.write(
             `migration ${receipt.pending} => ${row.references.app} ${row.references._tag}\n`,
           )
@@ -297,8 +308,10 @@ describe.skipIf(mode !== 'verify')('beta.23 persisted Connection migration', () 
             true,
           )
           const remaining = yield* decodeRow(second)
-          expect((yield* executor.status(remaining.references))._tag).toBe('Ready')
-          const read = yield* executor.call({
+          expect((yield* executor.as(installationCaller).status(remaining.references))._tag).toBe(
+            'Ready',
+          )
+          const read = yield* executor.as(installationCaller).call({
             references: remaining.references,
             tool: 'records',
             input: { subject: `migration-${receipt.second}` },

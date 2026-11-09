@@ -3,6 +3,9 @@ import { describe, expect, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
 import {
   ApprovalDecision,
+  ApprovalBinding,
+  ToolCallId,
+  ToolOutcome,
   CodeOutcome,
   CodeFailure,
   RuleScope,
@@ -30,7 +33,8 @@ import * as TestClock from 'effect/testing/TestClock'
 import { refusalLogs } from '../observability/testlogger.ts'
 import type { Actor } from '../auth/access.ts'
 import { membershipTable } from '../companies/tables.ts'
-import { threads } from '../threads/tables.ts'
+import { runs, threads } from '../threads/tables.ts'
+import { useTool } from '../connections/tools.ts'
 import { Database } from '../database/client.ts'
 import { auditEntries } from '../audit/tables.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
@@ -1242,18 +1246,21 @@ describe.skipIf(!testDatabaseConfigured)(
               })
               const executor = yield* Executor
               const inputs = yield* Ref.make<readonly import('effect/Schema').Json[]>([])
-              const provider = Executor.of({
+              const provider = {
                 ...executor,
-                call: Effect.fn('Test.records')(function* ({ input }) {
-                  yield* Ref.update(inputs, (values) => values.concat([input]))
-                  return ExecutorCallOutcome.cases.Completed.make({
-                    value: {
-                      cursor: 'next-page',
-                      rows: Array.from({ length: 500 }, (_, value) => ({ value })),
-                    },
-                  })
+                as: (caller) => ({
+                  ...executor.as(caller),
+                  call: Effect.fn('Test.records')(function* ({ input }) {
+                    yield* Ref.update(inputs, (values) => values.concat([input]))
+                    return ExecutorCallOutcome.cases.Completed.make({
+                      value: {
+                        cursor: 'next-page',
+                        rows: Array.from({ length: 500 }, (_, value) => ({ value })),
+                      },
+                    })
+                  }),
                 }),
-              })
+              } satisfies Executor['Service']
               const storedComputer = yield* ComputerStore
               const computer = ComputerStore.of({
                 ...storedComputer,
@@ -1319,16 +1326,19 @@ describe.skipIf(!testDatabaseConfigured)(
               const executor = yield* Executor
               const provider = Executor.of({
                 ...executor,
-                call: Effect.fn('Test.validation')(({ input }) =>
-                  Effect.succeed(
-                    isRepositoryInput(input)
-                      ? ExecutorCallOutcome.cases.Completed.make({ value: { corrected: true } })
-                      : ExecutorCallOutcome.cases.Rejected.make({
-                          message: 'Correct the input',
-                          problems: ['repoName: required'],
-                        }),
+                as: (caller) => ({
+                  ...executor.as(caller),
+                  call: Effect.fn('Test.validation')(({ input }) =>
+                    Effect.succeed(
+                      isRepositoryInput(input)
+                        ? ExecutorCallOutcome.cases.Completed.make({ value: { corrected: true } })
+                        : ExecutorCallOutcome.cases.Rejected.make({
+                            message: 'Correct the input',
+                            problems: ['repoName: required'],
+                          }),
+                    ),
                   ),
-                ),
+                }),
               })
               const outcome = yield* withCalls(
                 run(
@@ -1417,14 +1427,17 @@ describe.skipIf(!testDatabaseConfigured)(
                 const started = yield* Deferred.make<void>()
                 const release = yield* Deferred.make<void>()
                 const executor = yield* Executor
-                const controlled = Executor.of({
+                const controlled = {
                   ...executor,
-                  call: Effect.fn('Test.revocationCall')(function* () {
-                    yield* Deferred.succeed(started, undefined)
-                    yield* Deferred.await(release)
-                    return ExecutorCallOutcome.cases.Completed.make({ value: { read: true } })
+                  as: (caller) => ({
+                    ...executor.as(caller),
+                    call: Effect.fn('Test.revocationCall')(function* () {
+                      yield* Deferred.succeed(started, undefined)
+                      yield* Deferred.await(release)
+                      return ExecutorCallOutcome.cases.Completed.make({ value: { read: true } })
+                    }),
                   }),
-                })
+                } satisfies Executor['Service']
                 const program = withCalls(
                   run(
                     test.member,
@@ -1507,6 +1520,154 @@ describe.skipIf(!testDatabaseConfigured)(
           }),
           testLayer,
         ),
+      )
+
+      it.effect('holds a declined send across routes in its Run and permits a later Approval', () =>
+        withCalls(
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const step = yield* (yield* ConnectionStore).begin(test.personal, {
+              from: 'Web',
+              service: serviceId,
+              name: null,
+              shared: false,
+            })
+            yield* recordRuns(test.personalId, [
+              {
+                id: 'declined',
+                personId: test.personal.person.id,
+                working: true,
+                origin: StoredRunOrigin.cases.Message.make({}),
+              },
+            ])
+            const request = {
+              toolCallId: ToolCallId.make('declined-call'),
+              connectionId: step.connection.id,
+              tool: 'write',
+              input: { draft: 'original' },
+              summary: 'Send the record',
+              rationale: 'Answer the request',
+            }
+            const { outcome: asked } = yield* useTool(test.vivid, request)
+            expect(ToolOutcome.guards.ApprovalRequired(asked)).toBe(true)
+            const store = yield* ApprovalStore
+            const [approval] = yield* store.inThread(test.personalId)
+            if (approval === undefined) return expect.fail('An Approval was raised')
+            yield* store.decide(test.personal, {
+              id: approval.id,
+              digest: approval.digest,
+              decision: ApprovalDecision.cases.Deny.make({}),
+            })
+            // A standing Allow must not let the same Run route around the Person's decline.
+            yield* (yield* RuleStore).create(test.personal, {
+              action: 'Allow updating records',
+              decision: 'Allow',
+              scope: RuleScope.cases.Personal.make({}),
+            })
+            const direct = yield* useTool(test.vivid, request).pipe(Effect.flip)
+            expect(direct).toHaveProperty('_tag', 'InvalidRequest')
+            expect(direct).toMatchObject({
+              message: expect.stringContaining('Person declined'),
+            })
+            const program = yield* run(
+              test.personal,
+              test.personalId,
+              `return await ${use('write')};`,
+            )
+            expect(program).toMatchObject({
+              calls: [{ end: 'refused' }],
+              result: { ok: false, reason: expect.stringContaining('Person declined') },
+            })
+            const proposed = yield* store
+              .raise(
+                test.vivid,
+                approval.action,
+                ApprovalBinding.make({
+                  connectionGeneration: 0,
+                  preconditions: [],
+                }),
+              )
+              .pipe(Effect.flip)
+            expect(proposed).toEqual(direct)
+            expect(yield* store.inThread(test.personalId)).toHaveLength(1)
+            expect(yield* Ref.get((yield* ConnectionProbe).calls)).toBe(0)
+            expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
+            // The Person's later request owns a new Run; the old denied Approval stays final.
+            const database = yield* Database
+            yield* database.run(
+              database
+                .update(runs)
+                .set({ state: 'completed' })
+                .where(eq(runs.id, testRunId(test.personalId, 'declined'))),
+            )
+            yield* recordRuns(
+              test.personalId,
+              [
+                {
+                  id: 'asked-again',
+                  personId: test.personal.person.id,
+                  working: true,
+                  origin: StoredRunOrigin.cases.Message.make({}),
+                },
+              ],
+              1,
+            )
+            const fresh = yield* store.raise(
+              test.vivid,
+              approval.action,
+              ApprovalBinding.make({
+                connectionGeneration: 0,
+                preconditions: [],
+              }),
+            )
+            expect(fresh.id).not.toBe(approval.id)
+            yield* store.decide(test.personal, {
+              id: fresh.id,
+              digest: fresh.digest,
+              decision: ApprovalDecision.cases.AllowOnce.make({}),
+            })
+            expect(yield* Ref.get((yield* Observation).actions)).toEqual([approval.action])
+            return yield* Effect.void
+          }),
+          testLayer,
+        ),
+      )
+
+      it.effect(
+        'refuses a fresh program repeating a send whose outcome stopped the first program',
+        () =>
+          withCalls(
+            Effect.gen(function* () {
+              const test = yield* fixture()
+              yield* (yield* ConnectionStore).begin(test.personal, {
+                from: 'Web',
+                service: serviceId,
+                name: null,
+                shared: false,
+              })
+              yield* (yield* RuleStore).create(test.personal, {
+                action: 'Allow updating records',
+                decision: 'Allow',
+                scope: RuleScope.cases.Personal.make({}),
+              })
+              const probe = yield* ConnectionProbe
+              yield* Ref.set(probe.outcome, ExecutorCallOutcome.cases.OutcomeUnknown.make({}))
+              const code = `return await ${use('write')};`
+              const first = yield* run(test.personal, test.personalId, code)
+              expect(CodeOutcome.guards.OutcomeUnknown(first)).toBe(true)
+              expect(yield* Ref.get(probe.calls)).toBe(1)
+              const repeated = yield* run(test.personal, test.personalId, code)
+              expect(repeated).toMatchObject({
+                calls: [{ end: 'refused' }],
+                result: {
+                  ok: false,
+                  reason: expect.stringContaining('not sent again'),
+                },
+              })
+              expect(yield* Ref.get(probe.calls)).toBe(1)
+            }),
+            testLayer,
+          ),
       )
 
       it.effect(
@@ -1756,10 +1917,13 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
               Executor,
               Executor.of({
                 ...executor,
-                call: () =>
-                  Effect.succeed(
-                    ExecutorCallOutcome.cases.Rejected.make({ message: 'Private rejection' }),
-                  ),
+                as: (caller) => ({
+                  ...executor.as(caller),
+                  call: () =>
+                    Effect.succeed(
+                      ExecutorCallOutcome.cases.Rejected.make({ message: 'Private rejection' }),
+                    ),
+                }),
               }),
             ),
             Effect.updateService(

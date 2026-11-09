@@ -1,3 +1,4 @@
+import { testMembersLayer, unansweredOperations } from '../connections/testing.ts'
 import { describe, expect, layer } from '@effect/vitest'
 import {
   ConnectionId,
@@ -110,7 +111,12 @@ describe.skipIf(!testDatabaseConfigured)('Watch presentation during removal', ()
           const writerContext = yield* Layer.build(Layer.fresh(testDatabaseLayer))
           const writer = yield* Database.pipe(Effect.provideContext(writerContext))
           const removalContext = yield* Layer.build(
-            Layer.mock(ConnectionExecutor, { remove: () => Effect.void }),
+            Layer.mergeAll(
+              Layer.mock(ConnectionExecutor, {
+                as: () => ({ ...unansweredOperations, remove: () => Effect.void }),
+              }),
+              testMembersLayer,
+            ),
           )
           const pending = yield* Ref.make(true)
           const events = yield* ExecutorEvents
@@ -150,7 +156,12 @@ describe.skipIf(!testDatabaseConfigured)('Watch presentation during removal', ()
         const actor = yield* person()
         const connection = yield* connect(actor)
         const removalContext = yield* Layer.build(
-          Layer.mock(ConnectionExecutor, { remove: () => Effect.void }),
+          Layer.mergeAll(
+            Layer.mock(ConnectionExecutor, {
+              as: () => ({ ...unansweredOperations, remove: () => Effect.void }),
+            }),
+            testMembersLayer,
+          ),
         )
         const changes = yield* Changes
         const context = yield* Effect.context<

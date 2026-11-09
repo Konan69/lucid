@@ -31,9 +31,9 @@ import { pushHandlers } from '../push/handlers.ts'
 import { ruleHandlers } from '../rules/handlers.ts'
 import { searchHandlers } from '../search/handlers.ts'
 import { messageSearchLayer } from '../search/messages.ts'
-import { settingsHandlers } from '../settings/handlers.ts'
+import { locationHandlers, settingsHandlers } from '../settings/handlers.ts'
 import { skillHandlers } from '../skills/handlers.ts'
-import { childHandlers } from '../runs/handlers.ts'
+import { childHandlers, followUpHandlers } from '../runs/handlers.ts'
 import { threadHandlers } from '../threads/handlers.ts'
 import { watchHandlers } from '../watches/handlers.ts'
 import { workHandlers } from '../work/handlers.ts'
@@ -63,6 +63,8 @@ export const rpcHandlersLayer = Layer.mergeAll(
     'WatchWork',
     'StopWork',
     'StopAllWork',
+    'ShareLocation',
+    'FollowUpChildRun',
   ).toLayer({
     ...artifactHandlers,
     ...channelHandlers,
@@ -104,6 +106,8 @@ export const rpcHandlersLayer = Layer.mergeAll(
   VividRpc.toLayerHandler('WatchWork', workHandlers.WatchWork),
   VividRpc.toLayerHandler('StopWork', workHandlers.StopWork),
   VividRpc.toLayerHandler('StopAllWork', workHandlers.StopAllWork),
+  VividRpc.toLayerHandler('ShareLocation', locationHandlers.ShareLocation),
+  VividRpc.toLayerHandler('FollowUpChildRun', followUpHandlers.FollowUpChildRun),
 ).pipe(
   Layer.provide(
     Layer.mergeAll(draftStoreLayer, feedStoreLayer, actionLookupLayer, messageSearchLayer),

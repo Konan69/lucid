@@ -4,16 +4,22 @@ import { Option } from 'effect'
 import { ChevronDown, ChevronRight } from 'lucide-react-native'
 import { useState } from 'react'
 import { View } from 'react-native'
-import { stopHelper, useHelperResult, useHelperStop } from '../../data/children'
+import {
+  followUpHelper,
+  stopHelper,
+  useHelperFollowUp,
+  useHelperResult,
+  useHelperStop,
+} from '../../data/children'
 import { LiveState, useLiveData } from '../../data/live'
 import { useTheme } from '../../theme'
-import { Label, Press, radius } from '../../ui/ui'
+import { Field, Label, Press, radius } from '../../ui/ui'
 import { Words } from './Words'
 
 /**
  * The helpers one step of Vivid's reply started, under that step: a quiet line naming them, then
  * one row each with what it was asked to do and where it stands. A row opens to the helper's
- * answer; while it works it has a Stop of its own. Drawn in the reply's quiet voice, as
+ * answer and a field to send it more; while it works it has a Stop of its own. Drawn in the reply's quiet voice, as
  * `AskedFirst` is (`Cards.tsx`): no card. The browser draws the same (`apps/web/src/screen/thread/Children.tsx`).
  */
 export function Children({ runs }: { runs: ReadonlyArray<ChildRun> }) {
@@ -99,6 +105,7 @@ function Helper({ run, stop }: { run: ChildRun; stop: helpers.Reading }) {
         </Label>
       )}
       {open && <Opened run={run} />}
+      {open && helpers.followable(run) && <More key={helpers.roundIn(run)} run={run} />}
     </View>
   )
 }
@@ -150,4 +157,65 @@ function Answer({ result }: { result: ChildRunResult }) {
       </Label>
     ),
   })
+}
+
+/**
+ * A field to send an opened helper more: more to do, a correction or a new direction, which it
+ * takes as its next turn with everything it knew (`FollowUpChildRun`). Keyed by the helper's round,
+ * so once the follow-up lands the field starts empty; a refused one keeps the words. The browser
+ * draws the same (`apps/web/src/screen/thread/Children.tsx` `More`).
+ */
+function More({ run }: { run: ChildRun }) {
+  const { colors: c } = useTheme()
+  const data = useLiveData()
+  const [draft, setDraft] = useState('')
+  const sending = useHelperFollowUp()
+  const refusal = helpers.followRefusalFor(sending, run.id)
+  const words = draft.trim()
+  const held = words.length === 0 || helpers.isSending(sending)
+  const send = () => {
+    if (words.length > 0) followUpHelper(data, run.id, words)
+  }
+  return (
+    <View style={{ paddingLeft: 24, paddingBottom: 8, gap: 4 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+        <Field
+          accessibilityLabel="Tell this helper more"
+          placeholder="Tell this helper more"
+          maxLength={8000}
+          value={draft}
+          onChangeText={setDraft}
+          returnKeyType="send"
+          onSubmitEditing={send}
+          style={{ flex: 1 }}
+        />
+        <Press
+          accessibilityRole="button"
+          accessibilityLabel={`Send to: ${run.brief}`}
+          accessibilityState={{ disabled: held }}
+          disabled={held}
+          onPress={send}
+          style={({ pressed }) => ({
+            minHeight: 44,
+            minWidth: 44,
+            paddingHorizontal: 10,
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: radius.row,
+            backgroundColor: pressed ? c['wash-pressed'] : 'transparent',
+            opacity: held ? 0.4 : 1,
+          })}
+        >
+          <Label size="label" tone="ink-2" style={{ fontWeight: '600' }}>
+            Send
+          </Label>
+        </Press>
+      </View>
+      {Option.isSome(refusal) && (
+        <Label size="label" tone="status-danger">
+          {refusal.value}
+        </Label>
+      )}
+    </View>
+  )
 }

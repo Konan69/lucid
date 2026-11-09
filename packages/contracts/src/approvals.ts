@@ -1,4 +1,4 @@
-import { Schema } from 'effect'
+import { Array as Arr, Option, Schema } from 'effect'
 import { BrowserAction, DefaultBrowseTarget, DesktopAction } from './computers.js'
 import {
   ActionOperationId,
@@ -214,6 +214,16 @@ export class ApprovalExpired extends Schema.TaggedError<ApprovalExpired>()(
   { title: 'This approval ran out' },
 ) {}
 
+/**
+ * Another decision got there first: the Approval is no longer pending, so this one was not taken.
+ * A Person answering from a notification after deciding elsewhere meets it, and is told so.
+ */
+export class ApprovalDecided extends Schema.TaggedError<ApprovalDecided>()(
+  'ApprovalDecided',
+  { id: ApprovalId },
+  { title: 'This approval was already answered' },
+) {}
+
 export const ApprovalResponse = Schema.Struct({ approval: Approval })
 export const ApprovalListResponse = Schema.Struct({ approvals: Schema.Array(Approval) })
 
@@ -224,3 +234,87 @@ export const ApprovalRequestMessage = Schema.Struct({
   summary: Schema.String,
 }).annotate({ identifier: 'ApprovalRequestMessage', title: 'Approval request message' })
 export interface ApprovalRequestMessage extends Schema.Schema.Type<typeof ApprovalRequestMessage> {}
+
+const isText = Schema.is(Schema.String)
+const isTexts = Schema.is(Schema.Array(Schema.String))
+const isFields = Schema.is(Schema.JsonObject)
+
+/**
+ * Which fields of an Integration action are which part of a message, by the names services give
+ * them, compared case-blind. The first name an action uses wins. A message needs a recipient and
+ * words; the subject and the attachments are read when there are any. `channel` is a recipient:
+ * a post to a channel is sent to people as much as an email is.
+ */
+const NAMES = {
+  to: ['to', 'recipient', 'recipients', 'recipient_email', 'to_email', 'to_address', 'channel'],
+  subject: ['subject'],
+  body: ['body', 'message', 'text', 'content', 'message_body', 'body_text', 'plain_text', 'html'],
+  attachments: ['attachments', 'attachment', 'attachment_name', 'files', 'file', 'filename'],
+} as const
+
+/** One field of a draft: the key it is sent under, and its words as the Person edits them. */
+export interface SendDraftField {
+  readonly key: string
+  readonly text: string
+}
+
+/**
+ * A send read as the message it is: who it goes to, the subject, what is attached and the words.
+ * `list` says the recipients were sent as a list, so edited text goes back as one; `input` is the
+ * whole action input as asked, every other field of which is sent unchanged.
+ */
+export interface SendDraft {
+  readonly account: string
+  readonly to: SendDraftField & { readonly list: boolean }
+  readonly subject: Option.Option<SendDraftField>
+  readonly body: SendDraftField
+  /** What is attached, by name; read only, as it was asked. */
+  readonly attachments: ReadonlyArray<string>
+  readonly input: Schema.JsonObject
+}
+
+/** The first field of `input` whose name is one of `names`, with its key as it was sent. */
+const fieldNamed = (input: Schema.JsonObject, names: ReadonlyArray<string>) =>
+  Arr.findFirst(Object.entries(input), ([key]) => names.includes(key.toLowerCase()))
+
+/** The names of what is attached: words, a list of words, or files that say their own name. */
+const attachedNames = (value: Schema.Json): ReadonlyArray<string> =>
+  (Array.isArray(value) ? value : [value]).flatMap((each) => {
+    if (isText(each)) return each === '' ? [] : [each]
+    if (isFields(each)) {
+      const name = Object.entries(each).find(([key]) => key === 'name' || key === 'filename')
+      return name !== undefined && isText(name[1]) ? [name[1]] : []
+    }
+    return []
+  })
+
+/**
+ * The action as a draft to send, when it is an Integration action that sends words to someone: a recipient as words or a list of words, and words to send. Anything else is decided
+ * as the action it is. The owner, 27 October 2026: "wants to send, needs a draft to send".
+ */
+export const draftOf = (action: ProposedAction): Option.Option<SendDraft> => {
+  const target = action.target
+  if (!ActionTarget.guards.Connection(target)) return Option.none()
+  const input = target.input
+  if (!isFields(input)) return Option.none()
+  const to = fieldNamed(input, NAMES.to)
+  const body = fieldNamed(input, NAMES.body)
+  if (Option.isNone(to) || Option.isNone(body)) return Option.none()
+  const [toKey, toValue] = to.value
+  const [bodyKey, bodyValue] = body.value
+  const list = isTexts(toValue)
+  if (!(list || isText(toValue)) || !isText(bodyValue)) return Option.none()
+  return Option.some({
+    account: target.account,
+    to: { key: toKey, list, text: list ? toValue.join(', ') : toValue },
+    subject: Option.flatMap(fieldNamed(input, NAMES.subject), ([key, value]) =>
+      isText(value) ? Option.some({ key, text: value }) : Option.none(),
+    ),
+    body: { key: bodyKey, text: bodyValue },
+    attachments: Option.match(fieldNamed(input, NAMES.attachments), {
+      onNone: () => [],
+      onSome: ([, value]) => attachedNames(value),
+    }),
+    input,
+  })
+}

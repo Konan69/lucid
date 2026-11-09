@@ -10,6 +10,7 @@ import {
   ExecutorStep,
   ExecutorCallOutcome,
   executorLayer,
+  installationCaller,
 } from './executor.ts'
 
 const url = NodeProcess.env['VIVID_TEST_EXECUTOR_URL']
@@ -53,7 +54,7 @@ describe.skipIf(
         Effect.gen(function* () {
           const executor = yield* Executor
           yield* Effect.acquireUseRelease(
-            executor.add({
+            executor.as(installationCaller).add({
               source: ConnectionSource.cases.Mcp.make({
                 address: 'https://mcp.deepwiki.com/mcp',
                 authorization: 'auto',
@@ -67,21 +68,21 @@ describe.skipIf(
             }),
             Effect.fn('ExecutorTest.read')(function* (step) {
               expect(ExecutorStep.guards.Done(step)).toBe(true)
-              const status = yield* executor.status(step.references)
+              const status = yield* executor.as(installationCaller).status(step.references)
               expect(status._tag).toBe('Ready')
-              const tools = yield* executor.tools(step.references)
+              const tools = yield* executor.as(installationCaller).tools(step.references)
               const tool = tools.find((candidate) => candidate.name === 'read_wiki_structure')
               expect(tool).toBeDefined()
               if (tool === undefined) {
                 expect.fail('The public service did not expose its documented tool')
               }
-              const rejected = yield* executor.call({
+              const rejected = yield* executor.as(installationCaller).call({
                 references: step.references,
                 tool: tool.name,
                 input: {},
               })
               expect(ExecutorCallOutcome.guards.Rejected(rejected)).toBe(true)
-              const result = yield* executor.call({
+              const result = yield* executor.as(installationCaller).call({
                 references: step.references,
                 tool: tool.name,
                 input: { repoName: 'facebook/react' },
@@ -91,7 +92,10 @@ describe.skipIf(
                 expect(JSON.stringify(result.value)).toContain('React')
             }),
             Effect.fn('ExecutorTest.cleanup')(function* (step) {
-              const removed = yield* executor.remove(step.references).pipe(Effect.result)
+              const removed = yield* executor
+                .as(installationCaller)
+                .remove(step.references)
+                .pipe(Effect.result)
               expect(Result.isSuccess(removed)).toBe(true)
             }),
           )

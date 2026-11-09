@@ -4,6 +4,7 @@ import {
   ChildFailure,
   ChildRunState,
   RunId,
+  roundOf,
   type ChildRun,
   type WorkerKind,
 } from '@vivid/contracts'
@@ -115,6 +116,128 @@ export const refusalFor = (reading: Reading, id: RunId): Option.Option<string> =
 /** Whether a helper can still be stopped: it has not ended and no stop is under way. */
 export const stoppable = (run: ChildRun) =>
   ChildRunState.isAnyOf(['Reserved', 'Working'])(run.state)
+
+/** The server refused a follow-up or could not be reached; the helper is as the server last said. */
+export class FollowUpRefused extends Schema.TaggedError<FollowUpRefused>()(
+  'HelperFollowUpRefused',
+  { id: RunId },
+  { title: 'HelperFollowUpRefused' },
+) {}
+
+/**
+ * The surface owns authenticated transport (`FollowUpChildRun`). `key` is the press's own, made by
+ * the surface when the Person sends, so the server takes a repeat of it once.
+ */
+export interface SendingService {
+  readonly send: (draft: Draft) => Effect.Effect<void, FollowUpRefused>
+}
+
+/** Each app supplies its existing authenticated RPC connection. */
+export class Sender extends Context.Service<Sender, SendingService>()(
+  '@vivid/state/helpers/Sender',
+) {}
+
+const Draft = Schema.Struct({ id: RunId, message: Schema.String, key: Schema.String })
+type Draft = typeof Draft.Type
+
+const FollowStates = Machine.state({
+  states: {
+    Ready: {},
+    Sending: { fields: Draft.fields },
+    Refused: { fields: Target.fields },
+  },
+})
+const FollowEvents = Machine.events({ Send: Draft.fields })
+const sending = {
+  target: 'Sending',
+  data: ({ event }: { readonly event: Draft }) => ({
+    id: event.id,
+    message: event.message,
+    key: event.key,
+  }),
+} as const
+
+/**
+ * One follow-up at a time in a session, as one stop is. The words go to the server with the
+ * press's key; the answer is the helper's own new round, which the Thread's live view then shows.
+ */
+const followMachine = Machine.make({
+  id: 'HelperFollowUp',
+  root: FollowStates,
+  events: FollowEvents,
+  effects: { send: (draft: Draft) => Sender.use((service) => service.send(draft)) },
+}).handle({
+  initial: { target: 'Ready' },
+  states: {
+    Ready: { on: { Send: sending } },
+    Sending: {
+      invoke: {
+        src: 'send',
+        input: ({ state }) => ({ id: state.id, message: state.message, key: state.key }),
+        onDone: { target: 'Ready' },
+        onFailure: { target: 'Refused', data: ({ state }) => ({ id: state.id }) },
+      },
+    },
+    Refused: { on: { Send: sending } },
+  },
+})
+
+/** What a screen reads of the follow-up machine, including startup before it accepts a press. */
+export const FollowReading = Schema.TaggedUnion({
+  Starting: {},
+  Ready: {},
+  Sending: { id: RunId },
+  Refused: { id: RunId },
+})
+export type FollowReading = typeof FollowReading.Type
+
+/** Session-owned atoms, so a refusal outlives the row that sent it. */
+export const makeFollowUps = (services: Layer.Layer<Sender>) => {
+  const atoms = AtomMachine.bind(Atom.runtime(services)).make(followMachine)
+  const reading = Atom.map(atoms.snapshot, (result): FollowReading => {
+    if (!AsyncResult.isSuccess(result) || result.value.status !== 'active')
+      return FollowReading.cases.Starting.make({})
+    const state = result.value.state
+    return Option.getOrElse(
+      Option.firstSomeOf([
+        Option.map(FollowStates.get(state, 'Sending'), (at) =>
+          FollowReading.cases.Sending.make({ id: at.id }),
+        ),
+        Option.map(FollowStates.get(state, 'Refused'), (at) =>
+          FollowReading.cases.Refused.make(at),
+        ),
+      ]),
+      () => FollowReading.cases.Ready.make({}),
+    )
+  })
+  return { ...atoms, reading, followUp: FollowEvents.Send }
+}
+
+/** Every Send waits while a follow-up is being asked; the machine refuses the press too. */
+export const isSending = FollowReading.isAnyOf(['Starting', 'Sending'])
+
+/** The refused helper keeps its own line under its words, which stay in its field. */
+export const followRefusalFor = (reading: FollowReading, id: RunId): Option.Option<string> =>
+  FollowReading.match(reading, {
+    Starting: () => Option.none(),
+    Ready: () => Option.none(),
+    Sending: () => Option.none(),
+    Refused: (refused) =>
+      refused.id === id ? Option.some('It could not be sent just now. Try again.') : Option.none(),
+  })
+
+/**
+ * Whether a helper takes a follow-up: one at work takes it at its next step, one that finished a
+ * round starts its next. One not started yet, stopping or stopped takes none.
+ */
+export const followable = (run: ChildRun) =>
+  ChildRunState.isAnyOf(['Working', 'Completed', 'Failed'])(run.state)
+
+/**
+ * The round a helper is in, which a row's field is keyed by: once a follow-up lands the helper's
+ * next round shows and the field starts empty; a refused one leaves the round, and the words.
+ */
+export const roundIn = (run: ChildRun) => roundOf(run.turn)
 
 /** What a Person reads for what a helper is doing; product words, never the implementation's. */
 const KIND = {

@@ -7,7 +7,9 @@ import {
   CapabilityFacts,
   ComputerInventory,
   DEFAULT_APPEARANCE,
+  LocationSharing,
   PersonName,
+  type LocationReading,
   type VividName,
 } from '@vivid/contracts'
 import { asActing, type Acting, type ProductService } from './client.ts'
@@ -32,6 +34,7 @@ export const emptyContext = VividContext.make({
   apps: [],
   name: DEFAULT_APPEARANCE.name,
   person: Option.none(),
+  location: Option.none(),
 })
 
 /**
@@ -83,13 +86,29 @@ const loadSkills = Effect.fn('Context.loadSkills')(
   Effect.orElseSucceed(() => []),
 )
 
-/** Missing settings leave the timezone absent rather than inventing a timezone for relative dates. */
-const loadTimezone = Effect.fn('Context.loadTimezone')(
+/**
+ * The latest place the Person shared, as this context carries it, stamped with the instant it was
+ * read. Nothing while sharing is off or no device has sent a reading yet.
+ */
+export const locatedAt = (sharing: LocationSharing, readAt: number): VividContext['location'] =>
+  LocationSharing.match(sharing, {
+    Off: () => Option.none(),
+    Waiting: () => Option.none(),
+    Known: ({ reading }) => Option.some({ reading, readAt }),
+  })
+
+/**
+ * The Person's own settings that shape a response: the time zone relative dates are read in, and
+ * where they are if they share it. Missing settings leave both absent rather than inventing a
+ * zone for relative dates or a place for "near me".
+ */
+const loadSettings = Effect.fn('Context.loadSettings')(
   function* (product: ProductService, acting: Option.Option<Acting>) {
     const settings = yield* asActing(product, acting, (client) => client.GetSettings())
-    return settings.timezone
+    const readAt = yield* Clock.currentTimeMillis
+    return { timezone: settings.timezone, location: locatedAt(settings.location, readAt) }
   },
-  Effect.orElseSucceed(() => ''),
+  Effect.orElseSucceed(() => ({ timezone: '', location: Option.none() })),
 )
 
 /** Failed server lookup stays explicitly unknown, independently of local Memory. */
@@ -193,7 +212,7 @@ export const loadContext = Effect.fn('Context.load')(function* (
       memory: loadMemory(sources.memory, acting),
       facts: loadCapabilities(product, acting),
       skills: loadSkills(product, acting),
-      timezone: loadTimezone(product, acting),
+      settings: loadSettings(product, acting),
       asOf: readClock(),
       name: loadName(product, acting),
       person: loadPerson(product, acting),
@@ -201,9 +220,10 @@ export const loadContext = Effect.fn('Context.load')(function* (
     },
     { concurrency: 8 },
   )
-  const { facts, ...prepared } = loaded
+  const { facts, settings, ...prepared } = loaded
   return VividContext.make({
     ...prepared,
+    ...settings,
     capabilities: sources.capabilities(facts, Remembered.guards.Memory(prepared.memory)),
   })
 })
@@ -216,7 +236,7 @@ export function contextInstruction(context: VividContext) {
     timezone: context.timezone,
     apps: context.apps.map(views.modelText),
   })
-  return `Context for this response (saved facts may be stale; confirm current facts before acting):\n${JSON.stringify(output)}${remembered(context.memory)}${clock(context)}`
+  return `Context for this response (saved facts may be stale; confirm current facts before acting):\n${JSON.stringify(output)}${remembered(context.memory)}${clock(context)}${whereabouts(context)}`
 }
 
 /**
@@ -242,6 +262,57 @@ function clock(context: VividContext) {
   }).format(context.asOf.value)
   const utc = new Date(context.asOf.value).toISOString().slice(0, 16)
   return `\n\nCurrent local date and time (${zone}, locked to the hour): ${local}. UTC instant: ${utc}Z. This is the start of the current hour; the minutes are not known. Use it as the clock for today, tomorrow, deadlines and anything relative to now.`
+}
+
+/** A reading older than this is said to be old: the Person may well have moved since. */
+const STALE = 3 * HOUR
+
+/** How long ago a reading was taken, in the words a person would use. */
+function ago(age: number) {
+  const minutes = Math.floor(Math.max(0, age) / 60_000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'} ago`
+  return `${Math.floor(hours / 24)} days ago`
+}
+
+/**
+ * The place in words: the name the device gave it, or, when it could name none (a browser has no
+ * geocoder), the coordinates to two decimals, about a kilometre, which a search can still use.
+ */
+function placeOf(reading: LocationReading) {
+  return (
+    reading.place ??
+    `latitude ${reading.latitude.toFixed(2)}, longitude ${reading.longitude.toFixed(2)}`
+  )
+}
+
+/** The radius the device vouched for, rounded the way a person says it. */
+function within(accuracy: number) {
+  return accuracy < 1000
+    ? `about ${Math.max(10, Math.round(accuracy / 10) * 10)} metres`
+    : `about ${Math.round(accuracy / 1000)} km`
+}
+
+/**
+ * Where the Person is, after the clock, as Meta Muse gives its model `last_seen_location` with a
+ * timestamp (`muse/workspace/system/system_prompt.md:156-165`): use it only when the answer
+ * depends on where they are now, and what they say in the conversation outranks it. Unlike Muse
+ * the place arrives already named, and its age is said in words, with an old reading called old
+ * instead of being passed off as where they are. The Computer runs in a data centre; the line
+ * says so, so its address is never taken for the Person's.
+ */
+function whereabouts(context: VividContext) {
+  if (Option.isNone(context.location)) return ''
+  const { reading, readAt } = context.location.value
+  const age = readAt - reading.takenAt
+  const seen = `near ${placeOf(reading)}, ${ago(age)} (accurate to ${within(reading.accuracy)})`
+  const use =
+    age > STALE
+      ? 'That is old, so they may have moved: confirm where they are before relying on it.'
+      : 'Use it only when the answer depends on where they are now: what is near, travel time, what is open, which city.'
+  return `\n\nWhere the person last shared they were, from one of their own devices: ${seen}. ${use} Anything they say in this conversation about where they are outranks it. It is not where your computer is.`
 }
 
 /**

@@ -11,6 +11,8 @@ import { live, LiveState, useLive, useLiveValue } from './data/live'
 import { panel, usePanel } from './data/panel'
 import { Me } from './data/me'
 import { startNotifying } from './data/notifying'
+import { startLocating } from './data/locating'
+import { desktopVersion } from './data/build'
 import { warm } from './data/warm'
 import { router, threadOnScreen } from './router'
 import type { FileRoutesById } from './tree.gen'
@@ -39,6 +41,8 @@ const stopWaiting = engine.registry.subscribe(
       stopWaiting()
       warm.places()
       startNotifying()
+      // The desktop app cannot read where it is (`data/locating.ts`).
+      if (Option.isNone(desktopVersion)) startLocating()
     })
   },
   { immediate: true },

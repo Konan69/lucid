@@ -447,6 +447,12 @@ Required by the stack:
 
 - `VIVID_EXECUTOR_KEY`, `VIVID_EXECUTOR_ORGANIZATION` — the key and organization the server uses
   on Executor, which gives Vivid its Integrations. Both are minted on the deployed Executor.
+- `VIVID_EXECUTOR_OWNER_EMAIL`, `VIVID_EXECUTOR_OWNER_PASSWORD` — the Executor owner's sign-in. The
+  server invites each Person's own Executor member with it the first time that Person connects an
+  Integration of their own (`apps/server/src/connections/members.ts`).
+- `VIVID_EXECUTOR_SEAL_KEY` — 32 random bytes in base64 (`openssl rand -base64 32`). It seals each
+  member's key in PostgreSQL and derives each member's password, so it is set once per
+  installation and never replaced: a new value strands every member.
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` — the Google client a Person
   signs in through. The same client signs a Person in to a Google Integration, so it must also
   allow `https://<server domain>/api/connections/return` (`docs/22-one-product.md`, "Google

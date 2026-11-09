@@ -119,6 +119,11 @@ export interface ObservabilityAccess {
 export interface ExecutorAccess {
   readonly key: Redacted.Redacted
   readonly organization: string
+  /** The installation owner's sign-in: it invites each Person's own Executor member. */
+  readonly ownerEmail: string
+  readonly ownerPassword: Redacted.Redacted
+  /** Seals each member's key and derives its password (`apps/server/src/connections/seal.ts`). */
+  readonly sealKey: Redacted.Redacted
 }
 
 const environmentError = (variable: string) =>
@@ -157,6 +162,9 @@ export const loadInfrastructureEnvironment = Effect.gen(function* () {
   const executor: ExecutorAccess = {
     key: yield* requiredSecret('VIVID_EXECUTOR_KEY'),
     organization: yield* requiredString('VIVID_EXECUTOR_ORGANIZATION'),
+    ownerEmail: yield* requiredString('VIVID_EXECUTOR_OWNER_EMAIL'),
+    ownerPassword: yield* requiredSecret('VIVID_EXECUTOR_OWNER_PASSWORD'),
+    sealKey: yield* requiredSecret('VIVID_EXECUTOR_SEAL_KEY'),
   }
   const texting: TextingAccess = {
     projectId: yield* requiredString('VIVID_PHOTON_PROJECT_ID'),

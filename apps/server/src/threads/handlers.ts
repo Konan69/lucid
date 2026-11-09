@@ -70,6 +70,7 @@ const announceShare = Effect.fn('Threads.announceShare')(function* (
         title: thread.title,
         body: `${sharer} shared a Thread with you.`,
         threadId: thread.id,
+        approvalId: null,
       }),
     { discard: true },
   )
@@ -189,9 +190,6 @@ export const threadHandlers = {
   StopThread: Effect.fn('Rpc.StopThread')(function* ({ id }: { readonly id: ThreadId }) {
     const auth = yield* requirePerson()
     yield* requireThread(id, auth.person.id)
-    // Helpers first: their results are dropped and their work ends before the Thread's own
-    // abort, so no late result starts the Thread again after this Stop.
-    yield* (yield* ChildRuns).stopThread(id)
     yield* abortThread(id)
   }),
   /**

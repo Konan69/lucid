@@ -79,14 +79,17 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
             const database = yield* Database
             const executor = yield* Executor
             const calls = yield* Ref.get(probe.calls)
-            const dispatch = Executor.of({
+            const dispatch = {
               ...executor,
-              call: Effect.fn('Executor.Test.dispatchBeforePersistenceFailure')(function* () {
-                yield* Ref.update(probe.calls, (count) => count + 1)
-                yield* Ref.set(unavailable, true)
-                return ExecutorCallOutcome.cases.NotReady.make({})
+              as: (caller) => ({
+                ...executor.as(caller),
+                call: Effect.fn('Executor.Test.dispatchBeforePersistenceFailure')(function* () {
+                  yield* Ref.update(probe.calls, (count) => count + 1)
+                  yield* Ref.set(unavailable, true)
+                  return ExecutorCallOutcome.cases.NotReady.make({})
+                }),
               }),
-            })
+            } satisfies Executor['Service']
             const outcome = yield* Effect.gen(function* () {
               // The store captures this phase-specific database failure before approved execution.
               const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
@@ -127,13 +130,19 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
           })
           const executor = yield* Executor
           const calls = yield* Ref.get(probe.calls)
-          const unavailable = Executor.of({
+          const unavailable = {
             ...executor,
-            call: Effect.fn('Executor.Test.dispatchedUnavailable')(function* () {
-              yield* Ref.update(probe.calls, (count) => count + 1)
-              return yield* ExecutorTransportFailure.make({ service: 'connections', tool: 'read' })
+            as: (caller) => ({
+              ...executor.as(caller),
+              call: Effect.fn('Executor.Test.dispatchedUnavailable')(function* () {
+                yield* Ref.update(probe.calls, (count) => count + 1)
+                return yield* ExecutorTransportFailure.make({
+                  service: 'connections',
+                  tool: 'read',
+                })
+              }),
             }),
-          })
+          } satisfies Executor['Service']
           const input = {
             person: ownerActor.person,
             workspace: ownerActor.workspace,

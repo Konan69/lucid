@@ -1,4 +1,4 @@
-import { ExecutorAppOwnership } from './executor.ts'
+import { ExecutorAppOwnership, installationCaller } from './executor.ts'
 import { describe, expect, layer } from '@effect/vitest'
 import { Layer, Effect, Option, Redacted, Ref, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
@@ -222,9 +222,12 @@ describe.skipIf(!testDatabaseConfigured)('several accounts on one Integration', 
           const executor = yield* Executor
           const silent = Executor.of({
             ...executor,
-            identity: Effect.fn('Executor.Test.unreachable')(() =>
-              Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool: null })),
-            ),
+            as: (caller) => ({
+              ...executor.as(caller),
+              identity: Effect.fn('Executor.Test.unreachable')(() =>
+                Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool: null })),
+              ),
+            }),
           })
           const connected = yield* Effect.gen(function* () {
             // Capture the identity-failing Executor rather than the harness's default account reader.
@@ -448,9 +451,9 @@ describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', ()
         // The client's scope must stay open until the account check finishes.
         const context = yield* Layer.build(remote.configured)
         const executor = yield* Executor.pipe(Effect.provide(context))
-        expect(yield* executor.identity(references(Option.some('account')))).toEqual(
-          Option.some('ada@work.example'),
-        )
+        expect(
+          yield* executor.as(installationCaller).identity(references(Option.some('account'))),
+        ).toEqual(Option.some('ada@work.example'))
         expect(yield* asked(remote)).toBe(1)
       }).pipe(Effect.scoped),
     )
@@ -461,9 +464,9 @@ describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', ()
         yield* Ref.set(remote.identity, { email: `${'a'.repeat(200)}@x.example`, username: 'ada' })
         const context = yield* Layer.build(remote.configured)
         const executor = yield* Executor.pipe(Effect.provide(context))
-        expect(yield* executor.identity(references(Option.some('account')))).toEqual(
-          Option.some('ada'),
-        )
+        expect(
+          yield* executor.as(installationCaller).identity(references(Option.some('account'))),
+        ).toEqual(Option.some('ada'))
       }).pipe(Effect.scoped),
     )
 
@@ -474,11 +477,13 @@ describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', ()
           const remote = yield* hostedExecutorFixture()
           const context = yield* Layer.build(remote.configured)
           const executor = yield* Executor.pipe(Effect.provide(context))
-          expect(yield* executor.identity(references(Option.some('account')))).toEqual(
-            Option.none(),
-          )
+          expect(
+            yield* executor.as(installationCaller).identity(references(Option.some('account'))),
+          ).toEqual(Option.none())
           expect(yield* asked(remote)).toBe(1)
-          expect(yield* executor.identity(references(Option.none()))).toEqual(Option.none())
+          expect(
+            yield* executor.as(installationCaller).identity(references(Option.none())),
+          ).toEqual(Option.none())
           // A Connection with no account was not asked about: there is nobody it could be.
           expect(yield* asked(remote)).toBe(1)
         }).pipe(Effect.scoped),

@@ -40,6 +40,8 @@ export interface PersonConversations {
    */
   readonly agent: AgentChange
   readonly sources: ContextSources
+  /** The helpers Vivid starts from this Person's Threads, for the routes that read, stop and follow them up. */
+  readonly helpers: Helpers
   /** Waits for queued settlement follow-ups, including learning admission. Pi owns background completion. */
   readonly quiet: Effect.Effect<void>
 }
@@ -198,6 +200,7 @@ export const openPerson = Effect.fn('Person.open')(function* (
       tools: offered(all, skills),
     },
     sources: { product, memory, capabilities: registered.reading },
+    helpers: helping,
     quiet,
   } satisfies PersonConversations
 })

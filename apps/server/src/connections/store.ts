@@ -63,6 +63,8 @@ import {
   resourceReason,
   ExecutorStatus,
   ExecutorStep,
+  type ExecutorConnectionOperations,
+  type ExecutorPrincipal,
   type ExecutorService,
   ExecutorSignInRequired,
   ExecutorAuthorizationUnavailable,
@@ -70,6 +72,7 @@ import {
 } from './executor.ts'
 import { madeFiles, madeService, MADE } from './made.ts'
 import { executorFailure } from './errors.ts'
+import { ExecutorMembers, operationsOf } from './members.ts'
 import {
   connectionOf,
   encodeReferences,
@@ -153,16 +156,14 @@ const executorLabel = (serviceName: string) => serviceName.slice(0, 40)
  */
 const identify = Effect.fn('Connections.identify')(function* (row: ConnectionRecord) {
   if (row.status !== 'ready') return row
-  const executor = yield* Executor
-  const identity = yield* executor
-    .identity(row.references)
-    .pipe(
-      Effect.catch((failure) =>
-        Effect.logWarning('Integration identity unavailable', failure._tag).pipe(
-          Effect.as(Option.none<typeof row.identity & string>()),
-        ),
+  const identity = yield* operationsOf(row).pipe(
+    Effect.flatMap((operations) => operations.identity(row.references)),
+    Effect.catch((failure) =>
+      Effect.logWarning('Integration identity unavailable', failure._tag).pipe(
+        Effect.as(Option.none<typeof row.identity & string>()),
       ),
-    )
+    ),
+  )
   if (Option.isNone(identity) || identity.value === row.identity) return row
   // Not being able to keep the answer is the same as not having one: the Connection is ready
   // either way, and what follows (publishing it, the audit entry) must still happen.
@@ -220,8 +221,9 @@ const finish = Effect.fn('Connections.finish')(function* (
   row: ConnectionRecord,
   references: ExecutorReferences,
 ) {
-  const executor = yield* Executor
-  const status = yield* executor.status(references).pipe(Effect.mapError(executorFailure))
+  const status = yield* (yield* operationsOf(row))
+    .status(references)
+    .pipe(Effect.mapError(executorFailure))
   const next = ExecutorStatus.match<{ state: ConnectionState; references: ExecutorReferences }>(
     status,
     {
@@ -273,8 +275,8 @@ const finish = Effect.fn('Connections.finish')(function* (
  * original failure; only a cleanup tag can enter diagnostics, never provider or callback data.
  */
 const discardBegin = Effect.fn('Connections.discardBegin')(
-  (executor: ExecutorService, references: ExecutorReferences) =>
-    executor.remove(references).pipe(
+  (operations: ExecutorConnectionOperations, references: ExecutorReferences) =>
+    operations.remove(references).pipe(
       Effect.tapError((failure) =>
         Effect.logError('Integration Begin compensation failed', failure._tag),
       ),
@@ -282,14 +284,24 @@ const discardBegin = Effect.fn('Connections.discardBegin')(
     ),
 )
 
-/** Allocate the storage owner separately from the connecting Person's execution attribution. */
+/** How a Begin asks Executor to allocate, given the operations of the Connection's caller. */
+type BeginStart<E> = (
+  operations: ExecutorConnectionOperations,
+  input: Parameters<ExecutorConnectionOperations['begin']>[0],
+) => Effect.Effect<typeof ExecutorStep.Type, E>
+
+/**
+ * Allocate the storage owner separately from the connecting Person's execution attribution.
+ *
+ * A Person's own Connection is made as their Executor member, so Executor itself keeps its app
+ * and account to them; a Company-shared one stays with the installation owner, whose apps every
+ * Member's Vivid already reaches (`ExecutorPrincipal`).
+ */
 const begin = Effect.fn('Connections.begin')(function* <E>(
   actor: Actor,
   request: BeginConnectionRequest,
   service: Service,
-  start: (
-    input: Parameters<ExecutorService['begin']>[0],
-  ) => Effect.Effect<typeof ExecutorStep.Type, E>,
+  start: BeginStart<E>,
 ) {
   let companyId: CompanyId | null = null
   if (request.shared) companyId = (yield* requireAdmin(actor.workspace)).company.id
@@ -305,9 +317,13 @@ const begin = Effect.fn('Connections.begin')(function* <E>(
   const id = ConnectionId.make(crypto.randomUUID())
   const config = yield* ServerConfig
   const owner = ExecutorOwnerId.make(companyId === null ? `p-${actor.person.id}` : `c-${companyId}`)
-  const executor = yield* Executor
+  const principal: ExecutorPrincipal = companyId === null ? 'member' : 'installation'
+  const operations = yield* operationsOf({
+    executorPrincipal: principal,
+    personId: actor.person.id,
+  })
   // Revoke an unusable pending grant before reporting failure; never insert a dead product row.
-  const step = yield* start({
+  const step = yield* start(operations, {
     connectionId: id,
     service: request.service,
     label: executorLabel(service.name),
@@ -316,7 +332,7 @@ const begin = Effect.fn('Connections.begin')(function* <E>(
     returnAddress: new URL('/api/connections/return', config.PUBLIC_URL).href,
   }).pipe(
     Effect.flatMap((next) =>
-      correlateSignIn(next).pipe(Effect.tapError(() => discardBegin(executor, next.references))),
+      correlateSignIn(next).pipe(Effect.tapError(() => discardBegin(operations, next.references))),
     ),
   )
   const now = yield* Clock.currentTimeMillis
@@ -352,6 +368,7 @@ const begin = Effect.fn('Connections.begin')(function* <E>(
           ),
           returnsTo: request.from,
           reason: null,
+          executorPrincipal: principal,
           createdAt: now,
           updatedAt: now,
         })
@@ -361,7 +378,7 @@ const begin = Effect.fn('Connections.begin')(function* <E>(
       Effect.catch(
         Effect.fn('Connections.compensateInsert')(function* (error) {
           // Cleanup is attempted and logged; the rejected insert remains the operation's original failure.
-          yield* executor.remove(step.references).pipe(
+          yield* operations.remove(step.references).pipe(
             Effect.tapError((failure) =>
               Effect.logError('Connection insert compensation failed', failure._tag),
             ),
@@ -401,10 +418,13 @@ const madeBeginFailure = (error: import('./executor.ts').ExecutorFailure | Execu
 
 /** Cancel an unusable grant before its failure is translated. Preserve authored build errors
  * for the author without adding them to the catalogue/import adapter's failure channel. */
-function prepareBegin<A, E>(executor: ExecutorService, operation: Effect.Effect<A, E>) {
+function prepareBegin<A, E>(
+  operations: ExecutorConnectionOperations,
+  operation: Effect.Effect<A, E>,
+) {
   return operation.pipe(
     Effect.tapError((error) =>
-      isSignInRequired(error) ? discardBegin(executor, error.references) : Effect.void,
+      isSignInRequired(error) ? discardBegin(operations, error.references) : Effect.void,
     ),
   )
 }
@@ -428,8 +448,7 @@ const retainAuthorization = Effect.fn('Connections.retainAuthorization')(functio
 /** Resume keeps the same Company owner and provider target while attributing the grant to its admin. */
 const resume = Effect.fn('Connections.resume')(function* (actor: Actor, row: ConnectionRecord) {
   const config = yield* ServerConfig
-  const executor = yield* Executor
-  const step = yield* executor
+  const step = yield* (yield* operationsOf(row))
     .reauthorize({
       connectionId: row.id,
       service: row.service,
@@ -501,8 +520,7 @@ const isNotReady = Schema.is(ExecutorNotReady)
  * days and failed every find_tools for all of their Integrations.
  */
 const loadTools = Effect.fn('Connections.tools')(function* (actor: Actor, row: ConnectionRecord) {
-  const executor = yield* Executor
-  return yield* executor.tools(row.references).pipe(
+  return yield* (yield* operationsOf(row)).tools(row.references).pipe(
     Effect.mapError((error) =>
       isResourceMissing(error) || isNotReady(error) ? error : executorFailure(error),
     ),
@@ -619,7 +637,14 @@ const rememberListCatalog = Effect.fn('Connections.rememberListCatalog')(
     ),
 )
 
-type ConnectionAuthority = Executor | Database | Audit | ServerConfig | Changes | Watches
+type ConnectionAuthority =
+  | Executor
+  | ExecutorMembers
+  | Database
+  | Audit
+  | ServerConfig
+  | Changes
+  | Watches
 type ProvideAuthority = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ) => Effect.Effect<A, E, Exclude<R, ConnectionAuthority>>
@@ -632,6 +657,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
   // Retain only authorities; the caller owns its span, Scope and Clock after construction ends.
   const dependencies = Context.pick(
     Executor,
+    ExecutorMembers,
     Database,
     Audit,
     ServerConfig,
@@ -730,22 +756,20 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     }),
     records: (actor: Actor) => provide(listRecords(actor)),
     tools: (actor: Actor, row: ConnectionRecord) => provide(loadTools(actor, row)),
-    ...makeRegistration({ executor, provide, catalogServices }),
-    ...makeAuthoredManagement({ executor, provide }),
+    ...makeRegistration({ provide, catalogServices }),
+    ...makeAuthoredManagement({ provide }),
     ...management,
   }
 })
 
 /** Registration owns allocation and its failure translation; management owns existing accounts. */
 function makeRegistration(input: {
-  readonly executor: ExecutorService
   readonly provide: ProvideAuthority
   readonly catalogServices: () => Effect.Effect<
     ReadonlyArray<Service>,
     ReturnType<typeof executorFailure>
   >
 }) {
-  const { executor } = input
   return {
     /** Validate shared management before the first external operation. */
     begin: Effect.fn('Connections.begin')(function* (
@@ -759,10 +783,8 @@ function makeRegistration(input: {
         return yield* new InvalidRequest({
           message: 'Choose an integration from the current catalogue.',
         })
-      const start = Effect.fn('Connections.beginCatalog')(
-        (input: Parameters<ExecutorService['begin']>[0]) =>
-          prepareBegin(executor, executor.begin(input)).pipe(Effect.mapError(publicBeginFailure)),
-      )
+      const start: BeginStart<ReturnType<typeof publicBeginFailure>> = (operations, input) =>
+        prepareBegin(operations, operations.begin(input)).pipe(Effect.mapError(publicBeginFailure))
       return yield* input
         .provide(begin(actor, request, entry, start))
         .pipe(
@@ -785,9 +807,6 @@ function makeRegistration(input: {
         mark: serviceLogo(source.address),
         authorization: ServiceAuthorization.cases.None.make({}),
       })
-      const start: ExecutorService['begin'] = Effect.fn('Connections.import')((input) =>
-        executor.add({ ...input, source }),
-      )
       return yield* input.provide(
         begin(
           actor,
@@ -796,7 +815,10 @@ function makeRegistration(input: {
           // its initial browser return keeps the existing web destination.
           { service: importedService.id, name: null, shared: request.shared, from: 'Web' },
           importedService,
-          (input) => prepareBegin(executor, start(input)).pipe(Effect.mapError(publicBeginFailure)),
+          (operations, input) =>
+            prepareBegin(operations, operations.add({ ...input, source })).pipe(
+              Effect.mapError(publicBeginFailure),
+            ),
         ),
       )
     }),
@@ -814,8 +836,8 @@ function makeRegistration(input: {
           actor,
           { service: service.id, name: null, shared: false, from: 'Web' },
           service,
-          (input) =>
-            prepareBegin(executor, executor.make({ ...input, files: madeFiles(request) })).pipe(
+          (operations, input) =>
+            prepareBegin(operations, operations.make({ ...input, files: madeFiles(request) })).pipe(
               Effect.mapError(madeBeginFailure),
             ),
         ),
@@ -858,10 +880,10 @@ const serializeResumes = () => {
  * from dispatching another completion in this process. Executor also claims each OAuth attempt.
  */
 const makeCallbacks = (
-  input: Pick<Parameters<typeof makeManagement>[0], 'executor' | 'provide'>,
+  input: Pick<Parameters<typeof makeManagement>[0], 'provide'>,
   withCallback: ReturnType<typeof serializeResumes>,
 ) => {
-  const { executor, provide } = input
+  const { provide } = input
   /** Ownership, pending state, correlation, and fresh Company permission precede provider access. */
   const callback = Effect.fn('Connections.callback')(
     function* (actor: Actor, id: ConnectionId, callbackAddress: Redacted.Redacted) {
@@ -874,7 +896,7 @@ const makeCallbacks = (
       )
         return yield* new NotFound({ message: 'Integration sign-in not found' })
       const managing = yield* provide(rowActor(actor, row))
-      const references = yield* executor
+      const references = yield* (yield* provide(operationsOf(row)))
         .completeSignIn({ references: row.references, callbackAddress })
         .pipe(Effect.mapError(executorFailure))
       const connection = yield* provide(finish(managing, row, references))
@@ -1003,7 +1025,7 @@ const makeManagement = (input: {
     | import('../database/client.ts').DatabaseInfrastructureError
   >
 }) => {
-  const { executor, provide, get } = input
+  const { provide, get } = input
   const withResume = serializeResumes()
   return {
     /** Resume has exactly removal's scoped lookup and admin check, before provider access. */
@@ -1019,7 +1041,7 @@ const makeManagement = (input: {
     ) {
       const row = yield* get(actor, request.id)
       yield* mayManage(actor, row)
-      const references = yield* executor
+      const references = yield* (yield* provide(operationsOf(row)))
         .complete({ references: row.references, fields: request.fields })
         .pipe(Effect.mapError(executorFailure))
       return yield* provide(finish(actor, row, references))
@@ -1116,10 +1138,7 @@ export const connectionStoreLayer = Layer.effect(ConnectionStore, makeStore()).p
 )
 
 /** Authored source belongs only to its Person and a dedicated, ready Executor app. */
-function makeAuthoredManagement(input: {
-  readonly executor: ExecutorService
-  readonly provide: ProvideAuthority
-}) {
+function makeAuthoredManagement(input: { readonly provide: ProvideAuthority }) {
   const selected = Effect.fn('Connections.authored')(function* (actor: Actor, account: string) {
     const found = namedAccounts(yield* input.provide(listRecords(actor))).find(
       (entry) => entry.account.trim().toLowerCase() === account.trim().toLowerCase(),
@@ -1139,11 +1158,12 @@ function makeAuthoredManagement(input: {
       return yield* new InvalidRequest({
         message: 'This Integration does not own a dedicated app.',
       })
-    return { account: found.account, app: references.app }
+    return { account: found.account, app: references.app, row }
   })
   const readMade = Effect.fn('Connections.readMade')(function* (actor: Actor, account: string) {
     const held = yield* selected(actor, account)
-    const files = yield* input.executor.readMade(held.app).pipe(Effect.mapError(executorFailure))
+    const operations = yield* input.provide(operationsOf(held.row))
+    const files = yield* operations.readMade(held.app).pipe(Effect.mapError(executorFailure))
     return MadeIntegrationSource.make({ account: held.account, files })
   })
   return {
@@ -1154,7 +1174,7 @@ function makeAuthoredManagement(input: {
       request: ReviseMadeIntegrationRequest,
     ) {
       const held = yield* selected(actor, request.account)
-      yield* input.executor
+      yield* (yield* input.provide(operationsOf(held.row)))
         .reviseMade(held.app, madeFiles({ name: held.account, files: request.files }))
         .pipe(
           Effect.mapError(madeBeginFailure),

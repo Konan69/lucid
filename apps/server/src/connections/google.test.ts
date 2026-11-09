@@ -10,6 +10,7 @@ import {
   ExecutorOwnerId,
   ExecutorReferences,
   ExecutorStep,
+  installationCaller,
 } from './executor.ts'
 import { GoogleState, googleReturnPath, googleServices } from './google.ts'
 import { connectionReturnRoutes } from './return.ts'
@@ -101,8 +102,8 @@ describe('Google Integrations', () => {
         return yield* Effect.gen(function* () {
           const executor = yield* Executor
           return {
-            first: yield* executor.begin(input),
-            second: yield* executor.begin({
+            first: yield* executor.as(installationCaller).begin(input),
+            second: yield* executor.as(installationCaller).begin({
               ...input,
               connectionId: ConnectionId.make('second'),
             }),
@@ -167,22 +168,25 @@ describe.skipIf(!testDatabaseConfigured)('Google fixed callback', () => {
           const executor = yield* Executor
           const google = Executor.of({
             ...executor,
-            begin: Effect.fn('GoogleTest.begin')(function* (input) {
-              const step = yield* executor.begin(input)
-              if (!ExecutorStep.guards.OpenSignIn(step)) expect.fail('Sign-in fixture required')
-              return ExecutorStep.cases.OpenSignIn.make({
-                references: ExecutorReferences.cases.GoogleSigningIn.make({
-                  appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
-                  service: step.references.service,
-                  app: step.references.app,
-                  binding: step.references.binding,
-                  owner: step.references.owner,
+            as: (caller) => ({
+              ...executor.as(caller),
+              begin: Effect.fn('GoogleTest.begin')(function* (input) {
+                const step = yield* executor.as(installationCaller).begin(input)
+                if (!ExecutorStep.guards.OpenSignIn(step)) expect.fail('Sign-in fixture required')
+                return ExecutorStep.cases.OpenSignIn.make({
+                  references: ExecutorReferences.cases.GoogleSigningIn.make({
+                    appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
+                    service: step.references.service,
+                    app: step.references.app,
+                    binding: step.references.binding,
+                    owner: step.references.owner,
 
-                  authorization: step.references.authorization,
-                  googleState: GoogleState.make(crypto.randomUUID()),
-                }),
-                address: step.address,
-              })
+                    authorization: step.references.authorization,
+                    googleState: GoogleState.make(crypto.randomUUID()),
+                  }),
+                  address: step.address,
+                })
+              }),
             }),
           })
           const run = Effect.fn('GoogleTest.verifyReturns')(function* () {

@@ -7,6 +7,7 @@ import * as Schema from 'effect/Schema'
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import type { WatchArguments } from '@vivid/contracts'
+import { ExecutorCaller } from '../connections/executor.ts'
 import { requiredSetting, settingSecret } from '../config.ts'
 
 /**
@@ -140,21 +141,31 @@ export interface Subscription {
   readonly url: string
 }
 
+/**
+ * Each call is made as the caller that owns the watched app (`ExecutorCaller`): a Person's member
+ * sees and subscribes to its own app's events, which the installation owner cannot use.
+ */
 export interface ExecutorEventsService {
-  /** Every event the apps Vivid's key can reach declare. */
-  readonly list: Effect.Effect<ReadonlyArray<EventDefinition>, ExecutorEventsFailure>
+  /** Every event the apps this caller can reach declare. */
+  readonly list: (
+    caller: ExecutorCaller,
+  ) => Effect.Effect<ReadonlyArray<EventDefinition>, ExecutorEventsFailure>
   /**
    * Subscribe, or renew the subscription with the same key. Executor POSTs a signed challenge to
    * `url` before it answers, so the receiver must already know the Watch and its secret.
    */
   readonly subscribe: (
+    caller: ExecutorCaller,
     subscription: Subscription & {
       readonly secret: Redacted.Redacted
       readonly ttlMs: number
     },
   ) => Effect.Effect<{ readonly id: string; readonly refreshBefore: Date }, ExecutorEventsFailure>
   /** Stop the subscription with this key. Executor answers success for one that does not exist. */
-  readonly unsubscribe: (subscription: Subscription) => Effect.Effect<void, ExecutorEventsFailure>
+  readonly unsubscribe: (
+    caller: ExecutorCaller,
+    subscription: Subscription,
+  ) => Effect.Effect<void, ExecutorEventsFailure>
 }
 
 export class ExecutorEvents extends Context.Service<ExecutorEvents, ExecutorEventsService>()(
@@ -233,11 +244,16 @@ export const makeExecutorEvents = (transport: HttpClient.HttpClient, config: Exe
   const client = HttpClient.withScope(transport)
   /** Send the request and read request 1's answer out of the body, in the caller's Scope. */
   const exchange = Effect.fn('ExecutorEvents.exchange')(function* (
+    caller: ExecutorCaller,
     method: string,
     params: Readonly<Record<string, Schema.Json>>,
   ) {
+    const bearer = ExecutorCaller.match(caller, {
+      Installation: () => config.key,
+      Member: ({ key }) => key,
+    })
     const request = HttpClientRequest.post(`${config.url}/mcp`).pipe(
-      HttpClientRequest.bearerToken(config.key),
+      HttpClientRequest.bearerToken(bearer),
       HttpClientRequest.setHeaders({
         'X-Executor-Organization': config.organization,
         Accept: 'application/json, text/event-stream',
@@ -284,11 +300,12 @@ export const makeExecutorEvents = (transport: HttpClient.HttpClient, config: Exe
    * liked. Interruption releases the response through the call's Scope.
    */
   const call = <A, I>(
+    caller: ExecutorCaller,
     method: string,
     params: Readonly<Record<string, Schema.Json>>,
     result: Schema.Codec<A, I>,
   ) =>
-    exchange(method, params).pipe(
+    exchange(caller, method, params).pipe(
       Effect.flatMap((value) =>
         Schema.decodeUnknownEffect(result)(value).pipe(
           Effect.mapError(() => new ExecutorEventsUnreachable({})),
@@ -302,9 +319,11 @@ export const makeExecutorEvents = (transport: HttpClient.HttpClient, config: Exe
     )
 
   return ExecutorEvents.of({
-    list: call('events/list', {}, ListResult).pipe(Effect.map((result) => result.events)),
-    subscribe: (input) =>
+    list: (caller) =>
+      call(caller, 'events/list', {}, ListResult).pipe(Effect.map((result) => result.events)),
+    subscribe: (caller, input) =>
       call(
+        caller,
         'events/subscribe',
         {
           name: input.name,
@@ -314,8 +333,9 @@ export const makeExecutorEvents = (transport: HttpClient.HttpClient, config: Exe
         },
         SubscribeResult,
       ),
-    unsubscribe: (input) =>
+    unsubscribe: (caller, input) =>
       call(
+        caller,
         'events/unsubscribe',
         {
           name: input.name,

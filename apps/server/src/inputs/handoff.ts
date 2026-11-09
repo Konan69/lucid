@@ -413,6 +413,7 @@ const announce = Effect.fn('Handoffs.announce')(function* (
     title: 'Vivid needs you for one step',
     body: summary,
     threadId: thread.id,
+    approvalId: null,
   })
 })
 
