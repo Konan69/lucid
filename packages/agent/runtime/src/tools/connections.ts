@@ -184,7 +184,7 @@ function useTool(runTool: RunTool) {
   return defineTool({
     name: Tool.use_tool,
     description:
-      'Call one Integration tool that find_tools returned. input is the JSON object the tool’s signature takes, exactly as find_tools showed it: never a string, and never wrapped with an account; account chooses the account. If the call is rejected, read the tool’s signature with find_tools, correct the input and call again. If approval is requested, stop and wait. Report partial or unknown coverage when it affects the answer. observedAt is receipt time; only a Source asOf is a provider timestamp.',
+      'Call one Integration tool that find_tools returned. input is the JSON object the tool’s signature takes, exactly as find_tools showed it: never a string, and never wrapped with an account; account chooses the account. If the call is rejected, read the tool’s signature with find_tools, correct the input and call again. For a file-content input, use {"$file":{"source":"artifact" or "library","name":"visible title or filename"}}. Vivid replaces it with {name,mimeType,base64}; choose a tool accepting that envelope. Artifact titles resolve in your own current Thread; Library filenames resolve on your personal shelf and must be unique. Files total at most 5 MiB per call. If approval is requested, stop and wait. Report partial or unknown coverage when it affects the answer. observedAt is receipt time; only a Source asOf is a provider timestamp.',
     input: v.object({
       account: text('The exact account name returned by find_tools.', 300),
       tool: text('The exact tool name returned by find_tools.', 200),
