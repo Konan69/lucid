@@ -464,7 +464,7 @@ function makeLiveData(session: SignedIn) {
     /** A step's calls, like a device decision, outlive the banner that pressed them. */
     handing: makeHandoffCalls(engine),
     ...makeForms(engine, live),
-    helpers: makeHelpers(engine), // Stopping a helper and reading its result (`data/children.ts`).
+    helpers: makeHelpers(engine), // Stopping, following up and reading a helper (`data/children.ts`).
     /** What Vivid made: its live queries, the editor and the share sheet (`data/artifact.ts`). */
     artifacts: makeArtifacts(engine, session),
     /**
