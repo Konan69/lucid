@@ -9,6 +9,7 @@ import {
   ApprovalBinding,
   ThreadId,
   NotFound,
+  type ActionOperationId,
   type Person,
   type ProposedAction,
   type Workspace,
@@ -141,6 +142,7 @@ export interface ActionRunnerService {
    * infrastructure failures retain their typed error for the handler.
    */
   readonly run: (input: {
+    readonly operation: Option.Option<ActionOperationId>
     readonly person: Person
     readonly workspace: Workspace
     readonly action: ProposedAction
