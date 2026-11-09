@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm'
 import { boolean, jsonb, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core'
 import type {
+  CommandUnreachable,
   ComputerRecoveryId,
   ComputerRecoveryStep,
   ComputerRecoveryOutcome,
@@ -13,6 +14,7 @@ import type {
   InstallationId,
   RunId,
   SessionId,
+  ShellHandle,
 } from '@vivid/contracts'
 import { epoch, personColumn, threadColumn } from '../database/owner.ts'
 import type { DeviceReceipt, DeviceSubscriptionId } from './receipt.ts'
@@ -133,4 +135,29 @@ export const computerRecoveries = pgTable('vivid_computer_recoveries', {
   step: text('step').$type<ComputerRecoveryStep>().notNull(),
   createdAt: epoch('created_at').notNull(),
   outcome: jsonb('outcome').$type<typeof ComputerRecoveryOutcome.Encoded>(),
+})
+
+/**
+ * One row per command Vivid left running in the background on a Person's Computer
+ * (`start_shell`), from its start until its completion was handed to its Thread; then it is
+ * deleted, and the `computer-shell` queue entry in `vivid_work` is its history. The queue owns the
+ * wake; this row is what the work view lists, read without touching the Computer
+ * (`computers/background.ts`).
+ *
+ * `output_at` is when the receipt's output was last seen to change, written at most once a minute;
+ * `output_digest` is the SHA-256 of the stdout and stderr tails it was compared against, null
+ * until a receipt was read. `unreachable` is set while the last read of the receipt failed.
+ * `stopped_at` is set when a Stop from the work view is under way or done: such a command is not
+ * listed, and its Stopped receipt does not wake its Thread. Times are epoch milliseconds.
+ */
+export const computerCommands = pgTable('vivid_computer_commands', {
+  handle: text('handle').$type<ShellHandle>().primaryKey(),
+  personId: personColumn().notNull(),
+  threadId: threadColumn('thread_id').notNull(),
+  command: text('command').notNull(),
+  startedAt: epoch('started_at').notNull(),
+  outputAt: epoch('output_at').notNull(),
+  outputDigest: text('output_digest'),
+  unreachable: jsonb('unreachable').$type<typeof CommandUnreachable.Encoded>(),
+  stoppedAt: epoch('stopped_at'),
 })

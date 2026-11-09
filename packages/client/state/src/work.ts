@@ -61,6 +61,7 @@ export const keyOf = (ref: WorkRef): string =>
   WorkRef.match(ref, {
     Run: ({ run }) => `run:${run}`,
     Helper: ({ helper }) => `helper:${helper}`,
+    Command: ({ handle }) => `command:${handle}`,
     Watch: ({ watch }) => `watch:${watch}`,
     MadeIntegration: ({ connection }) => `made:${connection}`,
   })
@@ -140,15 +141,18 @@ const listeners = (count: number) => {
  */
 export function makeWorkWords(when: (moment: number, now: number) => string) {
   // The row's detail already names the account, so these do not say it again.
-  const failure = (failed: WorkFailure) =>
+  const failure = (failed: WorkFailure, now: number) =>
     WorkFailure.match(failed, {
       LastRunFailed: ({ reason }) => `Last time: ${FAILED[reason]}`,
       IntegrationNeedsSignIn: () => 'Needs you to sign in again',
       IntegrationFailed: ({ reason }) => `Failed: ${reason}`,
+      // The reason is said to Vivid (`list_work`); its words are written for the model.
+      ComputerUnreachable: ({ since }) => `Its computer has not answered since ${when(since, now)}`,
     })
   const stall = (stalled: WorkStall, now: number) =>
     WorkStall.match(stalled, {
       WorkingLong: ({ since }) => `No answer after ${stuckFor(now - since)}`,
+      Quiet: ({ since }) => `Nothing new printed for ${stuckFor(now - since)}`,
       Paused: () => 'Paused until you sign in again',
       NotConfirmed: () => 'Not confirmed yet',
       NotRenewed: ({ since }) => `Not renewed since ${when(since, now)} · events may be missed`,
@@ -165,6 +169,7 @@ export function makeWorkWords(when: (moment: number, now: number) => string) {
     BackgroundWork.match(work, {
       Run: ({ startedAt }) => `Working ${spanOf(now - startedAt)}`,
       Helper: ({ state }) => helperGoing(state, now),
+      Command: ({ startedAt }) => `Running ${spanOf(now - startedAt)}`,
       Watch: ({ state, lastFiring, purpose }) =>
         Match.valueTags(state, {
           Pending: () => 'Starting',
@@ -183,7 +188,7 @@ export function makeWorkWords(when: (moment: number, now: number) => string) {
       }),
       Failing: ({ failure: failed }): Said => ({
         tone: 'failing',
-        standing: failure(failed),
+        standing: failure(failed, now),
       }),
     })
     const { title, detail } = BackgroundWork.match(work, {
@@ -192,6 +197,7 @@ export function makeWorkWords(when: (moment: number, now: number) => string) {
         title: brief,
         detail: `Helper ${number} · ${HELPER[kind]} for “${thread}”`,
       }),
+      Command: ({ command, title: thread }) => ({ title: command, detail: `For “${thread}”` }),
       Watch: ({ name, account, purpose }) => ({
         title: name,
         detail: WatchPurpose.guards.Checkin(purpose) ? 'Check-in' : account,
@@ -206,6 +212,8 @@ export function makeWorkWords(when: (moment: number, now: number) => string) {
 const NOT_STOPPED = {
   RuntimeUnreachable: 'Marked stopped, but Vivid did not answer, so it may still be working',
   IntegrationsUnreachable: 'Could not be removed right now. Try again in a moment',
+  ComputerUnreachable: 'Its computer could not be reached, so it may still be running',
+  StillRunning: 'Its computer was told to stop it, but it was still running',
 } satisfies Record<WorkNotStopped, string>
 
 /** What a Stop that did not take says on its own, naming the work it was about. */

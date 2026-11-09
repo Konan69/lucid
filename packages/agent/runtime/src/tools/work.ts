@@ -8,6 +8,7 @@ import {
   WorkStanding,
   WorkStopResult,
   standingOf,
+  type WorkNotStopped,
   type WorkStopReport,
 } from '@vivid/contracts'
 import { Clock, Effect } from 'effect'
@@ -32,6 +33,8 @@ const troubleWords = (standing: WorkStanding, now: number) =>
       WorkStall.match(stall, {
         WorkingLong: ({ since }) =>
           `stalled: no answer after ${Math.round((now - since) / 60_000)} minutes`,
+        Quiet: ({ since }) =>
+          `stalled: it has printed nothing new for ${Math.round((now - since) / 60_000)} minutes`,
         Paused: () => 'stalled: paused until the Person signs in to its Integration again',
         NotConfirmed: () => 'stalled: its Integration has not confirmed the Watch',
         NotRenewed: () =>
@@ -43,6 +46,8 @@ const troubleWords = (standing: WorkStanding, now: number) =>
           `failing: the last time it fired, the reply failed (${reason})`,
         IntegrationNeedsSignIn: () => 'failing: its Integration needs the Person to sign in again',
         IntegrationFailed: ({ reason }) => `failing: its Integration failed: ${modelText(reason)}`,
+        ComputerUnreachable: ({ since, reason }) =>
+          `failing: your Computer has not answered for ${Math.round((now - since) / 60_000)} minutes (${modelText(reason)}), so it may or may not still be running`,
       }),
   })
 
@@ -53,6 +58,11 @@ const view = (work: BackgroundWork, now: number) => ({
     Helper: ({ number, brief, title }) => ({
       kind: `helper ${number}`,
       name: modelText(brief),
+      for: modelText(title),
+    }),
+    Command: ({ command, title }) => ({
+      kind: 'command running on your Computer',
+      name: modelText(command),
       for: modelText(title),
     }),
     Watch: ({ name, account, purpose }) => ({
@@ -69,15 +79,20 @@ const view = (work: BackgroundWork, now: number) => ({
   standing: troubleWords(standingOf(work, now), now),
 })
 
+/** Why a Stop did not take, in words. */
+const NOT_STOPPED = {
+  RuntimeUnreachable: 'marked stopped, but the runtime did not answer, so it may still be working',
+  IntegrationsUnreachable: 'could not be removed right now',
+  ComputerUnreachable: 'your Computer could not be reached to stop it, so it may still be running',
+  StillRunning: 'your Computer was told to stop it, but it was still running thirty seconds later',
+} satisfies Record<WorkNotStopped, string>
+
 /** What one Stop did, in words. */
 const resultWords = (report: WorkStopReport) =>
   WorkStopResult.match(report.result, {
     Stopped: () => 'stopped',
     AlreadyEnded: () => 'had already finished',
-    NotStopped: ({ reason }) =>
-      reason === 'RuntimeUnreachable'
-        ? 'marked stopped, but the runtime did not answer, so it may still be working'
-        : 'could not be removed right now',
+    NotStopped: ({ reason }) => NOT_STOPPED[reason],
   })
 
 export function workTools(runTool: RunTool) {
@@ -85,7 +100,7 @@ export function workTools(runTool: RunTool) {
     defineTool({
       name: Tool.list_work,
       description:
-        'List everything you have going for the Person besides this reply: replies still working, Watches and Integrations you made, each with whether it is going, stalled or failing and why. Read it when asked what you are doing in the background, and before saying something is still working. Report a stall as a stall.',
+        'List everything you have going for the Person besides this reply: replies still working, commands still running in the background on your Computer, Watches and Integrations you made, each with whether it is going, stalled or failing and why. Read it when asked what you are doing in the background, and before saying something is still working. Report a stall as a stall.',
       input: v.object({ summary }),
       run({ signal }) {
         return runTool(
@@ -102,7 +117,7 @@ export function workTools(runTool: RunTool) {
     defineTool({
       name: Tool.stop_all_work,
       description:
-        'Stop everything you have going in the background for the Person, in one call: every Watch and every other reply still working, never this one. It deletes nothing. When the Person asks you to stop, halt, cancel or quit what you are doing, in any words, call it first, before checking anything one by one. Then tell them what stopped, what had already finished, and plainly what may still be running. Do not restart, resume or redo the stopped work.',
+        'Stop everything you have going in the background for the Person, in one call: every Watch, every background command on your Computer and every other reply still working, never this one. It deletes nothing. When the Person asks you to stop, halt, cancel or quit what you are doing, in any words, call it first, before checking anything one by one. Then tell them what stopped, what had already finished, and plainly what may still be running. Do not restart, resume or redo the stopped work.',
       input: v.object({ summary }),
       run({ signal }) {
         return runTool(
