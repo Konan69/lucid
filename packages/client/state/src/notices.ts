@@ -166,11 +166,11 @@ export const everyNoticeRead =
  * here until it has a name.
  */
 export const NOTICE_NAME = {
-  finished: 'Vivid finished',
-  'needs-you': 'Vivid needs you',
-  shared: 'A Thread was shared with you',
-  invited: 'You were invited',
-  posted: 'Vivid posted to your Feed',
+  finished: 'Done',
+  'needs-you': 'Waiting for you',
+  shared: 'Shared with you',
+  invited: 'Invitation',
+  posted: 'New in your Feed',
 } as const satisfies Record<Notification['kind'], string>
 
 /**

@@ -410,7 +410,7 @@ const announce = Effect.fn('Handoffs.announce')(function* (
     personId: actor.person.id,
     companyId: thread.companyId,
     kind: 'needs-you',
-    title: 'Vivid needs you for one step',
+    title: 'Your turn',
     body: summary,
     threadId: thread.id,
   })

@@ -368,7 +368,7 @@ export function Handing({
       refusal={handing.refusalFor(reading, handoff.id)}
       onGone={() => undefined}
     >
-      <section aria-label="Vivid needs you for one step" className={SURFACE}>
+      <section aria-label="Your turn" className={SURFACE}>
         <Head
           words={handoff.summary}
           count={Option.none()}

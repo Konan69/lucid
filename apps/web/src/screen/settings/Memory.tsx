@@ -89,10 +89,7 @@ const download = () =>
 function Download() {
   return (
     <Section title="Your copy">
-      <Row
-        label="Download everything Vivid remembers"
-        detail="Every page and line, whole, as one file you can keep."
-      >
+      <Row label="Download everything Vivid remembers" detail="Download everything as one file.">
         <Button size="sm" variant="outline" onClick={download}>
           <DownloadIcon />
           Download

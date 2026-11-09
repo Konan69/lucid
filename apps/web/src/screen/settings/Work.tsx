@@ -25,22 +25,18 @@ const TONE = {
 const GROUPS = [
   {
     title: 'Working now',
-    detail: 'Replies Vivid is still working on.',
     takes: BackgroundWork.guards.Run,
   },
   {
     title: 'Helpers',
-    detail: 'Narrower work Vivid handed off while answering.',
     takes: BackgroundWork.guards.Helper,
   },
   {
     title: 'Watching',
-    detail: 'Each one wakes Vivid when something happens in an Integration.',
     takes: BackgroundWork.guards.Watch,
   },
   {
     title: 'Made by Vivid',
-    detail: 'Integrations Vivid wrote for itself. Removing one cannot be undone.',
     takes: BackgroundWork.guards.MadeIntegration,
   },
 ] as const
@@ -87,7 +83,7 @@ export function Work() {
         const members = shown.filter(group.takes)
         if (members.length === 0) return null
         return (
-          <Section key={group.title} title={group.title} detail={group.detail}>
+          <Section key={group.title} title={group.title}>
             {members.map((piece) => (
               <WorkRow
                 key={lineOf(piece).key}

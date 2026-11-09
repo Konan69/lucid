@@ -62,7 +62,7 @@ export function VividComputer() {
   return (
     <Section
       title="Vivid’s computer"
-      detail="The machine Vivid works on: how it is doing and what Vivid can do there now."
+
       action={
         <Button
           size="sm"
@@ -200,7 +200,7 @@ export function YourComputers() {
     <>
       <Section
         title="Your computers"
-        detail="Vivid can open and use pages in the Vivid desktop app on one computer you allow. A page Vivid is using shows a Stop button."
+        detail="Let Vivid use the desktop app on one of your computers."
       >
         {devices.length === 0 ? (
           <Empty>{QUIET[state._tag]}</Empty>

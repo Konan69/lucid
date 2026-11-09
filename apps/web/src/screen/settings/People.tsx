@@ -111,7 +111,7 @@ function CompanyPeople({
       <Refusal message={refusal} />
       <Section
         title={`People in ${company}`}
-        detail="Members see shared threads, the company library and shared connections."
+
         action={
           admin ? (
             <Button size="sm" onClick={() => setInviting(true)}>
@@ -148,10 +148,7 @@ function CompanyPeople({
       </Section>
 
       {admin && (
-        <Section
-          title="Invitations"
-          detail="Pending invitations. Each link works once, for the email it was sent to."
-        >
+        <Section title="Invitations" detail="Each link works once.">
           {people.invitations.length === 0 && <Empty>No open invitations.</Empty>}
           {people.invitations.map((invitation) => (
             <InvitationRow
@@ -172,7 +169,7 @@ function CompanyPeople({
 
       {role !== 'owner' && (
         <Section title="Leave">
-          <Row label={`Leave ${company}`} detail="You keep everything in your own space.">
+          <Row label={`Leave ${company}`}>
             <Button
               variant="outline"
               onClick={() =>

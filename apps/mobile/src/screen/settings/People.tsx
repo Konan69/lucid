@@ -167,10 +167,7 @@ function Listed({
   return (
     <>
       {Option.isSome(refused) && <Notice message={refused.value} />}
-      <Section
-        title={`In ${company}`}
-        detail="Members see shared threads, the company library and shared integrations."
-      >
+      <Section title={`In ${company}`}>
         {people.members.map((member) => {
           const mine = member.person.id === me.person.id
           // An owner's standing is not changed here, and nobody edits their own row.

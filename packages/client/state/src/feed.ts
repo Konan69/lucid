@@ -190,9 +190,7 @@ export const seenIn =
  * which in the background reaches the Person only here. Opening the Thread is how they answer.
  */
 export const askedWords = (item: Waiting): string =>
-  item.asking.includes('approval')
-    ? 'Vivid needs your approval to do something. Open it to decide.'
-    : 'Vivid has a question for you. Open it to answer.'
+  item.asking.includes('approval') ? 'Waiting for your approval.' : 'Vivid has a question.'
 
 /**
  * The Approval a waiting card stopped on, to decide on the card (#129): the oldest one still

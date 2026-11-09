@@ -27,7 +27,7 @@ import { Row } from './Parts'
 export function Name({ current }: { current: string }) {
   const reading = useNaming()
   return (
-    <Row label="Name" detail="What Vivid calls you, and what others see beside your messages.">
+    <Row label="Name">
       <Popover
         open={naming.isOpen(reading)}
         onOpenChange={(open) => (open ? openNaming() : closeNaming())}

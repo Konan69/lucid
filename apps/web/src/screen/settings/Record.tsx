@@ -46,7 +46,7 @@ export function Record() {
   const audit = useLive(live.audit)
   if (!LiveState.$is('Ready')(audit)) return <Awaiting state={audit} />
   return (
-    <Section title="What happened" detail="Newest first. This record cannot be edited.">
+    <Section title="What happened">
       {audit.value.entries.length === 0 && <Empty>Nothing recorded yet.</Empty>}
       {audit.value.entries.map((entry) => (
         <Line key={entry.id} entry={entry} />

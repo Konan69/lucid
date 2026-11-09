@@ -59,12 +59,15 @@ export const shortId = (id: string): string => id.slice(0, 8)
  * day, in the phone's own clock: it is compared with a time someone else said, so "9:12" alone,
  * which could be this morning or last week, would not do.
  */
-export const runningWords = (running: Running, write: (moment: Date) => string): string =>
+export const runningWords = (
+  running: Running,
+  write: (moment: Date) => string,
+): Option.Option<string> =>
   Running.$match(running, {
-    Off: () => 'Updates are off in this build.',
-    Installed: () => 'Original app version',
-    Updated: ({ published, id }) => `Published ${write(published)} · ${shortId(id)}`,
-    Unnamed: () => 'Running an update. Its version is unknown.',
+    Off: () => Option.none(),
+    Installed: () => Option.none(),
+    Updated: ({ published, id }) => Option.some(`${write(published)} · ${shortId(id)}`),
+    Unnamed: () => Option.some('Unknown'),
   })
 
 /**
@@ -99,7 +102,7 @@ export const reportsFrom = (started: Option.Option<{ readonly native: boolean }>
 /** The line Settings shows for error reports. */
 export const reportsWords = (reports: Reports): string =>
   Reports.$match(reports, {
-    Unstarted: () => 'Off in this build.',
-    Unsendable: () => 'Off. Install a newer version of the app to enable error reports.',
+    Unstarted: () => 'Off',
+    Unsendable: () => 'Needs a newer install',
     Sending: () => 'On',
   })

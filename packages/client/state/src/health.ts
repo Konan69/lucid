@@ -261,20 +261,17 @@ export const recoveryWords = (
   ComputerRecoveryRecord.match(record, {
     None: () => Option.none(),
     Unsettled: ({ step, since }) =>
-      Option.some(
-        `Vivid began to ${STEP_WORDS[step].doing.toLocaleLowerCase()} at ${at(since)}. No answer yet.`,
-      ),
+      Option.some(`Trying to ${STEP_WORDS[step].doing.toLocaleLowerCase()} since ${at(since)}.`),
     Settled: ({ step, since, outcome }) =>
       Option.some(
         ComputerRecoveryOutcome.match(outcome, {
           Completed: () => `Vivid ${STEP_WORDS[step].done} at ${at(since)}.`,
-          Refused: () =>
-            `Vivid tried to ${STEP_WORDS[step].doing.toLocaleLowerCase()} at ${at(since)}; it was not the right step then.`,
+          Refused: () => `Couldn’t ${STEP_WORDS[step].doing.toLocaleLowerCase()} at ${at(since)}.`,
           PersonRequired: ({ consequence }) =>
-            `To ${STEP_WORDS[step].doing.toLocaleLowerCase()} needs you: ${consequence}`,
-          Unsupported: () => `Vivid cannot ${STEP_WORDS[step].doing.toLocaleLowerCase()} yet.`,
+            `Only you can ${STEP_WORDS[step].doing.toLocaleLowerCase()}. ${consequence}`,
+          Unsupported: () => `Vivid can’t ${STEP_WORDS[step].doing.toLocaleLowerCase()} yet.`,
           OutcomeUnknown: () =>
-            `Vivid tried to ${STEP_WORDS[step].doing.toLocaleLowerCase()} at ${at(since)}; whether it worked is not known.`,
+            `Tried to ${STEP_WORDS[step].doing.toLocaleLowerCase()} at ${at(since)}. Not sure it worked.`,
         }),
       ),
   })

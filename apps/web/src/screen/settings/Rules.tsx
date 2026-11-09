@@ -61,7 +61,7 @@ export function Rules({ me }: { me: MeResponse }) {
   return (
     <>
       <Refusal message={refusal} />
-      <Section title="Your rules" detail="They apply whenever Vivid acts for you, in every space.">
+      <Section title="Your rules">
         {mine.length === 0 && (
           <Empty>No rules yet. Vivid asks before it changes anything outside Vivid.</Empty>
         )}
@@ -76,7 +76,7 @@ export function Rules({ me }: { me: MeResponse }) {
       {company !== null && (
         <Section
           title={`${company.company.name}’s rules`}
-          detail="They apply to everyone. A personal rule can make Vivid stricter, never looser."
+          detail="Apply to everyone. Your own rules can only add to them."
         >
           {companys.length === 0 && <Empty>No company rules yet.</Empty>}
           {companys.map((rule) => (

@@ -60,10 +60,7 @@ function SignedIn() {
   return (
     <>
       <Refusal message={refused} />
-      <Section
-        title="Where you are signed in"
-        detail="Sign out a device you no longer use or no longer have."
-      >
+      <Section title="Where you are signed in" detail="Sign out devices you don’t use.">
         <Suspense fallback={<Empty>Looking…</Empty>}>
           <DeviceList
             asked={asked}

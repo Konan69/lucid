@@ -68,9 +68,9 @@ const Over = Data.taggedEnum<Over>()
  * is. Integrations is the row before them and a screen of its own (`Shared`).
  */
 const IN_PLACE = [
-  { title: 'Rules', detail: 'What Vivid needs to ask you about first.', over: Over.Rules() },
-  { title: 'Record', detail: 'Vivid’s actions and who they were for.', over: Over.Record() },
-] as const satisfies ReadonlyArray<{ title: string; detail: string; over: Over }>
+  { title: 'Rules', over: Over.Rules() },
+  { title: 'Record', over: Over.Record() },
+] as const satisfies ReadonlyArray<{ title: string; over: Over }>
 
 /**
  * Settings: the Person's name and own preferences and what Vivid has kept about them, which are the same
@@ -103,8 +103,8 @@ export function Settings() {
 
   const leave = () =>
     confirmDestructive({
-      title: 'Sign out of this phone?',
-      detail: 'Your threads stay where they are. You will need to sign in here again.',
+      title: 'Sign out?',
+      detail: 'You’ll need to sign in again on this phone.',
       action: 'Sign out',
       onConfirm: () => {
         warn()
@@ -123,31 +123,14 @@ export function Settings() {
             leading={<Avatar name={me.person.name} image={pictureOf(me.person)} size={40} />}
             title={me.person.name}
             detail={me.person.email}
-          />
-          <Row
-            title="Your name"
-            detail="What Vivid calls you, and what others see beside your messages."
-            wrap
             onPress={() => openNaming(data)}
           />
-          <Row
-            title="What Vivid knows"
-            detail="What Vivid remembers about you. Correct or remove anything."
-            onPress={() => go.navigate('Memory')}
-          />
-          <Row
-            title="What Vivid is doing"
-            detail="What runs while you are away, and a way to stop it."
-            onPress={() => setOver(Over.Work())}
-          />
+          <Row title="Memory" onPress={() => go.navigate('Memory')} />
+          <Row title="Running now" onPress={() => setOver(Over.Work())} />
         </Section>
         <VividRow workspace={me.workspace} onCustomise={() => setOver(Over.Customise())} />
         <Section title="Devices">
-          <Row
-            title="Your computers"
-            detail="Choose which of your computers Vivid can use."
-            onPress={() => setOver(Over.Devices())}
-          />
+          <Row title="Computers" onPress={() => setOver(Over.Devices())} />
         </Section>
         <TextVivid onOpen={() => go.navigate('Texting')} />
         <Live state={settings} loading={<Skeleton rows={3} />}>
@@ -198,8 +181,11 @@ function ThisApp() {
   return (
     <Section title="This app">
       {Option.isSome(version) && <Row title="Version" detail={version.value} />}
-      <Row title="Update" detail={runningWords(running, writeMoment)} wrap />
-      <Row title="Error reports" detail={reportsWords(reports())} wrap />
+      {Option.match(runningWords(running, writeMoment), {
+        onNone: () => null,
+        onSome: (words) => <Row title="Update" detail={words} />,
+      })}
+      <Row title="Error reports" detail={reportsWords(reports())} />
     </Section>
   )
 }
@@ -217,12 +203,7 @@ function VividRow({ workspace, onCustomise }: { workspace: Workspace; onCustomis
       <Row
         leading={<Face size={40} label="" />}
         title={name}
-        detail={
-          editable
-            ? 'Change Vivid’s name and colour everywhere it appears.'
-            : 'Only an owner or admin of this company can change its name and colour.'
-        }
-        wrap
+        detail={editable ? undefined : 'Only admins can change this'}
         onPress={editable ? onCustomise : undefined}
       />
     </Section>
@@ -255,11 +236,7 @@ function TextVivid({ onOpen }: { onOpen: () => void }) {
     <Section title="Text Vivid">
       <Row
         title="iMessage and WhatsApp"
-        detail={
-          standings.length === 0
-            ? 'Connect your number, then text Vivid from your phone.'
-            : standings.join(' · ')
-        }
+        detail={standings.length === 0 ? undefined : standings.join(' · ')}
         wrap
         onPress={onOpen}
       />
@@ -273,15 +250,8 @@ function TextVivid({ onOpen }: { onOpen: () => void }) {
  */
 function Sharing({ workspace, onPeople }: { workspace: Workspace; onPeople: () => void }) {
   return Workspace.match(workspace, {
-    Personal: () => (
-      <Row
-        title="You are working in your own space"
-        detail="To share threads, a library and integrations, create a company from the menu on Home."
-      />
-    ),
-    Company: () => (
-      <Row title="People" detail="Members, invitations and roles." onPress={onPeople} />
-    ),
+    Personal: () => <Row title="Sharing" detail="Create a company from Home to share" wrap />,
+    Company: () => <Row title="People" onPress={onPeople} />,
   })
 }
 
@@ -312,41 +282,19 @@ function Shared({
       })}
     >
       <Sharing workspace={workspace} onPeople={onPeople} />
-      <Row
-        title="Integrations"
-        detail="The services Vivid can use for you."
-        onPress={onIntegrations}
-      />
+      <Row title="Integrations" onPress={onIntegrations} />
       {IN_PLACE.map((sheet) => (
-        <Row
-          key={sheet.title}
-          title={sheet.title}
-          detail={sheet.detail}
-          onPress={() => onOpen(sheet.over)}
-        />
+        <Row key={sheet.title} title={sheet.title} onPress={() => onOpen(sheet.over)} />
       ))}
     </Section>
   )
 }
 
-/** One setting with a control too wide to sit beside its name: the name, a line, then the control. */
-function Setting({
-  title,
-  detail,
-  children,
-}: {
-  title: string
-  detail: string
-  children: ReactNode
-}) {
+/** One setting with a control too wide to sit beside its name: the name, then the control. */
+function Setting({ title, children }: { title: string; children: ReactNode }) {
   return (
     <View style={{ paddingHorizontal: 16, paddingVertical: 12, gap: 10 }}>
-      <View style={{ gap: 1 }}>
-        <Label>{title}</Label>
-        <Label size="label" tone="ink-2">
-          {detail}
-        </Label>
-      </View>
+      <Label>{title}</Label>
       {children}
     </View>
   )
@@ -399,7 +347,7 @@ function Preferences({ settings, onZone }: { settings: SettingsRecord; onZone: (
     <>
       {Option.isSome(refused) && <Notice message={refused.value} />}
       <Section title="Preferences">
-        <Setting title="Appearance" detail="Light or dark, on this phone and your other devices.">
+        <Setting title="Appearance">
           <Segmented
             label="Appearance"
             value={settings.theme}
@@ -411,12 +359,11 @@ function Preferences({ settings, onZone }: { settings: SettingsRecord; onZone: (
             }}
           />
         </Setting>
-        <Setting title="Theme" detail="Vivid’s colours on this phone.">
+        <Setting title="Theme">
           <Themes />
         </Setting>
         <Row
           title="Notifications"
-          detail="Tell me when something finishes or needs me."
           trailing={
             // The system's own switch, in the theme's primary: on or off is what it is for.
             <Switch
@@ -428,11 +375,7 @@ function Preferences({ settings, onZone }: { settings: SettingsRecord; onZone: (
           }
         />
         <Away />
-        <Row
-          title="Time zone"
-          detail={`${settings.timezone.replaceAll('_', ' ')}. Times like “tomorrow at 9” use this.`}
-          onPress={onZone}
-        />
+        <Row title="Time zone" detail={settings.timezone.replaceAll('_', ' ')} onPress={onZone} />
       </Section>
     </>
   )
@@ -450,7 +393,6 @@ function Zone({ onClose }: { onClose: () => void }) {
   return (
     <NameSheet
       title="Time zone"
-      detail={`Enter a time zone name. This phone is in ${here}.`}
       label="Time zone"
       initial={settings.value.timezone}
       placeholder={here}
@@ -464,24 +406,26 @@ function Zone({ onClose }: { onClose: () => void }) {
   )
 }
 
-const HERE = 'On this phone, even when Vivid is closed.'
-
-/** The row's words for each reading of the machine (`@vivid/state` `notifying.ts`). */
-const awayDetail = (reading: notifying.Reading): string =>
+/**
+ * The row's second line for each reading of the machine (`@vivid/state` `notifying.ts`): only
+ * what the switch cannot say by itself. A Person who closed the system question without
+ * answering sees the switch off and can press it again, so that reading has no line.
+ */
+const awayDetail = (reading: notifying.Reading): Option.Option<string> =>
   notifying.Reading.match(reading, {
-    Starting: () => HERE,
-    Unsupported: () => 'Notifications while Vivid is closed are not available on this build.',
-    Blocked: () => 'Notifications are off for Vivid in this phone’s settings. Open them to allow.',
-    Off: () => HERE,
-    TurningOn: () => HERE,
-    On: () => HERE,
-    TurningOff: () => HERE,
-    Kept: () => 'Still on: Vivid could not be reached to turn it off. Try again.',
+    Starting: () => Option.none(),
+    Unsupported: () => Option.some('Not available in this build'),
+    Blocked: () => Option.some('Off in iPhone Settings. Tap to allow.'),
+    Off: () => Option.none(),
+    TurningOn: () => Option.none(),
+    On: () => Option.none(),
+    TurningOff: () => Option.none(),
+    Kept: () => Option.some('Couldn’t turn off. Try again.'),
     Refused: ({ reason }) =>
       ({
-        Dismissed: 'The question was closed without an answer. Turn it on to be asked again.',
-        Unavailable: 'This phone could not be set up for notifications. Try again.',
-        Unreachable: 'Vivid could not be reached. Try again.',
+        Dismissed: Option.none(),
+        Unavailable: Option.some('Couldn’t turn on. Try again.'),
+        Unreachable: Option.some('Couldn’t reach Vivid. Try again.'),
       })[reason],
   })
 
@@ -498,13 +442,13 @@ function Away() {
   const blocked = notifying.Reading.guards.Blocked(reading)
   return (
     <Row
-      title="Notify me when something needs me"
-      detail={awayDetail(reading)}
+      title="Notify me on this phone"
+      detail={Option.getOrUndefined(awayDetail(reading))}
       wrap
       onPress={blocked ? () => void Linking.openSettings() : undefined}
       trailing={
         <Switch
-          accessibilityLabel="Notify me when something needs me"
+          accessibilityLabel="Notify me on this phone"
           value={notifying.isOn(reading)}
           disabled={
             blocked || notifying.isWaiting(reading) || notifying.Reading.guards.Unsupported(reading)

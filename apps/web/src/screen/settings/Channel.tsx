@@ -60,7 +60,7 @@ export function TextingChannels({
     <Section
       // Not "Text Vivid" again: the pane is already titled that, one line above.
       title="Messaging apps"
-      detail="Connect an app, then message Vivid there the way you message anyone."
+      detail="Message Vivid from iMessage or WhatsApp."
     >
       {links.map((link) => (
         <ChannelControl key={link.channel} link={link} acts={acts} />
@@ -193,7 +193,7 @@ function Line({
  */
 function Unavailable({ channel }: { channel: Channel }) {
   return (
-    <Line channel={channel} quiet detail={`Vivid cannot text on ${channel} yet.`}>
+    <Line channel={channel} quiet detail="Coming soon">
       <Button size="sm" variant="outline" disabled>
         Connect
       </Button>
@@ -218,7 +218,7 @@ function NotConnected({
   const [edited, setEdited] = useState(false)
   const busy = asking !== 'nothing'
   return (
-    <Line channel={channel} detail="Your own number, with its country code.">
+    <Line channel={channel} detail="Include your country code.">
       <form
         className="flex w-full items-center gap-2 sm:w-auto"
         onSubmit={(event) => {
@@ -269,7 +269,7 @@ function NotStarted({
   onConnect: () => void
 }) {
   return (
-    <Line channel={channel} detail={`Connect, then send Vivid a code on ${channel}.`}>
+    <Line channel={channel} detail={`Send Vivid a code on ${channel} to connect.`}>
       <Button size="sm" disabled={asking !== 'nothing'} onClick={onConnect}>
         {asking === 'connecting' ? 'Connecting…' : `Connect ${channel}`}
       </Button>

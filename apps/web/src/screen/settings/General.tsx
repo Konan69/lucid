@@ -214,7 +214,7 @@ function Preferences({ settings }: { settings: Settings }) {
         message={unsaved ? 'Couldn’t reach Vivid, so that change wasn’t saved. Try again.' : null}
       />
       <Section title="Preferences">
-        <Row label="Appearance" detail="How Vivid looks on this device and your other devices.">
+        <Row label="Appearance">
           <Segmented
             label="Appearance"
             value={settings.theme}
@@ -225,7 +225,7 @@ function Preferences({ settings }: { settings: Settings }) {
             }}
           />
         </Row>
-        <Row label="Time zone" detail="Times like “tomorrow at 9” use this.">
+        <Row label="Time zone">
           <Select
             value={settings.timezone}
             items={zones}
@@ -249,7 +249,7 @@ function Preferences({ settings }: { settings: Settings }) {
             </SelectContent>
           </Select>
         </Row>
-        <Row label="Notifications" detail="Tell me when something finishes or needs me.">
+        <Row label="Notifications">
           <Segmented
             label="Notifications"
             value={settings.notify ? 'on' : 'off'}
@@ -270,39 +270,35 @@ function Preferences({ settings }: { settings: Settings }) {
 
 /** What this browser's row says, and the one thing it offers to do, when it offers one. */
 interface AwayWords {
-  readonly detail: string
+  readonly detail: Option.Option<string>
   readonly action: Option.Option<{ readonly label: string; readonly press: () => void }>
 }
 
-const HERE = 'In this browser, even when Vivid is closed.'
 const turnOn = Option.some({ label: 'Turn on', press: turnNotificationsOn })
 const turnOff = Option.some({ label: 'Turn off', press: turnNotificationsOff })
 
 /** The row's words for each reading of the machine (`@vivid/state` `notifying.ts`). */
 const awayWords = (reading: notifying.Reading): AwayWords =>
   notifying.Reading.match<AwayWords>(reading, {
-    Starting: () => ({ detail: HERE, action: Option.none() }),
+    Starting: () => ({ detail: Option.none(), action: Option.none() }),
     Unsupported: () => ({
-      detail: 'This browser cannot notify you while Vivid is closed.',
+      detail: Option.some('Not available in this browser'),
       action: Option.none(),
     }),
     Blocked: () => ({
-      detail: 'This browser blocks notifications from Vivid. Allow them in its site settings.',
+      detail: Option.some('Blocked in this browser’s site settings'),
       action: turnOn,
     }),
-    Off: () => ({ detail: HERE, action: turnOn }),
-    TurningOn: () => ({ detail: HERE, action: turnOff }),
-    On: () => ({ detail: HERE, action: turnOff }),
-    TurningOff: () => ({ detail: HERE, action: turnOn }),
-    Kept: () => ({
-      detail: 'Still on: Vivid could not be reached to turn it off. Try again.',
-      action: turnOff,
-    }),
+    Off: () => ({ detail: Option.none(), action: turnOn }),
+    TurningOn: () => ({ detail: Option.none(), action: turnOff }),
+    On: () => ({ detail: Option.none(), action: turnOff }),
+    TurningOff: () => ({ detail: Option.none(), action: turnOn }),
+    Kept: () => ({ detail: Option.some('Couldn’t turn off. Try again.'), action: turnOff }),
     Refused: ({ reason }) => ({
       detail: {
-        Dismissed: 'The question was closed without an answer. Turn it on to be asked again.',
-        Unavailable: 'This browser could not be set up for notifications. Try again.',
-        Unreachable: 'Vivid could not be reached. Try again.',
+        Dismissed: Option.none(),
+        Unavailable: Option.some('Couldn’t turn on. Try again.'),
+        Unreachable: Option.some('Couldn’t reach Vivid. Try again.'),
       }[reason],
       action: turnOn,
     }),
@@ -318,7 +314,7 @@ function Away() {
   const reading = useNotifying()
   const { detail, action } = awayWords(reading)
   return (
-    <Row label="Notify me when something needs me" detail={detail}>
+    <Row label="Notify me in this browser" detail={Option.getOrUndefined(detail)}>
       {Option.isSome(action) && (
         <Button
           variant="outline"
