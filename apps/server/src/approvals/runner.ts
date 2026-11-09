@@ -62,10 +62,13 @@ export const actionRunnerLayer = Layer.effect(
           const row = yield* connections.get(actor, target.connectionId)
           return yield* inspectMail(row, target)
         }).pipe(Effect.provideContext(services)),
-      run: ({ person, workspace, action, origin }) => {
+      run: ({ person, workspace, action, origin, operation }) => {
         const target = action.target
         return ActionTarget.guards.Connection(target)
-          ? Effect.provideContext(connectionRunner({ person, workspace, target }), services)
+          ? Effect.provideContext(
+              connectionRunner({ person, workspace, target, operation }),
+              services,
+            )
           : Effect.provideContext(computerRunner({ person, target, origin }), services)
       },
     })

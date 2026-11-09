@@ -57,6 +57,7 @@ import {
   resourceReason,
 } from './executor.ts'
 import { operationsOf } from './members.ts'
+import { prepareReconciliation } from './reconcile.ts'
 import { callableTool, discoveredTool } from '../code/signatures.ts'
 import { executorFailure } from './errors.ts'
 import { ConnectionStore, ToolDiscovery } from './store.ts'
@@ -69,6 +70,7 @@ import { permissionRefusal } from './permissions.ts'
 import { namedAccounts } from './names.ts'
 import { bindDocuments } from '../artifacts/store.ts'
 import { namedDocuments } from '../artifacts/placeholder.ts'
+import { bindFiles } from './files.ts'
 
 /** Provider schemas stay on this server projection; discovery publishes only rendered signatures. */
 const NamedTool = ExecutorTool.pipe(
@@ -390,8 +392,11 @@ export const runConnection = Effect.fn('Connections.run')(
     const { effect, operation } = call
     const refusal = yield* permissionRefusal(row)
     if (Option.isSome(refusal)) return yield* notRead(refusal.value)
+    const sending = Option.isSome(operation)
+      ? yield* prepareReconciliation(row, target, operation.value)
+      : target
     const outcome = yield* (yield* operationsOf(row))
-      .call({ references: row.references, tool: target.tool, input: target.input })
+      .call({ references: row.references, tool: sending.tool, input: sending.input })
       .pipe(
         Effect.mapError((error) =>
           isResourceMissing(error) || isApprovalUnsupported(error) ? error : executorFailure(error),
@@ -663,7 +668,10 @@ const prepareTool = Effect.fn('Connections.prepareTool')(function* (
  * one of them is not there. A document is named within the acting Thread only; a call with no
  * Thread (a display's) names none.
  */
-const bindInput = Effect.fn('Connections.bindInput')(function* (actor: Actor, input: Schema.Json) {
+const bindDocumentInput = Effect.fn('Connections.bindDocumentInput')(function* (
+  actor: Actor,
+  input: Schema.Json,
+) {
   if (Option.isNone(actor.threadId))
     return namedDocuments(input).length === 0
       ? Result.succeed({ input, preconditions: [] })
@@ -685,6 +693,41 @@ const bindInput = Effect.fn('Connections.bindInput')(function* (actor: Actor, in
       ),
     ),
   )
+})
+
+/** File refusals are model-readable data, decided before approval and Executor dispatch. */
+const bindInput = Effect.fn('Connections.bindInput')(function* (actor: Actor, input: Schema.Json) {
+  const files = yield* bindFiles(actor, input).pipe(
+    Effect.map(Result.succeed),
+    Effect.catchTags({
+      IntegrationFileUnavailable: ({ name }) =>
+        Effect.succeed(
+          Result.fail(
+            ToolOutcome.cases.Rejected.make({
+              message: `File "${name}" is unavailable or its name is ambiguous on your own shelf or Thread.`,
+            }),
+          ),
+        ),
+      IntegrationFileTooLarge: ({ limit }) =>
+        Effect.succeed(
+          Result.fail(
+            ToolOutcome.cases.Rejected.make({
+              message: `Integration files exceed the ${limit} byte total limit.`,
+            }),
+          ),
+        ),
+      IntegrationFileReferenceInvalid: () =>
+        Effect.succeed(
+          Result.fail(
+            ToolOutcome.cases.Rejected.make({
+              message: 'Use {"$file":{"source":"artifact" or "library","name":"visible name"}}.',
+            }),
+          ),
+        ),
+    }),
+  )
+  if (Result.isFailure(files)) return files
+  return yield* bindDocumentInput(actor, files.success)
 })
 
 /** One Integration call as Vivid asks for it, before the server names its operation. */
@@ -988,6 +1031,7 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
     readonly person: Person
     readonly workspace: Workspace
     readonly target: typeof ActionTarget.cases.Connection.Type
+    readonly operation: Option.Option<ActionOperationId>
   }) {
     const workspace = yield* workspaceIn(
       input.person.id,
@@ -1025,7 +1069,7 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
     // The Approval's decision journals this operation around the runner (`approvals/store.ts`).
     const outcome = yield* runConnection(actor, row, input.target, {
       effect: tool.effect,
-      operation: Option.none(),
+      operation: input.operation,
     })
     yield* recordTimerOutcome(actor, input.target, outcome)
     return actionOutcome(outcome)
