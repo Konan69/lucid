@@ -42,6 +42,7 @@ const liveLayer = executorLayer.pipe(
         GOOGLE_CLIENT_ID: clientId,
         GOOGLE_CLIENT_SECRET: 'isolated-test-secret',
         VIVID_EXECUTOR_URL: NodeProcess.env['VIVID_TEST_EXECUTOR_URL'],
+        VIVID_EXECUTOR_PUBLIC_URL: NodeProcess.env['VIVID_TEST_EXECUTOR_URL'],
         VIVID_EXECUTOR_KEY: NodeProcess.env['VIVID_TEST_EXECUTOR_KEY'],
         VIVID_EXECUTOR_ORGANIZATION: NodeProcess.env['VIVID_TEST_EXECUTOR_ORGANIZATION'],
       }),

@@ -332,6 +332,7 @@ Required by the stack:
 
 - `VIVID_EXECUTOR_KEY`, `VIVID_EXECUTOR_ORGANIZATION` — the key and organization the server uses
   on Executor, which gives Vivid its Integrations. Both are minted on the deployed Executor.
+- `VIVID_EXECUTOR_PUBLIC_URL` — Executor's public origin (`https://` plus its Railway public domain). Its sign-in checks the request Origin against it and refuses the private address, so member provisioning signs in there.
 - `VIVID_EXECUTOR_OWNER_EMAIL`, `VIVID_EXECUTOR_OWNER_PASSWORD` — the Executor owner's sign-in. The
   server invites each Person's own Executor member with it the first time that Person connects an
   Integration of their own (`apps/server/src/connections/members.ts`).
