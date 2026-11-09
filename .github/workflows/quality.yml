@@ -109,9 +109,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .turbo/cache
-          key: turbo-${{ runner.os }}-${{ matrix.stages }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          key: turbo-${{ runner.os }}-${{ strategy.job-index }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
           restore-keys: |
-            turbo-${{ runner.os }}-${{ matrix.stages }}-${{ hashFiles('pnpm-lock.yaml') }}-
+            turbo-${{ runner.os }}-${{ strategy.job-index }}-${{ hashFiles('pnpm-lock.yaml') }}-
 
       - name: Run the gate stages
         run: node scripts/gate.mjs full --here --only ${{ matrix.stages }} --ceilings-base "$CEILINGS_BASE"
@@ -177,7 +177,11 @@ jobs:
             turbo-${{ runner.os }}-test-${{ hashFiles('pnpm-lock.yaml') }}-
 
       - name: Run the test stage
-        run: node scripts/gate.mjs full --here --only test
+        run: |
+          if ! node scripts/gate.mjs full --here --only test; then
+            cat .cache/gate/runs/*/test.log
+            exit 1
+          fi
 
   proof:
     name: Regression proof
