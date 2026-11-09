@@ -101,11 +101,13 @@ export type ExecutorPrincipal = typeof ExecutorPrincipal.Type
 
 /**
  * The credential one request to Executor is sent with, decided from a Connection's principal.
- * `Member` carries that Person's member key, read from its sealed copy (`members.ts`).
+ * `Member` carries the stable Executor user identity and its key. Consumers do not need to read
+ * provisioning state to address that member in Executor's public APIs.
  */
+export const ExecutorUserId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorUserId'))
 export const ExecutorCaller = Schema.TaggedUnion({
   Installation: {},
-  Member: { key: Schema.Redacted(Schema.String) },
+  Member: { user: ExecutorUserId, key: Schema.Redacted(Schema.String) },
 })
 export type ExecutorCaller = typeof ExecutorCaller.Type
 /** The installation owner, for installation resources and for Connections it owns. */

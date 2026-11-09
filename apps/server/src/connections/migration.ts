@@ -18,15 +18,16 @@ import { AdoptionSourceUnsupported, adoptionFiles, adoptedFiles } from './adopti
 import {
   AdoptedSource,
   Executor,
+  ExecutorCaller,
+  ExecutorAccessDenied,
   ExecutorAppOwnership,
   ExecutorBinding,
   ExecutorReferences,
   installationCaller,
-  type ExecutorCaller,
 } from './executor.ts'
-import { ExecutorMembers, MemberState } from './members.ts'
+import { ExecutorMembers } from './members.ts'
 import { decodeRow, encodeReferences, type ConnectionRecord } from './records.ts'
-import { connections, executorMembers } from './tables.ts'
+import { connections } from './tables.ts'
 
 type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
 const sourceUnsupported = Schema.is(AdoptionSourceUnsupported)
@@ -35,7 +36,6 @@ const decodeClaim = decodeStored(
   Schema.Struct({ rows: Schema.Tuple([Schema.Struct({ acquired: Schema.Boolean })]) }),
   'Connection adoption claim',
 )
-const decodeMember = decodeStored(MemberState, 'Executor member')
 const Outcome = Schema.TaggedUnion({
   Moved: {},
   Finalized: {},
@@ -77,24 +77,15 @@ const claim = Effect.fn('Connections.claimAdoption')(function* <E, R>(
   )
 })
 
-/** Provisioning is independently durable in ExecutorMembers. Only its Ready user names a group. */
+/** Group membership uses the identity returned by the public caller interface, never its store. */
 const memberFor = Effect.fn('Connections.adoptionMember')(function* (row: ConnectionRecord) {
   const caller = yield* (yield* ExecutorMembers).caller({
     principal: 'member',
     personId: row.personId,
   })
-  const database = yield* Database
-  const [stored] = yield* database.run(
-    database.select().from(executorMembers).where(eq(executorMembers.personId, row.personId)),
-  )
-  if (stored === undefined)
-    return yield* new DatabaseFailure({ message: 'Executor member is missing after provisioning' })
-  const state = yield* decodeMember(stored.state)
-  if (!MemberState.guards.Ready(state))
-    return yield* new DatabaseFailure({
-      message: 'Executor member is not ready after provisioning',
-    })
-  return { caller, user: state.user }
+  if (!ExecutorCaller.guards.Member(caller))
+    return yield* ExecutorAccessDenied.make({ service: 'connections', tool: null })
+  return { caller, user: caller.user }
 })
 
 /** The bridge marker commits before any source or link changes. A refused source stays entirely

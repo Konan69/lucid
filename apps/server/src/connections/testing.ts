@@ -54,6 +54,7 @@ import {
   type ExecutorConnectionOperations,
   type ExecutorActiveReferences,
   ExecutorCaller,
+  ExecutorUserId,
   Executor,
   ExecutorAppId,
   ExecutorAuthorizationId,
@@ -368,7 +369,10 @@ export const testMembersLayer = Layer.mergeAll(
           Match.value(principal).pipe(
             Match.when('installation', () => installationCaller),
             Match.whenOr('member', 'adopted', () =>
-              ExecutorCaller.cases.Member.make({ key: Redacted.make('test-member-key') }),
+              ExecutorCaller.cases.Member.make({
+                user: ExecutorUserId.make('test-executor-user'),
+                key: Redacted.make('test-member-key'),
+              }),
             ),
             Match.exhaustive,
           ),

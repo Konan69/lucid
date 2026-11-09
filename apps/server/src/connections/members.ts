@@ -25,6 +25,7 @@ import {
   Executor,
   ExecutorAccessDenied,
   ExecutorCaller,
+  ExecutorUserId,
   ExecutorRateLimited,
   ExecutorResponseInvalid,
   ExecutorTransportFailure,
@@ -71,8 +72,6 @@ export type MemberFailure =
   | ExecutorAccessDenied
   | ExecutorResponseInvalid
   | DatabaseInfrastructureError
-
-const ExecutorUserId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorUserId'))
 
 /**
  * Where a Person's member is. `Provisioning` is written before Executor is first asked anything,
@@ -284,7 +283,7 @@ const makeMembers = Effect.fn('ExecutorMembers.make')(function* () {
   /** The member's key from a Ready row, opened for this request only. */
   const keyOf = (person: PersonId, state: Extract<MemberState, { readonly _tag: 'Ready' }>) =>
     unseal(secret, person, state.sealedKey).pipe(
-      Effect.map((key) => ExecutorCaller.cases.Member.make({ key })),
+      Effect.map((key) => ExecutorCaller.cases.Member.make({ user: state.user, key })),
     )
 
   const member = Effect.fn('ExecutorMembers.member')(function* (person: PersonId) {
