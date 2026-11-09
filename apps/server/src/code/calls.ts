@@ -1,4 +1,5 @@
 import {
+  ActionApplied,
   BrowseOutcome,
   BrowseRequest,
   CodeCallKind,
@@ -121,6 +122,18 @@ const connection = Effect.fn('Code.useConnection')(function* (
   const result = sent.value
   const evidence = { coverage: result.coverage, asOf: result.asOf, observedAt: result.observedAt }
   return ToolOutcome.match<CallOutcome>(result.outcome, {
+    Accepted: ({ output, receipt }) =>
+      CallOutcome.cases.Returned.make({
+        value: {
+          ok: true,
+          output,
+          message: 'The service accepted the action; it is queued, not confirmed yet.',
+          ...evidence,
+        },
+        summary: request.summary,
+        end: 'accepted',
+        receipt,
+      }),
     Completed: ({ output, receipt }) =>
       CallOutcome.cases.Returned.make({
         value: { ok: true, output, ...evidence },
@@ -132,7 +145,7 @@ const connection = Effect.fn('Code.useConnection')(function* (
       CallOutcome.cases.Returned.make({
         value: { ok: true, output: null, repeated: true, ...evidence },
         summary: request.summary,
-        end: 'completed',
+        end: ActionApplied.guards.Accepted(receipt) ? 'accepted' : 'completed',
         receipt,
       }),
     ApprovalRequired: ({ approvalId, summary }) =>

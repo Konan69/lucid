@@ -325,6 +325,7 @@ interface ListedTool {
   readonly account: typeof ToolAccount.Type
 }
 export const ExecutorCallOutcome = Schema.TaggedUnion({
+  Accepted: { value: Schema.Json },
   Completed: { value: Schema.Json },
   Rejected: {
     message: Schema.String,
@@ -1138,10 +1139,38 @@ function classifyTool(tool: typeof WireTool.Type) {
   return 'write' as const
 }
 
-/** A completed semantic error is actionable, not a successful tool value. */
+/** Only explicit provider acceptance evidence changes a synchronous answer into unfinished work.
+ * MCP retains its structured envelope in beta.23. Google long-running operations omit `done`
+ * until finished (Drive long-running-operations docs); an ordinary resource id proves no job.
+ * OpenAPI HTTP status is discarded upstream, so only status exposed in the answer is usable. */
+const pendingStatus = Schema.Literals([
+  'accepted',
+  'queued',
+  'scheduled',
+  'pending',
+  'processing',
+  'in_progress',
+])
+const acceptance = Schema.Union([
+  Schema.Struct({ status: pendingStatus }),
+  Schema.Struct({ status: Schema.Literal(202) }),
+  Schema.Struct({ statusCode: Schema.Literal(202) }),
+  Schema.Struct({ accepted: Schema.Literal(true) }),
+  Schema.Struct({ jobId: Schema.NonEmptyString, status: Schema.optionalKey(pendingStatus) }),
+  Schema.Struct({
+    name: Schema.String.check(Schema.isPattern(/^operations\//u)),
+    done: Schema.optionalKey(Schema.NullOr(Schema.Literal(false))),
+  }),
+])
+const isAccepted = Schema.is(
+  Schema.Union([acceptance, Schema.Struct({ structuredContent: acceptance })]),
+)
+
+/** A synchronous answer can reject the call, accept unfinished work, or confirm its result. */
 function completedCall(value: Schema.Json) {
   if (isToolError(value))
     return ExecutorCallOutcome.cases.Rejected.make({ message: toolRejectionMessage })
+  if (isAccepted(value)) return ExecutorCallOutcome.cases.Accepted.make({ value })
   return ExecutorCallOutcome.cases.Completed.make({ value })
 }
 

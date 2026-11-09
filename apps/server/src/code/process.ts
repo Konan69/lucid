@@ -40,7 +40,7 @@ const FINAL_LOG_GRACE = CodeTiming.graceMs
 export const CallOutcome = Schema.TaggedUnion({
   Returned: {
     value: Schema.Json,
-    end: Schema.Literals(['completed', 'refused']),
+    end: Schema.Literals(['accepted', 'completed', 'refused']),
     summary: Schema.String,
     /** The journal's receipt when the call sent an outward write; null otherwise. */
     receipt: Schema.NullOr(ActionReceipt),

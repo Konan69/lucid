@@ -1,5 +1,6 @@
 import { describe, expect, layer } from '@effect/vitest'
 import { Clock, Deferred, Effect, Fiber, Layer, Logger, Predicate, Ref, Schema } from 'effect'
+import * as Option from 'effect/Option'
 import { ScriptedAnswer } from '../decisions/testing.ts'
 import { DecisionModel } from 'effect/ai'
 import { RELEVANCE_BUDGET } from './relevance.ts'
@@ -185,6 +186,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
               return yield* Effect.gen(function* () {
                 if (caller === 'approved')
                   return yield* connectionRunner({
+                    operation: Option.none(),
                     person: ownerActor.person,
                     workspace: ownerActor.workspace,
                     target,
@@ -261,6 +263,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             yield* store.failed(ownerActor, row, 'Private failure')
           if (reason === 'NeedsAuthorization') yield* store.notReady(ownerActor, row)
           const outcome = yield* connectionRunner({
+            operation: Option.none(),
             person: reason === 'IntegrationUnavailable' ? memberActor.person : ownerActor.person,
             workspace: ownerActor.workspace,
             target: ActionTarget.cases.Connection.make({
@@ -313,6 +316,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           const probe = yield* ConnectionProbe
           const calls = yield* Ref.get(probe.calls)
           const outcome = yield* connectionRunner({
+            operation: Option.none(),
             person: ownerActor.person,
             workspace: ownerActor.workspace,
             target: ActionTarget.cases.Connection.make({
@@ -363,6 +367,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           })
           const calls = yield* Ref.get((yield* ConnectionProbe).calls)
           const outcome = yield* connectionRunner({
+            operation: Option.none(),
             person: ownerActor.person,
             workspace: ownerActor.workspace,
             target: ActionTarget.cases.Connection.make({
@@ -422,6 +427,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           )
           const calls = yield* Ref.get(probe.calls)
           const outcome = yield* connectionRunner({
+            operation: Option.none(),
             person: ownerActor.person,
             workspace: ownerActor.workspace,
             target: ActionTarget.cases.Connection.make({
@@ -1541,6 +1547,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
               effect: 'read',
             })
             const executed = yield* connectionRunner({
+              operation: Option.none(),
               person: ownerActor.person,
               workspace: ownerActor.workspace,
               target: ActionTarget.cases.Connection.make({

@@ -50,7 +50,7 @@ jobs:
     # stays cancelled, which `always()` would not allow.
     if: ${{ !cancelled() && needs.signoff.outputs.signed != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       # A push to main must compare with its previous tip, even when origin/main is already HEAD.
       CEILINGS_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -60,12 +60,17 @@ jobs:
         include:
           - name: Policy, format and tooling
             stages: policy,format,tooling
+            # actions/cache refuses a key that contains a comma, so the key uses its own spelling.
+            cache: policy-format-tooling
           - name: Lint with native type analysis
             stages: lint
+            cache: lint
           - name: Typecheck
             stages: typecheck
+            cache: typecheck
           - name: Production builds
             stages: build
+            cache: build
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -109,17 +114,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .turbo/cache
-          key: turbo-${{ runner.os }}-${{ strategy.job-index }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          key: turbo-${{ runner.os }}-${{ matrix.cache }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
           restore-keys: |
-            turbo-${{ runner.os }}-${{ strategy.job-index }}-${{ hashFiles('pnpm-lock.yaml') }}-
+            turbo-${{ runner.os }}-${{ matrix.cache }}-${{ hashFiles('pnpm-lock.yaml') }}-
 
-      # Preserve the stage logs when the shell exits on failure. A pass removes the trap;
-      # cancellation logs depend on whether the runner lets the shell handle its signal.
       - name: Run the gate stages
-        run: |
-          trap 'status=$?; cat .cache/gate/runs/*/*.log .turbo/*.log || true; exit $status' EXIT
-          node scripts/gate.mjs full --here --only ${{ matrix.stages }} --ceilings-base "$CEILINGS_BASE"
-          trap - EXIT
+        run: node scripts/gate.mjs full --here --only ${{ matrix.stages }} --ceilings-base "$CEILINGS_BASE"
 
   test:
     name: Test
@@ -168,18 +168,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Electron refuses to start when its installed setuid sandbox has pnpm's user ownership.
-      - name: Configure Electron sandbox
-        run: |
-          pnpm --dir apps/desktop exec node --input-type=module <<'NODE'
-          import path from 'node:path'
-          import { execFileSync } from 'node:child_process'
-          import electron from 'electron'
-          const sandbox = path.join(path.dirname(electron), 'chrome-sandbox')
-          execFileSync('sudo', ['chown', 'root:root', sandbox], { stdio: 'inherit' })
-          execFileSync('sudo', ['chmod', '4755', sandbox], { stdio: 'inherit' })
-          NODE
-
       # pnpm's cache contains downloads, not successful check results. Task hashes decide reuse
       # after restoring the latest cache for this lockfile; each job keeps its own, so a job
       # restores only the results of the stages it runs.
@@ -193,12 +181,24 @@ jobs:
           restore-keys: |
             turbo-${{ runner.os }}-test-${{ hashFiles('pnpm-lock.yaml') }}-
 
+      # The desktop suites start a real Electron under xvfb. Ubuntu 24.04 runners forbid the
+      # unprivileged user namespaces Chromium's sandbox needs, and Electron exits before the
+      # proof reports (`browser.test.ts`, NativeProofFailed with an empty message).
+      - name: Allow Electron's sandbox on the runner
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Run the test stage
-        run: |
-          if ! node scripts/gate.mjs full --here --only test; then
-            cat .cache/gate/runs/*/test.log
-            exit 1
-          fi
+        run: node scripts/gate.mjs full --here --only test
+
+      # The gate prints one line per failing package; the failing test's own output is only in
+      # the run's logs, so keep them when the stage fails.
+      - name: Keep the test logs of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-test-logs
+          path: .cache/gate/runs/
+          retention-days: 7
 
   proof:
     name: Regression proof
