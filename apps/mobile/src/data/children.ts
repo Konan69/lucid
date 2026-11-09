@@ -1,6 +1,7 @@
 import { useAtomValue } from '@effect/atom-react'
 import type { ChildRun, RunId } from '@vivid/contracts'
 import { helpers, liveStateOf, type makeLive } from '@vivid/state'
+import { randomUUID } from 'expo-crypto'
 import { Effect, Layer, Result } from 'effect'
 import { warn } from './haptics'
 import { useLiveData, type LiveData } from './live'
@@ -16,7 +17,16 @@ export const makeHelpers = (engine: ReturnType<typeof makeLive>) => {
     }),
   )
   engine.registry.mount(stops.reading)
-  return { ...stops, results: helpers.results(engine) }
+  const followUps = helpers.makeFollowUps(
+    Layer.succeed(helpers.Sender, {
+      send: Effect.fn('Helpers.followUp')(function* (draft) {
+        const result = yield* engine.change((client) => client.FollowUpChildRun(draft))
+        if (Result.isFailure(result)) return yield* new helpers.FollowUpRefused({ id: draft.id })
+      }),
+    }),
+  )
+  engine.registry.mount(followUps.reading)
+  return { ...stops, results: helpers.results(engine), followUps }
 }
 
 /** The stop every helper row reads: what is being asked and what was refused. */
@@ -30,4 +40,13 @@ export const useHelperResult = (run: ChildRun) =>
 export const stopHelper = (data: LiveData, id: RunId) => {
   warn()
   data.registry.set(data.helpers.send, data.helpers.stop({ id }))
+}
+
+/** The follow-up every helper row reads: what is being sent and what was refused. */
+export const useHelperFollowUp = () => useAtomValue(useLiveData().helpers.followUps.reading)
+
+/** The machine takes the press only while no other follow-up is waiting on the server. */
+export const followUpHelper = (data: LiveData, id: RunId, message: string) => {
+  const followUps = data.helpers.followUps
+  data.registry.set(followUps.send, followUps.followUp({ id, message, key: randomUUID() }))
 }

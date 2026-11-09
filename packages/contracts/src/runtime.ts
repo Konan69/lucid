@@ -27,6 +27,8 @@ import { MessageHit } from './search.js'
  *   whether one helper's work is still running, or how it ended, with its answer and usage.
  * - `POST /persons/:personId/threads/:threadId/children/:runId/abort` aborts one helper's work
  *   and answers `RuntimeStopped` once it has ended.
+ * - `POST /persons/:personId/threads/:threadId/children/:runId/messages` hands one helper its
+ *   next round (`RuntimeChildMessage`) and answers `RuntimeChildMessaged` once that round began.
  *
  * The Person is the Thread's creator. The runtime keeps each Person's conversations in a
  * directory of their own, named by this id, so the id is also a file name and its alphabet is

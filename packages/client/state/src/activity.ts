@@ -386,6 +386,14 @@ const STEPS = {
     },
     detail: nothing,
   },
+  message_run: {
+    said: {
+      running: 'Sending a helper more to do',
+      done: 'Sent a helper more to do',
+      failed: 'Could not reach the helper',
+    },
+    detail: nothing,
+  },
   cancel_run: {
     said: {
       running: 'Stopping a helper',

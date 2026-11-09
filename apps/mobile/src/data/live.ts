@@ -38,6 +38,7 @@ import { makeArtifacts } from './artifact'
 import { makeNaming } from './name'
 import { makeGoal } from './goal'
 import { makeNotifying } from './notifying'
+import { makeLocating } from './locating'
 import { makeHelpers } from './children'
 import { makeConnecting } from './connecting'
 import { makeSending } from './sending'
@@ -464,7 +465,7 @@ function makeLiveData(session: SignedIn) {
     /** A step's calls, like a device decision, outlive the banner that pressed them. */
     handing: makeHandoffCalls(engine),
     ...makeForms(engine, live),
-    helpers: makeHelpers(engine), // Stopping a helper and reading its result (`data/children.ts`).
+    helpers: makeHelpers(engine), // Stopping, following up and reading a helper (`data/children.ts`).
     /** What Vivid made: its live queries, the editor and the share sheet (`data/artifact.ts`). */
     artifacts: makeArtifacts(engine, session),
     /**
@@ -495,11 +496,17 @@ export type LiveData = ReturnType<typeof makeLiveData>
  */
 const makeForms = (
   engine: ReturnType<typeof makeLive>,
-  live: { readonly me: LiveQuery<MeResponse>; readonly projects: LiveQuery<ProjectListResponse> },
+  live: {
+    readonly me: LiveQuery<MeResponse>
+    readonly projects: LiveQuery<ProjectListResponse>
+    readonly settings: LiveQuery<Settings>
+  },
 ) => ({
   naming: makeNaming(engine, live.me),
   goal: makeGoal(engine, live.projects),
   ...makeHealth(engine),
+  /** Sharing where the Person is: the switch in Settings and its moments to send (`locating.ts`). */
+  locating: makeLocating(engine, live.settings),
 })
 
 /**

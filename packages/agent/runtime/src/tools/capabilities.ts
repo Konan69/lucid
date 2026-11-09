@@ -256,7 +256,7 @@ const definitions: ReadonlyArray<{
   },
   {
     description:
-      'Start helpers that work on independent parts of a request at the same time (spawn_run), each with a complete brief; their results come back as new messages, so carry on and never poll. Check one only when asked how it is going (check_run), wait only when the next step needs them now (wait_runs), and stop one that is no longer needed (cancel_run). Helpers cannot ask the Person anything; you stay the one who answers.',
+      'Start helpers that work on independent parts of a request at the same time (spawn_run), each with a complete brief; their results come back as new messages, so carry on and never poll. Check one only when asked how it is going (check_run), wait only when the next step needs them now (wait_runs), send one more instructions or a correction instead of starting another for related work (message_run), and stop one that is no longer needed (cancel_run). Helpers cannot ask the Person anything; you stay the one who answers.',
     requirement: 'Local',
     mount: ({ children }) => children,
   },

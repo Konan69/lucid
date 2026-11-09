@@ -64,6 +64,7 @@ import { drawnFrom } from '../data/heard'
 import { heardIn } from '../data/hearing'
 import { LiveState, useLiveData, useLiveValue, useLiveWhen } from '../data/live'
 import { offerNotifications } from '../data/notifying'
+import { shareLocation } from '../data/locating'
 import {
   doingOf,
   isShown,
@@ -407,6 +408,8 @@ function useSend(
   function say(words: string, pictures: ReadonlyArray<attaching.Picture>) {
     // Once only, while the Person was never asked (`data/notifying.ts`).
     offerNotifications(data)
+    // Vivid is about to answer: where the Person is now, while they share it (`data/locating.ts`).
+    shareLocation(data)
     name(words)
     const delivery = deliveryOf(unsent, words, pictures, randomUUID)
     const retried = drawn.unsent.some((failed) => failed.delivery.key === delivery.key)

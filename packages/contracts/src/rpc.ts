@@ -273,6 +273,7 @@ import { Appearance } from './appearance.js'
 import { EgressStatus } from './egress.js'
 import { StopAllWorkResponse, StopWorkResponse, WorkListResponse, WorkRef } from './work.js'
 import { PatchSettingsRequest, Settings } from './settings.js'
+import { LocationNotShared, ShareLocationRequest } from './location.js'
 import {
   SkillReadOnly,
   PatchSkillRequest,
@@ -312,6 +313,7 @@ import {
   ChildRun,
   ChildRunDetail,
   ChildRunRequest,
+  FollowUpChildRunRequest,
   SettleChildRunRequest,
   SpawnChildRunRequest,
 } from './runs.js'
@@ -604,6 +606,16 @@ const GetChildRun = Rpc.make('GetChildRun', {
 const CancelChildRun = Rpc.make('CancelChildRun', {
   ...call,
   payload: ChildRunRequest,
+  success: ChildRun,
+})
+/**
+ * Sends one helper a follow-up that reaches its own conversation as its next turn: it steers a
+ * helper still at work and starts the next round of one that finished. Anyone who may stop its
+ * Thread, or Vivid there for the Person its Runs act for. A stopped helper takes none.
+ */
+const FollowUpChildRun = Rpc.make('FollowUpChildRun', {
+  ...call,
+  payload: FollowUpChildRunRequest,
   success: ChildRun,
 })
 
@@ -1362,6 +1374,15 @@ const StopWork = Rpc.make('StopWork', {
 })
 /** Stop everything that stops without loss, in one call, with a line per piece of work. */
 const StopAllWork = Rpc.make('StopAllWork', { ...call, success: StopAllWorkResponse })
+/**
+ * One of the Person's own devices says where it is now (`location.ts`). Only a signed-in Person's
+ * device sends it; the latest reading replaces the last, and nothing is kept while sharing is off.
+ */
+const ShareLocation = Rpc.make('ShareLocation', {
+  payload: ShareLocationRequest,
+  success: Settings,
+  error: Schema.Union([RpcFailure, LocationNotShared]),
+})
 
 export const VividRpc = RpcGroup.make(
   Me,
@@ -1408,6 +1429,7 @@ export const VividRpc = RpcGroup.make(
   SettleChildRun,
   GetChildRun,
   CancelChildRun,
+  FollowUpChildRun,
   ListArtifacts,
   WatchArtifacts,
   GetArtifact,
@@ -1563,4 +1585,5 @@ export const VividRpc = RpcGroup.make(
   WatchWork,
   StopWork,
   StopAllWork,
+  ShareLocation,
 ).middleware(RpcAuthMiddleware)

@@ -1,0 +1,1 @@
+ALTER TABLE "vivid_child_runs" ADD COLUMN "turn" jsonb DEFAULT '{"_tag":"Brief"}' NOT NULL;

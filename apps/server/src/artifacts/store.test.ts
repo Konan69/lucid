@@ -68,6 +68,7 @@ const runtimeHistoryLayer = Layer.effectContext(
       stop: () => Effect.die('Artifact tests do not stop responses'),
       child: () => Effect.die('Artifact tests start no helpers'),
       stopChild: () => Effect.die('Artifact tests start no helpers'),
+      messageChild: () => Effect.die('Artifact tests start no helpers'),
       watch: () => Stream.never,
       read: Effect.fn('Artifacts.test.history')(function* ({ threadId }) {
         const history = (yield* Ref.get(responses)).filter((entry) => entry.threadId === threadId)
