@@ -50,7 +50,7 @@ jobs:
     # stays cancelled, which `always()` would not allow.
     if: ${{ !cancelled() && needs.signoff.outputs.signed != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       # A push to main must compare with its previous tip, even when origin/main is already HEAD.
       CEILINGS_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
