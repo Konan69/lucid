@@ -127,62 +127,7 @@ const referenceFields = {
   appOwnership: ExecutorAppOwnership,
 }
 
-/** Pre-beta.23 persistence ingress only. No product operation accepts these removed selections. */
-export const LegacyExecutorReferences = Schema.TaggedUnion({
-  Public: {
-    service: ServiceId,
-    app: ExecutorAppId,
-    profile: Schema.NonEmptyString,
-    owner: ExecutorOwnerId,
-    appOwnership: Schema.optionalKey(Schema.Literals(['Shared', 'Dedicated'])),
-  },
-  Authorized: {
-    service: ServiceId,
-    app: ExecutorAppId,
-    profile: Schema.NonEmptyString,
-    owner: ExecutorOwnerId,
-    account: ExecutorAccountId,
-    appOwnership: Schema.optionalKey(Schema.Literals(['Shared', 'Dedicated'])),
-  },
-  EnteringKey: {
-    service: ServiceId,
-    app: ExecutorAppId,
-    profile: Schema.NonEmptyString,
-    owner: ExecutorOwnerId,
-    authorization: ExecutorAuthorizationId,
-    method: Schema.NonEmptyString,
-    label: Schema.NonEmptyString,
-    appOwnership: Schema.optionalKey(Schema.Literals(['Shared', 'Dedicated'])),
-  },
-  SigningIn: {
-    service: ServiceId,
-    app: ExecutorAppId,
-    profile: Schema.NonEmptyString,
-    owner: ExecutorOwnerId,
-    authorization: ExecutorAuthorizationId,
-    appOwnership: Schema.optionalKey(Schema.Literals(['Shared', 'Dedicated'])),
-  },
-  OAuthSigningIn: {
-    service: ServiceId,
-    app: ExecutorAppId,
-    profile: Schema.NonEmptyString,
-    owner: ExecutorOwnerId,
-    authorization: ExecutorAuthorizationId,
-    stateHash: Schema.NonEmptyString,
-    appOwnership: Schema.optionalKey(Schema.Literals(['Shared', 'Dedicated'])),
-  },
-  GoogleSigningIn: {
-    service: ServiceId,
-    app: ExecutorAppId,
-    profile: Schema.NonEmptyString,
-    owner: ExecutorOwnerId,
-    authorization: ExecutorAuthorizationId,
-    googleState: GoogleState,
-    appOwnership: Schema.optionalKey(Schema.Literals(['Shared', 'Dedicated'])),
-  },
-})
-
-/** Exact legacy resources survive refusal until the store can prove exclusive reclamation. */
+/** Exact resources survive refusal until the store can prove exclusive reclamation. */
 export const ExecutorRetired = Schema.Struct({
   original: ExecutorAppId,
   ownership: Schema.Literals(['Dedicated', 'Unproven']),
@@ -207,15 +152,6 @@ export const ExecutorReferences = Schema.TaggedUnion({
       'MigrationTargetNotReady',
       'MigrationTargetUnavailable',
     ]),
-  },
-  MigrationPending: {
-    service: ServiceId,
-    owner: ExecutorOwnerId,
-    legacy: LegacyExecutorReferences,
-    compatibleAttempts: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).pipe(
-      Schema.withDecodingDefaultKey(Effect.succeed(0)),
-    ),
-    reason: Schema.Literals(['Unattempted', 'Unavailable', 'NotReady', 'CopyPending']),
   },
   EnteringKey: {
     ...referenceFields,
@@ -242,23 +178,8 @@ export type ExecutorReferences = typeof ExecutorReferences.Type
 
 export type ExecutorActiveReferences = Exclude<
   ExecutorReferences,
-  { readonly _tag: 'ReconnectRequired' | 'MigrationPending' }
+  { readonly _tag: 'ReconnectRequired' }
 >
-export const executorMigrationMessage = 'Vivid is updating this integration. Try again shortly.'
-/** Deferred selections have no live app binding and expose only their recovery instruction. */
-const isMigrationOnly = ExecutorReferences.isAnyOf(['ReconnectRequired', 'MigrationPending'])
-const migrationReason = (
-  references: Extract<
-    ExecutorReferences,
-    { readonly _tag: 'ReconnectRequired' | 'MigrationPending' }
-  >,
-) =>
-  Match.value(references).pipe(
-    Match.tag('ReconnectRequired', () => executorReconnectMessage),
-    Match.tag('MigrationPending', () => executorMigrationMessage),
-    Match.exhaustive,
-  )
-
 export const ExecutorServiceEntry = Schema.Struct({
   id: ServiceId,
   name: Schema.String,
@@ -392,7 +313,7 @@ export class ExecutorSetupRequired extends Schema.TaggedError<ExecutorSetupRequi
   errorContext,
   { title: 'Connection setup required' },
 ) {}
-/** OAuth discovery/client setup can fail before reporting client-required on beta.8.
+/** OAuth discovery/client setup can fail before reporting client-required.
  * Only finite SDK reasons cross this boundary; the original response can contain credentials.
  * See Executor packages/sdk/src/contracts/oauth.ts OAuthSetupFailed. */
 const OAuthSetupReason = Schema.Literals([
@@ -663,12 +584,6 @@ export interface ExecutorService {
     readonly service: ServiceId
     readonly returnAddress: string
   }) => Effect.Effect<ServiceAuthorization, ExecutorFailure>
-  /** One decoded organization snapshot is shared by all rows in a migration pass. */
-  readonly inventory: Effect.Effect<typeof ExecutorInventory.Type, ExecutorFailure>
-  readonly reconcile: (
-    legacy: typeof LegacyExecutorReferences.Type,
-    inventory: typeof ExecutorInventory.Type,
-  ) => Effect.Effect<ExecutorReferences, ExecutorFailure>
   readonly catalog: Effect.Effect<readonly (typeof ExecutorServiceEntry.Type)[], ExecutorFailure>
   /** The operations on one Connection's app and account, each sent as `caller`. */
   readonly as: (caller: ExecutorCaller) => ExecutorConnectionOperations
@@ -1307,7 +1222,6 @@ function validateSelections(
     OAuthSigningIn: () => false,
     GoogleSigningIn: () => false,
     ReconnectRequired: () => false,
-    MigrationPending: () => false,
   })
   return matches
     ? Effect.void
@@ -1317,7 +1231,7 @@ function validateSelections(
 /** Pin all pages to the first version and refuse changed account selections or cursor cycles. */
 function makeDiscovery(http: ExecutorHttp) {
   return Effect.fn('Executor.discover')(function* (references: ExecutorReferences) {
-    if (isMigrationOnly(references))
+    if (ExecutorReferences.guards.ReconnectRequired(references))
       return yield* ExecutorNotReady.make({ service: 'connections', tool: null })
     const items: ListedTool[] = []
     let version = Option.none<typeof ExecutorVersionId.Type>()
@@ -1626,8 +1540,6 @@ function makeAuthorize(
  * Executor runs an app's `health` function only when asked (`check` in `HostedAccounts`,
  * `apps/hosted/server/src/contracts/accounts.ts`: `POST …/accounts/:account/health`), never by
  * itself when an account is connected, so a Connection that has just become ready is asked here.
- * Run against the hosted build (source at commit `304bf60`): before the call the account's `info`
- * is null; the call answers with what `health` returned, per account, for two accounts on one app.
  * An app with no `health` answers with no `info`, which is most of the catalogue.
  *
  * The most specific name wins: an address tells two accounts apart where two display names often
@@ -1670,8 +1582,8 @@ function connectionFailure(failure: typeof ConnectionFailure.Type) {
 function makeStatus(http: ExecutorHttp) {
   return Effect.fn('Executor.status')(
     function* (references: ExecutorReferences) {
-      if (isMigrationOnly(references))
-        return ExecutorStatus.cases.Failed.make({ reason: migrationReason(references) })
+      if (ExecutorReferences.guards.ReconnectRequired(references))
+        return ExecutorStatus.cases.Failed.make({ reason: executorReconnectMessage })
       let resolved = references
       if (isPending(references)) {
         const connection = yield* http.readConnection(
@@ -2504,7 +2416,7 @@ function makeReauthorize(
   return Effect.fn('Executor.reauthorize')(function* (
     input: typeof BeginInput.Type & { readonly references: ExecutorReferences },
   ) {
-    if (isMigrationOnly(input.references))
+    if (ExecutorReferences.guards.ReconnectRequired(input.references))
       return yield* ExecutorRejected.make({
         service: 'connections',
         tool: null,
@@ -2642,11 +2554,10 @@ function makeRemove(http: ExecutorHttp) {
   const retire = makeRetire(http)
   const resolveRemovalAccount = makeResolveRemovalAccount(http)
   return Effect.fn('Executor.remove')(function* (references: ExecutorReferences) {
-    if (isMigrationOnly(references)) return yield* Effect.void
+    if (ExecutorReferences.guards.ReconnectRequired(references)) return yield* Effect.void
     const account = yield* ExecutorReferences.match(references, {
       Public: () => Effect.succeedNone,
       ReconnectRequired: () => Effect.succeedNone,
-      MigrationPending: () => Effect.succeedNone,
       Authorized: (value) => Effect.succeedSome(value.account),
       EnteringKey: resolveRemovalAccount,
       SigningIn: resolveRemovalAccount,
@@ -2711,10 +2622,7 @@ function discoveryFailed() {
 function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>) {
   return Effect.fn('Executor.call')(
     function* ({ references, tool, input }: typeof CallInput.Type) {
-      if (
-        ExecutorReferences.guards.ReconnectRequired(references) ||
-        ExecutorReferences.guards.MigrationPending(references)
-      )
+      if (ExecutorReferences.guards.ReconnectRequired(references))
         return ExecutorCallOutcome.cases.NotReady.make({})
       const catalog = yield* discover(references).pipe(
         Effect.catchTags({
@@ -2754,7 +2662,6 @@ function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>
                   ...ExecutorReferences.match(references, {
                     Public: () => [],
                     ReconnectRequired: () => [],
-                    MigrationPending: () => [],
                     Authorized: ({ account }) => [account],
                     EnteringKey: () => [],
                     SigningIn: () => [],
@@ -2786,32 +2693,6 @@ function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>
   )
 }
 
-/** Preserve exact credentials and explicit copy identities; refusal grants no app claim. */
-export function reconnectRequired(
-  legacy: typeof LegacyExecutorReferences.Type,
-  reason: typeof ExecutorReferences.cases.ReconnectRequired.Type.reason,
-  copies: ReadonlyArray<typeof ExecutorAppId.Type>,
-) {
-  return ExecutorReferences.cases.ReconnectRequired.make({
-    service: legacy.service,
-    owner: legacy.owner,
-    retired: ExecutorRetired.make({
-      original: legacy.app,
-      ownership: legacy.appOwnership === 'Dedicated' ? 'Dedicated' : 'Unproven',
-      account: LegacyExecutorReferences.guards.Authorized(legacy)
-        ? Option.some(legacy.account)
-        : Option.none(),
-      copies,
-      authorization:
-        LegacyExecutorReferences.guards.Public(legacy) ||
-        LegacyExecutorReferences.guards.Authorized(legacy)
-          ? Option.none()
-          : Option.some(legacy.authorization),
-    }),
-    reason,
-  })
-}
-
 /** Active app access carries separate deletion authority. Pending requests preserve their exact
  * correlation so retirement can discover a completed account without inventing a selection.
  */
@@ -2838,31 +2719,6 @@ export function retirementOf(references: ExecutorActiveReferences) {
   })
 }
 
-/** Conversion discards removed persistence fields. Only known protocol correlation survives. */
-function migratedReferences(
-  legacy: typeof LegacyExecutorReferences.Type,
-  identity: Omit<ReturnType<typeof referenceIdentity>, 'appOwnership'>,
-) {
-  let appOwnership: typeof ExecutorAppOwnership.Type = ExecutorAppOwnership.cases.Unproven.make({})
-  if (identity.app !== legacy.app)
-    appOwnership = ExecutorAppOwnership.cases.Copied.make({ original: legacy.app })
-  else if (legacy.appOwnership === 'Dedicated')
-    appOwnership = ExecutorAppOwnership.cases.Dedicated.make({})
-  const owned = { ...identity, appOwnership }
-  return LegacyExecutorReferences.match<ExecutorReferences>(legacy, {
-    Public: () => ExecutorReferences.cases.Public.make(owned),
-    Authorized: ({ account }) => ExecutorReferences.cases.Authorized.make({ ...owned, account }),
-    EnteringKey: ({ authorization, method, label }) =>
-      ExecutorReferences.cases.EnteringKey.make({ ...owned, authorization, method, label }),
-    SigningIn: ({ authorization }) =>
-      ExecutorReferences.cases.SigningIn.make({ ...owned, authorization }),
-    OAuthSigningIn: ({ authorization, stateHash }) =>
-      ExecutorReferences.cases.OAuthSigningIn.make({ ...owned, authorization, stateHash }),
-    GoogleSigningIn: ({ authorization, googleState }) =>
-      ExecutorReferences.cases.GoogleSigningIn.make({ ...owned, authorization, googleState }),
-  })
-}
-
 /** A migration copy proves provenance with copiedFrom.reference, never with a display name.
  * beta.23 packages/sdk/src/implementation/apps.ts:611-639 records `app:<original id>` on copyAs;
  * apps/hosted/server/src/implementation/profile-app-copies.ts:17-20 uses that exact operation.
@@ -2876,161 +2732,6 @@ function migratedApps(
       app.id === original ||
       (app.copiedFrom !== null && app.copiedFrom.reference === `app:${original}`),
   )
-}
-
-/** One plain requirement linked to exactly the stored account is the only recoverable selection. */
-function legacyCandidate(http: ExecutorHttp) {
-  return Effect.fn('Executor.migrationCandidate')(function* (
-    appId: typeof ExecutorAppId.Type,
-    account: typeof ExecutorAccountId.Type,
-  ) {
-    const app = yield* http.readApp(
-      Effect.succeed(HttpClientRequest.get(`/apps/${query(appId)}`)),
-      null,
-    )
-    const entries = Object.entries(app.requirements.accounts)
-    const entry = entries[0]
-    if (entries.length !== 1 || entry === undefined)
-      return Option.none<ReturnType<typeof referenceIdentity>['binding']>()
-    const [requirement, definition] = entry
-    const links = yield* http.readLinks(
-      Effect.succeed(HttpClientRequest.get(`/apps/${query(appId)}/accounts/${definition.scope}`)),
-      null,
-    )
-    if (
-      links.length !== 1 ||
-      !links.some((link) => link.requirement === requirement && link.account.id === account)
-    )
-      return Option.none<ReturnType<typeof referenceIdentity>['binding']>()
-    return Option.some(ExecutorBinding.cases.Account.make({ requirement, scope: definition.scope }))
-  })
-}
-
-/** Deferred states retain the original selection so a later explicit pass can retry it. */
-export function migrationPending(
-  legacy: typeof LegacyExecutorReferences.Type,
-  reason: typeof ExecutorReferences.cases.MigrationPending.Type.reason,
-) {
-  return ExecutorReferences.cases.MigrationPending.make({
-    service: legacy.service,
-    owner: legacy.owner,
-    legacy,
-    compatibleAttempts: 0,
-    reason,
-  })
-}
-
-/** A pending shared request has no authority over an app that still selects another account. */
-function reconcilePending(http: ExecutorHttp) {
-  return Effect.fn('Executor.reconcilePending')(function* (
-    legacy: Exclude<
-      typeof LegacyExecutorReferences.Type,
-      { readonly _tag: 'Authorized' | 'Public' }
-    >,
-    inventory: typeof ExecutorInventory.Type,
-  ) {
-    const connection = yield* http.readConnection(
-      Effect.succeed(HttpClientRequest.get(`/connections/${query(legacy.authorization)}`)),
-      null,
-    )
-    const app = migratedApps(inventory, legacy.app).find(
-      (item) => item.id === connection.target.app,
-    )
-    if (app === undefined) return migrationPending(legacy, 'CopyPending')
-    const dedicated = legacy.appOwnership === 'Dedicated' && app.id === legacy.app
-    if (!dedicated && inventory.links.some((link) => link.app === app.id))
-      return reconnectRequired(legacy, 'SharedSelection', app.id === legacy.app ? [] : [app.id])
-    if (app.activeVersion === null) return migrationPending(legacy, 'NotReady')
-    const detail = yield* http.readApp(
-      Effect.succeed(HttpClientRequest.get(`/apps/${query(app.id)}`)),
-      null,
-    )
-    const requirement = detail.requirements.accounts[connection.target.requirement]
-    if (requirement === undefined)
-      return reconnectRequired(legacy, 'UnresolvedMigration', app.id === legacy.app ? [] : [app.id])
-    return migratedReferences(legacy, {
-      service: legacy.service,
-      owner: legacy.owner,
-      app: app.id,
-      binding: ExecutorBinding.cases.Account.make({
-        requirement: connection.target.requirement,
-        scope: requirement.scope,
-      }),
-    })
-  })
-}
-
-/** A public legacy app is recoverable only with prior dedicated ownership and no requirements. */
-function reconcilePublic(http: ExecutorHttp) {
-  return Effect.fn('Executor.reconcilePublic')(function* (
-    legacy: typeof LegacyExecutorReferences.cases.Public.Type,
-    inventory: typeof ExecutorInventory.Type,
-  ) {
-    const apps = migratedApps(inventory, legacy.app)
-    const copies: ReadonlyArray<typeof ExecutorAppId.Type> = []
-    if (legacy.appOwnership !== 'Dedicated')
-      return reconnectRequired(legacy, 'SharedSelection', copies)
-    const original = apps.find((app) => app.id === legacy.app)
-    if (original === undefined) return reconnectRequired(legacy, 'UnresolvedMigration', copies)
-    if (original.activeVersion === null) return migrationPending(legacy, 'NotReady')
-    const app = yield* http.readApp(
-      Effect.succeed(HttpClientRequest.get(`/apps/${query(legacy.app)}`)),
-      null,
-    )
-    if (Object.keys(app.requirements.accounts).length !== 0)
-      return reconnectRequired(legacy, 'UnresolvedMigration', copies)
-    return migratedReferences(legacy, {
-      service: legacy.service,
-      owner: legacy.owner,
-      app: legacy.app,
-      binding: ExecutorBinding.cases.Public.make({}),
-    })
-  })
-}
-
-/** Upstream copy plans are not exposed by inventory. An existing account without an exact
- * linked app can still have a pending plan; an undeployed copy can be repaired. Neither is a
- * permanent refusal. Explicit copy provenance and exact links are the only successful mapping.
- */
-function makeLegacyReconciliation(http: ExecutorHttp) {
-  const candidate = legacyCandidate(http)
-  const pending = reconcilePending(http)
-  const publicApp = reconcilePublic(http)
-  return Effect.fn('Executor.reconcileLegacy')(function* (
-    legacy: typeof LegacyExecutorReferences.Type,
-    inventory: typeof ExecutorInventory.Type,
-  ) {
-    const apps = migratedApps(inventory, legacy.app)
-    if (LegacyExecutorReferences.guards.Public(legacy)) return yield* publicApp(legacy, inventory)
-    if (!LegacyExecutorReferences.guards.Authorized(legacy))
-      return yield* pending(legacy, inventory)
-    const linked = apps.filter((app) =>
-      inventory.links.some((link) => link.app === app.id && link.account === legacy.account),
-    )
-    const copies = linked.filter((app) => app.id !== legacy.app).map((app) => app.id)
-    if (linked.some((app) => app.activeVersion === null))
-      return migrationPending(legacy, 'NotReady')
-    const matches = yield* Effect.forEach(
-      linked,
-      Effect.fnUntraced(function* (app) {
-        return Option.map(yield* candidate(app.id, legacy.account), (binding) => ({
-          app: app.id,
-          binding,
-        }))
-      }),
-    )
-    const found = Arr.getSomes(matches)
-    const match = found[0]
-    if (linked.length === 0 && inventory.accounts.some((item) => item.id === legacy.account))
-      return migrationPending(legacy, 'CopyPending')
-    if (found.length !== 1 || match === undefined)
-      return reconnectRequired(
-        legacy,
-        found.length > 1 ? 'AmbiguousMigration' : 'UnresolvedMigration',
-        copies,
-      )
-    return migratedReferences(legacy, { service: legacy.service, owner: legacy.owner, ...match })
-  })
 }
 
 /** A completed request proves account ownership only on the original or a provenance copy. */
@@ -3441,8 +3142,6 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
   return Executor.of({
     catalog: availability.catalog,
     authorization: availability.authorization,
-    inventory: http.readInventory(Effect.succeed(HttpClientRequest.get('/inventory')), null),
-    reconcile: makeLegacyReconciliation(http),
     as: connectionOperationsFor(installation, members),
   })
 })

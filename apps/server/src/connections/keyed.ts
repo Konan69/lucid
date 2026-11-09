@@ -1,7 +1,5 @@
 import { Schema } from 'effect'
 
-/** Versions proven together on executor-selfhost:2.0.0-beta.8 in
- * artifacts/research/github-token-proof.md, Route 2. Upgrading needs another real token proof. */
 export const keyedAppsVersion = '0.0.1-beta.19'
 export const keyedMcpVersion = '1.30.0'
 

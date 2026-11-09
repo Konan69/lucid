@@ -158,24 +158,6 @@ front, so E starts before D finishes.
 
 D and E are written down so the earlier stages do not close them off. They are not scheduled.
 
-## What the pilot proved
-
-Run against the published image `executor-selfhost:2.0.0-beta.8` in a disposable container, with one
-API key and no browser. The image is built from an older commit than the source read above, so
-source-only claims stay marked.
-
-- Setup, organization and key creation work over HTTP alone.
-- Catalogue (5,533 entries), install, import of an MCP server by address, tool list, tool call,
-  connection by API key, and deletion of profile, account and app all work with the key.
-- Two profiles on one app held two different accounts. A call names its profile; with none it fails
-  (`AccountRequired`) and never falls back to another account.
-- The `subject` a caller sends on a profile is ignored and replaced by the key's owner, and a profile
-  can be re-pointed at any account in the organization. So before stage C, isolation between owners
-  is Vivid's to enforce: it sends only the references stored on the Connection.
-- Memory: about 0.8 GB at start and 1.0 GB idle; it was killed at a 1 GB limit and ran at 2 GB.
-  Volume after setup: 87 MB.
-- Not proven: a completed OAuth sign-in with a real provider, and a live approval-declared call.
-
 ## What one instance costs us until D
 
 - A restart or redeploy interrupts Integrations for its duration.
