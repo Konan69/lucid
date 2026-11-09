@@ -60,12 +60,17 @@ jobs:
         include:
           - name: Policy, format and tooling
             stages: policy,format,tooling
+            # actions/cache refuses a key that contains a comma, so the key uses its own spelling.
+            cache: policy-format-tooling
           - name: Lint with native type analysis
             stages: lint
+            cache: lint
           - name: Typecheck
             stages: typecheck
+            cache: typecheck
           - name: Production builds
             stages: build
+            cache: build
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -109,9 +114,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .turbo/cache
-          key: turbo-${{ runner.os }}-${{ matrix.stages }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          key: turbo-${{ runner.os }}-${{ matrix.cache }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
           restore-keys: |
-            turbo-${{ runner.os }}-${{ matrix.stages }}-${{ hashFiles('pnpm-lock.yaml') }}-
+            turbo-${{ runner.os }}-${{ matrix.cache }}-${{ hashFiles('pnpm-lock.yaml') }}-
 
       - name: Run the gate stages
         run: node scripts/gate.mjs full --here --only ${{ matrix.stages }} --ceilings-base "$CEILINGS_BASE"
@@ -178,6 +183,16 @@ jobs:
 
       - name: Run the test stage
         run: node scripts/gate.mjs full --here --only test
+
+      # The gate prints one line per failing package; the failing test's own output is only in
+      # the run's logs, so keep them when the stage fails.
+      - name: Keep the test logs of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-test-logs
+          path: .cache/gate/runs/
+          retention-days: 7
 
   proof:
     name: Regression proof
