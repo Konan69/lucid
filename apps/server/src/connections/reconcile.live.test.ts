@@ -164,13 +164,19 @@ const scenario = Effect.fn('ReconciliationProof.scenario')(function* (input: {
   const operations = yield* operationsOf(row)
   const before = yield* operations.call({ references: row.references, tool: 'attempts', input: {} })
   const checked = yield* reconcile(actor.person.id, operationId)
-  expect(checked.reconciliation._tag).toBe(present ? 'Applied' : 'NotApplied')
+  // Gmail only ever proves a send happened; an empty search stays Inconclusive (`reconcile.ts`).
+  const absent = row.service === 'google/gmail' ? 'Inconclusive' : 'NotApplied'
+  expect(checked.reconciliation._tag).toBe(present ? 'Applied' : absent)
   if (ActionReconciliation.guards.Applied(checked.reconciliation))
     expect(checked.reconciliation.receipt.operationId).toBe(operationId)
   expect(
     yield* operations.call({ references: row.references, tool: 'attempts', input: {} }),
   ).toEqual(before)
-  expect(yield* reconcile(actor.person.id, operationId)).toEqual(checked)
+  const again = yield* reconcile(actor.person.id, operationId)
+  // A settled answer repeats as it is; an inconclusive one is asked again and stamped anew.
+  if (ActionReconciliation.guards.Inconclusive(checked.reconciliation))
+    expect(again.reconciliation._tag).toBe('Inconclusive')
+  else expect(again).toEqual(checked)
 })
 
 describe.skipIf(NodeProcess.env['VIVID_LIVE_RECONCILE'] !== '1' || !testDatabaseConfigured)(
@@ -178,7 +184,7 @@ describe.skipIf(NodeProcess.env['VIVID_LIVE_RECONCILE'] !== '1' || !testDatabase
   () => {
     layer(connectionTestLayer, { excludeTestServices: true, timeout: 240_000 })((it) => {
       it.effect(
-        'finds applied Gmail and Calendar sends and proves absent sends through their member caller',
+        'finds applied Gmail and Calendar sends, proves absent Calendar sends and leaves absent Gmail sends inconclusive, through their member caller',
         () =>
           Effect.gen(function* () {
             const actors = yield* fixture()

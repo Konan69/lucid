@@ -230,7 +230,13 @@ const look = Effect.fn('Connections.lookupAction')(function* (operation: ActionO
       }),
     })
   // A still-dispatching request may not have arrived yet. Positive evidence is safe; absence is not.
-  return parsed.nextPageToken === undefined && !ActionPhase.guards.Dispatching(operation.phase)
+  // Gmail never proves absence: its search index lags a send, and whether Gmail keeps the
+  // Message-ID Vivid wrote has not been proven against a real account, so an empty search could
+  // turn a sent message into a retry and a second email. Calendar's private property is stored
+  // with the event and listed directly, so an empty, complete listing is evidence.
+  return Search.guards.Calendar(query.value) &&
+    parsed.nextPageToken === undefined &&
+    !ActionPhase.guards.Dispatching(operation.phase)
     ? Lookup.cases.Absent.make({})
     : Lookup.cases.Unsupported.make({})
 })
