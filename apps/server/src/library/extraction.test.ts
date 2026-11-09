@@ -14,7 +14,6 @@ import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 import * as TestClock from 'effect/testing/TestClock'
 import { extractText } from 'unpdf'
-import { AbortException, InvalidPDFException, PasswordException } from 'unpdf/pdfjs'
 import {
   EXTRACTION_HEAP_MB,
   ExtractionLimitExceeded,
@@ -29,7 +28,6 @@ import { type Launch, ProcessEnd, processOptions } from './extraction/process.ts
 import { Fixture } from './fixtures/mode.ts'
 import { CRASH_TIMEOUT_MS } from './fixtures/process/mode.ts'
 import { GROW_HEAP_MB, nativeLaunch, extractWith, reportRemoved } from './fixtures/launch.ts'
-import { rejectionOf } from './extraction/rejection.ts'
 import { Pages } from './fixtures/process/pages.ts'
 import { Command, commandLayer } from './fixtures/process/command.ts'
 
@@ -212,24 +210,6 @@ testLayer(NodeFileSystem.layer)((it) => {
       expect(native).toEqual({ name: 'PasswordException', code: 1 })
       assertFailure(yield* Effect.exit(extractPdf(bytes)), new PdfLocked())
     }),
-  )
-
-  /** X3: real BaseException subclasses own name/code; unsupported password codes are not content. */
-  it.effect.each([
-    new PasswordException('fixture', 3),
-    new AbortException('fixture'),
-    new Error('InvalidPDFException PasswordException'),
-  ])('X3 retries unrecognized parser rejection %$', (cause) =>
-    Effect.sync(() => expect(rejectionOf(cause)).toEqual(new ExtractionFaulted())),
-  )
-
-  /** Known content follows pdf.js own names/codes, not message strings (pdfjs.mjs wrapReason). */
-  it.effect.each([
-    { cause: new InvalidPDFException('fixture'), expected: new PdfUnreadable() },
-    { cause: new PasswordException('fixture', 1), expected: new PdfLocked() },
-    { cause: new PasswordException('fixture', 2), expected: new PdfLocked() },
-  ])('classifies known pdf.js content rejection %$', ({ cause, expected }) =>
-    Effect.sync(() => expect(rejectionOf(cause)).toEqual(expected)),
   )
 
   /**

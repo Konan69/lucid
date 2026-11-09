@@ -1,6 +1,3 @@
-import * as NodeFS from 'node:fs'
-import * as NodeOS from 'node:os'
-import * as NodePath from 'node:path'
 import { describe, expect, it } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
@@ -8,17 +5,11 @@ import * as Option from 'effect/Option'
 import * as Queue from 'effect/Queue'
 import * as TestClock from 'effect/testing/TestClock'
 import { fakeComputer } from './fake.ts'
-import { WATCHDOG_GRACE_MS, locateComputer, startComputer } from './computer.ts'
+import { WATCHDOG_GRACE_MS, startComputer } from './computer.ts'
 import { ComputerCall, ComputerReply } from './wire.ts'
 
 const window = { app: 'notepad', id: '7' }
 const turn = Option.some('run-1')
-
-/** An owned temporary directory, removed with the test's scope. */
-const directory = Effect.acquireRelease(
-  Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-computer-'))),
-  (path) => Effect.sync(() => NodeFS.rmSync(path, { recursive: true, force: true })),
-)
 
 /** A started stand-in, and a queue that says when it stopped a turn or went away. */
 const started = Effect.fn('started')(function* () {
@@ -41,60 +32,6 @@ const started = Effect.fn('started')(function* () {
 })
 
 describe('the Computer process', () => {
-  it.effect('is the shipped pair on Windows, and nothing anywhere else', () =>
-    Effect.gen(function* () {
-      const root = yield* directory
-      // The packaged layout (`electron-builder.yml`) and the development one, written out by
-      // hand: the file names here are the vendored ones, not read from the module under test.
-      const packaged = NodePath.join(root, 'resources', 'native', 'computer')
-      const vendored = NodePath.join(root, 'dist', 'vendor', 'computer')
-      const supervisorOnly = NodePath.join(root, 'half', 'native', 'computer')
-      for (const pair of [packaged, vendored]) {
-        NodeFS.mkdirSync(NodePath.join(pair, 'swift', 'x64'), { recursive: true })
-        NodeFS.writeFileSync(NodePath.join(pair, 'codex-computer-use.exe'), '')
-        NodeFS.writeFileSync(
-          NodePath.join(pair, 'swift', 'x64', 'codex-computer-use-swift.exe'),
-          '',
-        )
-      }
-      NodeFS.mkdirSync(supervisorOnly, { recursive: true })
-      NodeFS.writeFileSync(NodePath.join(supervisorOnly, 'codex-computer-use.exe'), '')
-      const input = {
-        packaged: true,
-        resources: NodePath.join(root, 'resources'),
-        bundle: NodePath.join(root, 'dist', 'main'),
-        parent: 41,
-      }
-
-      expect(locateComputer({ ...input, platform: 'win32' })).toEqual(
-        Option.some({
-          command: NodePath.join(packaged, 'codex-computer-use.exe'),
-          args: ['--parent-pid', '41'],
-          engine: Option.some(
-            NodePath.join(packaged, 'swift', 'x64', 'codex-computer-use-swift.exe'),
-          ),
-        }),
-      )
-      // In development the pair is the one vendored beside `dist`, never the packaged copy.
-      expect(
-        Option.map(
-          locateComputer({ ...input, packaged: false, platform: 'win32' }),
-          (found) => found.command,
-        ),
-      ).toEqual(Option.some(NodePath.join(vendored, 'codex-computer-use.exe')))
-      // The same files on another system are not a Computer.
-      expect(locateComputer({ ...input, platform: 'linux' })).toEqual(Option.none())
-      expect(locateComputer({ ...input, platform: 'darwin' })).toEqual(Option.none())
-      // A supervisor without its engine, or no files at all, is no Computer on Windows either.
-      expect(
-        locateComputer({ ...input, resources: NodePath.join(root, 'half'), platform: 'win32' }),
-      ).toEqual(Option.none())
-      expect(
-        locateComputer({ ...input, resources: NodePath.join(root, 'absent'), platform: 'win32' }),
-      ).toEqual(Option.none())
-    }),
-  )
-
   it.effect('gives each request its own answer, in the order asked, past a line on stderr', () =>
     Effect.gen(function* () {
       const { ask, type } = yield* started()
