@@ -738,7 +738,7 @@ const raise = Effect.fn('Approvals.raise')(function* (
     return yield* new NotFound({ message: 'Approval needs a Vivid Thread' })
   const origin = yield* actionOrigin(actor)
   const threadId = actor.threadId.value
-  const runId = ActionOrigin.guards.RuntimeThread(origin) ? null : origin.runId
+  const runId = ActionOrigin.guards.Run(origin) ? origin.runId : null
   const thread = yield* requireThread(threadId, actor.person.id)
   if (thread.companyId !== companyColumnOf(actor.workspace))
     return yield* new NotFound({ message: 'Thread not found in workspace' })
