@@ -147,6 +147,7 @@ const dedicatedApp = (row: ConnectionRecord): Dedicated =>
   ExecutorReferences.match(row.references, {
     Public: ({ app, appOwnership }) => ready(row, app, appOwnership),
     Authorized: ({ app, appOwnership }) => ready(row, app, appOwnership),
+    Adopting: ({ app, appOwnership }) => ready(row, app, appOwnership),
     ReconnectRequired: shared,
     EnteringKey: notReady,
     SigningIn: notReady,

@@ -92,6 +92,7 @@ import {
 } from './records.ts'
 import { namedAccounts } from './names.ts'
 import { removeConnection } from './removal.ts'
+import { ExecutorAdoption } from './adopter.ts'
 import { connections, connectionPermissions } from './tables.ts'
 import { classPolicies } from './permissions.ts'
 import { callbackHash, correlateSignIn } from './correlation.ts'
@@ -639,6 +640,7 @@ const rememberListCatalog = Effect.fn('Connections.rememberListCatalog')(
 type ConnectionAuthority =
   | Executor
   | ExecutorMembers
+  | ExecutorAdoption
   | Database
   | Audit
   | ServerConfig
@@ -657,6 +659,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
   const dependencies = Context.pick(
     Executor,
     ExecutorMembers,
+    ExecutorAdoption,
     Database,
     Audit,
     ServerConfig,
@@ -1148,7 +1151,7 @@ function makeAuthoredManagement(input: { readonly provide: ProvideAuthority }) {
       return yield* new InvalidRequest({
         message: 'Reconnect this Integration before revising it.',
       })
-    if (!ExecutorAppOwnership.guards.Dedicated(references.appOwnership))
+    if (!ExecutorAppOwnership.isAnyOf(['Dedicated', 'Adopted'])(references.appOwnership))
       return yield* new InvalidRequest({
         message: 'This Integration does not own a dedicated app.',
       })

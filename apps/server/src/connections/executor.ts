@@ -53,8 +53,18 @@ import {
   type GoogleClient,
 } from './google.ts'
 
+export const AdoptionGroupId = Schema.NonEmptyString.pipe(Schema.brand('AdoptionGroupId'))
 export const ExecutorAppId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorAppId'))
 export const ExecutorAccountId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorAccountId'))
+/** The owned account survives reauthorization so Adopted removal never loses its cleanup identity. */
+export const AdoptedSource = Schema.TaggedUnion({
+  Public: {},
+  Account: {
+    original: Schema.NonEmptyString,
+    adopted: Schema.NonEmptyString,
+    account: ExecutorAccountId,
+  },
+})
 export const ExecutorVersionId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorVersionId'))
 /** An app either needs no account or binds one exact requirement in its declared scope. */
 export const ExecutorBinding = Schema.TaggedUnion({
@@ -82,8 +92,11 @@ export const ExecutorAuthorizationId = Schema.NonEmptyString.pipe(
  * keep the app and its personal account to that member: another member's key, and the owner's,
  * are refused its tools (executor@2.0.0-beta.23 `concepts/organizations-and-access.md`), so a
  * mistake in Vivid's own mapping cannot reach another Person's account.
+ *
+ * `adopted`: execution and Watches use that Person's member, while app and account management
+ * stays with the installation creator. The app's group grants use only to that member.
  */
-export const ExecutorPrincipal = Schema.Literals(['installation', 'member'])
+export const ExecutorPrincipal = Schema.Literals(['installation', 'member', 'adopted'])
 export type ExecutorPrincipal = typeof ExecutorPrincipal.Type
 
 /**
@@ -115,6 +128,7 @@ const decodeAccountIdentity = Schema.decodeUnknownOption(AccountIdentity)
 /** Deletion authority is either a Vivid allocation, a proven migration copy, or access only. */
 export const ExecutorAppOwnership = Schema.TaggedUnion({
   Dedicated: {},
+  Adopted: { group: AdoptionGroupId, source: AdoptedSource },
   Copied: { original: ExecutorAppId },
   Unproven: {},
 })
@@ -173,6 +187,14 @@ export const ExecutorReferences = Schema.TaggedUnion({
     googleState: GoogleState,
   },
   Authorized: { ...referenceFields, account: ExecutorAccountId },
+  /** Durable bridge: original user links keep Installation calls valid until the principal commits. */
+  Adopting: {
+    ...referenceFields,
+    account: ExecutorAccountId,
+    group: AdoptionGroupId,
+    original: Schema.NonEmptyString,
+    adopted: Schema.NonEmptyString,
+  },
 })
 export type ExecutorReferences = typeof ExecutorReferences.Type
 
@@ -511,6 +533,8 @@ const SignInInput = Schema.Struct({
  * or the Person's own member, whose app and personal account no other key can call.
  */
 export interface ExecutorConnectionOperations {
+  /** Source redeployment retires pinned discovery snapshots before the next invocation. */
+  readonly refresh: Effect.Effect<void>
   /** Read the event namespace through the same authenticated app transport as Connection setup. */
   readonly appSlug: (app: typeof ExecutorAppId.Type) => Effect.Effect<string, ExecutorFailure>
   readonly begin: (
@@ -1124,7 +1148,7 @@ const decodeBuildFailure = Schema.decodeUnknownOption(
 
 /** A rejected first build has no retained app (Executor VersionBuildFailed at 26d03a48).
  * Read diagnostics only here so existing keyed, Google and imported apps keep their failures. */
-function deployReader(client: HttpClient.HttpClient) {
+function deployReader<A, I>(client: HttpClient.HttpClient, schema: Schema.Codec<A, I>) {
   const read = responseReader(client, ({ status, body }) => {
     const build = decodeBuildFailure(body)
     if (status === 422 && Option.isSome(build))
@@ -1132,7 +1156,7 @@ function deployReader(client: HttpClient.HttpClient) {
         ExecutorBuildFailed.make({ message: build.value.message.trim().slice(0, 4000) }),
       )
     return Effect.void
-  })(WireApp)
+  })(schema)
   return (request: Effect.Effect<HttpClientRequest.HttpClientRequest, HttpBody.HttpBodyError>) =>
     read(request, null)
 }
@@ -1159,7 +1183,8 @@ function makeHttp(client: HttpClient.HttpClient, google: GoogleClient) {
   const readRemoval = read(Schema.Json)
   return {
     google,
-    readDeploy: deployReader(client),
+    readDeploy: deployReader(client, WireApp),
+    readRevision: deployReader(client, Schema.Json),
     readSource: read(
       Schema.Struct({
         files: Schema.Array(Schema.Struct({ path: Schema.String, content: Schema.String })),
@@ -1204,6 +1229,15 @@ function validateSelections(
   ].filter((slot) => slot.ids.length > 0)
   const matches = ExecutorReferences.match(references, {
     Public: () => actual.length === 0,
+    Adopting: (value) =>
+      actual.length > 0 &&
+      actual.every(
+        (slot) =>
+          slot.ids.length === 1 &&
+          slot.ids[0] === value.account &&
+          ((slot.scope === 'user' && slot.name === value.original) ||
+            (slot.scope === 'app' && slot.name === value.adopted)),
+      ),
     Authorized: (value) =>
       ExecutorBinding.match(value.binding, {
         Public: () => false,
@@ -1279,7 +1313,7 @@ function makeDiscovery(http: ExecutorHttp) {
  */
 function listedTool(references: ExecutorReferences, tool: typeof WireTool.Type): ListedTool {
   const listed = { input: tool.inputSchema, output: Option.fromUndefinedOr(tool.outputSchema) }
-  const branch = ExecutorReferences.guards.Authorized(references)
+  const branch = ExecutorReferences.isAnyOf(['Authorized', 'Adopting'])(references)
     ? Option.map(accountBranch(listed, references.account), (own) => ({
         own,
         account: ToolAccount.cases.Account.make({ accountId: references.account }),
@@ -1502,7 +1536,7 @@ function makeAuthorize(
       }),
     }
     const path = yield* bindingPath(bound)
-    const body: Schema.Json = ExecutorReferences.guards.Authorized(references)
+    const body: Schema.Json = ExecutorReferences.isAnyOf(['Authorized', 'Adopting'])(references)
       ? { account: references.account }
       : {}
     const connection = isPending(references)
@@ -1547,7 +1581,8 @@ function makeAuthorize(
  */
 function makeIdentity(http: ExecutorHttp) {
   return Effect.fn('Executor.identity')(function* (references: ExecutorReferences) {
-    if (!ExecutorReferences.guards.Authorized(references)) return Option.none<AccountIdentity>()
+    if (!ExecutorReferences.isAnyOf(['Authorized', 'Adopting'])(references))
+      return Option.none<AccountIdentity>()
     const health = yield* http.readHealth(
       Effect.succeed(HttpClientRequest.post(`/accounts/${query(references.account)}/health`)),
       null,
@@ -2445,7 +2480,7 @@ function makeReauthorize(
       }
     }
     if (
-      ExecutorReferences.guards.Authorized(references) ||
+      ExecutorReferences.isAnyOf(['Authorized', 'Adopting'])(references) ||
       ExecutorReferences.guards.Public(input.references)
     ) {
       const current = yield* status(references)
@@ -2559,6 +2594,7 @@ function makeRemove(http: ExecutorHttp) {
       Public: () => Effect.succeedNone,
       ReconnectRequired: () => Effect.succeedNone,
       Authorized: (value) => Effect.succeedSome(value.account),
+      Adopting: (value) => Effect.succeedSome(value.account),
       EnteringKey: resolveRemovalAccount,
       SigningIn: resolveRemovalAccount,
       OAuthSigningIn: resolveRemovalAccount,
@@ -2663,6 +2699,7 @@ function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>
                     Public: () => [],
                     ReconnectRequired: () => [],
                     Authorized: ({ account }) => [account],
+                    Adopting: ({ account }) => [account],
                     EnteringKey: () => [],
                     SigningIn: () => [],
                     OAuthSigningIn: () => [],
@@ -2701,6 +2738,7 @@ export function retirementOf(references: ExecutorActiveReferences) {
     Pick<typeof ExecutorRetired.Type, 'original' | 'ownership' | 'copies'>
   >(references.appOwnership, {
     Dedicated: () => ({ original: references.app, ownership: 'Dedicated' as const, copies: [] }),
+    Adopted: () => ({ original: references.app, ownership: 'Dedicated' as const, copies: [] }),
     Copied: ({ original }) => ({
       original,
       ownership: 'Unproven' as const,
@@ -2710,10 +2748,10 @@ export function retirementOf(references: ExecutorActiveReferences) {
   })
   return ExecutorRetired.make({
     ...app,
-    account: ExecutorReferences.guards.Authorized(references)
+    account: ExecutorReferences.isAnyOf(['Authorized', 'Adopting'])(references)
       ? Option.some(references.account)
       : Option.none(),
-    authorization: ExecutorReferences.isAnyOf(['Public', 'Authorized'])(references)
+    authorization: ExecutorReferences.isAnyOf(['Public', 'Authorized', 'Adopting'])(references)
       ? Option.none()
       : Option.some(references.authorization),
   })
@@ -2895,7 +2933,7 @@ const makeToolCache = Effect.fn('Executor.toolCache')(function* (http: ExecutorH
     timeToLive: (exit) => (Exit.isSuccess(exit) ? TOOL_SNAPSHOT_TTL : 0),
   })
   const discover = Effect.fn('Executor.discoverCached')(function* (references: ExecutorReferences) {
-    if (ExecutorReferences.guards.Authorized(references)) {
+    if (ExecutorReferences.isAnyOf(['Authorized', 'Adopting'])(references)) {
       const path = yield* bindingPath(references)
       const links = yield* http.readLinks(
         Effect.succeed(HttpClientRequest.get(path.slice(0, path.lastIndexOf('/')))),
@@ -2980,6 +3018,7 @@ const makeConnectionOperations = Effect.fn('Executor.connectionOperations')(func
   const install = yield* makeInstall(http)
   const registration = makeBegin(http, availability, install)
   const operations: ExecutorConnectionOperations = {
+    refresh: Cache.invalidateAll(toolCache.snapshots),
     appSlug: makeAppSlug(http),
     begin: registration.begin,
     add: Effect.fn('Executor.addPublic')((input) =>
@@ -2989,7 +3028,8 @@ const makeConnectionOperations = Effect.fn('Executor.connectionOperations')(func
     readMade: makeReadMade(http),
     /** Deploy by ID preserves app data, schedules, event names, and every existing Watch. */
     reviseMade: Effect.fn('Executor.reviseMade')(function* (app, files) {
-      yield* http.readDeploy(post('/apps/deploy', { app, files }))
+      yield* http.readRevision(post(`/apps/${query(app)}/deploy`, { files }))
+      yield* Cache.invalidateAll(toolCache.snapshots)
     }),
     reauthorize: makeReauthorize(http, availability),
     complete: Effect.fn('Executor.completeCached')(function* (input: typeof CompleteInput.Type) {
@@ -3054,6 +3094,7 @@ function connectionOperationsFor(
     const run = <A, E>(use: (operations: ExecutorConnectionOperations) => Effect.Effect<A, E>) =>
       RcMap.get(members, caller.key).pipe(Effect.flatMap(use), Effect.scoped)
     return {
+      refresh: run((operations) => operations.refresh),
       appSlug: (app) => run((operations) => operations.appSlug(app)),
       begin: (input) => run((operations) => operations.begin(input)),
       add: (input) => run((operations) => operations.add(input)),

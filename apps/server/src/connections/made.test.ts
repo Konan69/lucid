@@ -153,7 +153,7 @@ describe.skipIf(!testDatabaseConfigured)('made Integrations through real adapter
         })
         yield* Ref.update(made.hosted.replies, (replies) =>
           new Map(replies)
-            .set(`POST ${hostedPrefix}/apps/deploy`, {
+            .set(`POST ${hostedPrefix}/apps/app/deploy`, {
               status: 200,
               body: {
                 id: 'app',
@@ -172,13 +172,13 @@ describe.skipIf(!testDatabaseConfigured)('made Integrations through real adapter
         ).toEqual({ account: request.name, files })
         expect(yield* made.store.records(made.ownerActor)).toEqual(before)
         const deployed = (yield* Ref.get(made.hosted.requests))
-          .filter((sent) => sent.path === `POST ${hostedPrefix}/apps/deploy`)
+          .filter((sent) => sent.path === `POST ${hostedPrefix}/apps/app/deploy`)
           .at(-1)
         if (deployed === undefined) return expect.fail('Expected an in-place deployment')
-        expect(deployed.body).toMatchObject({ app: 'app', files: expect.arrayContaining(files) })
+        expect(deployed.body).toMatchObject({ files: expect.arrayContaining(files) })
         expect(deployed.body).not.toHaveProperty('name')
         yield* Ref.update(made.hosted.replies, (replies) =>
-          new Map(replies).set(`POST ${hostedPrefix}/apps/deploy`, {
+          new Map(replies).set(`POST ${hostedPrefix}/apps/app/deploy`, {
             status: 422,
             body: BuildFailure.make({
               owner: 'owner',

@@ -5,6 +5,7 @@ import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Match from 'effect/Match'
 import * as Option from 'effect/Option'
 import * as Redacted from 'effect/Redacted'
 import * as Ref from 'effect/Ref'
@@ -30,6 +31,7 @@ import {
   executorAddress,
   installationCaller,
   type ExecutorPrincipal,
+  type ExecutorConnectionOperations,
 } from './executor.ts'
 import { memberPassword, seal, sealSecret, unseal, type SealSecret } from './seal.ts'
 import { executorMembers } from './tables.ts'
@@ -299,7 +301,11 @@ const makeMembers = Effect.fn('ExecutorMembers.make')(function* () {
 
   return ExecutorMembers.of({
     caller: ({ principal, personId }) =>
-      principal === 'installation' ? Effect.succeed(installationCaller) : member(personId),
+      Match.value(principal).pipe(
+        Match.when('installation', () => Effect.succeed(installationCaller)),
+        Match.whenOr('member', 'adopted', () => member(personId)),
+        Match.exhaustive,
+      ),
   })
 })
 
@@ -425,7 +431,29 @@ export const operationsOf = Effect.fn('ExecutorMembers.operationsOf')(function* 
   readonly personId: PersonId
 }) {
   const caller = yield* callerOf(connection)
-  return (yield* Executor).as(caller)
+  const executor = yield* Executor
+  const own = executor.as(caller)
+  return Match.value(connection.executorPrincipal).pipe(
+    Match.whenOr('installation', 'member', () => own),
+    // Adopted apps keep their creator for management, while execution never gains owner authority.
+    Match.when('adopted', () => ({
+      ...executor.as(installationCaller),
+      appSlug: own.appSlug,
+      tools: own.tools,
+      call: own.call,
+      status: own.status,
+      refresh: own.refresh,
+      reviseMade: (
+        app: Parameters<ExecutorConnectionOperations['reviseMade']>[0],
+        files: Parameters<ExecutorConnectionOperations['reviseMade']>[1],
+      ) =>
+        executor
+          .as(installationCaller)
+          .reviseMade(app, files)
+          .pipe(Effect.tap(() => own.refresh)),
+    })),
+    Match.exhaustive,
+  )
 })
 
 /** Requires Database, HttpClient and the Executor settings; a missing one stops launch. */
