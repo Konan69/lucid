@@ -17,6 +17,7 @@ import * as Option from 'effect/Option'
 import * as Match from 'effect/Match'
 import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { actingRun } from '../threads/runs.ts'
+import { requireNotDeclined } from '../actions/journal.ts'
 import { requireThread } from '../threads/access.ts'
 import type { Actor } from '../auth/access.ts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
@@ -259,6 +260,11 @@ export const gateLayer = Layer.effect(
     ) {
       if (action.effect === 'read' && exposure === 'Ordinary')
         return Option.some<GateDecision>(yield* allow(audit, actor, action))
+      yield* requireNotDeclined({
+        threadId: origin.threadId,
+        runId: ActionOrigin.guards.RuntimeThread(origin) ? null : origin.runId,
+        target: action.target,
+      }).pipe(Effect.provideService(Database, database))
       if (!isDreamThread(origin.threadId)) return Option.none<GateDecision>()
       yield* recordRefusal(
         Refusal.cases.ActionBlocked.make({ effect: action.effect, target: action.target._tag }),
