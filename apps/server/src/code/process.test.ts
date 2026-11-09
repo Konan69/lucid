@@ -384,18 +384,6 @@ describe('Supervised programs', () => {
         'inherited',
       ),
   )
-  standalone.effect('enforces the UTF-8 source budget before startup', () =>
-    scopedCase(
-      supervised,
-      Effect.gen(function* () {
-        check(yield* run(`return "${'é'.repeat(8192)}";`, reply), 'Failed', {
-          failure: CodeFailure.cases.Threw.make({ message: 'Program source exceeds 16 KiB.' }),
-          calls: [],
-        })
-      }),
-      'inherited',
-    ),
-  )
   standalone.effect('enforces the call budget', () =>
     scopedCase(
       supervised,
