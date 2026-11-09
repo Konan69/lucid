@@ -241,8 +241,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
    * domain because a Person's browser returns from a provider's sign-in through it, `/health` with
    * a 120-second start, and exactly one instance per volume. The image derives its own origin from
    * `RAILWAY_PUBLIC_DOMAIN`. Pin the published beta.23 image, whose app/user account links
-   * replace profiles. Each Vivid Connection owns a dedicated app; legacy references reconcile
-   * against upstream's explicit copy provenance and requirement links before use.
+   * replace profiles. Each Vivid Connection owns a dedicated app.
    *
    * Every sign-in returns to Vivid, not to Executor's own page, which needs an Executor browser
    * session no Person has. Railway resolves the server's domain in the reference at deploy time.

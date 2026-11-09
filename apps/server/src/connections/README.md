@@ -6,41 +6,7 @@ The adapter uses `ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.23`, ups
 `executor@2.0.0-beta.23`. Use the published image directly; no fork checkout or image build is needed.
 
 Each new Connection allocates a dedicated Executor app. Its reference records the requirement and scope,
-plus the saved account or pending authorization. A scoped background worker starts at server boot;
-reads and health never invoke or await it. Each idempotent pass probes inventory once before any
-write. An old-shape or unreachable inventory leaves every legacy selection pending and untouched.
-The pass maps `copiedFrom.reference` and exact requirement/account links, saving changed outcomes
-under a cross-process claim lock. Permanent refusals retain exact credentials and copies for safe
-removal. Transient failures, undeployed copies and unfinished copy plans retry with capped backoff;
-per-row retries have a persisted budget of 1,440 compatible unsuccessful attempts (roughly
-24 hours at the capped cadence). Global outages never consume that budget. Counter-only writes
-preserve the Connection revision, so a concurrent removal can continue; identical JSON is not rewritten.
-Global protocol failures cannot turn the mixed-version rollout into permanent refusals. Invalid
-rows are logged and excluded from the retry count; no retryable rows ends the worker. The
-`executor_app` selection is unique and checked against every active reference. Selection grants
-no deletion authority: legacy selections on shared originals retain Unproven ownership, and
-proven copies retain their original app identity for safe reclamation. Removal revokes only their exact
-unretained credential and preserves the shared app and other links. Pending Dedicated removals
-persist their resolved account before deleting the app, so failed final revocation remains retryable.
-
-Executor's storage migration does not update Vivid's PostgreSQL rows. Back up both the entire
-Executor volume with its keys and Vivid PostgreSQL. See the cutover and rollback sequence in
-[Executor's image](../../../../docs/19-infrastructure.md#executors-image). Neither mixed server/image
-pairing supports Integrations, and an old image cannot open the migrated store.
-
-The opt-in `migration.live.test.ts` has a two-process proof. Run its seed section against an
-archive of original Vivid and the old image. Copy only that section into the archive, omitting the
-branch-only `migration.ts` import; the verifier stays in this checkout. Keep the seed process alive
-on its release FIFO, start beta.23 on that same volume, migrate only its disposable PostgreSQL
-worker database, then run verify mode. The receipt contains only fixture IDs and its disposable
-database name. Before replacing the old image, run `VIVID_EXECUTOR_MIGRATION=waiting` against
-that retained database after applying this branch's generated product migration. It proves the
-new server leaves all three original selections and revisions intact on the old protocol. Then
-switch the same volume to beta.23. Verify runs the explicit pass and checks both original account identities, separate
-app IDs and a retained unfinished key card. It then removes the Connection on the shared original
-and verifies that app and the other account still work before releasing seed.
-
-For a fresh-image proof, run from the repository root:
+plus the saved account or pending authorization. For a fresh-image proof, run from the repository root:
 
 ```sh
 set -eu

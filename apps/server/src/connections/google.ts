@@ -11,8 +11,8 @@ import { requiredSetting, settingSecret, settingText } from '../config.ts'
  * configure. They were once a file of app identifiers an operator produced on one Executor and
  * named in a setting; a deploy could not carry it, so the hosted server never offered Google.
  *
- * What was run on the hosted Executor's own build (upstream source at commit `304bf60`, `apps`
- * framework at that revision): each source deploys and starts sign-in at Google with these scopes
+ * What was run on the hosted Executor's own build (`executor-selfhost:2.0.0-beta.23`, `apps`
+ * framework `appsVersion`): each source deploys and starts sign-in at Google with these scopes
  * (`google.live.test.ts`). Listing tools needs a connected account, so a copy of each source with
  * a key in place of sign-in was deployed beside it: the six definitions compile to 211 tools, one
  * for every operation, and a call reaches Google's API host, which refuses the stand-in key.

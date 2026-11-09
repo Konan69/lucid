@@ -30,9 +30,6 @@ import {
   ExecutorReferences,
   ExecutorAppId,
   ExecutorPrincipal,
-  LegacyExecutorReferences,
-  migrationPending,
-  executorMigrationMessage,
 } from './executor.ts'
 import { connectionLogo, connectionSite, IMPORTED } from './logo.ts'
 import { namedAccounts } from './names.ts'
@@ -51,7 +48,7 @@ export const storedRowSchema = createSelectSchema(connections, {
   personId: PersonId,
   companyId: Schema.NullOr(CompanyId),
   executorApp: Schema.NullOr(ExecutorAppId),
-  references: Schema.Union([ExecutorReferences, LegacyExecutorReferences]),
+  references: ExecutorReferences,
   returnsTo: SignInSurface,
   grantObservation: Schema.NullOr(GrantObservation),
   status: Schema.Literals(['ready', 'needs-authorization', 'failed']),
@@ -65,36 +62,25 @@ export type ConnectionRecord = typeof rowSchema.Type
 const decodeTrip = Schema.decodeUnknownEffect(Schema.Struct({ id: ConnectionId, person: PersonId }))
 /** The one decoder for a stored Connection; every reader of the table goes through it. */
 export const decodeStoredRow = decodeStored(storedRowSchema, 'Connection')
-const isLegacy = Schema.is(LegacyExecutorReferences)
 
 /** An active Connection selects exactly one app. This unique selection grants no deletion
  * authority; ExecutorAppOwnership separately decides whether its app may be reclaimed.
  */
 export function claimedApp(references: ExecutorReferences) {
-  if (
-    ExecutorReferences.guards.ReconnectRequired(references) ||
-    ExecutorReferences.guards.MigrationPending(references)
-  )
-    return null
+  if (ExecutorReferences.guards.ReconnectRequired(references)) return null
   return references.app
 }
 
-/** Database decoding performs no I/O or reconciliation. Unprocessed legacy selections project
- * an explicit unavailable state; only the migration pass writes outcomes or asks Executor.
- */
+/** Stored app claims must agree with their decoded references before any product use. */
 export const decodeRow = Effect.fn('Connections.decodeRow')(function* (
   input: typeof connections.$inferSelect,
 ) {
   const row = yield* decodeStoredRow(input)
-  const references = isLegacy(row.references)
-    ? migrationPending(row.references, 'Unattempted')
-    : row.references
+  const references = row.references
   if (row.executorApp !== claimedApp(references))
     return yield* new DatabaseFailure({
       message: 'Connection app claim does not match its references',
     })
-  if (ExecutorReferences.guards.MigrationPending(references))
-    return { ...row, references, status: 'failed' as const, reason: executorMigrationMessage }
   return { ...row, references }
 })
 export const encodeReferences = encodeStored(ExecutorReferences, 'Connection references')

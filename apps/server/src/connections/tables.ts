@@ -51,7 +51,7 @@ export const connections = pgTable(
     personId: personColumn().notNull(),
     companyId: companyColumn(),
     references: jsonb('references').notNull(),
-    // Null only until a legacy selection is reconciled or while reconnection is required.
+    // Null while reconnection is required.
     executorApp: text('executor_app'),
     status: text('status').notNull(),
     // Existing trips returned to the web; each new client trip writes its own surface.
