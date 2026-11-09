@@ -1,0 +1,1 @@
+ALTER TABLE "settings" ADD COLUMN "location" jsonb DEFAULT '{"_tag":"Off"}' NOT NULL;

@@ -1,5 +1,5 @@
 import * as Effect from 'effect/Effect'
-import type { PatchSettingsRequest } from '@vivid/contracts'
+import type { PatchSettingsRequest, ShareLocationRequest } from '@vivid/contracts'
 import { requireActor, requirePerson, type Actor } from '../auth/access.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { live } from '../live/query.ts'
@@ -19,6 +19,20 @@ export const settingsHandlers = {
   PatchSettings: Effect.fn('Rpc.PatchSettings')(function* (request: PatchSettingsRequest) {
     const auth = yield* requirePerson()
     const saved = yield* (yield* SettingsStore).patch(auth.person.id, request)
+    yield* (yield* Changes).publish([Topic.person(auth.person.id)])
+    return saved
+  }),
+}
+
+/**
+ * Where the Person is, sent by one of their own signed-in devices (`location.ts`). Vivid acting
+ * for them may read it through `GetSettings` and never writes it, so this takes a Person and not
+ * any actor. Every device's Settings hears the change, as for any other setting.
+ */
+export const locationHandlers = {
+  ShareLocation: Effect.fn('Rpc.ShareLocation')(function* (request: ShareLocationRequest) {
+    const auth = yield* requirePerson()
+    const saved = yield* (yield* SettingsStore).shareLocation(auth.person.id, request.reading)
     yield* (yield* Changes).publish([Topic.person(auth.person.id)])
     return saved
   }),
