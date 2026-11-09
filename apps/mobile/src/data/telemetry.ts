@@ -73,6 +73,7 @@ const updates = () =>
  */
 export const startTelemetry = (): void => {
   if (__DEV__ || Platform.OS === 'web') return
+  // oxlint-disable-next-line vivid/no-direct-process-env -- babel-preset-expo inlines only this literal member at build time; React Native has no runtime env for Effect Config to read.
   const configuration = launch(process.env.EXPO_PUBLIC_VIVID_ENVIRONMENT ?? 'production')
   if (Option.isNone(configuration)) return
   const started = Option.liftThrowable(init)({
