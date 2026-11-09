@@ -50,6 +50,7 @@ const settings = ConfigProvider.layer(
     GOOGLE_CLIENT_ID: 'isolated-test-client',
     GOOGLE_CLIENT_SECRET: 'isolated-test-secret',
     VIVID_EXECUTOR_URL: process.env['VIVID_TEST_EXECUTOR_URL'],
+    VIVID_EXECUTOR_PUBLIC_URL: process.env['VIVID_TEST_EXECUTOR_URL'],
     VIVID_EXECUTOR_KEY: process.env['VIVID_TEST_EXECUTOR_KEY'],
     VIVID_EXECUTOR_ORGANIZATION: process.env['VIVID_TEST_EXECUTOR_ORGANIZATION'],
     VIVID_EXECUTOR_OWNER_EMAIL: process.env['VIVID_TEST_EXECUTOR_OWNER_EMAIL'],

@@ -102,6 +102,8 @@ const executorAccess = ({ executor }: InfrastructureEnvironment) => ({
   VIVID_EXECUTOR_URL: privateUrl(serviceNames.executor, ports.executor),
   VIVID_EXECUTOR_KEY: executor.key,
   VIVID_EXECUTOR_ORGANIZATION: executor.organization,
+  /** Executor's sign-in checks this origin; the private address above is refused there. */
+  VIVID_EXECUTOR_PUBLIC_URL: `https://\${{${serviceNames.executor}.RAILWAY_PUBLIC_DOMAIN}}`,
   /** Each Person's own Executor member is invited by the owner and its key sealed with this. */
   VIVID_EXECUTOR_OWNER_EMAIL: executor.ownerEmail,
   VIVID_EXECUTOR_OWNER_PASSWORD: executor.ownerPassword,
