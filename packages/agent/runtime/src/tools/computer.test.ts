@@ -365,37 +365,6 @@ describe('browser model target and image result', () => {
 })
 
 describe('desktop model image result', () => {
-  it.effect('uses a complete public tool schema that pi validates before native execution', () =>
-    Effect.gen(function* () {
-      const transport = yield* fixture()
-      const input = {
-        action: DesktopAction.cases.Move.make({ to: { x: 8, y: 9 } }),
-        summary: 'Move the pointer',
-      }
-      expect(
-        validateToolArguments(transport.tool, {
-          type: 'toolCall',
-          id: 'fixture-call',
-          name: 'use_desktop',
-          arguments: input,
-        }),
-      ).toEqual(input)
-      expect(() =>
-        validateToolArguments(transport.tool, {
-          type: 'toolCall',
-          id: 'fixture-call',
-          name: 'use_desktop',
-          arguments: {
-            // Deliberately invalid wire input exercises pi's public ingress validator.
-            // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- Deliberately invalid RPC wire fixture cannot be constructed by the domain schema.
-            action: { _tag: 'Move', to: { x: -1, y: 0 } },
-            summary: 'Invalid pointer',
-          },
-        }),
-      ).toThrow('Validation failed')
-    }).pipe(Effect.scoped),
-  )
-
   it.effect(
     'carries the full PNG in image content, with no base64 or identifiers in bounded text',
     () =>

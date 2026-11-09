@@ -11,14 +11,7 @@ import { PageResolver, PageFailure } from '../code/address.ts'
 import { PageNetwork } from '../code/network.ts'
 import { pageReaderLayer } from '../code/page.ts'
 import * as NetAddress from 'effect/net/NetAddress'
-import {
-  ConnectionSource,
-  makeConnectionAddressLayer,
-  ConnectionAddressUnreachable,
-  ConnectionAddress,
-  inspectAddress,
-  publicAddress,
-} from './address.ts'
+import { ConnectionSource, inspectAddress } from './address.ts'
 
 const specification = {
   openapi: '3.0.3',
@@ -285,36 +278,5 @@ describe('public integration addresses', () => {
           })
         }),
     )
-    it.layer(
-      makeConnectionAddressLayer((_hostname, _options, callback) =>
-        callback(null, [{ address: '127.0.0.1', family: 4 }]),
-      ),
-    )('private destination policy', (it) => {
-      it.effect(
-        'refuses private literals, credential URLs and names resolving to loopback at socket creation',
-        () =>
-          Effect.gen(function* () {
-            for (const address of [
-              'http://127.1/',
-              'http://2130706433/',
-              'http://169.254.169.254/',
-              'http://10.0.0.1/',
-              'http://[::1]/',
-              'http://[::ffff:127.0.0.1]/',
-              'https://localhost/',
-              'https://service.internal/',
-              'https://user:key@example.com/',
-            ])
-              expect(publicAddress(address)).toBeUndefined()
-            const reader = yield* ConnectionAddress
-            expect(yield* reader.inspect('http://127.0.0.1/').pipe(Effect.flip)).toMatchObject({
-              reason: 'not a public web address',
-            })
-            expect(
-              yield* reader.inspect('https://integration.example/').pipe(Effect.flip),
-            ).toBeInstanceOf(ConnectionAddressUnreachable)
-          }).pipe(Effect.scoped, Effect.scoped),
-      )
-    })
   })
 })

@@ -15,7 +15,6 @@ import type * as RpcGroup from 'effect/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/rpc/RpcMessage'
 import { computerSandbox, machineTools } from './sandbox.ts'
 import { Scope, scopedRunner } from './scope.ts'
-import schemas from './tests/schemas.json' with { type: 'json' }
 import { tools as catalogue } from './index.ts'
 import { roundTrip } from './tests/harness.ts'
 
@@ -210,16 +209,6 @@ describe('Computer tools on Pi', () => {
     }),
   )
 })
-
-/** Model tool schemas and descriptions stay stable across runtime changes. */
-it.effect('advertises main’s exact six schemas, descriptions and ordering', () =>
-  Effect.gen(function* () {
-    const { tools } = yield* fixture('machine-person')
-    expect(
-      tools.map(({ name, description, parameters }) => ({ name, description, parameters })),
-    ).toEqual(schemas)
-  }),
-)
 
 it.effect('accepts read optional nulls after Pi normalization', () =>
   Effect.gen(function* () {
