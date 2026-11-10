@@ -4,6 +4,7 @@ import {
   CheckinArming,
   CheckinRead,
   CheckinFocus,
+  AvailableCheckinFocus,
   CheckinTiming,
   CheckinNotFound,
   CheckinNotScheduled,
@@ -107,7 +108,7 @@ const sourceReading = Effect.fn('Checkins.read')(function* (
     helper: Option.none(),
   }
   const records = yield* owed.list(actor)
-  return yield* CheckinFocus.match<ReturnType<typeof projectReading>>(purpose.focus, {
+  return yield* AvailableCheckinFocus.match(purpose.focus, {
     Project: ({ projectId }) => projectReading(actor, projectId),
     Owed: ({ owedId }) => {
       const source = records.find((item) => item.id === owedId)
