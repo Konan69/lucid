@@ -621,6 +621,9 @@ export const replyOf = (
   Option.match(up, {
     onNone: () => Reply.Message(),
     onSome: ({ request, drafting }) => {
+      // An Integration's question is answered by its own form (`filling.ts`), never by words:
+      // the server refuses an ordinary answer to it.
+      if (request.integration !== null) return Reply.Message()
       const { question } = progressOf(request.questions, drafting)
       if (question.options.length > 0 || !question.allowsOwnAnswer) return Reply.Message()
       const written = type(request.questions, drafting, words)

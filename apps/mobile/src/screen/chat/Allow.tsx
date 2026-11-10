@@ -1,5 +1,5 @@
 import { ApprovalDecision, type InputOption } from '@vivid/contracts'
-import { asking, type ApprovalUp } from '@vivid/state'
+import { asking, form, type ApprovalUp } from '@vivid/state'
 import { Option } from 'effect'
 import { useState } from 'react'
 import type { SharedValue } from 'react-native-reanimated'
@@ -66,6 +66,16 @@ const ANSWERS: ReadonlyArray<Answer> = [
  * A decision that did not go through is said over the composer (`screen/Chat.tsx`), as a
  * question's is, and not in the banner.
  */
+/**
+ * The answers an Approval offers. An Integration that paused its call asks every time and takes
+ * only Allow and Don't allow (`form.isIntegrationApproval`, `@vivid/state`), so it has no
+ * "Always allow".
+ */
+const answersOf = (up: ApprovalUp): ReadonlyArray<Answer> =>
+  form.isIntegrationApproval(up.approval)
+    ? ANSWERS.filter((answer) => !ApprovalDecision.guards.AlwaysAllow(answer.decision))
+    : ANSWERS
+
 export function Allow({ up, leaving, busy, dock, covered, onDecide, onGone }: AllowProps) {
   // Whether the Person has the banner open. It is this Approval's: the banner is keyed by it
   // (`screen/Chat.tsx`), so the next one comes up open.
@@ -98,7 +108,7 @@ export function Allow({ up, leaving, busy, dock, covered, onDecide, onGone }: Al
         <Body open={open}>
           <Under>
             <Rows
-              rows={ANSWERS.map(({ option, decision }) => ({
+              rows={answersOf(up).map(({ option, decision }) => ({
                 option,
                 decision,
                 standing: standingOf(option, pressed, busy),

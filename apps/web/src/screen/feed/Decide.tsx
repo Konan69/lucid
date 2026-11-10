@@ -1,5 +1,5 @@
 import { ApprovalDecision, draftOf, type Approval, type SendDraft } from '@vivid/contracts'
-import { allowing, draftWords, editedInput, riskWords, type DraftWords } from '@vivid/state'
+import { allowing, draftWords, editedInput, form, riskWords, type DraftWords } from '@vivid/state'
 import { Option } from 'effect'
 import { Paperclip } from 'lucide-react'
 import { useId, useState, type ReactNode } from 'react'
@@ -33,6 +33,9 @@ export function Decide({ approval, room }: { approval: Approval; room: 'card' | 
   const decide = (decision: ApprovalDecision) =>
     decideApproval({ id: approval.id, digest: approval.digest, decision })
   const { action } = approval
+  // An Integration's paused call is answered as it was asked: the server refuses an edit to it,
+  // so it is never offered as a draft.
+  const draft = form.isIntegrationApproval(approval) ? Option.none() : draftOf(action)
   return (
     <div className="flex flex-col">
       {/* What Vivid would do, in its own sentence, then why, then how much it can change. */}
@@ -55,7 +58,7 @@ export function Decide({ approval, room }: { approval: Approval; room: 'card' | 
           {riskWords(action.effect)}
         </span>
       </p>
-      {Option.match(draftOf(approval.action), {
+      {Option.match(draft, {
         onSome: (draft) => (
           <DraftForm
             // A newer record of the same ask is a new draft: the words start again from it.

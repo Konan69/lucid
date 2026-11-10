@@ -5,6 +5,14 @@ import * as NodeCrypto from 'node:crypto'
 import * as NodeBuffer from 'node:buffer'
 import { describe, expect, layer } from '@effect/vitest'
 import {
+  ActionOperationId,
+  ActionTarget,
+  ConnectionId,
+  IntegrationAnswerOutcome,
+  IntegrationPause,
+  IntegrationRequestId,
+  ProposedAction,
+  type IntegrationResponse,
   InputAnswer,
   CompanyId,
   Computer,
@@ -72,6 +80,7 @@ import * as RpcSerialization from 'effect/rpc/RpcSerialization'
 import { sendToThread } from './relay.ts'
 import { findPerson, type Actor } from '../auth/access.ts'
 import { InputStore, inputStoreLayer } from '../inputs/store.ts'
+import { IntegrationAnswers } from '../connections/answers.ts'
 import { Definition } from '../inputs/handoff.ts'
 import { handoffs } from '../inputs/tables.ts'
 import { ComputerStore } from '../computers/store.ts'
@@ -339,9 +348,31 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
   /** The Computer as a handoff reaches it: each clearing's labels, and each hand back. */
   const cleared = yield* Ref.make<ReadonlyArray<ReadonlyArray<string>>>([])
   const handedBack = yield* Ref.make(0)
+  /**
+   * The Integration as a paused call reaches it: each answer sent to a saved call. Executor itself
+   * is outside this suite (`connections/asks.live.test.ts` resumes a real one); here it takes a
+   * cancel and says so.
+   */
+  const resumed = yield* Ref.make<ReadonlyArray<IntegrationResponse>>([])
+  const integrations = Layer.succeed(
+    IntegrationAnswers,
+    IntegrationAnswers.of({
+      pause: () => Effect.die('Delivery tests raise no Integration pause'),
+      settle: () => Effect.void,
+      answer: (_actor, _action, response) =>
+        Ref.update(resumed, (before) => [...before, response]).pipe(
+          Effect.as(IntegrationAnswerOutcome.cases.Cancelled.make({})),
+        ),
+    }),
+  )
   const sending = yield* Layer.build(
-    Layer.merge(
+    Layer.mergeAll(
       services,
+      integrations,
+      inputStoreLayer.pipe(
+        Layer.provide(Layer.succeed(Conversation, conversation)),
+        Layer.provide(services),
+      ),
       Layer.mock(ComputerStore, {
         clearFields: (_person, _page, labels) =>
           Ref.update(cleared, (before) => [...before, labels]).pipe(Effect.as([])),
@@ -380,6 +411,7 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
     finish,
     services,
     sending,
+    resumed,
     cleared,
     handedBack,
     topics,
@@ -694,6 +726,67 @@ layer(
           )
           expect(yield* Ref.get(test.topics)).toEqual(beforeTopics)
           expect(yield* Ref.get(test.admitted)).toHaveLength(1)
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect(
+      'an admitted message cancels a withdrawn Integration question’s paused call once',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* inputHarness()
+          const actor = yield* actorOf(test, test.ben)
+          const asked = yield* test.inputs.askIntegration(
+            { ...actor, by: 'vivid', threadId: Option.some(test.threadId) },
+            ProposedAction.make({
+              summary: 'File a verification issue with Verify Pulse',
+              rationale: 'Which priority should the issue have?',
+              effect: 'write',
+              target: ActionTarget.cases.Connection.make({
+                connectionId: ConnectionId.make(NodeCrypto.randomUUID()),
+                account: 'Verify Pulse',
+                tool: 'file',
+                input: { receipt: 'withdraw' },
+              }),
+              continuation: {
+                operation: ActionOperationId.make(NodeCrypto.randomUUID()),
+                pause: IntegrationPause.cases.Input.make({
+                  requestId: IntegrationRequestId.make('paused-call'),
+                  expiresAt: Date.now() + 15 * 60 * 1000,
+                  form: {
+                    mode: 'form',
+                    message: 'Which priority should the issue have?',
+                    requestedSchema: {
+                      type: 'object',
+                      properties: { name: { type: 'string' } },
+                      required: ['name'],
+                    },
+                  },
+                }),
+              },
+            }),
+          )
+          const ordinary = yield* askFor(test, test.ben, test.threadId)
+          const body = { kind: 'user', body: 'Never mind, file it later.', idempotencyKey: 'later' }
+          expect((yield* post(test, body)).status).toBe(202)
+          const records = yield* test.inputs.inThread(test.threadId)
+          const integration = records.find((request) => request.id === asked.id)
+          if (integration === undefined) expect.fail('Missing Integration question')
+          // Withdrawn by the message, which is its reply, with its paused call answered `cancel`.
+          expect(InputRequestState.guards.Withdrawn(integration.state)).toBe(true)
+          expect(integration.integrationOutcome).toEqual(
+            IntegrationAnswerOutcome.cases.Cancelled.make({}),
+          )
+          expect(yield* Ref.get(test.resumed)).toEqual([{ action: 'cancel' }])
+          const plain = records.find((request) => request.id === ordinary.id)
+          if (plain === undefined) expect.fail('Missing ordinary question')
+          expect(InputRequestState.guards.Withdrawn(plain.state)).toBe(true)
+          expect(plain.integrationOutcome).toBeNull()
+          // A replayed send, and a later message, cancel nothing a second time.
+          expect((yield* post(test, body)).status).toBe(202)
+          expect(
+            (yield* post(test, { kind: 'user', body: 'Thanks', idempotencyKey: 'thanks' })).status,
+          ).toBe(202)
+          expect(yield* Ref.get(test.resumed)).toEqual([{ action: 'cancel' }])
         }).pipe(Effect.scoped),
     )
 

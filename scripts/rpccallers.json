@@ -1,4 +1,3 @@
 {
-  "AnswerIntegrationInput": "Wire Integration input prompts to this typed answer procedure (#227).",
   "NudgedOwed": "Records a nudge actually sent; the send path does not yet carry the Owed id, so nothing can write it truthfully."
 }

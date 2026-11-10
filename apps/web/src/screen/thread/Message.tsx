@@ -22,6 +22,7 @@ import {
   offeredReplies,
   pictureAddress,
   runOf,
+  form,
   Source,
   sourceOf,
   speakerOfTurn,
@@ -326,17 +327,18 @@ export function Replied({ request, me }: { request: InputRequest; me: PersonId }
     Waiting: () => null,
     Withdrawn: () => null,
     Expired: () => null,
+    // An Integration's bubble says which button answered it, and nothing once the answer came
+    // too late (`form.repliedOf`).
     Answered: ({ answers, answeredBy: person }) =>
-      person.id === me ? (
-        <Said text={asking.repliedWords(answers)} mine pictures={NO_PICTURES} />
-      ) : (
-        <Said
-          text={asking.repliedWords(answers)}
-          mine={false}
-          pictures={NO_PICTURES}
-          from={{ name: person.name }}
-        />
-      ),
+      Option.match(form.repliedOf(request, answers), {
+        onNone: () => null,
+        onSome: (text) =>
+          person.id === me ? (
+            <Said text={text} mine pictures={NO_PICTURES} />
+          ) : (
+            <Said text={text} mine={false} pictures={NO_PICTURES} from={{ name: person.name }} />
+          ),
+      }),
   })
 }
 
@@ -551,7 +553,12 @@ function drawn(wanted: CardRequest, key: string, context: ThreadContext, live: b
     case 'approval': {
       const approval = approvalById(context.approvals, wanted.id)
       return Option.isNone(approval) ? null : (
-        <AskedFirst key={key} approval={approval.value} me={context.me} />
+        <AskedFirst
+          key={key}
+          approval={approval.value}
+          requests={context.requests}
+          me={context.me}
+        />
       )
     }
     case 'input': {

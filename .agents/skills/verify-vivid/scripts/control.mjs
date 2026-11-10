@@ -1,7 +1,6 @@
 import * as NodeFSP from 'node:fs/promises'
 import * as NodePath from 'node:path'
 import * as NodeOS from 'node:os'
-import { createRequire } from 'node:module'
 import { boot } from './process.mjs'
 import { recoverPrevious, recover, dependenciesCleanup } from './recovery.mjs'
 import { doctor } from './doctor.mjs'
@@ -23,7 +22,8 @@ import {
   lock,
 } from './process.mjs'
 const [action = 'help', ...args] = process.argv.slice(2)
-const loader = createRequire(root + '/apps/server/package.json').resolve('tsx')
+// The skill's loader: the server's tsx plus the resolver for the scripts' imports.
+const loader = new URL('./loader.mjs', import.meta.url).pathname
 
 /** The CLI always selects a run it created, never any ordinary application instance. */
 async function selected() {
@@ -282,9 +282,12 @@ try {
               process.execPath,
               '--import',
               loader,
-              skill + (args.includes('monitoring') ? '/scripts/monitoring.mjs' : '/scripts/browser.mjs'),
+              skill +
+                (args.includes('monitoring') ? '/scripts/monitoring.mjs' : '/scripts/browser.mjs'),
               state.evidence + '/state.json',
-              args.includes('monitoring') ? 'browser' : args.filter((arg) => !arg.startsWith('pi-'))[0] ?? 'all',
+              args.includes('monitoring')
+                ? 'browser'
+                : (args.filter((arg) => !arg.startsWith('pi-'))[0] ?? 'all'),
             ],
             {
               heavy: true,
