@@ -30,6 +30,10 @@ const program = Effect.gen(function* () {
     sleep: (duration) => live.sleep(duration),
   }
   yield* paceOnce().pipe(Effect.provideService(Clock.Clock, clock))
-}).pipe(Effect.provide(services), Effect.scoped)
+}).pipe(
+  // @effect-diagnostics-next-line strictEffectProvide:off -- This executable proof entry owns the service Layer and its scope.
+  Effect.provide(services),
+  Effect.scoped,
+)
 
 NodeRuntime.runMain(program)
