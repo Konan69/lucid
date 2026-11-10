@@ -104,7 +104,8 @@ async function allow(state, approval, directory, client, stage) {
 
 /** The Feed's Needs you, with the Thread's ask on it, then back to the Thread. */
 async function feed(state, id, client, words, stage) {
-  await client.run(['open', state.web + '/feed'])
+  // In-app, by the sidebar's Feed entry, as a Person gets there; no full page load.
+  await client.run(['find', 'role', 'link', 'click', '--name', 'Feed', '--exact'])
   await client.run(['wait', '--text', words])
   await client.capture(stage)
   // The card is the element holding the ask's words with the most buttons, the smallest such:
@@ -113,7 +114,8 @@ async function feed(state, id, client, words, stage) {
     client,
     `(() => { const found = Array.from(document.querySelectorAll('div, article, li, section')).filter((node) => node.innerText.includes(${JSON.stringify(words)}) && !node.querySelector('[aria-label="Message Vivid"]')).sort((a, b) => b.querySelectorAll('button').length - a.querySelectorAll('button').length || a.innerText.length - b.innerText.length)[0]; return found ? { buttons: Array.from(found.querySelectorAll('button')).map((b) => b.innerText.trim()).filter(Boolean), fields: found.querySelectorAll('textarea, input').length } : null })()`,
   )
-  await client.run(['open', state.web + '/t/' + id])
+  await client.run(['back'])
+  await client.run(['wait', '--fn', `location.pathname === ${JSON.stringify('/t/' + id)}`])
   await client.run(['wait', '[aria-label="Message Vivid"]'])
   return card
 }
