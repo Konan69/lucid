@@ -195,13 +195,8 @@ async function questionStep(state, id, directory, client) {
       { label: 'Summary', value: 'Phone form bug' },
     )
     assert.equal(shown.send, true, 'Send waits for the required Urgent')
-    const card = await feed(
-      state,
-      id,
-      client,
-      'Which priority should the issue have?',
-      'feed-question',
-    )
+    // Needs you says a question waits and opens its Thread; it is answered only there.
+    const card = await feed(state, id, client, 'Vivid has a question for you', 'feed-question')
     assert.ok(card === null || card.fields === 0, 'A question is answered only in its Thread')
     await client.run(['wait', 'section[aria-label="Vivid\'s question"]'])
     await client.run(['find', 'role', 'button', 'click', '--name', 'No', '--exact'])
