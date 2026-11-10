@@ -52,7 +52,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
       Effect.gen(function* () {
         const { personalActor } = yield* fixture()
         const database = yield* Database
-        const storedJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json))
+        const storedJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))
         yield* database.run(
           database.insert(connections).values([
             {
@@ -62,7 +62,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
               serviceName: 'Stored account',
               executorPrincipal: 'adopted-account',
               executorApp: 'stored-account-app',
-              references: storedJson(
+              references: yield* storedJson(
                 `{"service":"${serviceId}","owner":"stored-owner","_tag":"Authorized","app":"stored-account-app","account":"stored-account","binding":{"_tag":"Account","scope":"app","requirement":"adopted"},"appOwnership":{"_tag":"Adopted","group":"stored-group","source":{"_tag":"Account","original":"original","adopted":"adopted","account":"stored-account"},"finalization":{"_tag":"Completed"}}}`,
               ),
               status: 'needs-authorization',
@@ -76,7 +76,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
               serviceName: 'Stored public',
               executorPrincipal: 'adopted-public',
               executorApp: 'stored-public-app',
-              references: storedJson(
+              references: yield* storedJson(
                 `{"service":"${serviceId}","owner":"stored-owner","_tag":"Public","app":"stored-public-app","binding":{"_tag":"Public"},"appOwnership":{"_tag":"Adopted","group":"stored-group","source":{"_tag":"Public"},"finalization":{"_tag":"Completed"}}}`,
               ),
               status: 'ready',
@@ -90,7 +90,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
               serviceName: 'Stored reconnect',
               executorPrincipal: 'member',
               executorApp: null,
-              references: storedJson(
+              references: yield* storedJson(
                 `{"service":"${serviceId}","owner":"stored-owner","_tag":"ReconnectRequired","reason":"UnresolvedMigration","retired":{"original":"retired-app","ownership":"Dedicated","account":null,"copies":[],"authorization":null}}`,
               ),
               status: 'failed',

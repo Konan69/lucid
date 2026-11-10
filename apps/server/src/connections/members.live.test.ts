@@ -2,7 +2,7 @@ import * as NodeHttp from 'node:http'
 import * as NodeProcess from 'node:process'
 import { NodeHttpClient, NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
-import { ConnectionId, PersonId, ServiceId } from '@vivid/contracts'
+import { ConnectionId, PersonId, ServiceId, WatchId } from '@vivid/contracts'
 import { eq, sql } from 'drizzle-orm'
 import {
   Config,
@@ -12,6 +12,7 @@ import {
   Layer,
   Option,
   Redacted,
+  Ref,
   Result,
   Schema,
 } from 'effect'
@@ -23,6 +24,8 @@ import {
   HttpServerResponse,
 } from 'effect/http'
 import * as NetAddress from 'effect/net/NetAddress'
+import { ServerConfig } from '../config.ts'
+import { secretFor } from '../watches/signature.ts'
 import { ExecutorEvents, executorEventsLayer } from '../watches/events.ts'
 import { makeWatchedApps } from '../watches/apps.ts'
 import { ExecutorAdoption, executorAdoptionLayer } from './adopter.ts'
@@ -406,7 +409,7 @@ const adoptedAccount = Effect.fn('MembersProof.adoptedAccount')(function* (
   yield* Ref.set(receipts, [])
   const grant = yield* events.subscribe(watchCaller, {
     ...subscription,
-    secret: Redacted.make('adopted-watch-proof'),
+    secret: secretFor((yield* ServerConfig).AUTH_SECRET, WatchId.make(crypto.randomUUID())),
     ttlMs: 60_000,
   })
   expect(grant.refreshBefore.getTime()).toBeGreaterThan(Date.now())
