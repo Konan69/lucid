@@ -3,7 +3,7 @@ import * as NodeFSP from 'node:fs/promises'
 import { command } from './process.mjs'
 import { WatchState } from '@vivid/contracts'
 import { observe } from './observation.mjs'
-import { connectPulse, emit, posted, watchWords } from './watch.mjs'
+import { connectPulse, emit, posted, threadFor, watchWords } from './watch.mjs'
 import { providerSnapshot } from './snapshot.mjs'
 import { chat, history, json, rpc, settled } from './wire.mjs'
 
@@ -73,7 +73,7 @@ async function feedDelivery(state, { integration, me }, directory, browser) {
     { app: integration.app, words: 'outcome feed delivery', name: 'provider-receipt' },
     path,
   )
-  const published = await posted(state, marker, path)
+  const published = await posted(state, threadFor(watching.id, receipt), path)
   const away = await settled(state, published.thread, 1, 'Completed', path)
   // Posting can publish a Working card before the Run commits its completed outcome.
   const feed = await rpc(state, 'ListFeed', undefined, path)

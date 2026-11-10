@@ -3,7 +3,7 @@ import { Schema } from 'effect'
 import { PatchSettingsRequest } from '@vivid/contracts'
 import { decodeText } from './receipts.mjs'
 import { chat, history, json, rpc, settled } from './wire.mjs'
-import { connectPulse, emit, posted } from './watch.mjs'
+import { connectPulse, emit, posted, threadFor } from './watch.mjs'
 import { command } from './process.mjs'
 
 /** Read only this Launch's database. Notification rows are the actual server's delivery obligations. */
@@ -125,7 +125,7 @@ export async function pacing(state, id, directory) {
       },
       directory,
     )
-    const ordinary = await posted(state, marker + ' ' + receipt, directory)
+    const ordinary = await posted(state, threadFor(watch.id, receipt), directory)
     await settled(state, ordinary.thread, 1, 'Completed', directory)
     const ordinaryHistory = await history(state, ordinary.thread, directory)
     await json(directory + '/ordinary-history.json', ordinaryHistory)
@@ -159,7 +159,7 @@ export async function pacing(state, id, directory) {
       },
       directory,
     )
-    const urgent = await posted(state, marker + ' ' + urgentReceipt, directory)
+    const urgent = await posted(state, threadFor(watch.id, urgentReceipt), directory)
     await settled(state, urgent.thread, 1, 'Completed', directory)
     const urgentHistory = await history(state, urgent.thread, directory)
     await json(directory + '/urgent-history.json', urgentHistory)
