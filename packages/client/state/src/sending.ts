@@ -48,7 +48,7 @@ const Taken = Schema.Struct({
   submission: Schema.Option(Schema.String),
   working: Schema.Boolean,
 })
-export interface Taken extends Schema.Schema.Type<typeof Taken> {}
+interface Taken extends Schema.Schema.Type<typeof Taken> {}
 
 /** Unanswered or refused words retained for an explicit same-key retry. */
 export const Unsent = Schema.Struct({
@@ -863,7 +863,7 @@ const Admission = Schema.TaggedUnion({
   Unanswered: {},
   Uncreated: { why: Schema.Option(Schema.String) },
 })
-export type Admission = typeof Admission.Type
+type Admission = typeof Admission.Type
 
 /** First-word adapters observe the same admission as composers, rather than issuing another send. */
 const admissionOf = (state: Option.Option<SendingState>, key: string): Option.Option<Admission> => {

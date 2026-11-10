@@ -15,7 +15,7 @@
  */
 
 /** A line that opens or closes a fence: its indent, and its run of backticks or tildes. */
-export const FENCE = /^(\s*)(`{3,}|~{3,})/u
+const FENCE = /^(\s*)(`{3,}|~{3,})/u
 
 /**
  * The fence the text ends inside, when it ends inside one: the indent and marker that opened it.

@@ -103,7 +103,7 @@ export const Settling = Data.taggedEnum<Settling>()
 
 /** One press, including the post it answered, survives every state of its delivery. */
 const Pressed = Schema.Struct({ revision: Schema.String, how: SettlingSchema })
-export interface Pressed extends Schema.Schema.Type<typeof Pressed> {}
+interface Pressed extends Schema.Schema.Type<typeof Pressed> {}
 
 /**
  * Where a press on a card stands, between the press and the Feed's next answer. While `Sending`

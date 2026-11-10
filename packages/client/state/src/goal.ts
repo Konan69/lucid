@@ -36,7 +36,7 @@ export type Form = typeof Form.Type
  * against that. `Failed`: the server could not be reached or refused for another reason.
  */
 const Reason = Schema.Literals(['Changed', 'Failed'])
-export type Reason = typeof Reason.Type
+type Reason = typeof Reason.Type
 
 export class Refused extends Schema.TaggedError<Refused>()(
   'ProjectWorkRefused',

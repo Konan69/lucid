@@ -28,7 +28,7 @@ export const PageFavicon = pageOption(Schema.String)
 const PageInput = Schema.Struct({
   address: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(8192)),
 })
-export type PageInput = typeof PageInput.Type
+type PageInput = typeof PageInput.Type
 
 const Coordinate = Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0))
 const Dimension = Coordinate.check(Schema.isGreaterThan(0))
