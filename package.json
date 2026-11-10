@@ -40,6 +40,7 @@
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "catalog:",
+    "@earendil-works/chord": "catalog:",
     "@effect/vitest": "catalog:",
     "@maschwenk/tsrslint": "0.1.5",
     "@oxlint/plugins": "1.83.0",
@@ -48,6 +49,7 @@
     "@typeonce/oxlint-plugin-effect-machine": "catalog:",
     "@types/node": "catalog:",
     "@vivid/compiler": "workspace:*",
+    "@vivid/contracts": "workspace:*",
     "alchemy": "catalog:",
     "effect": "catalog:",
     "husky": "9.1.7",
