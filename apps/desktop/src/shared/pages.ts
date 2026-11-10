@@ -12,9 +12,6 @@ function pageOption<S extends Schema.Constraint>(value: S) {
   return Schema.TaggedUnion({ None: {}, Some: { value } })
 }
 
-/** Clone-safe optional data on the renderer bridge, with the usual None/Some vocabulary. */
-type PageOption<A> = ReturnType<typeof pageOption<Schema.declare<A>>>['Type']
-
 /** No selection and a selected opaque handle are exhaustive bridge states. */
 export const ShowingTab = pageOption(Tab)
 /**
