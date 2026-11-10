@@ -57,7 +57,7 @@ export type WatchCondition = typeof WatchCondition.Type
 export const TimerOperationKey = Schema.NonEmptyString.pipe(Schema.brand('TimerOperationKey'))
 export type TimerOperationKey = typeof TimerOperationKey.Type
 
-/** Project is a typed extension point, awaiting its owning unit's actual state model. */
+/** A check-in follows explicit open work, including a Project with an active objective. */
 export const CheckinFocus = Schema.TaggedUnion({
   OpenWork: {},
   Owed: { owedId: OwedId },
@@ -65,11 +65,12 @@ export const CheckinFocus = Schema.TaggedUnion({
   Project: { projectId: ProjectId },
 })
 export type CheckinFocus = typeof CheckinFocus.Type
-/** No public command can schedule a Project check-in before its state is available. */
+/** Public check-in commands admit every source whose state the server can read. */
 export const AvailableCheckinFocus = Schema.Union([
   CheckinFocus.cases.OpenWork,
   CheckinFocus.cases.Owed,
   CheckinFocus.cases.Thread,
+  CheckinFocus.cases.Project,
 ]).pipe(Schema.toTaggedUnion('_tag'))
 
 /** The timer Integration owns execution and recurrence; this records who chose the check. */

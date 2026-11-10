@@ -4,10 +4,12 @@ import {
   CheckinFocus,
   CheckinTiming,
   OwedState,
+  ProjectWork,
   ReviseWatchRequest,
   WatchIntent,
   WatchPurpose,
   type Owed,
+  type Project,
   type Watch,
 } from '@vivid/contracts'
 import * as v from 'valibot'
@@ -17,6 +19,7 @@ import { Scope, type RunTool } from './scope.ts'
 import { summary, text } from './inputs.ts'
 import { modelText } from './views.ts'
 import { view } from './watches.ts'
+import { projectNamed } from './projects.ts'
 
 const focus = v.variant('kind', [
   v.object({ kind: v.literal('OpenWork') }),
@@ -25,6 +28,7 @@ const focus = v.variant('kind', [
     name: text('The exact name returned by list_open_work.', 400),
   }),
   v.object({ kind: v.literal('Thread') }),
+  v.object({ kind: v.literal('Project'), name: text('The exact active Project name.', 80) }),
 ])
 const timing = v.variant('kind', [
   v.object({
@@ -78,6 +82,28 @@ const coveringOf = (record: Owed, watches: ReadonlyArray<Watch>) =>
     return covers ? [modelText(watch.name)] : []
   })
 
+/** Active Projects are named explicitly; only a check-in on that Project covers its next step. */
+const projectWork = (projects: ReadonlyArray<Project>, watches: ReadonlyArray<Watch>) =>
+  projects.flatMap((project) =>
+    ProjectWork.guards.Active(project.work)
+      ? [
+          {
+            kind: 'project',
+            name: modelText(project.name),
+            objective: modelText(project.work.objective),
+            nextStep: modelText(project.work.nextStep),
+            checkins: watches.flatMap((watch) =>
+              WatchPurpose.guards.Checkin(watch.purpose) &&
+              CheckinFocus.guards.Project(watch.purpose.focus) &&
+              watch.purpose.focus.projectId === project.id
+                ? [modelText(watch.name)]
+                : [],
+            ),
+          },
+        ]
+      : [],
+  )
+
 /** Resolve source names within this Person's open records; Thread means the current source Thread. */
 const focusOf = Effect.fn('CheckinTools.focus')(function* (input: v.InferOutput<typeof focus>) {
   const { acting } = yield* Scope
@@ -86,6 +112,10 @@ const focusOf = Effect.fn('CheckinTools.focus')(function* (input: v.InferOutput<
       return CheckinFocus.cases.OpenWork.make({})
     case 'Thread':
       return CheckinFocus.cases.Thread.make({ threadId: acting.threadId })
+    case 'Project': {
+      const project = yield* projectNamed(input.name)
+      return CheckinFocus.cases.Project.make({ projectId: project.id })
+    }
     case 'Owed': {
       const open = yield* openOwed()
       const selected = yield* Effect.fromResult(
@@ -116,7 +146,7 @@ export function checkinTools(runTool: RunTool) {
     defineTool({
       name: Tool.list_open_work,
       description:
-        'List explicit open work and its existing check-ins. If an open record has no check-in, choose its next check in this Run and set a timer through make-an-integration, find_events, watch with Checkin purpose, then use_tool with its persisted operationKey. It is set only after the timer confirms. Do not infer obligations from unread Threads or transcripts.',
+        'List explicit open work, including active Projects with their goals and next steps, and its existing check-ins. If an open record has no check-in, choose its next check in this Run and set a timer through make-an-integration, find_events, watch with Checkin purpose, then use_tool with its persisted operationKey. It is set only after the timer confirms. Do not infer obligations from unread Threads or transcripts.',
       input: v.object({ summary }),
       run({ signal }) {
         return runTool(
@@ -124,17 +154,21 @@ export function checkinTools(runTool: RunTool) {
             const { client } = yield* Scope
             const open = yield* openOwed()
             const { watches } = yield* client.ListWatches()
+            const { projects } = yield* client.ListProjects()
             return {
               output: {
-                work: open.map((record) => ({
-                  kind: 'owed',
-                  name: `${modelText(record.what)} from ${modelText(record.from)}`,
-                  what: modelText(record.what),
-                  from: modelText(record.from),
-                  nextStep: modelText(record.nextStep),
-                  due: record.due,
-                  checkins: coveringOf(record, watches),
-                })),
+                work: [
+                  ...open.map((record) => ({
+                    kind: 'owed',
+                    name: `${modelText(record.what)} from ${modelText(record.from)}`,
+                    what: modelText(record.what),
+                    from: modelText(record.from),
+                    nextStep: modelText(record.nextStep),
+                    due: record.due,
+                    checkins: coveringOf(record, watches),
+                  })),
+                  ...projectWork(projects, watches),
+                ],
               },
             }
           }),

@@ -9,12 +9,15 @@ import {
   CheckinNotFound,
   CheckinNotScheduled,
   OwedState,
+  ProjectWork,
+  ProjectNotActive,
   TimerOperationKey,
   TimerReceipt,
   WatchPurpose,
   WatchIntent,
   Watch,
   NotFound,
+  type ProjectId,
   type ConnectionId,
   type RunId,
   type Owed,
@@ -25,6 +28,7 @@ import { workspaceIn } from '../auth/session.ts'
 import { Database } from '../database/client.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { OwedStore } from '../owed/store.ts'
+import { ProjectStore } from '../projects/store.ts'
 import { requireThread } from '../threads/access.ts'
 import { WatchedApps } from './apps.ts'
 import { ExecutorEvents } from './events.ts'
@@ -59,6 +63,29 @@ const sweepRead = (records: ReadonlyArray<Owed>, timing: CheckinTiming) => {
   return CheckinRead.cases.Open.make({ context: sourceContext(open) })
 }
 
+/** Read the current Project goal and next step; a persisted completion supplies closure evidence. */
+const projectReading = Effect.fn('Checkins.project')(function* (
+  actor: Actor,
+  projectId: ProjectId,
+) {
+  const project = (yield* (yield* ProjectStore).list(actor)).find((item) => item.id === projectId)
+  if (project === undefined) return yield* new NotFound({ message: 'Project not found' })
+  return ProjectWork.match(project.work, {
+    Unspecified: () =>
+      CheckinRead.cases.Closed.make({ evidence: 'The Project has no active objective.' }),
+    Active: ({ objective, nextStep, progress }) =>
+      CheckinRead.cases.Open.make({
+        context: JSON.stringify({
+          name: project.name,
+          objective,
+          nextStep,
+          progress: progress.map(({ at, text }) => ({ at, text })),
+        }),
+      }),
+    Completed: ({ proof }) => CheckinRead.cases.Closed.make({ evidence: proof.summary }),
+  })
+})
+
 /** Re-read the source at firing. An explicitly requested OpenWork sweep keeps its recurrence. */
 const sourceReading = Effect.fn('Checkins.read')(function* (
   record: WatchRecord,
@@ -81,21 +108,28 @@ const sourceReading = Effect.fn('Checkins.read')(function* (
     helper: Option.none(),
   }
   const records = yield* owed.list(actor)
-  return AvailableCheckinFocus.match(purpose.focus, {
+  return yield* AvailableCheckinFocus.match<ReturnType<typeof projectReading>>(purpose.focus, {
+    Project: ({ projectId }) => projectReading(actor, projectId),
     Owed: ({ owedId }) => {
       const source = records.find((item) => item.id === owedId)
       if (source === undefined)
-        return CheckinRead.cases.Closed.make({ evidence: JSON.stringify({ found: false }) })
-      return Option.match(ending(source), {
-        onNone: () => CheckinRead.cases.Open.make({ context: sourceContext([source]) }),
-        onSome: (evidence) => CheckinRead.cases.Closed.make({ evidence }),
-      })
+        return Effect.succeed(
+          CheckinRead.cases.Closed.make({ evidence: JSON.stringify({ found: false }) }),
+        )
+      return Effect.succeed(
+        Option.match(ending(source), {
+          onNone: () => CheckinRead.cases.Open.make({ context: sourceContext([source]) }),
+          onSome: (evidence) => CheckinRead.cases.Closed.make({ evidence }),
+        }),
+      )
     },
-    OpenWork: () => sweepRead(records, purpose.timing),
+    OpenWork: () => Effect.succeed(sweepRead(records, purpose.timing)),
     Thread: ({ threadId }) =>
-      sweepRead(
-        records.filter((item) => item.threadId === threadId),
-        purpose.timing,
+      Effect.succeed(
+        sweepRead(
+          records.filter((item) => item.threadId === threadId),
+          purpose.timing,
+        ),
       ),
   })
 })
@@ -148,6 +182,7 @@ const timerConfirmation = Effect.fn('Checkins.confirm')(function* (
 export const watchCheckins = Effect.fn('Watches.checkins')(function* () {
   const store = yield* WatchStore
   const owed = yield* OwedStore
+  const projects = yield* ProjectStore
   const database = yield* Database
   const changes = yield* Changes
   const events = yield* ExecutorEvents
@@ -164,6 +199,12 @@ export const watchCheckins = Effect.fn('Watches.checkins')(function* () {
       !(yield* owed.list(actor)).some((record) => record.id === focus.owedId)
     )
       return yield* new NotFound({ message: 'Owed record not found' })
+    if (CheckinFocus.guards.Project(focus)) {
+      const project = (yield* projects.list(actor)).find((item) => item.id === focus.projectId)
+      if (project === undefined) return yield* new NotFound({ message: 'Project not found' })
+      if (!ProjectWork.guards.Active(project.work))
+        return yield* new ProjectNotActive({ id: project.id })
+    }
     if (CheckinFocus.guards.Thread(focus))
       yield* requireThread(focus.threadId, actor.person.id).pipe(
         Effect.provideService(Database, database),
@@ -249,6 +290,7 @@ export const watchCheckins = Effect.fn('Watches.checkins')(function* () {
       sourceReading(record, purpose).pipe(
         Effect.provideService(Database, database),
         Effect.provideService(OwedStore, owed),
+        Effect.provideService(ProjectStore, projects),
       ),
     finishCheckin: finish,
   }

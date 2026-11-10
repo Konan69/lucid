@@ -871,6 +871,7 @@ const FindAppEvents = Rpc.make('FindAppEvents', {
 /** Subscribe to one of those events for the acting Person; each event wakes Vivid. */
 const CreateWatch = Rpc.make('CreateWatch', {
   ...call,
+  error: Schema.Union([RpcFailure, ProjectNotActive]),
   payload: CreateWatchRequest,
   success: WatchResponse,
 })
