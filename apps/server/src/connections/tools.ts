@@ -1,7 +1,9 @@
 import { IntegrationAnswers } from './answers.ts'
+import { Audit } from '../audit/record.ts'
 import { Array as Arr, Clock, Duration, Effect, Option, Order, Result, Schema } from 'effect'
 import {
   ActionReceipt,
+  AuditEvent,
   ApprovalBinding,
   ActionTarget,
   AnotherAccountMessage,
@@ -46,6 +48,7 @@ import {
   answerBefore,
   claim,
   operationOf,
+  originOf,
   release,
   resultDigest,
   settle,
@@ -464,8 +467,107 @@ const pauseConnection = Effect.fn('Connections.pause')(function* (
     )
 })
 
+/** Project one provider outcome without changing its operation or issuing another call. */
+const connectionOutcome = Effect.fn('Connections.outcome')(function* (
+  actor: Actor,
+  row: ConnectionRecord,
+  target: typeof ActionTarget.cases.Connection.Type,
+  call: {
+    readonly effect: ActionEffect
+    readonly operation: Option.Option<ActionOperationId>
+    readonly policy: DisplayCallPolicy
+    readonly outcome: typeof ExecutorCallOutcome.Type
+  },
+) {
+  const { effect, operation, outcome } = call
+  const receiptOperation = Option.filter(
+    operation,
+    () => effect !== 'read' || outcome.approvalAnswered === true,
+  )
+  return yield* ExecutorCallOutcome.match<
+    Effect.Effect<
+      IntegrationResult,
+      | import('@vivid/contracts').NotFound
+      | ReturnType<typeof executorFailure>
+      | ExecutorApprovalUnsupported
+      | import('@vivid/contracts').Conflict
+      | import('../database/client.ts').DatabaseInfrastructureError,
+      ConnectionStore | IntegrationAnswers | ActionLookup | import('../database/client.ts').Database
+    >
+  >(outcome, {
+    UncertainPause: Effect.fnUntraced(function* () {
+      if (DisplayCallPolicy.guards.Draw(call.policy))
+        return yield* notRead(
+          ToolOutcome.cases.Rejected.make({
+            message: 'This Integration needs the Person before it can continue. Ask in the Thread.',
+          }),
+        )
+      yield* claimPausedRead(actor, target, call)
+      const uncertain = yield* unknownConnection(operation, {
+        service: row.service,
+        target,
+        effect,
+      })
+      if (
+        ToolOutcome.guards.OutcomeUnknown(uncertain.outcome) &&
+        uncertain.outcome.receipt !== null
+      )
+        yield* settle(uncertain.outcome.receipt)
+      return uncertain
+    }),
+    Paused: ({ pause }) =>
+      DisplayCallPolicy.match(call.policy, {
+        Draw: () =>
+          notRead(
+            ToolOutcome.cases.Rejected.make({
+              message:
+                'This Integration needs the Person before it can continue. Ask in the Thread.',
+            }),
+          ),
+        Press: () => pauseConnection(actor, row, target, { effect, operation, pause }),
+      }),
+    Expired: () => unknownConnection(receiptOperation, { service: row.service, target, effect }),
+    Accepted: Effect.fnUntraced(function* ({ value }) {
+      const acceptedAt = yield* Clock.currentTimeMillis
+      const receipt = Option.map(receiptOperation, (operationId) =>
+        ActionReceipt.cases.Accepted.make({ operationId, acceptedAt }),
+      )
+      return yield* observedResult(
+        ToolOutcome.cases.Accepted.make({ output: value, receipt: Option.getOrNull(receipt) }),
+        { service: row.service, target, effect },
+      )
+    }),
+    Completed: Effect.fnUntraced(function* ({ value }) {
+      const completedAt = yield* Clock.currentTimeMillis
+      const receipt = Option.map(receiptOperation, (operationId) =>
+        ActionReceipt.cases.Completed.make({
+          operationId,
+          completedAt,
+          resultDigest: resultDigest(value),
+        }),
+      )
+      return yield* observedResult(
+        ToolOutcome.cases.Completed.make({ output: value, receipt: Option.getOrNull(receipt) }),
+        { service: row.service, target, effect },
+      )
+    }),
+    Rejected: Effect.fnUntraced(function* ({ message, problems }) {
+      // The service answer becomes a Tool rejection here; its private message is never recorded.
+      yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'ServiceRejected' }))
+      return yield* observedResult(ToolOutcome.cases.Rejected.make({ message, problems }), {
+        service: row.service,
+        target,
+        effect,
+      })
+    }),
+    OutcomeUnknown: () =>
+      unknownConnection(receiptOperation, { service: row.service, target, effect }),
+    NotReady: () => markNotReady(actor, row),
+  })
+})
+
 /** A Gate authorizes dispatch. Pauses keep the same operation; only provider evidence settles its receipt. */
-export const runConnection = Effect.fn('Connections.run')(
+const runConnection = Effect.fn('Connections.run')(
   function* (
     actor: Actor,
     row: ConnectionRecord,
@@ -490,100 +592,47 @@ export const runConnection = Effect.fn('Connections.run')(
           isResourceMissing(error) || isApprovalUnsupported(error) ? error : executorFailure(error),
         ),
       )
-    return yield* ExecutorCallOutcome.match<
-      Effect.Effect<
-        IntegrationResult,
-        | import('@vivid/contracts').NotFound
-        | ReturnType<typeof executorFailure>
-        | ExecutorApprovalUnsupported
-        | import('@vivid/contracts').Conflict
-        | import('../database/client.ts').DatabaseInfrastructureError,
-        | ConnectionStore
-        | IntegrationAnswers
-        | ActionLookup
-        | import('../database/client.ts').Database
-      >
-    >(outcome, {
-      UncertainPause: Effect.fnUntraced(function* () {
-        if (DisplayCallPolicy.guards.Draw(call.policy))
-          return yield* notRead(
-            ToolOutcome.cases.Rejected.make({
-              message:
-                'This Integration needs the Person before it can continue. Ask in the Thread.',
-            }),
-          )
-        yield* claimPausedRead(actor, target, call)
-        const uncertain = yield* unknownConnection(operation, {
-          service: row.service,
-          target,
-          effect,
-        })
-        if (
-          ToolOutcome.guards.OutcomeUnknown(uncertain.outcome) &&
-          uncertain.outcome.receipt !== null
+    const journaled = Option.filter(
+      operation,
+      () => effect !== 'read' || outcome.approvalAnswered === true,
+    )
+    if (outcome.approvalAnswered && !ExecutorCallOutcome.guards.Paused(outcome)) {
+      const prior = yield* claimPausedRead(actor, target, call)
+      if (Option.isSome(prior)) return yield* notRead(answeredOutcome(prior.value))
+    }
+    if (outcome.approvalAnswered) {
+      // Approved runners have no live Thread on their Actor; the journal retains its attribution.
+      const addressed =
+        Option.isNone(actor.threadId) && Option.isSome(operation)
+          ? { ...actor, threadId: Option.some((yield* originOf(operation.value)).threadId) }
+          : actor
+      const audited = yield* (yield* Audit)
+        .record(
+          addressed,
+          AuditEvent.cases.ActionAllowed.make({
+            service: target.account,
+            tool: target.tool,
+            effect,
+          }),
         )
-          yield* settle(uncertain.outcome.receipt)
-        return uncertain
-      }),
-      Paused: ({ pause }) =>
-        DisplayCallPolicy.match(call.policy, {
-          Draw: () =>
-            notRead(
-              ToolOutcome.cases.Rejected.make({
-                message:
-                  'This Integration needs the Person before it can continue. Ask in the Thread.',
-              }),
+        .pipe(Effect.result)
+      if (Result.isFailure(audited)) {
+        const observedAt = yield* Clock.currentTimeMillis
+        return yield* notRead(
+          ToolOutcome.cases.OutcomeUnknown.make({
+            receipt: Option.getOrNull(
+              Option.map(journaled, (operationId) =>
+                ActionReceipt.cases.Unknown.make({ operationId, observedAt }),
+              ),
             ),
-          Press: () => pauseConnection(actor, row, target, { effect, operation, pause }),
-        }),
-      Expired: () =>
-        unknownConnection(
-          Option.filter(operation, () => effect !== 'read'),
-          { service: row.service, target, effect },
-        ),
-      Accepted: Effect.fnUntraced(function* ({ value }) {
-        const acceptedAt = yield* Clock.currentTimeMillis
-        const receipt = Option.map(
-          Option.filter(operation, () => effect !== 'read'),
-          (operationId) => ActionReceipt.cases.Accepted.make({ operationId, acceptedAt }),
+          }),
         )
-        return yield* observedResult(
-          ToolOutcome.cases.Accepted.make({ output: value, receipt: Option.getOrNull(receipt) }),
-          { service: row.service, target, effect },
-        )
-      }),
-      Completed: Effect.fnUntraced(function* ({ value }) {
-        const completedAt = yield* Clock.currentTimeMillis
-        const receipt = Option.map(
-          Option.filter(operation, () => effect !== 'read'),
-          (operationId) =>
-            ActionReceipt.cases.Completed.make({
-              operationId,
-              completedAt,
-              resultDigest: resultDigest(value),
-            }),
-        )
-        return yield* observedResult(
-          ToolOutcome.cases.Completed.make({ output: value, receipt: Option.getOrNull(receipt) }),
-          { service: row.service, target, effect },
-        )
-      }),
-      Rejected: Effect.fnUntraced(function* ({ message, problems }) {
-        // The service answer becomes a Tool rejection here; its private message is never recorded.
-        yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'ServiceRejected' }))
-        return yield* observedResult(ToolOutcome.cases.Rejected.make({ message, problems }), {
-          service: row.service,
-          target,
-          effect,
-        })
-      }),
-      OutcomeUnknown: () =>
-        unknownConnection(
-          Option.filter(operation, () => effect !== 'read'),
-          { service: row.service, target, effect },
-        ),
-      NotReady: () => markNotReady(actor, row),
-    })
+      }
+    }
+    const result = yield* connectionOutcome(actor, row, target, { ...call, outcome })
+    if (effect === 'read' && outcome.approvalAnswered && Option.isSome(operation))
+      yield* settleCall(result.outcome, operation.value)
+    return result
   },
   (effect, actor, row) =>
     effect.pipe(
@@ -872,6 +921,24 @@ const runOf = (threadId: ThreadId, personId: PersonId) =>
     Effect.catchTag('NoActingRun', () => Effect.succeed(null)),
   )
 
+/** Provider evidence settles both outward writes and reads whose approval paused. */
+const settleCall = (outcome: ToolOutcome, operation: ActionOperationId) =>
+  ToolOutcome.match(outcome, {
+    Accepted: ({ receipt }) => (receipt === null ? Effect.void : settle(receipt)),
+    Completed: ({ receipt }) => (receipt === null ? Effect.void : settle(receipt)),
+    OutcomeUnknown: ({ receipt }) => (receipt === null ? Effect.void : settle(receipt)),
+    Rejected: () => release(operation),
+    ConnectionNotReady: () => release(operation),
+    // Permission refusals are decided before dispatch: nothing outward happened.
+    ScopeRequired: () => release(operation),
+    PermissionDeclined: () => release(operation),
+    Unsupported: () => release(operation),
+    Repeated: () => Effect.void,
+    ApprovalRequired: () => Effect.void,
+    InputRequired: () => Effect.void,
+    Blocked: () => Effect.void,
+  })
+
 /**
  * Sends one outward write under the journal: claim first, then send, then record the receipt the
  * adapter chose. A claim answered from the journal is not sent. A definite refusal, or a failure
@@ -902,21 +969,7 @@ const sendJournaled = Effect.fn('Connections.sendJournaled')(function* (
     operation: Option.some(operation.id),
     policy: DisplayCallPolicy.cases.Press.make({}),
   }).pipe(Effect.tapError(() => release(operation.id)))
-  yield* ToolOutcome.match(result.outcome, {
-    Accepted: ({ receipt }) => (receipt === null ? Effect.void : settle(receipt)),
-    Completed: ({ receipt }) => (receipt === null ? Effect.void : settle(receipt)),
-    OutcomeUnknown: ({ receipt }) => (receipt === null ? Effect.void : settle(receipt)),
-    Rejected: () => release(operation.id),
-    ConnectionNotReady: () => release(operation.id),
-    // Permission refusals are decided before dispatch: nothing outward happened.
-    ScopeRequired: () => release(operation.id),
-    PermissionDeclined: () => release(operation.id),
-    Unsupported: () => release(operation.id),
-    Repeated: () => Effect.void,
-    ApprovalRequired: () => Effect.void,
-    InputRequired: () => Effect.void,
-    Blocked: () => Effect.void,
-  })
+  yield* settleCall(result.outcome, operation.id)
   return result
 })
 

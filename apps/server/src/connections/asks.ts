@@ -1,9 +1,8 @@
 import {
   ActionReceipt,
   ActionTarget,
-  ApprovalBinding,
+  AuditEvent,
   IntegrationAnswerOutcome,
-  IntegrationPause,
   ProposedAction,
   ToolOutcome,
   InvalidRequest,
@@ -23,6 +22,8 @@ import { ExecutorMembers, operationsOf } from './members.ts'
 import { Executor } from './executor.ts'
 import { IntegrationAnswers } from './answers.ts'
 import { notRead } from './coverage.ts'
+import { Audit } from '../audit/record.ts'
+import { auditAction } from '../approvals/action.ts'
 
 /** Raise the app's question through the same stores that feed Thread, Needs you and notifications. */
 const pause = Effect.fn('IntegrationAsks.pause')(function* (actor: Actor, action: ProposedAction) {
@@ -33,20 +34,6 @@ const pause = Effect.fn('IntegrationAsks.pause')(function* (actor: Actor, action
     threadId: Option.some((yield* originOf(action.continuation.operation)).threadId),
   }
   const request = action.continuation.pause
-  if (IntegrationPause.guards.Approval(request)) {
-    const row = yield* (yield* ConnectionStore).get(addressed, action.target.connectionId)
-    const approval = yield* (yield* ApprovalStore).raise(
-      addressed,
-      action,
-      ApprovalBinding.make({
-        connectionGeneration: row.authorizationGeneration,
-        preconditions: [],
-      }),
-    )
-    return yield* notRead(
-      ToolOutcome.cases.ApprovalRequired.make({ approvalId: approval.id, summary: action.summary }),
-    )
-  }
   const input = yield* (yield* InputStore).askIntegration(addressed, action)
   return yield* notRead(
     ToolOutcome.cases.InputRequired.make({
@@ -106,6 +93,14 @@ const answer = Effect.fn('IntegrationAsks.answer')(function* (
   const result = Result.isSuccess(resumed)
     ? resumed.success
     : ExecutorCallOutcome.cases.OutcomeUnknown.make({})
+  if (result.approvalAnswered)
+    yield* (yield* Audit).record(
+      actor,
+      AuditEvent.cases.ActionAllowed.make({
+        ...auditAction(action),
+        effect: action.effect,
+      }),
+    )
   const outcome = yield* ExecutorCallOutcome.match<
     Effect.Effect<
       IntegrationAnswerOutcome,
@@ -183,7 +178,7 @@ export const integrationAnswersLayer = Layer.effect(
   IntegrationAnswers,
   Effect.gen(function* () {
     const context = yield* Effect.context<
-      Database | ConnectionStore | Executor | ExecutorMembers | ApprovalStore | InputStore
+      Database | ConnectionStore | Executor | ExecutorMembers | ApprovalStore | InputStore | Audit
     >()
     return IntegrationAnswers.of({
       settle: (action, outcome) => record(action, outcome).pipe(Effect.provide(context)),

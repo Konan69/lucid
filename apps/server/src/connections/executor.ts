@@ -271,18 +271,21 @@ interface ListedTool {
   readonly tool: typeof ExecutorTool.Type
   readonly account: typeof ToolAccount.Type
 }
+/** Evidence for the product audit; absent when no provider approval was answered. */
+const approvalEvidence = { approvalAnswered: Schema.optionalKey(Schema.Literal(true)) }
 export const ExecutorCallOutcome = Schema.TaggedUnion({
-  Paused: { pause: IntegrationPause },
-  UncertainPause: {},
-  Expired: {},
-  Accepted: { value: Schema.Json },
-  Completed: { value: Schema.Json },
+  Paused: { ...approvalEvidence, pause: IntegrationPause },
+  UncertainPause: { ...approvalEvidence },
+  Expired: { ...approvalEvidence },
+  Accepted: { ...approvalEvidence, value: Schema.Json },
+  Completed: { ...approvalEvidence, value: Schema.Json },
   Rejected: {
+    ...approvalEvidence,
     message: Schema.String,
     problems: Schema.Array(Schema.String).pipe(Schema.withConstructorDefault(Effect.succeed([]))),
   },
-  NotReady: {},
-  OutcomeUnknown: {},
+  NotReady: { ...approvalEvidence },
+  OutcomeUnknown: { ...approvalEvidence },
 })
 const errorContext = { service: Schema.Literal('connections'), tool: Schema.NullOr(Schema.String) }
 /** MCP and OpenAPI URL registration need Executor's own public-only egress, since it resolves
@@ -2785,7 +2788,11 @@ const callPaused = Effect.fn('Executor.callPaused')(function* (
     .split('.')
     .map((part) => `[${JSON.stringify(part)}]`)
     .join('')}`
-  return fromMcp(yield* mcp('call', { calls: { path, input: call.input } }, call.tool), call.effect)
+  return yield* continueApproved(
+    mcp,
+    yield* mcp('call', { calls: { path, input: call.input } }, call.tool),
+    call.effect,
+  )
 })
 
 /** Preserve pauses and expiry before interpreting an ordinary provider result. */
@@ -2804,6 +2811,42 @@ const fromMcp = (outcome: McpCallOutcome, effect: ActionEffect) =>
         : ExecutorCallOutcome.cases.OutcomeUnknown.make({}),
   })
 
+/** The Gate or the Person's display press already authorized this invocation. Only answer
+ * its saved request; a lost continuation is uncertain and never reissues the original call. */
+const continueApproved = Effect.fn('Executor.continueApproved')(function* (
+  mcp: ReturnType<typeof mcpCalls>,
+  initial: McpCallOutcome,
+  effect: ActionEffect,
+) {
+  let outcome = initial
+  let answered = false
+  while (McpCallOutcome.guards.Paused(outcome) && IntegrationPause.guards.Approval(outcome.pause)) {
+    answered = true
+    const pause = outcome.pause
+    if (pause.expiresAt <= (yield* Clock.currentTimeMillis)) {
+      outcome = McpCallOutcome.cases.Expired.make({})
+      break
+    }
+    const resumed = yield* mcp(
+      'resume',
+      {
+        requestId: pause.requestId,
+        response: { action: 'accept', content: {} },
+      },
+      null,
+    ).pipe(Effect.result)
+    if (Result.isFailure(resumed)) {
+      const result = Schema.is(ExecutorRejected)(resumed.failure)
+        ? ExecutorCallOutcome.cases.Rejected.make({ message: resumed.failure.message })
+        : ExecutorCallOutcome.cases.OutcomeUnknown.make({})
+      return { ...result, approvalAnswered: true as const }
+    }
+    outcome = resumed.success
+  }
+  const result = fromMcp(outcome, effect)
+  return answered ? { ...result, approvalAnswered: true as const } : result
+})
+
 /** A response always names the saved request. Expiry and transport loss never start another call. */
 function makeResume(mcp: ReturnType<typeof mcpCalls>) {
   return Effect.fn('Executor.resume')(function* ({
@@ -2816,7 +2859,8 @@ function makeResume(mcp: ReturnType<typeof mcpCalls>) {
     const encoded = yield* encodeIntegrationResponse(response).pipe(
       Effect.mapError(() => ExecutorResponseInvalid.make({ service: 'connections', tool: null })),
     )
-    return fromMcp(
+    return yield* continueApproved(
+      mcp,
       yield* mcp('resume', { requestId: pause.requestId, response: encoded }, null).pipe(
         Effect.catchTags({
           ExecutorExecutionUncertain: () => Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),

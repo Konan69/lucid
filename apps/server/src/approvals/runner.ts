@@ -1,3 +1,4 @@
+import { Audit } from '../audit/record.ts'
 import { ActionLookup } from '../actions/journal.ts'
 import { Context } from 'effect'
 import { IntegrationAnswers } from '../connections/answers.ts'
@@ -31,6 +32,7 @@ export const actionRunnerLayer = Layer.effect(
     const services = Context.omit(IntegrationAnswers)(
       yield* Effect.context<
         | ActionLookup
+        | Audit
         | Database
         | ConnectionStore
         | Executor
