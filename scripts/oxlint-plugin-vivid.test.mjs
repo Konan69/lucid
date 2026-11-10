@@ -608,6 +608,64 @@ void test('the root config makes a switch name every union member, default or no
  */
 const incidentCases = [
   {
+    rule: 'no-silent-failure',
+    mistake: 'computers/store.ts MachineNotRunning passes its local handle by name',
+    invalid: `const handle = (failure) => Effect.succeed(answer(failure))
+program.pipe(Effect.catchTags({ MachineNotRunning: handle }))`,
+    valid: `const handle = (failure) => incidents.record(computerFailed(failure)).pipe(Effect.as(answer(failure)))
+program.pipe(Effect.catchTags({ MachineNotRunning: handle }))`,
+    findings: 1,
+    fix: /This `Effect\.catchTags` answers success/u,
+  },
+  {
+    rule: 'keep-incident-cause',
+    mistake: 'computers/store.ts named handler replaces the failure in a declaration',
+    invalid: `function handle(failure) { return Effect.fail(ComputerStartFailed.make({ person })) }
+program.pipe(Effect.catchTags({ MachineNotRunning: handle }))`,
+    valid: `function handle(failure) { return Effect.fail(ComputerStartFailed.make({ person, cause: hop(failure) })) }
+program.pipe(Effect.catchTags({ MachineNotRunning: handle }))`,
+    findings: 1,
+    fix: /ComputerStartFailed.*without its cause/u,
+  },
+  {
+    rule: 'keep-incident-cause',
+    mistake: 'runtime/client.ts attempt spread only preserves a cause it actually owns',
+    invalid: `const attempt = { threadId, runId: deliveryRunId(threadId, input.idempotencyKey) }
+const refusal = yield* HttpClientResponse.schemaBodyJson(RuntimeRefusal)(response).pipe(
+  Effect.mapError(() => AdmissionUncertain.make({ ...attempt, reason: 'Status' })),
+)`,
+    valid: `const refusal = yield* HttpClientResponse.schemaBodyJson(RuntimeRefusal)(response).pipe(
+  Effect.mapError((error) => {
+    const attempt = { threadId, runId: deliveryRunId(threadId, input.idempotencyKey), cause: hop(error) }
+    return AdmissionUncertain.make({ ...attempt, reason: 'Status' })
+  }),
+)`,
+    findings: 1,
+    fix: /AdmissionUncertain.*without its cause/u,
+  },
+  {
+    rule: 'keep-incident-cause',
+    mistake: 'runtime/client.ts Runtime.admit replaces a decoded refusal outside a combinator',
+    invalid: `const admit = Effect.fn('Runtime.admit')(function* () {
+const refusal = yield* HttpClientResponse.schemaBodyJson(RuntimeRefusal)(response).pipe(
+  Effect.mapError((error) => AdmissionUncertain.make({ ...attempt, reason: 'Status', cause: hop(error) })),
+)
+if (refusal.error === 'Unavailable')
+  return yield* AdmissionUncertain.make({ ...attempt, reason: 'Transport' })
+return yield* AdmissionRefused.make({ ...attempt, reason: 'Rejected' })
+})`,
+    valid: `const admit = Effect.fn('Runtime.admit')(function* () {
+const refusal = yield* HttpClientResponse.schemaBodyJson(RuntimeRefusal)(response).pipe(
+  Effect.mapError((error) => AdmissionUncertain.make({ ...attempt, reason: 'Status', cause: hop(error) })),
+)
+if (refusal.error === 'Unavailable')
+  return yield* AdmissionUncertain.make({ ...attempt, reason: 'Transport', cause: hop(refusal) })
+return yield* AdmissionRefused.make({ ...attempt, reason: 'Rejected', cause: hop(refusal) })
+})`,
+    findings: 2,
+    fix: /Admission(?:Uncertain|Refused).*without its cause/u,
+  },
+  {
     rule: 'keep-incident-cause',
     mistake: 'threads/delivery.ts Conversation.admitRuntime renames a refusal to unavailable',
     invalid: `const admitRuntime = Effect.fn('Conversation.admitRuntime')((runtime, input) =>

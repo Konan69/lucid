@@ -1232,9 +1232,9 @@ const reactNoUselessMemo = rule(
  * is `packages/contracts/src/incidents.ts`. They read syntax, not types, so each is a warning with
  * a ratchet in `scripts/gate/ratchets.mjs`: the count may only go down.
  *
- * What syntax cannot see, so silence is not proof: a handler given by name (`MachineNotRunning:
- * handle`), a cause carried in a spread (`{ ...attempt }`), and a failure replaced outside a
- * combinator (`if (refused) return yield* Other.make()`).
+ * Same-file bindings expose named handlers and object spreads. A decoded refusal remains a
+ * failure even when a later statement replaces it outside a combinator. Imported implementations
+ * and the outcomes of arbitrary calls remain unknown to these syntax rules.
  */
 
 /** The combinators that replace one failure with another (`IncidentCause`'s keep-cause rule). */
@@ -1324,12 +1324,38 @@ const constructedError = (node) => {
   return name !== undefined && pascalCase.test(name) ? { node: expression, name } : undefined
 }
 
-/** Whether a construction passes a cause: false only when its fields are visible and have none. */
-const passesCause = (construction) => {
+/** Resolve the nearest lexical binding, never a same-named declaration in another scope. */
+const bindingOf = (context, node) => {
+  for (let scope = context.sourceCode.getScope(node); scope !== null; scope = scope.upper) {
+    const variable = scope.set.get(node.name)
+    if (variable !== undefined) return variable
+  }
+  return undefined
+}
+
+/** Only visible object literals prove that a spread carries `cause`; unknown spreads do not. */
+const objectHasCause = (context, node, seen = new Set()) => {
+  const fields = unwrapExpression(node)
+  if (fields?.type === 'Identifier') {
+    const definition = bindingOf(context, fields)?.defs[0]
+    if (definition?.parent?.kind !== 'const' || seen.has(definition.node)) return false
+    seen.add(definition.node)
+    return objectHasCause(context, definition.node.init, seen)
+  }
+  if (fields?.type !== 'ObjectExpression') return false
+  if (objectProperty(fields, 'cause') !== undefined) return true
+  return fields.properties.some(
+    (property) =>
+      property.type === 'SpreadElement' && objectHasCause(context, property.argument, seen),
+  )
+}
+
+/** A direct opaque argument keeps the old unknown result; visible fields must carry a cause. */
+const passesCause = (context, construction) => {
   const fields = unwrapExpression(construction.node.arguments[0])
   if (fields === undefined) return false
   if (fields.type !== 'ObjectExpression') return true
-  return objectProperty(fields, 'cause') !== undefined
+  return objectHasCause(context, fields)
 }
 
 /** The generator an `Effect.fn('name')(function* ...)` or `Effect.fnUntraced(...)` wraps. */
@@ -1344,25 +1370,32 @@ const wrappedGenerator = (node) => {
   return body?.generator === true ? body : undefined
 }
 
-/** A handler as a function whose body can be read, or undefined when it is a name or a call. */
-const handlerFunction = (node) => {
-  const expression = unwrapExpression(node)
+/** A same-file function declaration or const has a body just as an inline handler does. */
+const handlerFunction = (context, node) => {
+  let expression = unwrapExpression(node)
+  if (expression?.type === 'Identifier') {
+    const definition = bindingOf(context, expression)?.defs[0]
+    if (definition?.type === 'FunctionName') return definition.node
+    if (definition?.parent?.kind !== 'const') return undefined
+    expression = unwrapExpression(definition.node.init)
+  }
   return isFunction(expression) ? expression : wrappedGenerator(expression)
 }
 
 /** The handlers of a failure combinator call, each with the tags it catches when they are literal. */
-const handlersOf = (call) => {
+const handlersOf = (context, call) => {
   const method = propertyName(call.callee)
   if (handlerObjectMethods.has(method)) {
     const handlers = call.arguments.find((argument) => argument?.type === 'ObjectExpression')
     if (handlers === undefined) return []
     return handlers.properties.flatMap((property) => {
-      const handler = property.type === 'Property' ? handlerFunction(property.value) : undefined
+      const handler =
+        property.type === 'Property' ? handlerFunction(context, property.value) : undefined
       const tag = property.key?.type === 'Identifier' ? property.key.name : property.key?.value
       return handler === undefined ? [] : [{ handler, caught: new Set([tag]) }]
     })
   }
-  const handler = handlerFunction(call.arguments.at(-1))
+  const handler = handlerFunction(context, call.arguments.at(-1))
   if (handler === undefined) return []
   const tags = method === 'catchTag' ? unwrapExpression(call.arguments[0]) : undefined
   const literals = tags?.type === 'ArrayExpression' ? tags.elements : [tags]
@@ -1476,6 +1509,27 @@ const readsCaughtFailure = (context, handler) =>
         variable.defs.some((definition) => definition.type === 'Parameter'),
     )
 
+/** A refusal decoded earlier in this lexical scope is still available to carry into a failure. */
+const hasDecodedRefusal = (context, node) => {
+  for (let scope = context.sourceCode.getScope(node); scope !== null; scope = scope.upper) {
+    for (const variable of scope.variables) {
+      const declaration = variable.defs[0]?.node
+      if (declaration?.type !== 'VariableDeclarator' || declaration.range[1] >= node.range[0])
+        continue
+      let refused = false
+      walkTree(declaration.init, (part) => {
+        if (part.type === 'CallExpression' && propertyName(part.callee) === 'schemaBodyJson') {
+          const schema = part.arguments[0]
+          if (schema?.type === 'Identifier' && refusalTag.test(schema.name)) refused = true
+        }
+        return !isFunction(part)
+      })
+      if (refused) return true
+    }
+  }
+  return false
+}
+
 /**
  * `IncidentCause`'s keep-cause rule (`packages/contracts/src/incidents.ts`), the first link that
  * broke on 8 November 2026: the cell answered 400 for a field the server sent, the server's
@@ -1498,12 +1552,23 @@ const keepIncidentCause = {
   },
   create(context) {
     return {
+      YieldExpression(node) {
+        if (!node.delegate) return
+        const construction = constructedError(node.argument)
+        if (construction === undefined || passesCause(context, construction)) return
+        if (!hasDecodedRefusal(context, node)) return
+        context.report({
+          node: construction.node,
+          messageId: 'replaced',
+          data: { name: construction.name },
+        })
+      },
       CallExpression(node) {
         if (!isOwnedMember(node.callee, failureOwners, remapMethods)) return
         const mapsError = propertyName(node.callee) === 'mapError'
-        for (const { handler, caught } of handlersOf(node)) {
+        for (const { handler, caught } of handlersOf(context, node)) {
           const replaced = failingConstructions(handler, mapsError).filter(
-            (construction) => !caught.has(construction.name) && !passesCause(construction),
+            (construction) => !caught.has(construction.name) && !passesCause(context, construction),
           )
           replaced.forEach((construction) =>
             context.report({
@@ -1545,7 +1610,7 @@ const noRefusalAsUnavailable = {
     return {
       CallExpression(node) {
         if (!isOwnedMember(node.callee, failureOwners, remapMethods)) return
-        for (const { handler, caught } of handlersOf(node)) {
+        for (const { handler, caught } of handlersOf(context, node)) {
           const refused = [...caught].find((tag) => refusalTag.test(tag))
           if (refused === undefined) continue
           failingConstructions(handler, false)
@@ -1621,7 +1686,13 @@ const noSilentFailure = {
       CallExpression(node) {
         if (!isOwnedMember(node.callee, new Set(['Effect']), recoveryMethods)) return
         const method = propertyName(node.callee)
-        if (handlersOf(node).some(({ handler }) => functionOutcome(handler) === 'success'))
+        const handlers = handlersOf(context, node)
+        if (
+          handlers.some(
+            ({ handler }) =>
+              functionOutcome(handler) === 'success' && !siteAccountsForFailure(context, handler),
+          )
+        )
           report(node.callee, `This \`Effect.${method}\` answers success, so it`)
       },
     }
