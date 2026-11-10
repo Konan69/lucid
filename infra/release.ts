@@ -278,7 +278,7 @@ const variableDigests = Effect.fn('Infra.Release.variables')(function* (props: R
   )
   return Object.fromEntries(
     Object.entries(variables)
-      .sort(([a], [b]) => a.localeCompare(b))
+      .toSorted(([a], [b]) => a.localeCompare(b))
       .map(([name, value]) => [name, NodeCrypto.createHash('sha256').update(value).digest('hex')]),
   )
 })
