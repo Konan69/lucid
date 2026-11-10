@@ -594,9 +594,17 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
             yield* deliverOwed()
             expect(yield* Ref.get(probe.sent)).toEqual([])
             // A spoken start-time correction is persisted by the same handler as the runtime tool.
-            yield* setWakingHours({ start: 660, end: 1290 }).pipe(
-              Effect.provideService(AuthContext, auth),
+            const correction = yield* Effect.exit(
+              Effect.suspend(() =>
+                setWakingHours({ start: 660, end: 1290 }).pipe(
+                  Effect.provideService(AuthContext, auth),
+                ),
+              ),
             )
+            expect(correction).toMatchObject({
+              _tag: 'Success',
+              value: { wakingHours: { start: 660, end: 1290 } },
+            })
             yield* TestClock.adjust('10 hours')
             yield* paceOnce()
             yield* deliverOwed()
