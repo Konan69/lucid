@@ -2,17 +2,17 @@ import { Machine } from '@typeonce/effect-machine'
 import { AtomMachine } from '@typeonce/effect-machine/reactivity'
 import { VividRpcClient } from '@vivid/client-runtime'
 import {
-  causeAfter,
   CodeName,
   CreateThreadRequest,
   Incident,
   impactOfFailure,
+  isRemoteIncident,
   MessageAttachment,
   RunId,
   RunState,
   ThreadId,
   type ConversationMessage,
-  type IncidentCause,
+  type Impact,
   type IncidentHop,
   type IncidentSource,
   type ConversationState,
@@ -188,13 +188,15 @@ const unarrivalOf = Match.type<SendFailure>().pipe(
 )
 
 /**
- * The chain the server gave a failed send, outermost first: its own hop, then the cell's. Only an
- * admission's failures carry one; every other failure's root is the client's own hop.
+ * What a failed call cost, as a client says it. The failures the server owns (`isRemoteIncident`:
+ * its stores, and the runtime's refusal or unavailability, which it records as `AdmissionFailed`)
+ * are the server's to record, so the client says nothing more: one outcome is one Incident. Every
+ * other failure originated here and is said by `impactOfFailure`.
  */
-const causeOf = Match.type<SendFailure>().pipe(
-  Match.tag('DeliveryRefused', 'RuntimeUnavailable', ({ cause }) => Option.some(cause)),
-  Match.orElse(() => Option.none<IncidentCause>()),
-)
+const clientImpact = (failure: { readonly _tag: string }): Option.Option<Impact> =>
+  isRemoteIncident(failure)
+    ? Option.none()
+    : Option.some(impactOfFailure(failure))
 
 /** The operation a failed send's first hop names: the span `delivering`'s `send` runs in. */
 const SEND = CodeName.make('Sending.send')
@@ -217,8 +219,8 @@ export class Delivering extends Context.Service<Delivering, DeliveringService>()
  * A send that fails for good is a failure the Person sees, so it is recorded (`Recording`) where
  * it is decided, in the send's own span: the span's trace is the one the RPC carried to the
  * server (`RpcClient` puts the current span's trace and span id on each request), so the record
- * opens the server's trace of the same send. A refusal that is the Person's to correct
- * (`impactOfFailure`) is not recorded.
+ * opens the server's trace of the same send. Only a failure that originated on the client and cost
+ * the Person their words is recorded (`clientImpact`).
  */
 export const delivering = (run: Live['run'], recording: Recording): DeliveringService => ({
   create: Effect.fn('Sending.create')(function* (request: CreateThreadRequest) {
@@ -236,18 +238,10 @@ export const delivering = (run: Live['run'], recording: Recording): DeliveringSe
     const answered = Result.isFailure(once) ? yield* asked : once
     if (Result.isSuccess(answered)) return answered.success.run
     const refused = answered.failure
-    const hop: IncidentHop = {
-      service: recording.source,
-      operation: SEND,
-      tag: CodeName.make(refused._tag),
-    }
-    if (impactOfFailure(refused) === 'Incident')
+    if (Option.contains(clientImpact(refused), 'Incident'))
       yield* recording.record(
         Incident.cases.ClientFailed.make({
-          cause: Option.match(causeOf(refused), {
-            onNone: () => [hop],
-            onSome: (chain) => causeAfter(hop, chain),
-          }),
+          cause: [{ service: recording.source, operation: SEND, tag: CodeName.make(refused._tag) }],
         }),
       )
     return yield* new Undelivered({ why: unarrivalOf(refused) })
