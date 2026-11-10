@@ -134,7 +134,11 @@ async function approvalStep(state, id, directory, client) {
     assert.deepEqual(await read(client, bannerRows('Vivid asks first')), ['Allow', 'Don’t allow'])
     const card = await feed(state, id, client, pending.action.summary, 'feed-approval')
     assert.ok(card, 'The Feed shows the Integration Approval')
-    assert.deepEqual(card.buttons, ['Don’t allow', 'Allow'])
+    // The card's other button is its Thread's title, which opens the Thread.
+    assert.deepEqual(
+      card.buttons.filter((words) => /allow/iu.test(words)),
+      ['Don’t allow', 'Allow'],
+    )
     assert.equal(card.fields, 0, 'An Integration Approval is never offered as a draft')
   }
   await allow(state, pending, directory, client, 'approval')
