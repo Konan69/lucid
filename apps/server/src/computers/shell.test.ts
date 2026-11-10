@@ -1,6 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
+import * as NodeFSP from 'node:fs/promises'
 import * as NodePath from 'node:path'
 import { describe, expect, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
@@ -240,13 +241,8 @@ describe.skipIf(!testDatabaseConfigured || !peerAvailable)("Vivid's own Computer
             observeCommand(actor.person.id, action, { handle, seconds }).pipe(
               Effect.provide(provided),
             )
-          yield* Effect.flatMap(ComputerStore, (computer) =>
-            computer.run(actor.person.id, {
-              command: 'read -r ready < started',
-              directory: server.home,
-              timeoutSeconds: 30,
-            }),
-          ).pipe(Effect.provide(provided))
+          // The peer is local. Read its FIFO receipt directly instead of starting another SSH shell.
+          yield* Effect.promise(() => NodeFSP.readFile(NodePath.join(server.home, 'started')))
           const current = yield* read('read', 0)
           expect(current._tag).toBe('Running')
           expect(current).toMatchObject({
@@ -257,14 +253,10 @@ describe.skipIf(!testDatabaseConfigured || !peerAvailable)("Vivid's own Computer
             Layer.provide(conversation),
             Layer.provide(Layer.succeedContext(provided)),
           )
-          // FIFO input is the release signal, never a sleep or output poll.
-          yield* Effect.flatMap(ComputerStore, (computer) =>
-            computer.run(actor.person.id, {
-              command: "printf 'finished\\n' > release",
-              directory: server.home,
-              timeoutSeconds: 30,
-            }),
-          ).pipe(Effect.provide(provided))
+          // Release the same FIFO the remote command awaits, without another SSH round trip.
+          yield* Effect.promise(() =>
+            NodeFSP.writeFile(NodePath.join(server.home, 'release'), 'finished\n'),
+          )
           const ended = yield* read('wait', 30)
           expect(ended._tag).toBe('Completed')
           expect(ended).toMatchObject({
