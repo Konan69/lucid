@@ -7,6 +7,8 @@ import type { InfrastructureEnvironment } from './env.ts'
 import { CellWorker, cellVariables, cellsUrl, railwayCells } from './cells.ts'
 import { cellInputs } from './inputs.ts'
 import { repository } from './github.ts'
+import type { Input } from 'alchemy/Input'
+import type { BucketStorage } from './pointer.ts'
 import { Release, releaseSource } from './release.ts'
 import type { DeploymentTarget } from './targets.ts'
 
@@ -176,6 +178,39 @@ const computerAccess = ({ computer }: InfrastructureEnvironment) => ({
   ...whenSet('VIVID_BOAT_SIZE', computer.size),
   ...whenSet('VIVID_BOAT_LIFETIME_SECONDS', computer.lifetimeSeconds),
   ...whenSet('VIVID_BOAT_MACHINE', computer.machine),
+})
+
+/**
+ * The server's code reaches production only here: one release of this checkout's commit, carrying
+ * the Worker version the pre-deploy step must find in its own bundle and leave selected
+ * (`infra/predeploy.mjs`). The version is its own `Railway.Variable`, so Railway stores it without
+ * a deploy (`skipDeploys`) and drift reads it back.
+ */
+const releaseServer = Effect.fn('releaseServer')(function* (
+  project: Railway.Project,
+  server: Railway.Service,
+  worker: CellWorker,
+  fleet: Input<BucketStorage>,
+) {
+  const workerVersion = yield* Railway.Variable('CellWorkerVersion', {
+    project,
+    service: server,
+    name: 'VIVID_CELL_WORKER_VERSION',
+    value: worker.version,
+  })
+  const source = releaseSource(serverInputs)
+  yield* Release('ServerRelease', {
+    serviceId: server.serviceId,
+    environmentId: server.environmentId,
+    url: server.url,
+    commit: source.commit,
+    inputs: source.inputs,
+    cellWorkerVersion: worker.version,
+    versionVariable: workerVersion.digest,
+    storage: fleet,
+    /** The server image builds in about ten minutes; Alchemy's own wait stops at 90 seconds. */
+    timeoutMinutes: 25,
+  })
 })
 
 /**
@@ -371,31 +406,6 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     },
   })
 
-  /**
-   * The Worker version the pre-deploy step must find in its own bundle and leave selected. Its own
-   * resource, so Railway stores it without a deploy (`Railway.Variable` upserts with
-   * `skipDeploys`) and drift reads it back.
-   */
-  const workerVersion = yield* Railway.Variable('CellWorkerVersion', {
-    project,
-    service: server,
-    name: 'VIVID_CELL_WORKER_VERSION',
-    value: worker.version,
-  })
-
-  const source = releaseSource(serverInputs)
-  yield* Release('ServerRelease', {
-    serviceId: server.serviceId,
-    environmentId: server.environmentId,
-    url: server.url,
-    commit: source.commit,
-    inputs: source.inputs,
-    cellWorkerVersion: worker.version,
-    versionVariable: workerVersion.digest,
-    storage: fleet,
-    /** The server image builds in about ten minutes; Alchemy's own wait stops at 90 seconds. */
-    timeoutMinutes: 25,
-  })
-
+  yield* releaseServer(project, server, worker, fleet)
   return { serverUrl: server.url }
 })

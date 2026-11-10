@@ -119,10 +119,10 @@ const worker = async () => {
   return `${expected} published and selected by the fleet`
 }
 
-for (const [name, step] of [
-  ['migrate', migrate],
-  ['maps', maps],
-  ['worker', worker],
+for (const { name, step } of [
+  { name: 'migrate', step: migrate },
+  { name: 'maps', step: maps },
+  { name: 'worker', step: worker },
 ]) {
   // The step's own reason, or the bare fact that it failed: a thrown value is never printed whole.
   const outcome = await step().then(

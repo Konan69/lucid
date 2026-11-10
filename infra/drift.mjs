@@ -36,11 +36,8 @@ if (values.stage === undefined) {
   NodeProcess.exit(2)
 }
 
-const target = {
-  entrypoint: 'alchemy.run.ts',
-  stage: values.stage,
-  ...(values['env-file'] === undefined ? {} : { envFile: values['env-file'] }),
-}
+const target = { entrypoint: 'alchemy.run.ts', stage: values.stage }
+if (values['env-file'] !== undefined) target.envFile = values['env-file']
 
 /** Attributes another resource owns, by resource type: compared there, ignored here. */
 const ownedElsewhere = { 'Railway.Service': new Set(['deploymentId', 'deploymentStatus']) }
@@ -53,7 +50,7 @@ function differing(type, expected = {}, actual = {}) {
     .filter((name) => JSON.stringify(expected[name]) !== JSON.stringify(actual[name]))
 }
 
-const program = Effect.gen(function* () {
+const program = Effect.fn('Infra.drift')(function* () {
   const session = yield* Alchemist.open(target)
   const stack = { name: session.stack.name, stage: session.stack.stage }
   const detected = yield* Drift.plan(stack).pipe(Effect.provide(session.context))
@@ -68,8 +65,11 @@ const program = Effect.gen(function* () {
       problems.push(`${fqn} (${row.resourceType}) is missing`)
       continue
     }
-    const drift = detected.plan.resources[fqn]?.drift
-    const names = differing(row.resourceType, drift?.expected, drift?.actual)
+    const node = detected.plan.resources[fqn]
+    const names =
+      node === undefined || node.drift === undefined
+        ? ['(no detail)']
+        : differing(row.resourceType, node.drift.expected, node.drift.actual)
     if (names.length > 0) problems.push(`${fqn} (${row.resourceType}) drifted: ${names.join(', ')}`)
   }
   const planned = yield* Alchemist.Stack.plan({ target, operation: 'deploy' })
@@ -81,14 +81,14 @@ const program = Effect.gen(function* () {
 // This executable is the program's edge, so the Effect runs here.
 // oxlint-disable-next-line vivid/no-runpromise-in-library
 const exit = await Effect.runPromise(
-  program.pipe(Effect.provide(Alchemist.layer()), Effect.scoped, Effect.exit),
+  program().pipe(Effect.provide(Alchemist.layer()), Effect.scoped, Effect.exit),
 )
 if (Exit.isFailure(exit)) {
   // The error's tag and message only: a whole error object can carry the values it was built from.
   const error = Cause.squash(exit.cause)
   const reason =
     error instanceof Error
-      ? `${'_tag' in error ? error._tag : error.name}: ${error.message}`
+      ? `${'_tag' in error ? String(error._tag) : error.name}: ${error.message}`
       : 'failed'
   NodeProcess.stderr.write(`drift: could not be checked: ${reason}\n`)
   NodeProcess.exit(1)

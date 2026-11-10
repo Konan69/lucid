@@ -8,8 +8,10 @@ import * as NodeURL from 'node:url'
 import * as NodeUtil from 'node:util'
 import { Resource } from 'alchemy'
 import * as Provider from 'alchemy/Provider'
+import * as Arr from 'effect/Array'
 import * as Config from 'effect/Config'
 import * as Effect from 'effect/Effect'
+import * as Order from 'effect/Order'
 import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
 import * as HttpClient from 'effect/http/HttpClient'
@@ -106,78 +108,79 @@ const Monitor = Schema.Struct({
 })
 
 /** The receipt `monitoring.mjs --apply` writes: which rules it applied. */
-const Receipt = Schema.fromJsonString(
-  Schema.Struct({
-    workflows: Schema.Array(Schema.Struct({ id: Schema.String })),
-    monitors: Schema.Array(Schema.Struct({ actual: Schema.Struct({ id: Schema.String }) })),
-  }),
+const decodeReceipt = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      workflows: Schema.Array(Schema.Struct({ id: Schema.String })),
+      monitors: Schema.Array(Schema.Struct({ actual: Schema.Struct({ id: Schema.String }) })),
+    }),
+  ),
 )
 
 const token = Config.Redacted('SENTRY_MANAGEMENT_TOKEN').pipe(
   Effect.mapError(() => new SentryAlertsUnread({ message: 'SENTRY_MANAGEMENT_TOKEN is not set' })),
 )
 
-/** One rule from Sentry's API, decoded, or a typed failure naming only the path. */
-const fetchRule = <A, I>(path: string, schema: Schema.Codec<A, I>) =>
-  Effect.gen(function* () {
-    const bearer = yield* token
-    const unread = (why: string) => new SentryAlertsUnread({ message: `${path}: ${why}` })
-    const response = yield* HttpClient.execute(
-      HttpClientRequest.get(`${origin}${path}`).pipe(
-        HttpClientRequest.bearerToken(Redacted.value(bearer)),
-      ),
-    ).pipe(Effect.mapError(() => unread('the request failed')))
-    if (response.status !== 200) return yield* unread(`HTTP ${response.status}`)
-    const body = yield* response.text.pipe(Effect.mapError(() => unread('no body')))
-    return yield* Schema.decodeEffect(Schema.fromJsonString(schema))(body).pipe(
-      Effect.mapError(() => unread('not the rule the policy describes')),
-    )
-  })
+const decodeWorkflow = Schema.decodeEffect(Schema.fromJsonString(Workflow))
+const decodeMonitor = Schema.decodeEffect(Schema.fromJsonString(Monitor))
 
-/** The live rules, each reduced to the settings the policy owns, sorted for comparison. */
-const observe = Effect.fn('Infra.SentryAlerts.observe')(function* (
-  ids: ReadonlyArray<typeof Rule.Type>,
-) {
-  return yield* Effect.forEach(ids, (rule) =>
-    rule.kind === 'workflow'
-      ? fetchRule(`/workflows/${rule.id}/`, Workflow).pipe(
-          Effect.map((workflow) => ({
-            id: workflow.id,
-            kind: rule.kind,
-            settings: [
-              `enabled:${workflow.enabled}`,
-              `environment:${workflow.environment}`,
-              `frequency:${workflow.config.frequency}`,
-              ...workflow.triggers.conditions.map((condition) => `trigger:${condition.type}`),
-              ...workflow.actionFilters.flatMap((filter) =>
-                filter.actions.map(
-                  (action) => `action:${action.type}:${action.config.targetType}:${action.status}`,
-                ),
-              ),
-            ].sort(),
-          })),
-        )
-      : fetchRule(`/detectors/${rule.id}/`, Monitor).pipe(
-          Effect.map((monitor) => ({
-            id: monitor.id,
-            kind: rule.kind,
-            settings: [
-              `name:${monitor.name}`,
-              `enabled:${monitor.enabled}`,
-              ...monitor.workflowIds.map((id) => `workflow:${id}`),
-              ...monitor.dataSources.map(
-                ({ queryObj: { snubaQuery: source } }) =>
-                  `source:${source.aggregate}|${source.query}|${source.timeWindow}|${source.environment}`,
-              ),
-              ...monitor.conditionGroup.conditions.map(
-                (condition) =>
-                  `condition:${condition.type}:${condition.comparison}:${condition.conditionResult}`,
-              ),
-            ].sort(),
-          })),
-        ),
-  )
+/** One rule's body from Sentry's API, or a typed failure naming only the path. */
+const fetchRule = Effect.fn('Infra.SentryAlerts.fetch')(function* (path: string) {
+  const bearer = yield* token
+  const unread = (why: string) => new SentryAlertsUnread({ message: `${path}: ${why}` })
+  const response = yield* HttpClient.execute(
+    HttpClientRequest.get(`${origin}${path}`).pipe(
+      HttpClientRequest.bearerToken(Redacted.value(bearer)),
+    ),
+  ).pipe(Effect.mapError(() => unread('the request failed')))
+  if (response.status !== 200) return yield* unread(`HTTP ${response.status}`)
+  return yield* response.text.pipe(Effect.mapError(() => unread('no body')))
 })
+
+const unexpected = (path: string) =>
+  new SentryAlertsUnread({ message: `${path}: not the rule the policy describes` })
+
+/** The settings an issue alert workflow carries that the policy sets. */
+const workflowSettings = (workflow: typeof Workflow.Type) => [
+  `enabled:${workflow.enabled}`,
+  `environment:${workflow.environment}`,
+  `frequency:${workflow.config.frequency}`,
+  ...workflow.triggers.conditions.map((condition) => `trigger:${condition.type}`),
+  ...workflow.actionFilters
+    .flatMap((filter) => filter.actions)
+    .map((action) => `action:${action.type}:${action.config.targetType}:${action.status}`),
+]
+
+/** The settings a metric monitor carries that the policy sets. */
+const monitorSettings = (monitor: typeof Monitor.Type) => [
+  `name:${monitor.name}`,
+  `enabled:${monitor.enabled}`,
+  ...monitor.workflowIds.map((id) => `workflow:${id}`),
+  ...monitor.dataSources
+    .map((source) => source.queryObj.snubaQuery)
+    .map(
+      (query) =>
+        `source:${query.aggregate}|${query.query}|${query.timeWindow}|${query.environment}`,
+    ),
+  ...monitor.conditionGroup.conditions.map(
+    (condition) =>
+      `condition:${condition.type}:${condition.comparison}:${condition.conditionResult}`,
+  ),
+]
+
+/** One live rule, reduced to the settings the policy owns, sorted for comparison. */
+const observeRule = Effect.fn('Infra.SentryAlerts.observeRule')(function* (rule: typeof Rule.Type) {
+  const path = rule.kind === 'workflow' ? `/workflows/${rule.id}/` : `/detectors/${rule.id}/`
+  const body = yield* fetchRule(path)
+  const settings =
+    rule.kind === 'workflow'
+      ? workflowSettings(yield* decodeWorkflow(body).pipe(Effect.mapError(() => unexpected(path))))
+      : monitorSettings(yield* decodeMonitor(body).pipe(Effect.mapError(() => unexpected(path))))
+  return { id: rule.id, kind: rule.kind, settings: Arr.sort(settings, Order.String) }
+})
+
+/** The live rules, in the order they were applied. */
+const observe = (rules: ReadonlyArray<typeof Rule.Type>) => Effect.forEach(rules, observeRule)
 
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile)
 
@@ -207,7 +210,7 @@ const apply = Effect.fn('Infra.SentryAlerts.apply')(function* () {
     try: () => NodeFSP.readFile(receipt, 'utf8'),
     catch: () => new SentryAlertsUnread({ message: 'scripts/monitoring.mjs wrote no receipt' }),
   }).pipe(
-    Effect.flatMap(Schema.decodeEffect(Receipt)),
+    Effect.flatMap(decodeReceipt),
     Effect.mapError(() => new SentryAlertsUnread({ message: 'the alert receipt does not decode' })),
   )
   return yield* observe([

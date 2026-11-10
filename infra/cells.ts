@@ -49,8 +49,8 @@ export const cellsUrl = nodes.map(({ name }) => `http://${name}.railway.internal
  * `vars` must be the server's `VIVID_CELL_VARS` exactly, because they enter the hash and the
  * pre-deploy step bundles with the server's copy. `storage` is the fleet bucket.
  */
-export interface CellWorkerProps {
-  readonly vars: Redacted.Redacted<string>
+interface CellWorkerProps {
+  readonly vars: Redacted.Redacted
   readonly storage: BucketStorage
 }
 
@@ -77,16 +77,16 @@ class CellWorkerUnbuilt extends Schema.TaggedError<CellWorkerUnbuilt>()(
 const cli = NodeURL.fileURLToPath(new URL('./cli.mjs', import.meta.url))
 const root = NodeURL.fileURLToPath(new URL('../', import.meta.url))
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile)
-const Receipt = Schema.fromJsonString(Schema.Struct({ version: Schema.NonEmptyString }))
+const decodeReceipt = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ version: Schema.NonEmptyString })),
+)
 
 /**
  * The version a publish of this checkout's Worker with `vars` would write. The vars travel in the
  * child's environment, never in argv; celld's diagnostics go to its stderr and the receipt is the
  * last line of stdout (`apps/cells/scripts/build.mjs`).
  */
-const workerVersion = Effect.fn('Infra.CellWorker.version')(function* (
-  vars: Redacted.Redacted<string>,
-) {
+const workerVersion = Effect.fn('Infra.CellWorker.version')(function* (vars: Redacted.Redacted) {
   const { stdout } = yield* Effect.tryPromise({
     try: () =>
       execFile(process.execPath, [cli, 'build'], {
@@ -95,7 +95,7 @@ const workerVersion = Effect.fn('Infra.CellWorker.version')(function* (
       }),
     catch: () => new CellWorkerUnbuilt({ message: 'celld could not bundle the Worker' }),
   })
-  const receipt = yield* Schema.decodeUnknownEffect(Receipt)(stdout.trim().split('\n').pop()).pipe(
+  const receipt = yield* decodeReceipt(stdout.trim().split('\n').pop()).pipe(
     Effect.mapError(
       () => new CellWorkerUnbuilt({ message: 'celld printed no deployment receipt' }),
     ),

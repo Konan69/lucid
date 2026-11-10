@@ -15,8 +15,8 @@ export interface FleetStorage {
   readonly bucket: string
   readonly endpoint: string
   readonly region: string
-  readonly accessKeyId: Redacted.Redacted<string>
-  readonly secretAccessKey: Redacted.Redacted<string>
+  readonly accessKeyId: Redacted.Redacted
+  readonly secretAccessKey: Redacted.Redacted
 }
 
 /**
@@ -25,14 +25,14 @@ export interface FleetStorage {
  */
 export interface BucketStorage {
   readonly bucket: string
-  readonly endpoint: string | undefined
-  readonly region: string | undefined
-  readonly accessKeyId: Redacted.Redacted<string> | undefined
-  readonly secretAccessKey: Redacted.Redacted<string> | undefined
+  readonly endpoint?: string
+  readonly region?: string
+  readonly accessKeyId?: Redacted.Redacted
+  readonly secretAccessKey?: Redacted.Redacted
 }
 
 /** The bucket has no endpoint, region or key yet, so nothing in it can be read. */
-export class FleetStorageMissing extends Schema.TaggedError<FleetStorageMissing>()(
+class FleetStorageMissing extends Schema.TaggedError<FleetStorageMissing>()(
   'FleetStorageMissing',
   { message: Schema.String },
   { title: 'Fleet storage missing' },
@@ -57,7 +57,7 @@ export const fleetStorage = Effect.fn('Infra.fleetStorage')(function* (outputs: 
  * The fleet pointer could not be read. `reason` names which part failed (the request, a refusal by
  * status, or a body that is not a celld pointer) and never carries the URL, a key or the body.
  */
-export class FleetPointerUnreadable extends Schema.TaggedError<FleetPointerUnreadable>()(
+class FleetPointerUnreadable extends Schema.TaggedError<FleetPointerUnreadable>()(
   'FleetPointerUnreadable',
   { reason: Schema.String },
   { title: 'Fleet pointer unreadable' },
@@ -68,7 +68,9 @@ export class FleetPointerUnreadable extends Schema.TaggedError<FleetPointerUnrea
  * adopts in place. celld writes the named pointer first and this one last, so this is what the
  * fleet runs. Only `version` is read; celld's other fields stay its own.
  */
-const Pointer = Schema.fromJsonString(Schema.Struct({ version: Schema.NonEmptyString }))
+const decodePointer = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ version: Schema.NonEmptyString })),
+)
 
 const sha256 = (value: string) => NodeCrypto.createHash('sha256').update(value).digest('hex')
 const hmac = (key: string | Buffer, value: string) =>
@@ -129,7 +131,7 @@ export const readPointer = Effect.fn('Infra.readPointer')(function* (storage: Fl
   const body = yield* response.text.pipe(
     Effect.mapError(() => new FleetPointerUnreadable({ reason: 'the body could not be read' })),
   )
-  const pointer = yield* Schema.decodeEffect(Pointer)(body).pipe(
+  const pointer = yield* decodePointer(body).pipe(
     Effect.mapError(() => new FleetPointerUnreadable({ reason: 'not a celld pointer' })),
   )
   return Option.some(pointer.version)

@@ -58,7 +58,7 @@ export const releaseSource = (patterns: ReadonlyArray<string>) => {
 export interface ReleaseProps {
   readonly serviceId: string
   readonly environmentId: string
-  readonly url: string | undefined
+  readonly url?: string
   readonly commit: string
   readonly inputs: string
   readonly cellWorkerVersion: string
@@ -160,16 +160,47 @@ type Deployment = typeof Deployment.Type
 
 const deploymentFields = 'id status meta'
 
+/** A GraphQL answer: the operation's `data`, or `errors` with Railway's messages. */
+interface Answer<A> {
+  readonly data: A | null
+  readonly errors?: ReadonlyArray<{ readonly message: string }>
+}
+
+/** The answer decoder of one operation, compiled once at module scope. */
+const answer = <A, I>(data: Schema.Codec<A, I>) =>
+  Schema.decodeEffect(
+    Schema.fromJsonString(
+      Schema.Struct({
+        data: Schema.NullOr(data),
+        errors: Schema.optionalKey(Schema.Array(Schema.Struct({ message: Schema.String }))),
+      }),
+    ),
+  )
+
+const LogLines = Schema.Array(Schema.Struct({ message: Schema.String }))
+const answers = {
+  serviceInstance: answer(
+    Schema.Struct({
+      serviceInstance: Schema.Struct({ latestDeployment: Schema.NullOr(Deployment) }),
+    }),
+  ),
+  deployment: answer(Schema.Struct({ deployment: Deployment })),
+  deploy: answer(Schema.Struct({ serviceInstanceDeployV2: Schema.String })),
+  cancel: answer(Schema.Struct({ deploymentCancel: Schema.Boolean })),
+  buildLogs: answer(Schema.Struct({ buildLogs: LogLines })),
+  deploymentLogs: answer(Schema.Struct({ deploymentLogs: LogLines })),
+}
+
 /**
  * One call to Railway's public GraphQL API with the credential Alchemy's Railway providers resolved
  * (`RailwayEnvironment`, `alchemy/src/Railway/Environment.ts`). An account token goes as a bearer
  * token and a project token in its own header (`@distilled.cloud/railway` `credentials.ts`).
  */
-const railway = <A, I>(
+const railway = <A>(
   operation: string,
   query: string,
-  variables: Record<string, unknown>,
-  data: Schema.Codec<A, I>,
+  variables: Record<string, string>,
+  decode: (body: string) => Effect.Effect<Answer<A>, Schema.SchemaError>,
 ) =>
   Effect.gen(function* () {
     const credentials = yield* yield* RailwayEnvironment
@@ -189,21 +220,16 @@ const railway = <A, I>(
       )
       .pipe(Effect.mapError(() => refused('the request failed')))
     const body = yield* response.text.pipe(Effect.mapError(() => refused('no response body')))
-    const answer = yield* Schema.decodeEffect(
-      Schema.fromJsonString(
-        Schema.Struct({
-          data: Schema.NullOr(data),
-          errors: Schema.optionalKey(Schema.Array(Schema.Struct({ message: Schema.String }))),
-        }),
-      ),
-    )(body).pipe(Effect.mapError(() => refused(`unexpected answer, HTTP ${response.status}`)))
-    if (answer.errors !== undefined || answer.data === null)
+    const answered = yield* decode(body).pipe(
+      Effect.mapError(() => refused(`unexpected answer, HTTP ${response.status}`)),
+    )
+    if (answered.errors !== undefined || answered.data === null)
       return yield* refused(
-        answer.errors === undefined
+        answered.errors === undefined
           ? 'no data'
-          : answer.errors.map((error) => error.message).join('; '),
+          : answered.errors.map((error) => error.message).join('; '),
       )
-    return answer.data
+    return answered.data
   })
 
 const latestDeployment = (serviceId: string, environmentId: string) =>
@@ -211,9 +237,7 @@ const latestDeployment = (serviceId: string, environmentId: string) =>
     'serviceInstance',
     `query($environmentId: String!, $serviceId: String!) { serviceInstance(environmentId: $environmentId, serviceId: $serviceId) { latestDeployment { ${deploymentFields} } } }`,
     { environmentId, serviceId },
-    Schema.Struct({
-      serviceInstance: Schema.Struct({ latestDeployment: Schema.NullOr(Deployment) }),
-    }),
+    answers.serviceInstance,
   ).pipe(Effect.map((data) => data.serviceInstance.latestDeployment))
 
 const deployment = (id: string) =>
@@ -221,23 +245,22 @@ const deployment = (id: string) =>
     'deployment',
     `query($id: String!) { deployment(id: $id) { ${deploymentFields} } }`,
     { id },
-    Schema.Struct({ deployment: Deployment }),
+    answers.deployment,
   ).pipe(Effect.map((data) => data.deployment))
 
 /** The last lines a failed deployment wrote, build and deploy, for the deploy log. */
 const failureLogs = Effect.fn('Infra.Release.logs')(function* (deploymentId: string) {
-  const Lines = Schema.Array(Schema.Struct({ message: Schema.String }))
   const build = yield* railway(
     'buildLogs',
     'query($deploymentId: String!) { buildLogs(deploymentId: $deploymentId, limit: 100) { message } }',
     { deploymentId },
-    Schema.Struct({ buildLogs: Lines }),
+    answers.buildLogs,
   )
   const run = yield* railway(
     'deploymentLogs',
     'query($deploymentId: String!) { deploymentLogs(deploymentId: $deploymentId, limit: 100) { message } }',
     { deploymentId },
-    Schema.Struct({ deploymentLogs: Lines }),
+    answers.deploymentLogs,
   )
   return [...build.buildLogs, ...run.deploymentLogs].map((line) => line.message).join('\n')
 })
@@ -287,13 +310,13 @@ const deploy = Effect.fn('Infra.Release.deploy')(function* (props: ReleaseProps)
       'deploymentCancel',
       'mutation($id: String!) { deploymentCancel(id: $id) }',
       { id: previous.id },
-      Schema.Struct({ deploymentCancel: Schema.Boolean }),
+      answers.cancel,
     )
   const { serviceInstanceDeployV2: id } = yield* railway(
     'serviceInstanceDeployV2',
     'mutation($environmentId: String!, $serviceId: String!, $commitSha: String) { serviceInstanceDeployV2(environmentId: $environmentId, serviceId: $serviceId, commitSha: $commitSha) }',
     { environmentId: props.environmentId, serviceId: props.serviceId, commitSha: props.commit },
-    Schema.Struct({ serviceInstanceDeployV2: Schema.String }),
+    answers.deploy,
   )
   const live = yield* settled(id, props.timeoutMinutes)
   if (live.status !== 'SUCCESS')
@@ -331,14 +354,15 @@ const deploy = Effect.fn('Infra.Release.deploy')(function* (props: ReleaseProps)
 /** Provider of `Infra.Release`; it needs the Railway credential and HTTP client the Railway providers carry. */
 export const ReleaseProvider = Provider.succeed(Release, {
   /** Due when the image's inputs or the Worker changed; a push that touches neither is a noop. */
-  diff: Effect.fn(function* ({ olds, news, output }) {
-    if (output === undefined) return undefined
-    // Unresolved means an upstream changes in this deploy (the Worker, or the server's settings,
-    // which need a deployment of their own to take effect): release, and read it back.
-    if (!isResolved(news)) return { action: 'update' } as const
-    const due = news.inputs !== olds.inputs || news.cellWorkerVersion !== olds.cellWorkerVersion
-    return { action: due ? 'update' : 'noop' } as const
-  }),
+  diff: ({ olds, news, output }) =>
+    Effect.sync(() => {
+      if (output === undefined) return undefined
+      // Unresolved means an upstream changes in this deploy (the Worker, or the server's settings,
+      // which need a deployment of their own to take effect): release, and read it back.
+      if (!isResolved(news)) return { action: 'update' } as const
+      const due = news.inputs !== olds.inputs || news.cellWorkerVersion !== olds.cellWorkerVersion
+      return { action: due ? 'update' : 'noop' } as const
+    }),
   reconcile: Effect.fn(function* ({ news }) {
     return yield* deploy(news)
   }),
