@@ -1,4 +1,3 @@
-import { Audit } from '../audit/record.ts'
 import { ActionLookup } from '../actions/journal.ts'
 import { IntegrationAnswers } from '../connections/answers.ts'
 import {
@@ -353,7 +352,6 @@ export const codeCallsLayer = Layer.effect(
     // future dispatch requirements fail typecheck and the Run's Scope and parent span stay local.
     const context = Context.pick(
       ActionLookup,
-      Audit,
       CodeAuthority,
       IntegrationAnswers,
       Gate,
@@ -369,7 +367,6 @@ export const codeCallsLayer = Layer.effect(
     )(
       yield* Effect.context<
         | ActionLookup
-        | Audit
         | CodeAuthority
         | IntegrationAnswers
         | Gate

@@ -1,10 +1,8 @@
 import { Message } from '../observability/messages.ts'
 import { IntegrationAnswers } from './answers.ts'
-import { Audit } from '../audit/record.ts'
 import { Array as Arr, Clock, Duration, Effect, Option, Order, Result, Schema } from 'effect'
 import {
   ActionReceipt,
-  AuditEvent,
   ApprovalBinding,
   ActionTarget,
   AnotherAccountMessage,
@@ -56,7 +54,6 @@ import {
   answerBefore,
   claim,
   operationOf,
-  originOf,
   release,
   resultDigest,
   settle,
@@ -612,37 +609,6 @@ const connectionOutcome = Effect.fn('Connections.outcome')(function* (
   })
 })
 
-/** Approved runners retain their Thread in the journal; display presses retain the Person.
- * Failure after provider execution must stay uncertain, never release the dispatch for retry. */
-const auditApproval = Effect.fn('Connections.auditApproval')(
-  function* (
-    actor: Actor,
-    target: typeof ActionTarget.cases.Connection.Type,
-    call: {
-      readonly effect: ActionEffect
-      readonly operation: Option.Option<ActionOperationId>
-    },
-  ) {
-    yield* Effect.annotateCurrentSpan(
-      'vivid.approval.authority',
-      actor.by === 'person' ? 'PersonPress' : 'Gate',
-    )
-    const addressed =
-      Option.isNone(actor.threadId) && Option.isSome(call.operation)
-        ? { ...actor, threadId: Option.some((yield* originOf(call.operation.value)).threadId) }
-        : actor
-    yield* (yield* Audit).record(
-      addressed,
-      AuditEvent.cases.ActionAllowed.make({
-        service: target.account,
-        tool: target.tool,
-        effect: call.effect,
-      }),
-    )
-  },
-  (effect) => effect.pipe(Effect.result),
-)
-
 /** Capture a paused read before deciding its new consequence evidence. Never reissue the call. */
 const resolveApproval = Effect.fn('Connections.resolveApproval')(function* (
   actor: Actor,
@@ -732,31 +698,6 @@ const runConnection = Effect.fn('Connections.run')(
     const resolved = yield* resolveApproval(actor, sending, { ...call, outcome: dispatched })
     if (Result.isFailure(resolved)) return resolved.failure
     const outcome = resolved.success
-    const journaled = Option.filter(
-      operation,
-      () => effect !== 'read' || outcome.approvalAnswered === true,
-    )
-    if (outcome.approvalAnswered) {
-      const audited = yield* auditApproval(actor, target, { effect, operation })
-      if (Result.isFailure(audited)) {
-        yield* Effect.logError(Message.approvalAuditFailed).pipe(
-          Effect.annotateLogs({
-            'vivid.action.operation_id': Option.getOrNull(operation),
-            'vivid.executor.failure': audited.failure._tag,
-          }),
-        )
-        const observedAt = yield* Clock.currentTimeMillis
-        return yield* notRead(
-          ToolOutcome.cases.OutcomeUnknown.make({
-            receipt: Option.getOrNull(
-              Option.map(journaled, (operationId) =>
-                ActionReceipt.cases.Unknown.make({ operationId, observedAt }),
-              ),
-            ),
-          }),
-        )
-      }
-    }
     const result = yield* connectionOutcome(actor, row, target, { ...call, outcome })
     if (effect === 'read' && outcome.approvalAnswered && Option.isSome(operation))
       yield* settleCall(result.outcome, operation.value)

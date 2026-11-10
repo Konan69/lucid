@@ -1,7 +1,7 @@
 import type { GateDecision } from '../approvals/gate.ts'
 import type { UnreviewedReason } from '../approvals/policy.ts'
 import { getTableName, isTable } from 'drizzle-orm'
-import { Commit, ModelFailureReason } from '@vivid/contracts'
+import { Commit, ModelFailureReason, GateBasis } from '@vivid/contracts'
 import * as Clock from 'effect/Clock'
 import * as Cause from 'effect/Cause'
 import * as Duration from 'effect/Duration'
@@ -262,18 +262,7 @@ const rulesOf = (): Rules => {
     ['vivid.executor.outcome', oneOf(['Expired'])],
     // Both writers use typed error tags, never diagnostic strings from the Integration.
     ['vivid.executor.failure', codeName],
-    [
-      'vivid.gate.basis',
-      oneOf([
-        'Reviewed',
-        'AllowRule',
-        'PersonApproved',
-        'PersonPress',
-        'Read',
-        'Unreviewed',
-        'Contained',
-      ]),
-    ],
+    ['vivid.gate.basis', oneOf(GateBasis.literals)],
     ['vivid.gate.decision', oneOf(Object.keys(gateDecisions))],
     ['vivid.approval.authority', oneOf(['PersonPress', 'Gate'])],
     ['vivid.review.state', oneOf(['Reviewed', 'Unreviewed'])],

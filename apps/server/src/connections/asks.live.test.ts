@@ -342,7 +342,9 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
                 (entry) =>
                   entry.by === 'vivid' &&
                   AuditEvent.guards.ActionAllowed(entry.event) &&
-                  entry.event.tool === 'approve',
+                  entry.event.tool === 'approve' &&
+                  entry.event.integrationApproval !== undefined &&
+                  entry.event.integrationApproval.basis === 'Reviewed',
               ),
             ).toBe(true)
 
@@ -395,7 +397,9 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
                 (entry) =>
                   entry.by === 'person' &&
                   AuditEvent.guards.ActionAllowed(entry.event) &&
-                  entry.event.tool === 'approve',
+                  entry.event.tool === 'approve' &&
+                  entry.event.integrationApproval !== undefined &&
+                  entry.event.integrationApproval.basis === 'PersonPress',
               ),
             ).toBe(true)
             expect(yield* inspect(displayMarker)).toEqual(

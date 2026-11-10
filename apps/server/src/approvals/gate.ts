@@ -5,6 +5,7 @@ import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import {
   Approval,
+  GateBasis,
   ApprovalPrecondition,
   InvalidRequest,
   RunId,
@@ -34,16 +35,7 @@ import { Database, type DatabaseInfrastructureError } from '../database/client.t
  *   when that Person allows it.
  * - `Blocked`: a rule says never. `rule` is the rule's own wording, for Vivid to repeat.
  */
-export const GateBasis = Schema.Literals([
-  'Reviewed',
-  'AllowRule',
-  'PersonApproved',
-  'PersonPress',
-  'Read',
-  'Unreviewed',
-  'Contained',
-])
-export type GateBasis = typeof GateBasis.Type
+export { GateBasis } from '@vivid/contracts'
 
 export const GateDecision = Schema.TaggedUnion({
   Allowed: { basis: GateBasis },

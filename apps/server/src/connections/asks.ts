@@ -67,10 +67,11 @@ const pause = Effect.fn('IntegrationAsks.pause')(function* (actor: Actor, action
 
 /** Once authorized, successive pauses belong to the same saved invocation. */
 const resumeApproved = Effect.fn('IntegrationAsks.resumeApproved')(function* (
+  actor: Actor,
   row: ConnectionRecord,
   input: {
     readonly pause: IntegrationPause
-    readonly effect: import('@vivid/contracts').ActionEffect
+    readonly action: ProposedAction
     readonly basis: Extract<GateBasis, 'Reviewed' | 'PersonApproved' | 'PersonPress'>
   },
 ) {
@@ -82,12 +83,26 @@ const resumeApproved = Effect.fn('IntegrationAsks.resumeApproved')(function* (
     }
     yield* Effect.annotateCurrentSpan(attributes)
     yield* Effect.logInfo(Message.executorApproval).pipe(Effect.annotateLogs(attributes))
+    const audited = yield* (yield* Audit)
+      .record(
+        actor,
+        AuditEvent.cases.ActionAllowed.make({
+          ...auditAction(input.action),
+          effect: input.action.effect,
+          integrationApproval: { requestId: current.requestId, basis: input.basis },
+        }),
+      )
+      .pipe(Effect.result)
+    if (Result.isFailure(audited)) {
+      yield* Effect.logError(Message.approvalAuditFailed).pipe(Effect.annotateLogs(attributes))
+      return Result.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({}))
+    }
     const resumed = yield* operationsOf(row).pipe(
       Effect.flatMap((operation) =>
         operation.resume({
           pause: current,
           response: { action: 'accept', content: {} },
-          effect: input.effect,
+          effect: input.action.effect,
         }),
       ),
       Effect.result,
@@ -128,7 +143,14 @@ const approve = Effect.fn('IntegrationAsks.approve')(function* (
 ): Effect.fn.Return<
   Result.Result<typeof ExecutorCallOutcome.Type, import('@vivid/contracts').IntegrationResult>,
   NotFound | InvalidRequest | DatabaseInfrastructureError,
-  Gate | ApprovalStore | InputStore | ConnectionStore | Database | Executor | ExecutorMembers
+  | Gate
+  | ApprovalStore
+  | InputStore
+  | ConnectionStore
+  | Database
+  | Executor
+  | ExecutorMembers
+  | Audit
 > {
   const action = input.action
   if (!ActionTarget.guards.Connection(action.target))
@@ -164,12 +186,19 @@ const approve = Effect.fn('IntegrationAsks.approve')(function* (
       Effect.Effect<
         Result.Result<typeof ExecutorCallOutcome.Type, IntegrationResult>,
         NotFound | InvalidRequest | DatabaseInfrastructureError,
-        Gate | ApprovalStore | InputStore | ConnectionStore | Database | Executor | ExecutorMembers
+        | Gate
+        | ApprovalStore
+        | InputStore
+        | ConnectionStore
+        | Database
+        | Executor
+        | ExecutorMembers
+        | Audit
       >
     >(decision, {
       Allowed: ({ basis: reviewed }) =>
         reviewed === 'Reviewed'
-          ? resumeApproved(row, { pause: input.pause, effect: action.effect, basis: reviewed })
+          ? resumeApproved(addressed, row, { pause: input.pause, action, basis: reviewed })
           : pause(addressed, action).pipe(Effect.map(Result.fail)),
       ApprovalRequired: ({ approval }) =>
         notRead(
@@ -196,7 +225,7 @@ const approve = Effect.fn('IntegrationAsks.approve')(function* (
       }),
     })
   }
-  return yield* resumeApproved(row, { pause: input.pause, effect: action.effect, basis })
+  return yield* resumeApproved(addressed, row, { pause: input.pause, action, basis })
 })
 
 /** The saved operation is settled only by a provider answer or explicit uncertainty, never by waiting. */
@@ -268,14 +297,6 @@ const answer = Effect.fn('IntegrationAsks.answer')(function* (
     if (Result.isFailure(resolved)) return IntegrationAnswerOutcome.cases.Waiting.make({})
     result = resolved.success
   }
-  if (result.approvalAnswered)
-    yield* (yield* Audit).record(
-      actor,
-      AuditEvent.cases.ActionAllowed.make({
-        ...auditAction(action),
-        effect: action.effect,
-      }),
-    )
   const outcome = yield* ExecutorCallOutcome.match<
     Effect.Effect<
       IntegrationAnswerOutcome,
