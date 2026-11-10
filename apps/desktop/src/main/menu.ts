@@ -7,7 +7,7 @@ import type { DesktopPlatform } from '../shared/bridge.ts'
 export const pageZoomChanges = new NodeEvents.EventEmitter<{ changed: [BrowserWindow] }>()
 
 /** Follow Electron 44.4.3 role increments, then notify the window that owns native guest bounds. */
-function zoomPage(window: BrowserWindow, change: 'reset' | 'in' | 'out'): void {
+export function zoomPage(window: BrowserWindow, change: 'reset' | 'in' | 'out'): void {
   const level = window.webContents.getZoomLevel()
   window.webContents.setZoomLevel(change === 'reset' ? 0 : level + (change === 'in' ? 0.5 : -0.5))
   pageZoomChanges.emit('changed', window)
