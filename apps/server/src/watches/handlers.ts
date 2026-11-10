@@ -84,6 +84,8 @@ const resolved = <A, R>(
 ) =>
   effect.pipe(
     Effect.catchTags({
+      ProjectNotActive: () =>
+        Effect.fail(new InvalidRequest({ message: 'Only an active Project can have a check-in.' })),
       WatchAccountUnknown: () =>
         accountsText(actor).pipe(
           Effect.flatMap((known) =>

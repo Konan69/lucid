@@ -4,7 +4,6 @@ import {
   CheckinArming,
   CheckinRead,
   CheckinFocus,
-  AvailableCheckinFocus,
   CheckinTiming,
   CheckinNotFound,
   CheckinNotScheduled,
@@ -70,7 +69,7 @@ const projectReading = Effect.fn('Checkins.project')(function* (
 ) {
   const project = (yield* (yield* ProjectStore).list(actor)).find((item) => item.id === projectId)
   if (project === undefined) return yield* new NotFound({ message: 'Project not found' })
-  return ProjectWork.match(project.work, {
+  return ProjectWork.match<CheckinRead>(project.work, {
     Unspecified: () =>
       CheckinRead.cases.Closed.make({ evidence: 'The Project has no active objective.' }),
     Active: ({ objective, nextStep, progress }) =>
@@ -108,7 +107,7 @@ const sourceReading = Effect.fn('Checkins.read')(function* (
     helper: Option.none(),
   }
   const records = yield* owed.list(actor)
-  return yield* AvailableCheckinFocus.match<ReturnType<typeof projectReading>>(purpose.focus, {
+  return yield* CheckinFocus.match<ReturnType<typeof projectReading>>(purpose.focus, {
     Project: ({ projectId }) => projectReading(actor, projectId),
     Owed: ({ owedId }) => {
       const source = records.find((item) => item.id === owedId)
