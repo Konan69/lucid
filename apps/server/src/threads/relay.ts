@@ -1,4 +1,4 @@
-import { Effect, Predicate, Schedule, Schema, Stream } from 'effect'
+import { Effect, Option, Predicate, Schedule, Schema, Stream } from 'effect'
 import {
   InvalidAttachment,
   MessageAttachment,
@@ -13,6 +13,7 @@ import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { Forbidden } from '@vivid/contracts'
 import { requirePerson } from '../auth/access.ts'
 import { endWithdrawals } from '../inputs/handoff.ts'
+import { InputStore } from '../inputs/store.ts'
 import { Runtime } from '../runtime/client.ts'
 import { requireThread } from './access.ts'
 import { authorized } from './reach.ts'
@@ -87,6 +88,27 @@ export const sendToThread = Effect.fn('Rpc.SendToThread')(function* (request: Se
       Effect.logWarning('A withdrawn handoff could not be cleared yet', { failure: failure._tag }),
     ),
   )
+  // The message withdrew this Person's waiting Integration questions too; each still holds a
+  // paused call, which is cancelled now so the Integration does not wait out its deadline. The
+  // message is accepted whatever happens, so a failed cancel is logged, not answered.
+  yield* (yield* InputStore)
+    .cancelWithdrawn(
+      {
+        person: auth.person,
+        workspace: auth.workspace,
+        by: 'person',
+        threadId: Option.some(thread.id),
+        helper: Option.none(),
+      },
+      thread.id,
+    )
+    .pipe(
+      Effect.catch((failure) =>
+        Effect.logWarning('A withdrawn Integration question could not be cancelled', {
+          failure: failure._tag,
+        }),
+      ),
+    )
   const runs = yield* (yield* RunStore).list(thread.id)
   const run = runs.find((candidate) => candidate.id === receipt.runId)
   if (run === undefined) return yield* new NotFound({ message: 'Admitted Run not found' })

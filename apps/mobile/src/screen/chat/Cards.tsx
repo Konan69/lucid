@@ -2,12 +2,13 @@ import {
   ApprovalState,
   Tool,
   type Approval,
+  type InputRequest,
   type PersonId,
   type ThreadDetail,
   type ThreadId,
 } from '@vivid/contracts'
 import { Option } from 'effect'
-import { access, changedLine, helpers } from '@vivid/state'
+import { access, changedLine, form, helpers } from '@vivid/state'
 import { View } from 'react-native'
 import { Card, cardOf, type ToolPart } from '../../data/message'
 import { Label } from '../../ui/ui'
@@ -120,7 +121,13 @@ function Drawn({
     Approval: ({ id }) =>
       Option.match(approvalOf(detail, id), {
         onNone: () => null,
-        onSome: (approval) => <AskedFirst approval={approval} me={me} />,
+        onSome: (approval) => (
+          <AskedFirst
+            approval={approval}
+            requests={Option.match(detail, { onNone: () => [], onSome: (held) => held.requests })}
+            me={me}
+          />
+        ),
       }),
     Input: ({ id }) =>
       Option.match(requestOf(detail, id), {
@@ -146,9 +153,19 @@ function Drawn({
   })
 }
 
-/** How an Approval that is no longer waiting ended, in a sentence and the color of its outcome. */
-function ApprovalOutcome({ state }: { state: ApprovalState }) {
-  return ApprovalState.match(state, {
+/**
+ * How an Approval that is no longer waiting ended, in a sentence and the color of its outcome. An
+ * Integration's that ran out says nothing was sent: it paused before its call ran
+ * (`form.EXPIRED_APPROVAL`).
+ */
+function ApprovalOutcome({ approval }: { approval: Approval }) {
+  if (form.approvalExpired(approval))
+    return (
+      <Label size="label" tone="ink-2">
+        {form.EXPIRED_APPROVAL}
+      </Label>
+    )
+  return ApprovalState.match(approval.state, {
     Pending: () => null,
     Executing: ({ decidedBy }) => (
       <Label size="label" tone="status-working">
@@ -206,7 +223,16 @@ function ApprovalOutcome({ state }: { state: ApprovalState }) {
  * nesting, too much unnecessary text"): the conversation reads as a conversation, and what must
  * be pressed is where the thumb already is.
  */
-function AskedFirst({ approval, me }: { approval: Approval; me: PersonId }) {
+function AskedFirst({
+  approval,
+  requests,
+  me,
+}: {
+  approval: Approval
+  /** The Thread's questions: an Integration may ask one mid-call after this was allowed. */
+  requests: ReadonlyArray<InputRequest>
+  me: PersonId
+}) {
   const theirs = ApprovalState.guards.Pending(approval.state) && approval.askedOf.id !== me
   return (
     // A little apart from whatever Vivid said before asking.
@@ -215,7 +241,12 @@ function AskedFirst({ approval, me }: { approval: Approval; me: PersonId }) {
         Asked first
       </Label>
       <Words text={approval.action.summary} />
-      <ApprovalOutcome state={approval.state} />
+      <ApprovalOutcome approval={approval} />
+      {form.followingExpired(approval, requests).map((line) => (
+        <Label key={line} size="label" tone="ink-2">
+          {line}
+        </Label>
+      ))}
       {theirs && (
         <Label size="label" tone="ink-2">
           Waiting on {approval.askedOf.name}.

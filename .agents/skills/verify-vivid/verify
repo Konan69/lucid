@@ -5,5 +5,6 @@ if [[ "${1:-}" == android ]]; then
   shift
   exec node .agents/skills/verify-vivid/scripts/android.mjs "$@"
 fi
-loader=$(node --input-type=module -e 'import { createRequire } from "node:module"; import { resolve } from "node:path"; try { console.log(createRequire(resolve("apps/server/package.json")).resolve("tsx")) } catch { console.error("Install repository dependencies with pnpm install --frozen-lockfile before running verify-vivid"); process.exit(1) }')
-exec node --import "$loader" .agents/skills/verify-vivid/scripts/control.mjs "$@"
+node --input-type=module -e 'import { createRequire } from "node:module"; import { resolve } from "node:path"; try { createRequire(resolve("apps/server/package.json")).resolve("tsx") } catch { console.error("Install repository dependencies with pnpm install --frozen-lockfile before running verify-vivid"); process.exit(1) }'
+# tsx must be installed; the skill's own loader runs it and resolves the scripts' imports.
+exec node --import ./.agents/skills/verify-vivid/scripts/loader.mjs .agents/skills/verify-vivid/scripts/control.mjs "$@"

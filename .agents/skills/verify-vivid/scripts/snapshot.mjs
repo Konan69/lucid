@@ -26,7 +26,7 @@ const decodeDeliveries = Schema.decodeUnknownResult(
 
 /** Docker health is the restart receipt. Capture the observer before starting the container;
  * a failed feature remains cleanable through the supervisor's existing process journal. */
-async function restart(state) {
+export async function restart(state) {
   const events = NodeChildProcess.spawn(
     'docker',
     [

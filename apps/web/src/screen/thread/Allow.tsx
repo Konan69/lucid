@@ -5,13 +5,14 @@ import {
   type InputRequest,
   type PersonId,
 } from '@vivid/contracts'
-import { approvalUp, asking, type ApprovalUp } from '@vivid/state'
+import { approvalUp, asking, form, type ApprovalUp } from '@vivid/state'
 import { Data, Effect, Option, Result } from 'effect'
 import { useCallback, useId, useReducer, useRef, useState } from 'react'
 import { act } from '../../data/app'
 import { changing } from '../../data/live'
 import { useAsking, type Asking } from './asking'
 import { Attached, Head, Panel, Raised, Row, SURFACE, digits, steer, type Reach } from './Choices'
+import { Filled } from './Form'
 
 /**
  * Something Vivid wants to do and will not do without a yes, asked the way Vivid asks anything:
@@ -206,11 +207,28 @@ export function useAsks(
  * its last fold included, and otherwise the Approval's, when one is held.
  */
 export function Asks({ allowing, asked }: { allowing: Allowing; asked: Asking }) {
-  return asking.Hold.$is('Free')(asked.hold) ? (
-    <Allowed allowing={allowing} />
-  ) : (
-    <Raised asking={asked} />
-  )
+  return asking.Hold.$match(asked.hold, {
+    Free: () => <Allowed allowing={allowing} />,
+    Up: ({ request }) => <Question asked={asked} request={request} leaving={false} />,
+    Leaving: ({ request }) => <Question asked={asked} request={request} leaving />,
+  })
+}
+
+/**
+ * A question's banner: an Integration's form (`Form.tsx`) when the request is an Integration's
+ * mid-call question, and otherwise Vivid's own question (`Choices.tsx`).
+ */
+function Question({
+  asked,
+  request,
+  leaving,
+}: {
+  asked: Asking
+  request: InputRequest
+  leaving: boolean
+}) {
+  if (request.integration === null) return <Raised asking={asked} />
+  return <Filled key={request.id} request={request} leaving={leaving} onGone={asked.release} />
 }
 
 /**
@@ -260,8 +278,15 @@ const ANSWERS = [
   { option: { label: 'Don’t allow', detail: '' }, decision: ApprovalDecision.cases.Deny.make({}) },
 ] as const
 
-/** The answers' rows alone, for the number keys (`digits`, `Choices.tsx`). */
-const OPTIONS = ANSWERS.map((answer) => answer.option)
+/**
+ * The answers an Approval offers. An Integration that paused its call asks every time and takes
+ * only Allow and Don't allow (`form.isIntegrationApproval`, `@vivid/state`), so it has no
+ * "Always allow".
+ */
+const answersOf = (approval: Approval) =>
+  form.isIntegrationApproval(approval)
+    ? ANSWERS.filter((answer) => !ApprovalDecision.guards.AlwaysAllow(answer.decision))
+    : ANSWERS
 
 /**
  * An Approval, drawn as a question: the head a question's banner has, saying what Vivid would
@@ -290,8 +315,9 @@ function Allow({
   const [pressed, setPressed] = useState<Option.Option<string>>(Option.none())
   // Closed, the rows are out of sight and must not be pressed, by a pointer or a number key.
   const reach: Reach = held || !open ? 'held' : 'pressable'
+  const answers = answersOf(approval)
   const pick = (label: string) => {
-    const answer = ANSWERS.find((each) => each.option.label === label)
+    const answer = answers.find((each) => each.option.label === label)
     if (answer === undefined) return
     setPressed(Option.some(label))
     onDecide(answer.decision)
@@ -311,11 +337,11 @@ function Allow({
       />
       <Panel id={panel} open={open}>
         <ul className="mt-2 flex min-w-0 flex-col gap-0.5 ps-8 pe-1 pb-1 sm:ps-7">
-          {ANSWERS.map(({ option }, place) => (
+          {answers.map(({ option }, place) => (
             <Row
               key={option.label}
               option={option}
-              digit={place + 1}
+              digit={Option.some(place + 1)}
               several={false}
               reach={reach}
               standing={asking.standingOf(held && Option.contains(pressed, option.label), held)}
@@ -325,7 +351,15 @@ function Allow({
         </ul>
       </Panel>
       {/* There only while the rows can be pressed: see `digits`. */}
-      {reach === 'pressable' && <span hidden ref={digits(OPTIONS, pick)} />}
+      {reach === 'pressable' && (
+        <span
+          hidden
+          ref={digits(
+            answers.map((answer) => answer.option),
+            pick,
+          )}
+        />
+      )}
     </section>
   )
 }

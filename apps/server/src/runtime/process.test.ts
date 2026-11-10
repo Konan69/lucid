@@ -46,6 +46,8 @@ import { silentChangesLayer } from '../live/changes.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { Conversation } from '../threads/conversation.ts'
 import { ComputerStore } from '../computers/store.ts'
+import { IntegrationAnswers } from '../connections/answers.ts'
+import { InputStore } from '../inputs/store.ts'
 import { conversationLayer } from '../threads/delivery.ts'
 import { ThreadTitles } from '../threads/generation.ts'
 import { Presence } from '../threads/presence.ts'
@@ -241,7 +243,15 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (
   const server = yield* Layer.buildWithScope(serverLayer, serverScope)
   let conversation = yield* Conversation.pipe(Effect.provideContext(server))
   const scope = yield* Layer.build(foundation)
-  const computers = yield* Layer.build(Layer.mock(ComputerStore, {}))
+  // No step is handed over and no Integration asks in this Thread, so a send reaches neither the
+  // Computer nor an Integration's paused call.
+  const computers = yield* Layer.build(
+    Layer.mergeAll(
+      Layer.mock(ComputerStore, {}),
+      Layer.mock(InputStore, { cancelWithdrawn: () => Effect.void }),
+      Layer.mock(IntegrationAnswers, {}),
+    ),
+  )
   return {
     ...rows,
     admission,

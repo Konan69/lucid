@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, not, or, sql } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
@@ -36,6 +36,7 @@ import {
 import { requireThread } from '../threads/access.ts'
 import { actions } from './tables.ts'
 import { approvals } from '../approvals/tables.ts'
+import { inputRequests } from '../inputs/tables.ts'
 
 type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
 type Row = typeof actions.$inferSelect
@@ -334,6 +335,16 @@ export interface Unresolved {
  * The unresolved operation of each listed Run, for the Run's outcome; one per Run is enough. A
  * settled `Unknown` dates from when its answer was lost; one still `Dispatching` from its claim.
  */
+/**
+ * An operation an Integration paused is not unheard: its Approval or question waits on the Person
+ * and holds it, and the answer settles it (`connections/asks.ts`). Until that ask is settled the
+ * Run says nothing about it; once it is, its real receipt applies.
+ */
+const heldByAsk = or(
+  sql`exists (select 1 from ${approvals} where ${approvals.status} in ('pending', 'executing') and ${approvals.action}->'continuation'->>'operation' = ${actions.id})`,
+  sql`exists (select 1 from ${inputRequests} where ${inputRequests.status} in ('waiting', 'answering') and ${inputRequests.integration}->'continuation'->>'operation' = ${actions.id})`,
+)
+
 export const unresolvedOf = Effect.fn('Actions.unresolvedOf')(function* (
   runIds: ReadonlyArray<RunId>,
 ) {
@@ -344,7 +355,7 @@ export const unresolvedOf = Effect.fn('Actions.unresolvedOf')(function* (
     database
       .select()
       .from(actions)
-      .where(and(inArray(actions.runId, [...runIds]), unresolved)),
+      .where(and(inArray(actions.runId, [...runIds]), unresolved, not(heldByAsk))),
   )
   for (const row of rows) {
     if (row.runId === null) continue

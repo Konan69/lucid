@@ -114,6 +114,7 @@ import {
   type Scrolled,
 } from './chat/away'
 import { Choices } from './chat/Choices'
+import { Filled } from './chat/Form'
 import { Handing, useOpenScreen } from './chat/Handoff'
 import { Message } from './chat/Message'
 import { Replied, spokenOf } from './chat/Question'
@@ -546,8 +547,12 @@ function useAsking(up: Option.Option<InputRequest>) {
       request,
       drafting: draftingIn(request),
     })),
-    /** A request is waiting on this Person, whether or not its card is up yet. */
-    waiting: Option.isSome(up),
+    /**
+     * A question of Vivid's is waiting on this Person, whether or not its card is up yet, so what
+     * is sent is its reply. An Integration's is answered by its own form, so the composer stays
+     * "Message Vivid" for it.
+     */
+    waiting: Option.exists(up, (request) => request.integration === null),
     /** The answers to one request are on their way. */
     sendingTo: (id: InputRequestId) => Option.isSome(about(pending, id)),
     /** The answers to the request that is up are on their way, so nothing else is sent. */
@@ -688,6 +693,18 @@ function Raised({
     )
   }
   const { request, leaving } = question.value
+  // An Integration's mid-call question is its own form (`chat/Form.tsx`), on the same banner.
+  if (request.integration !== null)
+    return (
+      <Filled
+        key={request.id}
+        request={request}
+        leaving={leaving}
+        dock={dock.value}
+        covered={covered}
+        onGone={asking.release}
+      />
+    )
   return (
     <Choices
       key={request.id}
@@ -1092,7 +1109,9 @@ function Foot({
    * two moves. Moving on is the next question, or from the last every answer sent
    * (`asking.advance`); going back keeps every pick. With no request up it is nothing.
    */
-  const onward = Option.map(asking.up, ({ request, drafting }): Onward => {
+  // An Integration's form has its own Send and Skip (`chat/Form.tsx`): nothing to move on from.
+  const asked = Option.filter(asking.up, ({ request }) => request.integration === null)
+  const onward = Option.map(asked, ({ request, drafting }): Onward => {
     const progress = model.progressOf(request.questions, drafting)
     return {
       first: progress.first,
