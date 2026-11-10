@@ -1,3 +1,4 @@
+import { ActionLookup, Lookup } from '../actions/journal.ts'
 import { IntegrationAnswers } from '../connections/answers.ts'
 import { activitiesLayer } from '../activity/service.ts'
 import * as NodeCrypto from 'node:crypto'
@@ -226,6 +227,9 @@ const policy = ruleStoreLayer.pipe(Layer.provideMerge(foundation))
 /** Production stores over the test ports, for a test that composes the gate with other production Layers. */
 export const storeServices = Layer.merge(approvalStoreLayer, inputStoreLayer).pipe(
   Layer.provideMerge(policy),
+  Layer.provideMerge(
+    Layer.succeed(ActionLookup, { look: () => Effect.succeed(Lookup.cases.Unsupported.make({})) }),
+  ),
 )
 /** Stateful observations and stores are acquired per case over the suite's shared database. */
 export const trustTestServices = Layer.mergeAll(

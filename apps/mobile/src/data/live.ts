@@ -470,7 +470,7 @@ function makeLiveData(session: SignedIn) {
     ...makeSearches(engine),
     /** Connecting an Integration: the session's one machine (`data/connecting.ts`). */
     connecting,
-    ...makeDecisions(engine), // A computer's access, an Approval, an Integration's question.
+    ...makeDecisions(engine), // Access, Approvals, unheard actions, Integration questions.
     /** A step's calls, like a device decision, outlive the banner that pressed them. */
     handing: makeHandoffCalls(engine),
     ...makeForms(engine, live),

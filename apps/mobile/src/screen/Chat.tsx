@@ -3,6 +3,7 @@ import {
   ApprovalDecision,
   ThreadAudience,
   Workspace,
+  type ActionOperationId,
   type Approval,
   type ApprovalId,
   type ConversationMessage,
@@ -18,6 +19,7 @@ import {
   approvalUp,
   asking as model,
   attaching,
+  checking,
   conversationIn,
   draftPlace,
   handing,
@@ -36,7 +38,7 @@ import {
   makeTurns,
   thisReader,
 } from '@vivid/state'
-import { type Array as Arr, Effect, Option, Result } from 'effect'
+import { type Array as Arr, Data, Effect, Option, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { ScrollView, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native'
@@ -74,7 +76,8 @@ import {
   speakerOf,
   type Around,
 } from '../data/message'
-import { endingOf, newestRun } from '../data/outcome'
+import { checkAction, useChecking } from '../data/checking'
+import { endingOf, newestRun, unheardOf } from '../data/outcome'
 import { Stand, standIn } from '../data/stand'
 import { firstWay, UNDELIVERED, UNTITLED } from '../data/threads'
 import { bearer } from '../data/transport'
@@ -1203,22 +1206,26 @@ interface Trouble {
 /**
  * How the newest Run ended, when it ended without an answer; said once Vivid has stopped, where
  * the answer would have been. "Try again" says the Person's last words again, as a new message.
+ * An action never heard back about offers it only once a check found it did not happen.
  */
 const endedOf = (
   working: boolean,
   shown: ReadonlyArray<ConversationMessage>,
   around: Around,
   onSay: (words: string) => void,
-): Option.Option<Ended> =>
-  Option.map(
-    working ? Option.none() : Option.flatMap(newestRun(around.runs), endingOf),
-    (ending): Ended => ({
-      words: ending.words,
-      onAgain: ending.again
-        ? Option.map(lastWordsOf(shown, around), (words) => () => onSay(words))
-        : Option.none(),
+): Option.Option<Ended> => {
+  if (working) return Option.none()
+  const again = Option.map(lastWordsOf(shown, around), (words) => () => onSay(words))
+  return Option.flatMap(newestRun(around.runs), (run) =>
+    Option.match(unheardOf(run), {
+      onSome: (operationId) => Option.some<Ended>(Ended.Unheard({ operationId, onAgain: again })),
+      onNone: () =>
+        Option.map(endingOf(run.state), (ending): Ended =>
+          Ended.Said({ words: ending.words, onAgain: ending.again ? again : Option.none() }),
+        ),
     }),
   )
+}
 
 /**
  * Whether the conversation is out of reach in a way worth saying. A link that is already being
@@ -1281,11 +1288,18 @@ const troubleOf = (at: {
 const lostKeys = (id: ThreadId, lost: Option.Option<First>): ReadonlyArray<string> =>
   Option.match(lost, { onNone: () => [], onSome: () => [firstKey(id)] })
 
-/** A Run that ended without an answer: what to say, and the way to ask again when that can help. */
-interface Ended {
-  readonly words: string
-  readonly onAgain: Option.Option<() => void>
-}
+/**
+ * A Run that ended without an answer: what to say, and the way to ask again when that can help;
+ * or an action never heard back about, whose line is `checking`'s (`Unheard`).
+ */
+type Ended = Data.TaggedEnum<{
+  Said: { readonly words: string; readonly onAgain: Option.Option<() => void> }
+  Unheard: {
+    readonly operationId: ActionOperationId
+    readonly onAgain: Option.Option<() => void>
+  }
+}>
+const Ended = Data.taggedEnum<Ended>()
 
 interface MessagesProps {
   readonly messages: ReadonlyArray<ConversationMessage>
@@ -1920,20 +1934,13 @@ function Tail({
   if (Option.isNone(ended) && Option.isNone(trouble)) return null
   return (
     <View style={{ gap: 12 }}>
-      {Option.isSome(ended) && (
-        <View style={{ gap: 8 }}>
-          <Label size="label" tone="ink-2">
-            {ended.value.words}
-          </Label>
-          {Option.isSome(ended.value.onAgain) && (
-            <Button
-              label="Try again"
-              onPress={ended.value.onAgain.value}
-              containerStyle={{ alignSelf: 'flex-start' }}
-            />
-          )}
-        </View>
-      )}
+      {Option.isSome(ended) &&
+        Ended.$match(ended.value, {
+          Said: ({ words, onAgain }) => <EndedLine words={words} onAgain={onAgain} />,
+          Unheard: ({ operationId, onAgain }) => (
+            <Unheard operationId={operationId} onAgain={onAgain} />
+          ),
+        })}
       {Option.isSome(trouble) && (
         <View style={{ gap: 8 }}>
           <Notice message={trouble.value.message} />
@@ -1944,6 +1951,73 @@ function Tail({
           />
         </View>
       )}
+    </View>
+  )
+}
+
+/** What a Run's ending says, and "Try again" when asking again can help. */
+function EndedLine({ words, onAgain }: { words: string; onAgain: Option.Option<() => void> }) {
+  return (
+    <View style={{ gap: 8 }}>
+      <Label size="label" tone="ink-2">
+        {words}
+      </Label>
+      {Option.isSome(onAgain) && (
+        <Button
+          label="Try again"
+          onPress={onAgain.value}
+          containerStyle={{ alignSelf: 'flex-start' }}
+        />
+      )}
+    </View>
+  )
+}
+
+/**
+ * A Run sent something to a service and never heard back. Asking again could do it twice, so
+ * the server holds the same action until its result is known; "Check" asks the service whether it
+ * happened (`@vivid/state` `checking`), held while a check is on its way. Only once it is known
+ * not to have happened is "Try again" offered.
+ */
+function Unheard({
+  operationId,
+  onAgain,
+}: {
+  operationId: ActionOperationId
+  onAgain: Option.Option<() => void>
+}) {
+  const data = useLiveData()
+  const line = checking.lineOf(useChecking(), operationId)
+  const check = (held: boolean) => (
+    <Button
+      label="Check"
+      disabled={held}
+      onPress={() => checkAction(data, operationId)}
+      containerStyle={{ alignSelf: 'flex-start' }}
+    />
+  )
+  return (
+    <View style={{ gap: 8 }}>
+      <Label size="label" tone="ink-2">
+        {checking.wordsOf(line)}
+      </Label>
+      {checking.Line.match(line, {
+        Unheard: () => check(false),
+        Checking: () => check(true),
+        Applied: () => null,
+        NotApplied: () =>
+          Option.match(onAgain, {
+            onNone: () => null,
+            onSome: (again) => (
+              <Button
+                label="Try again"
+                onPress={again}
+                containerStyle={{ alignSelf: 'flex-start' }}
+              />
+            ),
+          }),
+        Unsure: () => check(false),
+      })}
     </View>
   )
 }

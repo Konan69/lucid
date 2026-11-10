@@ -8,6 +8,7 @@ import * as NodeUtil from 'node:util'
 import { snapshot } from './gate/cloud.mjs'
 import { openRunDatabase } from './gate/database.mjs'
 import { logged, runIdentifier, stopChildrenOnSignal } from './gate/process.mjs'
+import { vitestGroups } from './gate/vitest.mjs'
 import { needsDatabase } from './proof/database.mjs'
 import { judgeCase, readReceipt } from './proof/report.mjs'
 import { caseBody, changedLines, leafBodies, testBodies } from './proof/source.mjs'
@@ -53,21 +54,17 @@ export function proofSelection(root, options) {
 }
 
 /** Node tooling and Vitest packages keep their real runner and package-local setup. */
-async function runTests(tree, files, run) {
+async function runTests(run) {
   const reports = []
   let exit = 0
-  const groups = [
-    { kind: 'node', files: files.filter((file) => file.endsWith('.mjs')) },
-    { kind: 'vitest', files: files.filter((file) => !file.endsWith('.mjs')) },
-  ]
-  for (const group of groups.filter((entry) => entry.files.length > 0)) {
-    const report = NodePath.join(run.directory, `${run.phase}-${group.kind}.json`)
+  for (const [index, group] of run.groups.entries()) {
+    const report = NodePath.join(run.directory, `${run.phase}-${group.kind}-${index}.json`)
     const reporter = NodePath.join(repositoryRoot, `scripts/proof/${group.kind}.mjs`)
     const args =
       group.kind === 'node'
         ? ['--test', `--test-reporter=${reporter}`, ...group.files]
         : [
-            NodePath.join(repositoryRoot, 'node_modules/vitest/vitest.mjs'),
+            group.runner,
             'run',
             ...group.files,
             '--includeTaskLocation',
@@ -75,7 +72,7 @@ async function runTests(tree, files, run) {
             '--reporter=default',
             `--reporter=${reporter}`,
           ]
-    const database = needsDatabase(tree, group.files)
+    const database = needsDatabase(group.cwd, group.files)
       ? await openRunDatabase(repositoryRoot, run.env, runIdentifier())
       : undefined
     // Signal cleanup closes this phase's database before removing its scratch source.
@@ -89,7 +86,11 @@ async function runTests(tree, files, run) {
       delete env.NODE_TEST_CONTEXT
       delete env.VIVID_TEST_DATABASE_URL
       if (database !== undefined) env.VIVID_TEST_DATABASE_URL = database.url
-      const result = await logged([process.execPath, ...args], { cwd: tree, env, log: run.log })
+      const result = await logged([process.execPath, ...args], {
+        cwd: group.cwd,
+        env,
+        log: run.log,
+      })
       exit += result.exit
       const receipt = readReceipt(report)
       if (receipt.unhandled > 0) throw new Error('proof runner reported an unhandled failure')
@@ -202,10 +203,18 @@ export async function proveBranch(root, selection, environment) {
       code.length === 0
         ? ''
         : git(tree, ['diff', '--binary', selection.base, 'HEAD', '--', ...code])
-    const run = { directory, log, env: environment }
-    const green = await runTests(tree, files, { ...run, phase: 'fixed' })
+    // Resolve runners before reversal, which may remove a tracked dependency link.
+    const groups = [
+      { kind: 'node', cwd: tree, files: files.filter((file) => file.endsWith('.mjs')) },
+      ...vitestGroups(
+        tree,
+        files.filter((file) => !file.endsWith('.mjs')),
+      ),
+    ].filter((group) => group.files.length > 0)
+    const run = { directory, log, env: environment, groups }
+    const green = await runTests({ ...run, phase: 'fixed' })
     if (patch !== '') git(tree, ['apply', '--reverse', '--binary', '-'], patch)
-    const red = await runTests(tree, files, { ...run, phase: 'reversed' })
+    const red = await runTests({ ...run, phase: 'reversed' })
     const results = verdicts(changed, green, red, tree)
     if (files.length === 0)
       results.push({

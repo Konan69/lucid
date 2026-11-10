@@ -1,4 +1,11 @@
-import { RunOutcome, RunState, RunUncertainty, type Run, type RunFailure } from '@vivid/contracts'
+import {
+  RunOutcome,
+  RunState,
+  RunUncertainty,
+  type ActionOperationId,
+  type Run,
+  type RunFailure,
+} from '@vivid/contracts'
 import { Option } from 'effect'
 
 /**
@@ -39,15 +46,6 @@ const LOST: Ending = {
   again: true,
 }
 
-/**
- * A Run sent something to a service and never heard back. Asking again could do it twice, so
- * there is nothing to press: the server holds the same action until its result is known.
- */
-const UNHEARD: Ending = {
-  words: 'Vivid didn’t hear back, so the result of that action isn’t known yet.',
-  again: false,
-}
-
 /** The newest Run in a Thread, which is the one whose ending the Person is waiting on. */
 export const newestRun = (runs: ReadonlyArray<Run>): Option.Option<Run> =>
   runs.reduce<Option.Option<Run>>(
@@ -56,18 +54,20 @@ export const newestRun = (runs: ReadonlyArray<Run>): Option.Option<Run> =>
     Option.none(),
   )
 
-/** Whether a Run's outcome is an outward action whose result is not known. */
-const unheard = (run: Run) =>
+/**
+ * The operation of a Run whose outcome is an outward action whose result is not known. Its line
+ * is `@vivid/state` `checking`'s, which offers `Check` rather than `Try again`: asking again could
+ * do it twice, so the server holds the same action until its result is known.
+ */
+export const unheardOf = (run: Run): Option.Option<ActionOperationId> =>
   run.outcome !== null &&
   RunOutcome.guards.Unknown(run.outcome) &&
   RunUncertainty.guards.Action(run.outcome.uncertainty)
-
-/** What a Run's ending needs said, when it needs anything said at all. */
-export const endingOf = (run: Run): Option.Option<Ending> =>
-  unheard(run) ? Option.some(UNHEARD) : executionEnding(run.state)
+    ? Option.some(run.outcome.uncertainty.operationId)
+    : Option.none()
 
 /** How execution ended, which says nothing when it ended with an answer or was stopped. */
-const executionEnding = (state: RunState): Option.Option<Ending> =>
+export const endingOf = (state: RunState): Option.Option<Ending> =>
   RunState.match(state, {
     Working: () => Option.none(),
     Completed: () => Option.none(),

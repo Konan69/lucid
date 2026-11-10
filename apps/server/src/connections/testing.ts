@@ -1,3 +1,4 @@
+import { actionLookupLayer } from './reconcile.ts'
 import { IntegrationAnswers } from '../connections/answers.ts'
 import { ExecutorAdoption } from './adopter.ts'
 import { discordServiceId } from './discord.ts'
@@ -394,7 +395,11 @@ const dependencies = Layer.mergeAll(
   probeLayer,
   toolEffectsLayer.pipe(Layer.provideMerge(unconfiguredDecisionLayer)),
 )
-export const connectionTestLayer = connectionStoreLayer.pipe(Layer.provideMerge(dependencies))
+/** Keep the probe lookup acquisition separate from live proofs that build the same adapter. */
+export const connectionTestLayer = Layer.merge(
+  connectionStoreLayer,
+  Layer.fresh(actionLookupLayer),
+).pipe(Layer.provideMerge(dependencies))
 
 /** Cleanup is installed before the first write and only touches unique disposable test identities. */
 export const fixture = Effect.fn('Connections.Test.fixture')(function* () {
