@@ -1,4 +1,4 @@
-import { and, asc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
+import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
@@ -23,6 +23,7 @@ import { Database, decodeStored, encodeStored, returned } from '../database/clie
 import { announce, Topic } from '../live/changes.ts'
 import { readableThread } from '../threads/access.ts'
 import { StoredRunOrigin, StoredRunOriginColumn } from '../threads/conversation.ts'
+import { deliveredOnFeed } from '../threads/runs.ts'
 import { runs } from '../threads/tables.ts'
 import { cardIdOf, readFeed } from './read.ts'
 import { feedCards } from './tables.ts'
@@ -158,7 +159,7 @@ const makeStore = (database: Database['Service']) => {
         const [card] = rows
         if (card === undefined) return yield* new NotFound({ message: 'That card is gone.' })
         const provenance = yield* decodeProvenance(card.provenance)
-        const moved = yield* delivered(tx, { person, thread: card.thread, provenance, now })
+        const moved = yield* delivered(tx, { person, thread: card.thread, provenance })
         yield* announce(tx, [...feedTopic(person), ...moved])
       }),
     )
@@ -208,11 +209,9 @@ const causeOf = Effect.fn('FeedStore.causeOf')(function* (tx: Transaction, threa
 })
 
 /**
- * The Person's Feed drew a card: the Run that posted its current content, when it acted for them
- * and has completed, is Delivered (`RunDeliveryReceipt.Feed`). The first mark is the receipt; the
- * write is conditional, so a repeat or a later mark changes nothing and announces nothing. A card
- * drawn while its Run still works, or a legacy card that never recorded its Run, delivers none.
- * Answers the topics a delivery moved: the Run's Thread and the Person, as a Thread receipt does.
+ * The Person's Feed drew a card: the Run that posted its current content is Delivered when it can
+ * be (`deliveredOnFeed`). A legacy card that never recorded its Run delivers none. Answers the
+ * topics a first receipt moved: the Run's Thread and the Person, as a Thread receipt does.
  */
 const delivered = Effect.fn('FeedStore.delivered')(function* (
   tx: Transaction,
@@ -220,26 +219,16 @@ const delivered = Effect.fn('FeedStore.delivered')(function* (
     readonly person: PersonId
     readonly thread: ThreadId
     readonly provenance: FeedProvenance
-    readonly now: number
   },
 ) {
   const { provenance } = input
   if (!FeedProvenance.guards.Recorded(provenance)) return []
-  const rows = yield* tx
-    .update(runs)
-    .set({ deliveredAt: input.now, deliveredOn: 'Feed' })
-    .where(
-      and(
-        eq(runs.id, provenance.postedBy),
-        eq(runs.threadId, input.thread),
-        eq(runs.personId, input.person),
-        eq(runs.state, 'completed'),
-        isNotNull(runs.responseId),
-        isNull(runs.deliveredAt),
-      ),
-    )
-    .returning({ id: runs.id })
-  if (rows.length === 0) return []
+  const first = yield* deliveredOnFeed(tx, {
+    runId: provenance.postedBy,
+    threadId: input.thread,
+    personId: input.person,
+  })
+  if (!first) return []
   return [Topic.thread(input.thread), Topic.person(input.person)].map(Topic.part('activity'))
 })
 

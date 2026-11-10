@@ -922,7 +922,9 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
 
           // Drawn while the Run still works: there is no result yet to deliver.
           yield* feed.mark(test.ada, MarkFeedCardRequest.make({ card, state: 'seen' }))
-          expect((yield* outcome)[0]?._tag).toBe('Accepted')
+          expect(yield* outcome).toEqual([
+            RunOutcome.cases.Accepted.make({ acceptedAt: now - hour, submissionId: '1' }),
+          ])
 
           yield* store.end(id, RunEnding.cases.Completed.make({ responseId }))
           const completed = RunOutcome.cases.Completed.make({ completedAt: now - hour, responseId })

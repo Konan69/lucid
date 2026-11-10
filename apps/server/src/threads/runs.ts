@@ -638,6 +638,37 @@ const makeAcknowledge = (database: DatabaseService): RunStoreService['acknowledg
     return Option.map(Arr.head(written), (first) => first.thread)
   })
 
+/** A transaction the caller holds, so a Run's receipt commits with what proved it. */
+type Transaction = Parameters<Parameters<DatabaseService['transaction']>[0]>[0]
+
+/**
+ * The Person's Feed drew the card a Run posted (`FeedStore.mark`): that Run is Delivered with a
+ * `Feed` receipt, written in the caller's transaction with the mark. Only a completed Run with a
+ * response, acting for this Person in the card's Thread, takes it. The write is conditional, so
+ * the first draw is the receipt and a repeat changes nothing. Answers whether this was the first.
+ */
+export const deliveredOnFeed = Effect.fn('RunStore.deliveredOnFeed')(function* (
+  tx: Transaction,
+  input: { readonly runId: RunId; readonly threadId: ThreadId; readonly personId: PersonId },
+) {
+  const now = yield* Clock.currentTimeMillis
+  const rows = yield* tx
+    .update(runs)
+    .set({ deliveredAt: now, deliveredOn: 'Feed' })
+    .where(
+      and(
+        eq(runs.id, input.runId),
+        eq(runs.threadId, input.threadId),
+        eq(runs.personId, input.personId),
+        eq(runs.state, 'completed'),
+        isNotNull(runs.responseId),
+        isNull(runs.deliveredAt),
+      ),
+    )
+    .returning({ id: runs.id })
+  return rows.length > 0
+})
+
 export const runStoreLayer = Layer.effect(
   RunStore,
   Effect.gen(function* () {
