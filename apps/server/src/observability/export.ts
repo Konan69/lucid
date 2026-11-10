@@ -37,6 +37,7 @@ import {
   isSpanId,
   isTraceId,
   type Keys,
+  REMOTE_PARENT,
 } from './guard.ts'
 import { isCodeName, isMessage, Message, OMITTED } from './messages.ts'
 import { INCIDENT_KIND, incidentExport } from './incidents.ts'
@@ -472,6 +473,25 @@ const allowLink =
 const ERROR_STATUS = 2
 
 /**
+ * OTLP's `SPAN_FLAGS_CONTEXT_HAS_IS_REMOTE_MASK` and `SPAN_FLAGS_CONTEXT_IS_REMOTE_MASK`
+ * (`opentelemetry/proto/trace/v1/trace.proto` `SpanFlags`): whether the parent's locality is
+ * known, and that it is in another process.
+ */
+const PARENT_KNOWN = 0x100
+const PARENT_REMOTE = 0x200
+
+/** A span as it is posted: Effect's, plus the flags `makeOtlpSpan` does not write. */
+type PostedSpan = ExportedSpan & { readonly flags: number }
+
+/** The flags of a span that keeps `parent`: its locality, which `guard.ts` marked. */
+const flagsOf = (span: ExportedSpan, parent: string | undefined) =>
+  parent === undefined
+    ? 0
+    : span.attributes.some(({ key, value }) => key === REMOTE_PARENT && value.boolValue === true)
+      ? PARENT_KNOWN | PARENT_REMOTE
+      : PARENT_KNOWN
+
+/**
  * One span, rebuilt field by field.
  *
  * - A span on which an Incident was recorded (`incidents.ts`) has the error status, whatever its
@@ -480,6 +500,8 @@ const ERROR_STATUS = 2
  * - A request's span is named by its method and the route it matched (`GET /api/watches/:id`),
  *   both kept by the rules above, so the trace's transaction has a name a person can read. Effect
  *   4.0.2 `HttpMiddleware.SpanNameGenerator` names it by the method alone, before routing.
+ * - A span whose parent is in another process carries the OTLP remote-parent flag (`flagsOf`), so
+ *   Sentry starts a transaction there, named by the span: an RPC call's is its tag.
  *
  * - The status keeps its code only. rc.116 `makeOtlpSpan` sets the message to the first error's
  *   own message.
@@ -493,7 +515,7 @@ const ERROR_STATUS = 2
  */
 const allowSpan =
   (rules: Rules) =>
-  (span: ExportedSpan): ReadonlyArray<ExportedSpan> => {
+  (span: ExportedSpan): ReadonlyArray<PostedSpan> => {
     const traceId = traceIdOf(span.traceId)
     if (Option.isNone(traceId) || !isSpanId(span.spanId)) return []
     const links = span.links.flatMap(allowLink(rules))
@@ -502,14 +524,14 @@ const allowSpan =
       Arr.findFirst(kept.attributes, (pair) => pair.key === key).pipe(
         Option.flatMap(({ value }) => Option.fromUndefinedOr(value.stringValue)),
       )
+    const parentSpanId =
+      span.parentSpanId !== undefined && isSpanId(span.parentSpanId) ? span.parentSpanId : undefined
     return [
       {
         traceId: traceId.value,
         spanId: span.spanId,
-        parentSpanId:
-          span.parentSpanId !== undefined && isSpanId(span.parentSpanId)
-            ? span.parentSpanId
-            : undefined,
+        parentSpanId,
+        flags: flagsOf(span, parentSpanId),
         name: Option.match(said('http.route'), {
           onNone: () => spanName(span.name),
           onSome: (route) => (METHODS.includes(span.name) ? `${span.name} ${route}` : spanName(span.name)),

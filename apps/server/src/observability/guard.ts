@@ -159,6 +159,17 @@ export const isTraceId = (id: string) => isId(id, [16, 32])
  */
 const NO_SPAN = '0'.repeat(16)
 
+/**
+ * Marks a span whose parent is in another process, for `export.ts` `allowSpan` to send as the
+ * OTLP span flag `SPAN_FLAGS_CONTEXT_IS_REMOTE`, which Effect 4.0.2 `OtlpTracer.ts`
+ * `makeOtlpSpan` never writes. Sentry makes a span a segment, the unit its transaction is named
+ * by, only when it has no parent or that flag says its parent is remote (Relay
+ * `relay-spans/src/otel_to_sentry_v2.rs`, `is_segment`), so without it every RPC call, whose
+ * parent is the client's span, was a span of no transaction. No export rule names it, so it never
+ * leaves as an attribute.
+ */
+export const REMOTE_PARENT = 'vivid.span.remote_parent'
+
 /** The spans one guarded tracer has made. Reading one of them runs only this module's code. */
 type Own = WeakSet<object>
 
@@ -497,11 +508,17 @@ export const guardedTracer = (inner: Tracer.Tracer, keys: Keys): Tracer.Tracer =
         Result.try(() => plainOptions({ own, keys }, options)),
         unreadable,
       )
+      const made = Result.getOrElse(
+        Result.try(() => inner.span(plain)),
+        () => new Tracer.NativeSpan(plain),
+      )
+      // A parent this tracer did not make is not exported from here: it came from another process
+      // (a client's RPC payload, a `traceparent`), so the span begins this process's part of the
+      // trace (`REMOTE_PARENT`).
+      if (Option.exists(plain.parent, (parent) => parent._tag === 'ExternalSpan'))
+        Result.try(() => made.attribute(REMOTE_PARENT, true))
       const span = guardedSpan({
-        inner: Result.getOrElse(
-          Result.try(() => inner.span(plain)),
-          () => new Tracer.NativeSpan(plain),
-        ),
+        inner: made,
         plain,
         keys,
         own,
