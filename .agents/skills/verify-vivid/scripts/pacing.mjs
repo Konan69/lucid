@@ -53,22 +53,24 @@ async function pass(state, at, directory, name) {
   })
 }
 
+/** Use the same IANA wall hour to select the outside window and calculate tomorrow's pass. */
+const localHour = (zone, at) =>
+  Number(
+    new Intl.DateTimeFormat('en-GB', {
+      timeZone: zone,
+      hour: 'numeric',
+      hourCycle: 'h23',
+    }).format(at),
+  )
+
 /** One spoken preference, then real-model background posts through the disposable Integration.
  * Choose a real IANA zone currently before eleven, so the actual urgent post also happens outside
  * the window. Future clock passes check ten/eleven after every foreground Run is quiet. */
 export async function pacing(state, id, directory) {
   NodeAssert.equal(state.modelKind, 'real', 'Spoken pacing requires a real model')
   const now = Date.now()
-  const hour = (zone) =>
-    Number(
-      new Intl.DateTimeFormat('en-GB', {
-        timeZone: zone,
-        hour: 'numeric',
-        hourCycle: 'h23',
-      }).format(now),
-    )
   const zone = Intl.supportedValuesOf('timeZone').find(
-    (candidate) => hour(candidate) >= 8 && hour(candidate) < 10,
+    (candidate) => localHour(candidate, now) >= 8 && localHour(candidate, now) < 10,
   )
   NodeAssert.ok(zone, 'No IANA zone currently before eleven')
   await rpc(
@@ -133,7 +135,7 @@ export async function pacing(state, id, directory) {
     const minutes = Number(
       new Intl.DateTimeFormat('en-GB', { timeZone: zone, minute: 'numeric' }).format(now),
     )
-    const ten = now - (hour(zone) * 60 + minutes) * 60_000 + (24 + 10) * 3_600_000
+    const ten = now - (localHour(zone, now) * 60 + minutes) * 60_000 + (24 + 10) * 3_600_000
     await pass(state, ten, directory, 'outside')
     NodeAssert.equal(
       (await notices(state, ordinary.thread, directory, 'outside-notices')).length,
