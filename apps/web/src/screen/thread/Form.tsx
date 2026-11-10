@@ -190,11 +190,11 @@ function Block({
             reach={reach}
           />
         ),
-        Several: ({ choices, picked }) => (
+        Several: ({ choices }) => (
           <Choices
             rows={choices.map((choice) => ({
               label: choice.label,
-              chosen: picked.includes(choice.value),
+              chosen: form.isPicked(entry, choice.value),
               press: () => onPick(choice.value),
             }))}
             several
@@ -216,7 +216,7 @@ function Block({
           <Field
             id={id}
             entry={text}
-            words={text.words}
+            words={form.shownWords(text)}
             problem={problem}
             reach={reach}
             onType={onType}

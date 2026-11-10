@@ -220,13 +220,13 @@ function Block({
           })),
         ),
       }),
-    Several: ({ choices, picked }) =>
+    Several: ({ choices }) =>
       Option.some({
         several: true,
         shown: shownOf(
           choices.map((choice) => ({
             label: choice.label,
-            chosen: picked.includes(choice.value),
+            chosen: form.isPicked(entry, choice.value),
             press: () => onPick(choice.value),
           })),
         ),
@@ -270,7 +270,7 @@ function Block({
           accessibilityLabel={entry.title}
           accessibilityHint={Option.getOrUndefined(problem)}
           editable={reach === 'pressable'}
-          value={wordsOf(entry)}
+          value={form.shownWords(entry)}
           keyboardType={keyboardOf(entry)}
           autoCapitalize={
             form.Entry.$is('Text')(entry) && Option.isNone(entry.format) ? 'sentences' : 'none'
@@ -291,10 +291,6 @@ function Block({
     </View>
   )
 }
-
-/** The words in a text or number entry; a closed set has none. */
-const wordsOf = (entry: form.Entry): string =>
-  form.Entry.$is('Text')(entry) || form.Entry.$is('Number')(entry) ? entry.words : ''
 
 /** The keyboard a field offers, from what it holds. */
 const keyboardOf = (entry: form.Entry): KeyboardTypeOptions => {

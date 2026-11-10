@@ -50,9 +50,13 @@ interface Base {
  * One property of the form and what the Person has given for it.
  *
  * - `One`: a closed set, one of which is picked.
- * - `Several`: a closed set, any number of which are picked within `least` and `most`.
+ * - `Several`: a closed set, any number of which are picked within `least` and `most`. Nothing
+ *   picked is a value of its own (`[]`), apart from giving none: a required set always has a
+ *   value, starting empty when the schema gives no default; an optional one gives none until a
+ *   choice is picked, and none again once every pick is taken back.
  * - `Toggle`: yes or no.
- * - `Text`: words, within the length and format the schema says.
+ * - `Text`: words exactly as given, within the length and format the schema says. A default is
+ *   a value even when it is empty. Words the Person clears give none.
  * - `Number`: a number typed as words, so a half-typed "1." stays as the Person wrote it.
  */
 export type Entry = Data.TaggedEnum<{
@@ -61,7 +65,7 @@ export type Entry = Data.TaggedEnum<{
     readonly choices: ReadonlyArray<Choice>
     readonly least: number
     readonly most: Option.Option<number>
-    readonly picked: ReadonlyArray<string>
+    readonly picked: Option.Option<ReadonlyArray<string>>
   }
   Toggle: Base & { readonly on: Option.Option<boolean> }
   Text: Base & {
@@ -74,7 +78,7 @@ export type Entry = Data.TaggedEnum<{
     readonly integer: boolean
     readonly least: Option.Option<number>
     readonly most: Option.Option<number>
-    readonly words: string
+    readonly words: Option.Option<string>
   }
 }>
 export const Entry = Data.taggedEnum<Entry>()
@@ -146,13 +150,15 @@ const entryOf = (key: string, property: Property, required: boolean): Entry => {
         'anyOf' in property.items
           ? property.items.anyOf.map((one) => ({ value: one.const, label: one.title }))
           : property.items.enum.map((value) => ({ value, label: value }))
+      const offered = (values: ReadonlyArray<string>) =>
+        values.filter((value) => choices.some((choice) => choice.value === value))
       return Entry.Several({
         ...base,
         choices,
-        least: Option.getOrElse(some(property.minItems), () => (required ? 1 : 0)),
+        least: Option.getOrElse(some(property.minItems), () => 0),
         most: some(property.maxItems),
-        picked: Option.getOrElse(some(property.default), () => []).filter((value) =>
-          choices.some((choice) => choice.value === value),
+        picked: Option.orElse(Option.map(some(property.default), offered), () =>
+          required ? Option.some([]) : Option.none(),
         ),
       })
     }
@@ -172,7 +178,7 @@ const entryOf = (key: string, property: Property, required: boolean): Entry => {
         format: some(property.format),
         least: some(property.minLength),
         most: some(property.maxLength),
-        words: Option.getOrElse(some(property.default), () => ''),
+        words: some(property.default),
       })
     }
   }
@@ -201,11 +207,26 @@ export const pick = (entries: ReadonlyArray<Entry>, key: string, value: string) 
   edit(entries, key, (entry) => {
     if (Entry.$is('One')(entry)) return Entry.One({ ...entry, picked: Option.some(value) })
     if (!Entry.$is('Several')(entry)) return entry
-    const picked = entry.picked.includes(value)
-      ? entry.picked.filter((one) => one !== value)
-      : [...entry.picked, value]
-    return Entry.Several({ ...entry, picked })
+    const held: ReadonlyArray<string> = Option.getOrElse(entry.picked, () => [])
+    const picked = held.includes(value) ? held.filter((one) => one !== value) : [...held, value]
+    // An optional set left with nothing picked gives no value; a required one gives `[]`.
+    return Entry.Several({
+      ...entry,
+      picked: picked.length === 0 && !entry.required ? Option.none() : Option.some(picked),
+    })
   })
+
+/** Whether a choice is picked in a single or several pick. */
+export const isPicked = (entry: Entry, value: string): boolean => {
+  if (Entry.$is('One')(entry)) return Option.contains(entry.picked, value)
+  return Entry.$is('Several')(entry) && Option.exists(entry.picked, (held) => held.includes(value))
+}
+
+/** The words a text or number field shows: what is given, or nothing. */
+export const shownWords = (entry: Entry): string => {
+  if (Entry.$is('Text')(entry)) return Option.getOrElse(entry.words, () => '')
+  return Entry.$is('Number')(entry) ? entry.words : ''
+}
 
 /** Yes or No was pressed on a yes-or-no entry. */
 export const turn = (entries: ReadonlyArray<Entry>, key: string, on: boolean) =>
@@ -213,10 +234,14 @@ export const turn = (entries: ReadonlyArray<Entry>, key: string, on: boolean) =>
     Entry.$is('Toggle')(entry) ? Entry.Toggle({ ...entry, on: Option.some(on) }) : entry,
   )
 
-/** Words were typed into a text or number entry, exactly as typed. */
+/**
+ * Words were typed into a text or number entry, exactly as typed. A text field the Person
+ * clears gives no value: clearing is taking the answer back, as unpicking is.
+ */
 export const type = (entries: ReadonlyArray<Entry>, key: string, words: string) =>
   edit(entries, key, (entry) => {
-    if (Entry.$is('Text')(entry)) return Entry.Text({ ...entry, words })
+    if (Entry.$is('Text')(entry))
+      return Entry.Text({ ...entry, words: words === '' ? Option.none() : Option.some(words) })
     return Entry.$is('Number')(entry) ? Entry.Number({ ...entry, words }) : entry
   })
 
@@ -256,8 +281,9 @@ const formatProblem = (format: Format, words: string): Option.Option<string> => 
 
 /** What is wrong with typed words, against the entry's length and format. */
 const textProblem = (entry: Extract<Entry, { _tag: 'Text' }>): Option.Option<string> => {
-  const words = entry.words.trim()
-  if (words.length === 0) return entry.required ? Option.some('Fill this in.') : Option.none()
+  if (Option.isNone(entry.words))
+    return entry.required ? Option.some('Fill this in.') : Option.none()
+  const words = entry.words.value
   if (Option.exists(entry.least, (least) => words.length < least))
     return Option.map(entry.least, (least) => `Use at least ${least} characters.`)
   if (Option.exists(entry.most, (most) => words.length > most))
@@ -279,10 +305,11 @@ const numberProblem = (entry: Extract<Entry, { _tag: 'Number' }>): Option.Option
   return Option.none()
 }
 
-/** What is wrong with how many choices are picked. */
+/** What is wrong with how many choices are picked. Limits apply only to a given value. */
 const severalProblem = (entry: Extract<Entry, { _tag: 'Several' }>): Option.Option<string> => {
-  const count = entry.picked.length
-  if (count === 0 && !entry.required && entry.least <= 1) return Option.none()
+  if (Option.isNone(entry.picked))
+    return entry.required ? Option.some('Pick at least one.') : Option.none()
+  const count = entry.picked.value.length
   if (count < entry.least)
     return Option.some(entry.least <= 1 ? 'Pick at least one.' : `Pick at least ${entry.least}.`)
   return Option.exists(entry.most, (most) => count > most)
@@ -312,10 +339,9 @@ type Given = Content[string]
 const givenOf = (entry: Entry): Option.Option<Given> =>
   Entry.$match(entry, {
     One: ({ picked }) => picked,
-    Several: ({ picked }) => (picked.length === 0 ? Option.none() : Option.some(picked)),
+    Several: ({ picked }) => picked,
     Toggle: ({ on }) => on,
-    Text: ({ words }) =>
-      words.trim().length === 0 ? Option.none() : Option.some<Given>(words.trim()),
+    Text: ({ words }) => words,
     Number: ({ words }) =>
       words.trim().length === 0 ? Option.none() : Option.some<Given>(Number(words.trim())),
   })
