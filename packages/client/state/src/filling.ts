@@ -139,9 +139,7 @@ export const goingOn = (reading: Reading, id: InputRequestId): Option.Option<'Se
 
 /** What the refused request says over its banner; nothing on any other. */
 export const refusalFor = (reading: Reading, id: InputRequestId): Option.Option<string> =>
-  Reading.guards.Refused(reading) && reading.id === id
-    ? Option.some(reading.words)
-    : Option.none()
+  Reading.guards.Refused(reading) && reading.id === id ? Option.some(reading.words) : Option.none()
 
 /**
  * Why the server did not take an answer, in the Person's words. A conflict is the request

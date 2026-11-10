@@ -30,6 +30,7 @@ import {
   cardPress,
   connecting,
   desktopStep,
+  form,
 } from '@vivid/state'
 import { Check, X } from 'lucide-react'
 import { BorderBeam } from 'border-beam'
@@ -215,9 +216,12 @@ export function Exactly({ target }: { target: ActionTarget }) {
 
 const SETTLED = 'inline-flex items-center gap-1.5 text-label'
 
-/** How an Approval that is no longer waiting ended, in a sentence. */
-function ApprovalOutcome({ state }: { state: ApprovalState }) {
-  return ApprovalState.match(state, {
+/**
+ * How an Approval that is no longer waiting ended, in a sentence. An Integration's that ran out
+ * says nothing was sent: it paused before its call ran (`form.EXPIRED_APPROVAL`).
+ */
+function ApprovalOutcome({ approval }: { approval: Approval }) {
+  return ApprovalState.match(approval.state, {
     Pending: () => null,
     Executing: ({ decidedBy }) => (
       <span className={cn(SETTLED, 'text-working')}>
@@ -244,7 +248,11 @@ function ApprovalOutcome({ state }: { state: ApprovalState }) {
         Not allowed by {decidedBy.name}.
       </span>
     ),
-    Expired: () => <span className={cn(SETTLED, 'text-ink-3')}>This request expired.</span>,
+    Expired: () => (
+      <span className={cn(SETTLED, 'text-ink-3')}>
+        {form.isIntegrationApproval(approval) ? form.EXPIRED_APPROVAL : 'This request expired.'}
+      </span>
+    ),
     Withdrawn: () => <span className={cn(SETTLED, 'text-ink-3')}>Withdrawn.</span>,
     Invalidated: ({ reason }) => (
       <span className={cn(SETTLED, 'text-ink-3')}>{changedLine(reason)}</span>
@@ -281,7 +289,7 @@ export function AskedFirst({ approval, me }: { approval: Approval; me: PersonId 
       )}
       {!pending && (
         <p className="mt-1">
-          <ApprovalOutcome state={approval.state} />
+          <ApprovalOutcome approval={approval} />
         </p>
       )}
     </div>

@@ -22,6 +22,7 @@ import {
   offeredReplies,
   pictureAddress,
   runOf,
+  form,
   Source,
   sourceOf,
   speakerOfTurn,
@@ -321,6 +322,13 @@ const NO_PICTURES: ReadonlyArray<{ url: string; name: string }> = []
  * still waiting, or withdrawn, draws nothing: a reply that withdrew it is already its own
  * message.
  */
+/**
+ * The bubble's words: the answers, or for an Integration's question the button that answered it
+ * (`form.answeredWords`), since its stored answer is Vivid's account of the ending.
+ */
+const repliedText = (request: InputRequest, answers: Parameters<typeof asking.repliedWords>[0]) =>
+  request.integration === null ? asking.repliedWords(answers) : form.answeredWords(request)
+
 export function Replied({ request, me }: { request: InputRequest; me: PersonId }) {
   return InputRequestState.match(request.state, {
     Waiting: () => null,
@@ -328,10 +336,10 @@ export function Replied({ request, me }: { request: InputRequest; me: PersonId }
     Expired: () => null,
     Answered: ({ answers, answeredBy: person }) =>
       person.id === me ? (
-        <Said text={asking.repliedWords(answers)} mine pictures={NO_PICTURES} />
+        <Said text={repliedText(request, answers)} mine pictures={NO_PICTURES} />
       ) : (
         <Said
-          text={asking.repliedWords(answers)}
+          text={repliedText(request, answers)}
           mine={false}
           pictures={NO_PICTURES}
           from={{ name: person.name }}

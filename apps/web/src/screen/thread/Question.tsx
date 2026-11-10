@@ -1,4 +1,5 @@
 import { InputRequestState, type InputRequest, type PersonId } from '@vivid/contracts'
+import { form } from '@vivid/state'
 import { Markdown } from '../../ui/Markdown'
 
 /**
@@ -29,11 +30,29 @@ import { Markdown } from '../../ui/Markdown'
  * waiting on this Person, answered or withdrawn says nothing more here.
  */
 export function Asked({ request, me }: { request: InputRequest; me: PersonId }) {
-  const theirs = InputRequestState.guards.Waiting(request.state) && request.askedOf.id !== me
   return (
     <div className="mt-3">
       <Markdown content={request.questions.map((asked) => asked.question).join('\n\n')} />
-      {theirs && <p className="mt-1 text-label text-ink-3">Waiting on {request.askedOf.name}.</p>}
+      <Ending request={request} me={me} />
     </div>
   )
+}
+
+/**
+ * The one quiet line under the questions, when there is one: who a request waits on when it is
+ * somebody else, and that an Integration's question ran out before anyone answered it.
+ */
+function Ending({ request, me }: { request: InputRequest; me: PersonId }) {
+  return InputRequestState.match(request.state, {
+    Waiting: () =>
+      request.askedOf.id === me ? null : (
+        <p className="mt-1 text-label text-ink-3">Waiting on {request.askedOf.name}.</p>
+      ),
+    Expired: () =>
+      request.integration === null ? null : (
+        <p className="mt-1 text-label text-ink-3">{form.expiredQuestion(request)}</p>
+      ),
+    Answered: () => null,
+    Withdrawn: () => null,
+  })
 }

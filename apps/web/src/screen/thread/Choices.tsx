@@ -498,7 +498,7 @@ function Options({
             <Row
               key={`${progress.at}:${option.label}`}
               option={option}
-              digit={place + 1}
+              digit={Option.some(place + 1)}
               several={several}
               reach={reach}
               standing={model.standingOf(picked.includes(option.label), busy)}
@@ -551,8 +551,11 @@ export function Row({
   onPress,
 }: {
   option: InputOption
-  /** The number key that picks it, counted from one. */
-  digit: number
+  /**
+   * The number key that picks it, counted from one, where number keys pick rows. An Integration's
+   * form has fields beside its rows, so its rows have none (`Form.tsx`).
+   */
+  digit: Option.Option<number>
   /** Several of the question's options may be chosen, so this one is a checkbox. */
   several: boolean
   /** Whether the banner's rows can be pressed at all (`Choices`, `held`). */
@@ -570,7 +573,7 @@ export function Row({
         data-choice
         {...roleOf(several, chosen)}
         aria-disabled={!open}
-        aria-keyshortcuts={String(digit)}
+        aria-keyshortcuts={Option.getOrUndefined(Option.map(digit, String))}
         onClick={() => {
           if (open) onPress()
         }}
@@ -600,12 +603,18 @@ export function Row({
         {chosen ? (
           <Check aria-hidden className="size-3.5 shrink-0 text-primary" />
         ) : (
-          <kbd
-            aria-hidden
-            className="flex size-5 shrink-0 items-center justify-center font-sans text-meta font-title text-ink-3 tabular-nums"
-          >
-            {digit}
-          </kbd>
+          Option.match(digit, {
+            // The check's place is kept, so choosing a row never moves where its words break.
+            onNone: () => <span aria-hidden className="size-5 shrink-0" />,
+            onSome: (key) => (
+              <kbd
+                aria-hidden
+                className="flex size-5 shrink-0 items-center justify-center font-sans text-meta font-title text-ink-3 tabular-nums"
+              >
+                {key}
+              </kbd>
+            ),
+          })
         )}
       </button>
     </li>

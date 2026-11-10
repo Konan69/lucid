@@ -105,11 +105,13 @@ export const integrationName = (request: InputRequest): Option.Option<string> =>
     ? Option.some(request.integration.target.account)
     : Option.none()
 
-const some = <A>(value: A | undefined): Option.Option<A> => Option.fromUndefinedOr(value)
+/** The protocol leaves a property's optional keys out; each is read here as present or absent. */
+const some = Option.fromUndefinedOr
 
 /** The choices of a single pick, with the legacy `enumNames` as their words where given. */
 const singleChoices = (property: Property & { readonly type: 'string' }): ReadonlyArray<Choice> => {
-  if ('oneOf' in property) return property.oneOf.map((one) => ({ value: one.const, label: one.title }))
+  if ('oneOf' in property)
+    return property.oneOf.map((one) => ({ value: one.const, label: one.title }))
   if (!('enum' in property)) return []
   const names: ReadonlyArray<string> =
     'enumNames' in property ? Option.getOrElse(some(property.enumNames), () => []) : []
@@ -255,8 +257,7 @@ const formatProblem = (format: Format, words: string): Option.Option<string> => 
 /** What is wrong with typed words, against the entry's length and format. */
 const textProblem = (entry: Extract<Entry, { _tag: 'Text' }>): Option.Option<string> => {
   const words = entry.words.trim()
-  if (words.length === 0)
-    return entry.required ? Option.some('Fill this in.') : Option.none()
+  if (words.length === 0) return entry.required ? Option.some('Fill this in.') : Option.none()
   if (Option.exists(entry.least, (least) => words.length < least))
     return Option.map(entry.least, (least) => `Use at least ${least} characters.`)
   if (Option.exists(entry.most, (most) => words.length > most))
@@ -267,8 +268,7 @@ const textProblem = (entry: Extract<Entry, { _tag: 'Text' }>): Option.Option<str
 /** What is wrong with a typed number, against the entry's kind and range. */
 const numberProblem = (entry: Extract<Entry, { _tag: 'Number' }>): Option.Option<string> => {
   const words = entry.words.trim()
-  if (words.length === 0)
-    return entry.required ? Option.some('Fill this in.') : Option.none()
+  if (words.length === 0) return entry.required ? Option.some('Fill this in.') : Option.none()
   const value = Number(words)
   if (!Number.isFinite(value)) return Option.some('Enter a number.')
   if (entry.integer && !Number.isInteger(value)) return Option.some('Enter a whole number.')
@@ -340,7 +340,10 @@ export const contentOf = (entries: ReadonlyArray<Entry>): Option.Option<Content>
  * banner's head is the Integration's message, which asks it. Every other entry is named.
  */
 export const titled = (entries: ReadonlyArray<Entry>): boolean =>
-  !(entries.length === 1 && entries.every((entry) => !Entry.$is('Text')(entry) && !Entry.$is('Number')(entry)))
+  !(
+    entries.length === 1 &&
+    entries.every((entry) => !Entry.$is('Text')(entry) && !Entry.$is('Number')(entry))
+  )
 
 /**
  * How an expired Integration ask ends in the Thread, under what was asked. An Approval paused

@@ -164,7 +164,9 @@ export function useAsking(up: Option.Option<InputRequest>) {
     backward,
     /** Where the Person is in the request whose banner is up: what the composer's footer reads. */
     progress:
-      raised === undefined
+      // An Integration's form has its own Send and Skip (`Form.tsx`), so the composer's footer
+      // has nothing to move on from.
+      raised === undefined || raised.integration !== null
         ? Option.none()
         : Option.some(model.progressOf(raised.questions, draftingIn(raised))),
     /** A request is waiting on this Person, whether or not its banner is up yet. */
