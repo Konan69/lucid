@@ -10,6 +10,7 @@ import { computerScreenRoutes } from '../computers/screen.ts'
 import { egressRoutes } from '../computers/egress/route.ts'
 import { connectionReturnRoutes } from '../connections/return.ts'
 import { rpcServerLayer } from '../rpc/server.ts'
+import { CellContract, CellContractReading } from '../runtime/contract.ts'
 import { gatewayRoutes } from '../threads/gateway.ts'
 import { watchRoutes } from '../watches/receiver.ts'
 import { bytesRoutes } from './bytes.ts'
@@ -44,10 +45,24 @@ export const authRoute = HttpRouter.add(
   }),
 )
 
-const healthRoute = HttpRouter.add(
+/**
+ * Readiness, as Railway reads it before this deployment takes traffic (`infra/railway.ts`
+ * `healthcheckPath`): ready only when the cells read this server's wire contract
+ * (`runtime/contract.ts`). Otherwise 503 with the reading, so the deploy fails with the reason and
+ * the previous deployment keeps serving.
+ */
+export const healthRoute = HttpRouter.add(
   'GET',
   '/health',
-  HttpServerResponse.jsonUnsafe({ ok: true, service: 'vivid' }),
+  Effect.gen(function* () {
+    const reading = yield* (yield* CellContract).read
+    return CellContractReading.guards.Matched(reading)
+      ? HttpServerResponse.jsonUnsafe({ ok: true, service: 'vivid' })
+      : HttpServerResponse.jsonUnsafe(
+          { ok: false, service: 'vivid', contract: reading },
+          { status: 503 },
+        )
+  }),
 )
 
 /**
