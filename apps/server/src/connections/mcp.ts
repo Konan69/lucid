@@ -260,14 +260,19 @@ const rejectedCall = Effect.fn('Executor.mcpFailure')(function* (
   failure: typeof diagnostic.Type,
   tool: string | null,
 ) {
-  if (failure.kind === 'Truncated')
-    return McpCallOutcome.cases.Truncated.make({ message: failure.message })
-  if (failure.kind === 'UnknownTool') return yield* mcpFailure('ToolNotFound', tool, [])
-  if (failure.kind !== 'ToolFailure' && failure.kind !== 'ExecutionFailure')
-    return McpCallOutcome.cases.Uncertain.make({})
-  if (failure.response !== undefined)
-    return yield* mcpFailure(failure.response.code, tool, validationDetail(failure.response))
-  return McpCallOutcome.cases.Uncertain.make({})
+  switch (failure.kind) {
+    case 'Truncated':
+      return McpCallOutcome.cases.Truncated.make({ message: failure.message })
+    case 'UnknownTool':
+      return yield* mcpFailure('ToolNotFound', tool, [])
+    case 'ToolFailure':
+    case 'ExecutionFailure':
+      if (failure.response !== undefined)
+        return yield* mcpFailure(failure.response.code, tool, validationDetail(failure.response))
+      return McpCallOutcome.cases.Uncertain.make({})
+    default:
+      return McpCallOutcome.cases.Uncertain.make({})
+  }
 })
 
 /** Keep accepted form values encoded as the protocol expects at egress. */
