@@ -94,7 +94,7 @@ export function watchTools(runTool: RunTool) {
         instruction: text('What to do each time the event happens, in the Person’s words.', 4000),
         until: v.nullable(
           text(
-            'The explicit condition that ends this Watch. Null for ongoing work. Read the real source before calling finish_watching when it is met.',
+            'The explicit condition that ends this Watch. Null for ongoing work. Project check-ins must use null: the Project’s completion ends them, not finishing one visit. Read the real source before calling finish_watching when it is met.',
             4000,
           ),
         ),
