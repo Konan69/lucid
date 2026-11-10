@@ -79,7 +79,7 @@ describe.skipIf(!testDatabaseConfigured)('Action journal', () => {
           ),
         ).toBe(true)
         // Claimed and never answered: the Run says it did not hear back.
-        expect((yield* unresolvedOf([runId])).get(runId)?.operationId).toBe(id)
+        expect((yield* unresolvedOf([runId])).get(runId)).toMatchObject({ operationId: id })
         const approvalId = crypto.randomUUID()
         yield* database.run(
           database.insert(approvals).values({
@@ -99,7 +99,7 @@ describe.skipIf(!testDatabaseConfigured)('Action journal', () => {
           database.update(approvals).set({ status: 'expired' }).where(eq(approvals.id, approvalId)),
         )
         // Once the ask is settled, what the journal holds for the call applies again.
-        expect((yield* unresolvedOf([runId])).get(runId)?.operationId).toBe(id)
+        expect((yield* unresolvedOf([runId])).get(runId)).toMatchObject({ operationId: id })
       }).pipe(Effect.scoped),
     )
 
