@@ -235,9 +235,14 @@ export const delivering = (run: Live['run'], recording: Recording): DeliveringSe
     const asked = run(asking(delivery))
     // A failed send is not proof the words did not arrive: on 26 October 2026 a phone's send
     // failed after the server had taken it. The same key and payload are the same delivery, so
-    // it is asked once more, and only a second failure keeps the words as not sent.
+    // it is asked once more, and only a second failure keeps the words as not sent. A
+    // `DeliveryRefused` is the runtime's final answer and the server has already ended its Run,
+    // so asking again would only be refused again and end the Run a second time.
     const once = yield* asked
-    const answered = Result.isFailure(once) ? yield* asked : once
+    const answered =
+      Result.isFailure(once) && !Predicate.isTagged(once.failure, 'DeliveryRefused')
+        ? yield* asked
+        : once
     if (Result.isSuccess(answered)) return answered.success.run
     const refused = answered.failure
     if (Option.contains(clientImpact(refused), 'Incident'))
