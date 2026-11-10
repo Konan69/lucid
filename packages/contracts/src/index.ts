@@ -36,6 +36,7 @@ export {
   DatabaseConstraintViolation,
   DatabaseFailure,
   DatabaseUnavailable,
+  DeliveryRefused,
   Forbidden,
   InvalidRequest,
   MailboxUnconfirmed,

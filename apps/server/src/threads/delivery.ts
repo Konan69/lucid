@@ -6,12 +6,18 @@ import * as Option from 'effect/Option'
 import * as Predicate from 'effect/Predicate'
 import * as Schedule from 'effect/Schedule'
 import {
+  causeAfter,
   Conflict,
   DatabaseFailure,
+  DeliveryRefused,
+  Incident,
+  incidentHop,
   NotificationId,
   NotFound,
   RuntimeUnavailable,
   ThreadAudience,
+  type DeliveryKind,
+  type IncidentCause,
   type Person,
   type PersonId,
   type RunId,
@@ -33,8 +39,10 @@ import {
   oweRunNotice,
 } from '../notifications/delivery.ts'
 import { deliveryRunId } from '../threads/key.ts'
+import { Incidents } from '../observability/incidents.ts'
 import { recordRunFailure } from '../runtime/failure.ts'
 import { Runtime, Settlement } from '../runtime/client.ts'
+import { failedCause } from '../runtime/settlement.ts'
 import { audienceTopics, canSee, findThread, type StoredThread } from './access.ts'
 import {
   Conversation,
@@ -59,6 +67,15 @@ const previewOf = (message: DeliveryMessage) =>
     ChannelText: ({ body }) => Option.some(body),
     Signal: () => Option.none<string>(),
     FirstConversation: () => Option.none<string>(),
+  })
+
+/** Which kind of delivery did not reach Vivid: a Person's own words, or a server cue by its case. */
+const deliveryKind = (message: DeliveryMessage): DeliveryKind =>
+  DeliveryMessage.match(message, {
+    Said: () => 'Words',
+    ChannelText: () => 'Words',
+    FirstConversation: () => 'FirstConversation',
+    Signal: ({ cue }) => cue._tag,
   })
 
 /** The runtime's classified failure stays attached through the single conditional settlement write. */
@@ -92,6 +109,7 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
   const titles = yield* ThreadTitles
   const channels = yield* ChannelReplies
   const devices = yield* DeviceRegistry
+  const incidents = yield* Incidents
   const scope = yield* Effect.scope
   const queue = yield* notificationDelivery
   const noticeContext = yield* Effect.context<Database | Notifier | Presence>()
@@ -169,19 +187,42 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
     yield* activities
       .refresh(run.person.id)
       .pipe(Effect.catch(() => Effect.logWarning('Live Activity refresh failed')))
-    const settlement = yield* runtime.settled(run.threadId, run.id)
+    // Observation that gave up is stored as `Unknown`; why it gave up goes to the `RunLost` Incident.
+    const observed = yield* runtime.settled(run.threadId, run.id).pipe(
+      Effect.map((settlement) => ({ settlement, lost: Option.none<IncidentCause>() })),
+      Effect.catchTag('SettlementLost', ({ cause }) =>
+        Effect.succeed({
+          settlement: Settlement.cases.Unknown.make({}),
+          lost: Option.some(cause),
+        }),
+      ),
+    )
+    const { settlement } = observed
     const changed = yield* database.transaction(() => end(run, settlement))
     yield* activities
       .refresh(run.person.id)
       .pipe(Effect.catch(() => Effect.logWarning('Live Activity refresh failed')))
     // The conditional write owns reporting too: replay and restart observers cannot count twice.
-    if (changed && Settlement.guards.Failed(settlement))
+    const affected = { personId: run.person.id, threadId: run.threadId, runId: run.id }
+    if (changed && Settlement.guards.Failed(settlement)) {
       yield* recordRunFailure({
         threadId: run.threadId,
         runId: run.id,
         reason: settlement.reason,
         status: Option.fromUndefinedOr(settlement.providerStatus),
       })
+      yield* incidents.record(
+        Incident.cases.RunFailed.make({
+          ...affected,
+          reason: settlement.reason,
+          cause: failedCause(settlement),
+        }),
+      )
+    }
+    if (changed && Option.isSome(observed.lost))
+      yield* incidents.record(
+        Incident.cases.RunLost.make({ ...affected, cause: observed.lost.value }),
+      )
     yield* devices.ended(run.id)
     if (!changed) return
     // Naming lives in the server scope as its own fiber; even a stalled model cannot hold settlement open.
@@ -214,7 +255,22 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
 
 const threadMissing = () => Effect.fail(new NotFound({ message: 'Thread not found' }))
 
-/** Retry uncertain admissions with the same durable key. Cell activation has no server deadline. */
+/** The server's hop where an admission's failure became the answer: its tag, no status. */
+const admissionHop = (tag: string) =>
+  incidentHop({
+    service: 'server',
+    operation: 'Conversation.admitRuntime',
+    tag,
+    status: Option.none(),
+    issues: [],
+  })
+
+/**
+ * Retry uncertain admissions with the same durable key. Cell activation has no server deadline.
+ * A refusal stays a refusal (`DeliveryRefused`): the runtime answered and the same delivery will
+ * be refused again, so it is not said as unavailability, which a client would retry. An
+ * admission still uncertain after its retries is `RuntimeUnavailable`. Both keep the chain.
+ */
 const admitRuntime = Effect.fn('Conversation.admitRuntime')(
   (runtime: Runtime['Service'], input: Parameters<Runtime['Service']['admit']>[0]) =>
     runtime.admit(input).pipe(
@@ -222,11 +278,41 @@ const admitRuntime = Effect.fn('Conversation.admitRuntime')(
         while: (error) => Predicate.isTagged(error, 'AdmissionUncertain'),
         schedule: Schedule.exponential('1 second').pipe(Schedule.upTo({ times: 2 })),
       }),
-      Effect.catchTag(['AdmissionRefused', 'AdmissionUncertain'], () =>
-        Effect.fail(RuntimeUnavailable.make({ message: 'Vivid could not be reached' })),
-      ),
+      Effect.catchTags({
+        AdmissionRefused: (refused) =>
+          Effect.fail(
+            DeliveryRefused.make({
+              runId: refused.runId,
+              cause: causeAfter(admissionHop(refused._tag), refused.cause),
+            }),
+          ),
+        AdmissionUncertain: (uncertain) =>
+          Effect.fail(
+            RuntimeUnavailable.make({
+              message: 'Vivid could not be reached',
+              cause: causeAfter(admissionHop(uncertain._tag), uncertain.cause),
+            }),
+          ),
+      }),
     ),
 )
+
+/**
+ * The cause of an admission that failed: the chain a runtime failure already carries, or, for a
+ * failure of the server's own (its database while scoping the delivery), its one hop.
+ */
+const admissionCause = (error: { readonly _tag: string }): IncidentCause =>
+  error instanceof DeliveryRefused || error instanceof RuntimeUnavailable
+    ? error.cause
+    : [
+        incidentHop({
+          service: 'server',
+          operation: 'Conversation.admit',
+          tag: error._tag,
+          status: Option.none(),
+          issues: [],
+        }),
+      ]
 
 /** Producers keep durable receipts and retry on their own schedule; Busy never waits in-process. */
 const makeDeliver = (admit: ConversationService['admit'], runs: RunStore['Service']) =>
@@ -278,6 +364,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
   const threads = yield* ThreadStore
   const runs = yield* RunStore
   const changes = yield* Changes
+  const incidents = yield* Incidents
   const scope = yield* Effect.scope
   const observe = yield* makeObserve()
   // Serialize reservation through the runtime receipt, never the response itself. Pending admissions
@@ -363,7 +450,24 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
           scope: deliveryScope,
         })
       }).pipe(
-        Effect.tapError(() => runs.end(id, RunEnding.cases.Failed.make({ reason: 'Delivery' }))),
+        // The Run's ending decides the outcome, so the Incident is said only when it changed it.
+        Effect.tapError((error) =>
+          runs.end(id, RunEnding.cases.Failed.make({ reason: 'Delivery' })).pipe(
+            Effect.flatMap((changed) =>
+              changed
+                ? incidents.record(
+                    Incident.cases.AdmissionFailed.make({
+                      personId: speaker.id,
+                      threadId: thread.id,
+                      runId: id,
+                      delivery: deliveryKind(delivery.message),
+                      cause: admissionCause(error),
+                    }),
+                  )
+                : Effect.void,
+            ),
+          ),
+        ),
         Effect.onInterrupt(() => runs.end(id, RunEnding.cases.Failed.make({ reason: 'Delivery' }))),
       )
       // Replays returned above. Only a newly reserved ordinary message accepted by the runtime

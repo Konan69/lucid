@@ -8,6 +8,7 @@
     "./auth": "./src/auth.ts",
     "./code": "./src/code.ts",
     "./display": "./src/display.ts",
+    "./fingerprint": "./src/fingerprint.ts",
     "./rpc": "./src/rpc.ts",
     "./signin": "./src/signin.ts"
   },

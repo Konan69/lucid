@@ -3,6 +3,7 @@ import { NodeHttpClient } from '@effect/platform-node'
 import { expect } from '@effect/vitest'
 import { VividRpcClient } from '@vivid/client-runtime'
 import {
+  incidentHop,
   OpenFirstThreadResult,
   PersonId,
   RunId,
@@ -60,8 +61,19 @@ const chainPerson = Effect.fn('ThreadProof.person')(function* () {
   const response = yield* http
     .execute(request)
     .pipe(
-      Effect.mapError(() =>
-        RuntimeUnavailable.make({ message: 'Proof signup could not be reached' }),
+      Effect.mapError((error) =>
+        RuntimeUnavailable.make({
+          message: 'Proof signup could not be reached',
+          cause: [
+            incidentHop({
+              service: 'server',
+              operation: 'ThreadProof.person',
+              tag: error.reason._tag,
+              status: Option.none(),
+              issues: [],
+            }),
+          ],
+        }),
       ),
     )
   expect(response.status).toBe(200)

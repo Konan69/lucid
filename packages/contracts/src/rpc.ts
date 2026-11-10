@@ -178,6 +178,7 @@ import {
   DatabaseConstraintViolation,
   DatabaseFailure,
   DatabaseUnavailable,
+  DeliveryRefused,
   Forbidden,
   InvalidRequest,
   MailboxUnconfirmed,
@@ -338,7 +339,7 @@ import {
  * runtime state, which the server proxies at `/api/vivid/*`.
  */
 
-export { InvalidRequest, RuntimeUnavailable } from './failures.js'
+export { DeliveryRefused, InvalidRequest, RuntimeUnavailable } from './failures.js'
 
 /** Every failure a product call can return. Clients branch on `_tag`, never on a message. */
 export const RpcFailure = Schema.Union([
@@ -349,6 +350,7 @@ export const RpcFailure = Schema.Union([
   Conflict,
   InvalidRequest,
   RuntimeUnavailable,
+  DeliveryRefused,
   ServiceUnavailable,
   DatabaseConstraintViolation,
   DatabaseUnavailable,

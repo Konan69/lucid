@@ -2,8 +2,14 @@ import * as NodeCrypto from 'node:crypto'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import type { Harness } from '@earendil-works/pi-durable'
 import {
+  CodeName,
+  CONTRACT_HEADER,
   ConversationFrame,
   ConversationState,
+  incidentHop,
+  Issue,
+  issuesOf,
+  type IncidentCause,
   MemoryAddress,
   MemoryClosed,
   MemoryClosure,
@@ -21,6 +27,7 @@ import {
   RuntimeChildPath,
   RuntimeChildMessage,
   RuntimeChildMessaged,
+  RuntimeContract,
   RuntimeRefusal,
   RuntimeSettlement,
   RuntimeStopped,
@@ -33,6 +40,7 @@ import {
   RuntimeSearchBody,
   type ThreadId,
 } from '@vivid/contracts'
+import { contractFingerprint } from '@vivid/contracts/fingerprint'
 import { Effect, Layer, Option, Redacted, Schema, Stream } from 'effect'
 import type * as HttpBody from 'effect/http/HttpBody'
 import * as HttpRouter from 'effect/http/HttpRouter'
@@ -60,11 +68,28 @@ class Unauthorized extends Schema.TaggedError<Unauthorized>()(
   {},
   { title: 'Runtime token missing or wrong' },
 ) {}
-/** The route and the body disagree about which Thread or whose it is. */
+/**
+ * The route and the body disagree about which Thread or whose it is. `path` is the field whose
+ * check failed (`threadId`, `initialData.creator`, `personId`), so the refusal can name it.
+ */
 class WrongThread extends Schema.TaggedError<WrongThread>()(
   'WrongThread',
-  {},
+  { path: Issue.fields.path },
   { title: 'Delivery names another Thread or Person' },
+) {}
+const wrongThread = (...path: ReadonlyArray<string | number>) =>
+  WrongThread.make({
+    path: path.map((step) => (typeof step === 'number' ? step : CodeName.make(step))),
+  })
+
+/**
+ * An admission body did not decode and its sender's contract fingerprint is not this cell's:
+ * the server and this Worker were built from different wire schemas. `issues` are the decode's.
+ */
+class ContractMismatch extends Schema.TaggedError<ContractMismatch>()(
+  'ContractMismatch',
+  { issues: Schema.Array(Issue) },
+  { title: 'Server and cell were built from different contracts' },
 ) {}
 /** The Thread has no conversation in this Person's store. */
 class UnknownThread extends Schema.TaggedError<UnknownThread>()(
@@ -79,8 +104,20 @@ class UnknownSubmission extends Schema.TaggedError<UnknownSubmission>()(
   { title: 'Submission is not of this Thread' },
 ) {}
 
-const refuse = (error: RuntimeRefusal['error'], status: number) =>
-  HttpServerResponse.schemaJson(RuntimeRefusal)({ error }, { status })
+/** Every refusal carries its cause and this cell's contract fingerprint (`RuntimeRefusal`). */
+const refuse = (error: RuntimeRefusal['error'], status: number, cause: IncidentCause) =>
+  HttpServerResponse.schemaJson(RuntimeRefusal)(
+    { error, cause, contract: contractFingerprint },
+    { status },
+  )
+
+/** This cell's hop: the route `operation` stopped with `tag` and answered `status`. */
+const cellHop = (operation: string, tag: string, status: number, issues: ReadonlyArray<Issue>) =>
+  incidentHop({ service: 'cell', operation, tag, status: Option.some(status), issues })
+
+/** A refusal whose cause is this cell's one hop, naming no field. */
+const refused = (operation: string, error: RuntimeRefusal['error'], status: number, tag: string) =>
+  refuse(error, status, [cellHop(operation, tag, status, [])])
 
 /**
  * The runtime token protects every route but `/health`. The application server is the only
@@ -109,22 +146,31 @@ export const isAuthorized = (authorization: string, token: Redacted.Redacted) =>
 }
 
 /**
- * Every refusal has one status and one tag; a cause never crosses, because a schema issue or a
- * storage error can quote the request it failed on.
+ * Every refusal has one status, one tag and a cause of closed values (`RuntimeRefusal`); the raw
+ * cause never crosses, because a schema issue or a storage error can quote the request it failed
+ * on.
  *
  * - 400: the request is not one the runtime can read, or names the wrong Thread or Person.
  * - 404: nothing by that name here.
  * - 503: this Person's conversations could not be opened or failed while in use. The delivery may
  *   or may not be held; the same request again, with the same key, finds out.
  */
-const unavailable = (tag: string) =>
-  Effect.logError('Runtime request failed', tag).pipe(Effect.andThen(refuse('Unavailable', 503)))
+const unavailable = (operation: string, tag: string) =>
+  Effect.logError('Runtime request failed', tag).pipe(
+    Effect.andThen(refused(operation, 'Unavailable', 503, tag)),
+  )
 
+/**
+ * Answers every failure of the route `operation` (its `Effect.fn` name) as a refusal whose
+ * cause's first hop is this cell's: the route, the failure's tag and the status it answered.
+ */
 const answered = <R>(
+  operation: string,
   handler: Effect.Effect<
     HttpServerResponse.HttpServerResponse,
     | Unauthorized
     | WrongThread
+    | ContractMismatch
     | UnknownThread
     | UnknownSubmission
     | ThreadUnknown
@@ -137,14 +183,18 @@ const answered = <R>(
 ) =>
   handler.pipe(
     Effect.catchTags({
-      Unauthorized: () => refuse('Unauthorized', 401),
-      SchemaError: () => refuse('InvalidRequest', 400),
-      HttpServerError: () => refuse('InvalidRequest', 400),
-      WrongThread: () => refuse('WrongThread', 400),
-      UnknownThread: () => refuse('UnknownThread', 404),
-      ThreadUnknown: () => refuse('UnknownThread', 404),
-      UnknownSubmission: () => refuse('UnknownSubmission', 404),
-      PiRejected: () => unavailable('PiRejected'),
+      Unauthorized: ({ _tag }) => refused(operation, 'Unauthorized', 401, _tag),
+      SchemaError: ({ _tag, issue }) =>
+        refuse('InvalidRequest', 400, [cellHop(operation, _tag, 400, issuesOf(issue))]),
+      HttpServerError: ({ reason }) => refused(operation, 'InvalidRequest', 400, reason._tag),
+      WrongThread: ({ _tag, path }) =>
+        refuse('WrongThread', 400, [cellHop(operation, _tag, 400, [{ path, kind: 'InvalidValue' }])]),
+      ContractMismatch: ({ _tag, issues }) =>
+        refuse('ContractMismatch', 409, [cellHop(operation, _tag, 409, issues)]),
+      UnknownThread: ({ _tag }) => refused(operation, 'UnknownThread', 404, _tag),
+      ThreadUnknown: ({ _tag }) => refused(operation, 'UnknownThread', 404, _tag),
+      UnknownSubmission: ({ _tag }) => refused(operation, 'UnknownSubmission', 404, _tag),
+      PiRejected: ({ _tag }) => unavailable(operation, _tag),
     }),
     // Encoding one of the fixed bodies above cannot fail; this names what is sent if it ever does.
     Effect.orElseSucceed(() => HttpServerResponse.empty({ status: 500 })),
@@ -153,8 +203,34 @@ const answered = <R>(
 /** A route may only address the Person whose native cell owns this router. */
 const bound = Effect.fn('Runtime.bound')(function* (path: RuntimeThreadPath) {
   const person = yield* Person
-  if (person.personId !== path.personId) return yield* new WrongThread()
+  if (person.personId !== path.personId) return yield* wrongThread('personId')
   return person
+})
+
+/**
+ * The admission body, or why it was refused. Decoding comes first and the sender's contract
+ * fingerprint (`CONTRACT_HEADER`) is read only when it fails: a body this cell can read is
+ * admitted whatever build sent it, and one it cannot read from a build of other schemas is
+ * `ContractMismatch` instead of a bare `InvalidRequest`.
+ *
+ * Why not refuse every mismatch: a deploy publishes the new Worker before the new server takes
+ * traffic (`infra/railway.ts` pre-deploy), so for that window the old server sends to the new
+ * Worker. A change that only adds an optional field changes the fingerprint and leaves the old
+ * body readable; refusing on the fingerprint alone would fail every send of that window for no
+ * reason. The opposite pair (new server, old Worker) is what failed from 8 November 2026, and the
+ * server's readiness (`apps/server/src/runtime/contract.ts`) refuses to serve it at all.
+ */
+const admissionBody = Effect.fn('Runtime.admissionBody')(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest
+  return yield* HttpServerRequest.schemaBodyJson(RuntimeAdmissionBody).pipe(
+    Effect.catchTag('SchemaError', (error) =>
+      Effect.fail(
+        request.headers[CONTRACT_HEADER] === contractFingerprint
+          ? error
+          : ContractMismatch.make({ issues: issuesOf(error.issue) }),
+      ),
+    ),
+  )
 })
 
 /**
@@ -166,9 +242,10 @@ const bound = Effect.fn('Runtime.bound')(function* (path: RuntimeThreadPath) {
 const admission = Effect.fn('Runtime.admission')(function* () {
   yield* authorize()
   const path = yield* HttpRouter.schemaPathParams(RuntimeThreadPath)
-  const body = yield* HttpServerRequest.schemaBodyJson(RuntimeAdmissionBody)
-  if (body.threadId !== path.threadId || body.initialData.creator !== path.personId)
-    return yield* new WrongThread()
+  const body = yield* admissionBody()
+  if (body.threadId !== path.threadId) return yield* wrongThread('threadId')
+  if (body.initialData.creator !== path.personId)
+    return yield* wrongThread('initialData', 'creator')
   const person = yield* bound(path)
   const receipt = yield* admit(person, body)
   return yield* HttpServerResponse.schemaJson(RuntimeAdmissionReceipt)(receipt, { status: 202 })
@@ -282,7 +359,8 @@ const attachment = Effect.fn('Runtime.attachment')(function* () {
   const conversation = yield* conversationOf(person.harness, path.threadId)
   if (Option.isNone(conversation)) return yield* new UnknownThread()
   const found = yield* picture(conversation.value, path.attachmentId)
-  if (Option.isNone(found)) return yield* refuse('NotFound', 404)
+  if (Option.isNone(found))
+    return yield* refused('Runtime.attachment', 'NotFound', 404, 'AttachmentMissing')
   return HttpServerResponse.uint8Array(found.value.bytes, {
     contentType: found.value.mediaType,
     headers: { 'cache-control': 'private, max-age=31536000, immutable' },
@@ -330,17 +408,24 @@ const health = Effect.fn('Runtime.health')(function* () {
   })
 })
 
+/**
+ * The contract fingerprint this runtime was built with, for the server's readiness check
+ * (`RuntimeContract`). Behind the token like every route but `/health`.
+ */
+const contract = Effect.fn('Runtime.contract')(function* () {
+  yield* authorize()
+  return yield* HttpServerResponse.schemaJson(RuntimeContract)({ contract: contractFingerprint })
+})
+
 /** History is private to the addressed cell and cannot import another Person's Threads. */
 const history = Effect.fn('Runtime.history')(function* () {
   yield* authorize()
   const path = yield* HttpRouter.schemaPathParams(Schema.Struct({ personId: RuntimePersonId }))
   const person = yield* Person
   const body = yield* HttpServerRequest.schemaBodyJson(RuntimeHistoryBody)
-  if (
-    person.personId !== path.personId ||
-    body.threads.some((thread) => thread.origin.creator !== path.personId)
-  )
-    return yield* new WrongThread()
+  if (person.personId !== path.personId) return yield* wrongThread('personId')
+  const foreign = body.threads.findIndex((thread) => thread.origin.creator !== path.personId)
+  if (foreign !== -1) return yield* wrongThread('threads', foreign, 'origin', 'creator')
   const result = yield* loadHistory(person, body)
   return yield* HttpServerResponse.schemaJson(RuntimeHistoryAnswer)(result)
 })
@@ -355,14 +440,16 @@ const owner = Effect.fn('Runtime.memoryOwner')(function* () {
   yield* authorize()
   const path = yield* HttpRouter.schemaPathParams(Schema.Struct({ personId: RuntimePersonId }))
   const person = yield* Person
-  if (person.personId !== path.personId) return yield* new WrongThread()
+  if (person.personId !== path.personId) return yield* wrongThread('personId')
   return person
 })
 
-const missingMemory = () => refuse('NotFound', 404)
+const missingMemory = (operation: string) => () =>
+  refused(operation, 'NotFound', 404, 'MemoryMissing')
 const conflictedMemory = (conflict: MemoryConflict) =>
   HttpServerResponse.schemaJson(MemoryConflict)(conflict, { status: 409 })
-const unavailableMemory = (error: MemoryUnavailable) => unavailable(error._tag)
+const unavailableMemory = (operation: string) => (error: MemoryUnavailable) =>
+  unavailable(operation, error._tag)
 
 const memoryIndex = Effect.fn('Runtime.memoryIndex')(function* () {
   const person = yield* owner()
@@ -370,7 +457,7 @@ const memoryIndex = Effect.fn('Runtime.memoryIndex')(function* () {
     .index(person.personId)
     .pipe(
       Effect.flatMap(HttpServerResponse.schemaJson(MemoryIndex)),
-      Effect.catchTags({ MemoryUnavailable: unavailableMemory }),
+      Effect.catchTags({ MemoryUnavailable: unavailableMemory('Runtime.memoryIndex') }),
     )
 })
 
@@ -381,7 +468,7 @@ const memoryList = Effect.fn('Runtime.memoryList')(function* () {
     .list(person.personId, listing)
     .pipe(
       Effect.flatMap(HttpServerResponse.schemaJson(MemoryPage)),
-      Effect.catchTags({ MemoryUnavailable: unavailableMemory }),
+      Effect.catchTags({ MemoryUnavailable: unavailableMemory('Runtime.memoryList') }),
     )
 })
 
@@ -392,7 +479,10 @@ const memoryRead = Effect.fn('Runtime.memoryRead')(function* () {
     .read(person.personId, address)
     .pipe(
       Effect.flatMap(HttpServerResponse.schemaJson(SavedMemory)),
-      Effect.catchTags({ MemoryMissing: missingMemory, MemoryUnavailable: unavailableMemory }),
+      Effect.catchTags({
+        MemoryMissing: missingMemory('Runtime.memoryRead'),
+        MemoryUnavailable: unavailableMemory('Runtime.memoryRead'),
+      }),
     )
 })
 
@@ -403,7 +493,10 @@ const memoryWrite = Effect.fn('Runtime.memoryWrite')(function* () {
     .write(person.personId, write)
     .pipe(
       Effect.flatMap(HttpServerResponse.schemaJson(SavedMemory)),
-      Effect.catchTags({ MemoryConflict: conflictedMemory, MemoryUnavailable: unavailableMemory }),
+      Effect.catchTags({
+        MemoryConflict: conflictedMemory,
+        MemoryUnavailable: unavailableMemory('Runtime.memoryWrite'),
+      }),
     )
 })
 
@@ -414,8 +507,8 @@ const memoryDelete = Effect.fn('Runtime.memoryDelete')(function* () {
     Effect.as(HttpServerResponse.empty({ status: 204 })),
     Effect.catchTags({
       MemoryConflict: conflictedMemory,
-      MemoryMissing: missingMemory,
-      MemoryUnavailable: unavailableMemory,
+      MemoryMissing: missingMemory('Runtime.memoryDelete'),
+      MemoryUnavailable: unavailableMemory('Runtime.memoryDelete'),
     }),
   )
 })
@@ -431,7 +524,7 @@ const memoryForget = Effect.fn('Runtime.memoryForget')(function* () {
   return yield* closeMemory(person.harness, person.personId, closure).pipe(
     Effect.provideService(Memory, person.sources.memory),
     Effect.flatMap(HttpServerResponse.schemaJson(MemoryClosed)),
-    Effect.catchTag('PiRejected', () => unavailable('PiRejected')),
+    Effect.catchTag('PiRejected', ({ _tag }) => unavailable('Runtime.memoryForget', _tag)),
   )
 })
 
@@ -452,22 +545,46 @@ const THREAD = '/persons/:personId/threads/:threadId'
 
 /** The whole HTTP surface. Anything else is refused the same way whether or not it exists. */
 export const routes = Layer.mergeAll(
-  HttpRouter.add('GET', '/health', answered(health())),
-  HttpRouter.add('POST', '/persons/:personId/history', answered(history())),
-  HttpRouter.add('GET', MEMORY, answered(memoryIndex())),
-  HttpRouter.add('POST', `${MEMORY}/list`, answered(memoryList())),
-  HttpRouter.add('POST', `${MEMORY}/read`, answered(memoryRead())),
-  HttpRouter.add('POST', `${MEMORY}/write`, answered(memoryWrite())),
-  HttpRouter.add('POST', `${MEMORY}/delete`, answered(memoryDelete())),
-  HttpRouter.add('POST', `${MEMORY}/forget`, answered(memoryForget())),
-  HttpRouter.add('POST', '/persons/:personId/search', answered(search())),
-  HttpRouter.add('POST', THREAD, answered(admission())),
-  HttpRouter.add('POST', `${THREAD}/abort`, answered(stop())),
-  HttpRouter.add('GET', `${THREAD}/submissions/:submissionId`, answered(settled())),
-  HttpRouter.add('GET', `${THREAD}/state`, answered(state())),
-  HttpRouter.add('GET', `${THREAD}/attachments/:attachmentId`, answered(attachment())),
-  HttpRouter.add('GET', `${THREAD}/children/:runId`, answered(child())),
-  HttpRouter.add('POST', `${THREAD}/children/:runId/abort`, answered(stopChild())),
-  HttpRouter.add('POST', `${THREAD}/children/:runId/messages`, answered(messageChild())),
-  HttpRouter.add('*', '/*', answered(authorize().pipe(Effect.andThen(refuse('NotFound', 404))))),
+  HttpRouter.add('GET', '/health', answered('Runtime.health', health())),
+  HttpRouter.add('GET', '/contract', answered('Runtime.contract', contract())),
+  HttpRouter.add('POST', '/persons/:personId/history', answered('Runtime.history', history())),
+  HttpRouter.add('GET', MEMORY, answered('Runtime.memoryIndex', memoryIndex())),
+  HttpRouter.add('POST', `${MEMORY}/list`, answered('Runtime.memoryList', memoryList())),
+  HttpRouter.add('POST', `${MEMORY}/read`, answered('Runtime.memoryRead', memoryRead())),
+  HttpRouter.add('POST', `${MEMORY}/write`, answered('Runtime.memoryWrite', memoryWrite())),
+  HttpRouter.add('POST', `${MEMORY}/delete`, answered('Runtime.memoryDelete', memoryDelete())),
+  HttpRouter.add('POST', `${MEMORY}/forget`, answered('Runtime.memoryForget', memoryForget())),
+  HttpRouter.add('POST', '/persons/:personId/search', answered('Runtime.search', search())),
+  HttpRouter.add('POST', THREAD, answered('Runtime.admission', admission())),
+  HttpRouter.add('POST', `${THREAD}/abort`, answered('Runtime.stop', stop())),
+  HttpRouter.add(
+    'GET',
+    `${THREAD}/submissions/:submissionId`,
+    answered('Runtime.settled', settled()),
+  ),
+  HttpRouter.add('GET', `${THREAD}/state`, answered('Runtime.state', state())),
+  HttpRouter.add(
+    'GET',
+    `${THREAD}/attachments/:attachmentId`,
+    answered('Runtime.attachment', attachment()),
+  ),
+  HttpRouter.add('GET', `${THREAD}/children/:runId`, answered('Runtime.child', child())),
+  HttpRouter.add(
+    'POST',
+    `${THREAD}/children/:runId/abort`,
+    answered('Runtime.stopChild', stopChild()),
+  ),
+  HttpRouter.add(
+    'POST',
+    `${THREAD}/children/:runId/messages`,
+    answered('Runtime.messageChild', messageChild()),
+  ),
+  HttpRouter.add(
+    '*',
+    '/*',
+    answered(
+      'Runtime.route',
+      authorize().pipe(Effect.andThen(refused('Runtime.route', 'NotFound', 404, 'RouteNotFound'))),
+    ),
+  ),
 )

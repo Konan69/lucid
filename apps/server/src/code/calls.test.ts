@@ -84,6 +84,7 @@ import { CallOutcome, CodeProcess, codeProcessLayer } from './process.ts'
 import { WorkerMessage } from './protocol.ts'
 import { localCodeComputerLayer } from './testing.ts'
 import { codeSourceLayer } from './source.ts'
+import { unreachableCause } from '../runtime/testing.ts'
 
 const isRepositoryInput = Schema.is(Schema.Struct({ repoName: Schema.String }))
 const busyFailure = CodeFailure.cases.Busy.make({
@@ -533,7 +534,10 @@ describe.skipIf(!testDatabaseConfigured)(
           Effect.gen(function* () {
             const test = yield* fixture()
             const reads = yield* Ref.make(0)
-            const failure = RuntimeUnavailable.make({ message: 'History transport unavailable' })
+            const failure = RuntimeUnavailable.make({
+              message: 'History transport unavailable',
+              cause: unreachableCause,
+            })
             const runtime = Layer.mock(Runtime, {
               read: Effect.fn('Test.retryDisplayHistory')(function* () {
                 const count = yield* Ref.updateAndGet(reads, (value) => value + 1)

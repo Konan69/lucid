@@ -36,6 +36,7 @@ import { Presence } from './presence.ts'
 import { RunStore, runStoreLayer } from './runs.ts'
 import { ThreadStore, threadStoreLayer } from './store.ts'
 import { firstThreads, threads } from './tables.ts'
+import { incidentsTestLayer } from '../runtime/testing.ts'
 
 const stores = Layer.merge(threadStoreLayer, runStoreLayer).pipe(
   Layer.provideMerge(testDatabaseLayer),
@@ -166,7 +167,11 @@ const harness = Effect.fn('FirstThread.test.harness')(function* () {
     Layer.mock(Presence, { watching: () => Effect.succeed(true) }),
   )
   const context = yield* Layer.build(
-    conversationLayer.pipe(Layer.provide(silentChannelRepliesLayer), Layer.provide(services)),
+    conversationLayer.pipe(
+      Layer.provide(silentChannelRepliesLayer),
+      Layer.provide(services),
+      Layer.provide(incidentsTestLayer),
+    ),
   )
   const conversation = yield* Conversation.pipe(Effect.provideContext(context))
   const auth = AuthState.Person({

@@ -50,6 +50,7 @@ import {
 import { eq, inArray } from 'drizzle-orm'
 import {
   Clock,
+  Context,
   Deferred,
   Effect,
   Fiber,
@@ -116,6 +117,7 @@ import { Presence } from './presence.ts'
 import { RunStore, runStoreLayer, TurnReservation } from './runs.ts'
 import { threadStoreLayer } from './store.ts'
 import { threads } from './tables.ts'
+import { incidentsTestLayer, RecordedIncidents } from '../runtime/testing.ts'
 
 const databaseLayer = runStoreLayer.pipe(Layer.provideMerge(testDatabaseLayer))
 const decodeRuntimeRequest = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeRunRequest))
@@ -314,7 +316,10 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
   const topics = yield* Ref.make<ReadonlyArray<Topic>>([])
   const notices = yield* Ref.make<ReadonlyArray<Notice>>([])
   const watching = yield* Ref.make(true)
+  // One capture for every Conversation a test builds from these services.
+  const incidentContext = yield* Layer.build(incidentsTestLayer)
   const services = Layer.mergeAll(
+    Layer.succeedContext(incidentContext),
     Layer.succeed(Database, database),
     Layer.succeed(RunStore, recorded.observed),
     Layer.succeed(Runtime, runtime.runtime),
@@ -418,6 +423,7 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
     topics,
     notices,
     watching,
+    incidents: Ref.get(Context.get(incidentContext, RecordedIncidents)),
   }
 })
 

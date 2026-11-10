@@ -24,6 +24,7 @@ import {
   textPart,
   trustTestServices,
 } from './testing.ts'
+import { unreachableCause } from '../runtime/testing.ts'
 
 const message = StoredRunOrigin.cases.Message.make({})
 const decision = StoredRunOrigin.cases.Decision.make({})
@@ -220,7 +221,7 @@ layer(testDatabaseLayer)((it) => {
           ).toEqual(Option.some({ request: ['Send it'], earlier: Option.none() }))
           expect(
             yield* personRequest(
-              { read: () => Effect.fail(RuntimeUnavailable.make({ message: 'down' })) },
+              { read: () => Effect.fail(RuntimeUnavailable.make({ message: 'down', cause: unreachableCause })) },
               test.vivid,
             ),
           ).toEqual(Option.none())
