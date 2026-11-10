@@ -2,7 +2,7 @@ import * as NodeFSP from 'node:fs/promises'
 import { Schema } from 'effect'
 import { Ready, decodeText } from './receipts.mjs'
 import * as NodeEvents from 'node:events'
-import { signal, json, skill } from './process.mjs'
+import { signal, json, skill, root } from './process.mjs'
 
 export const ExecutorApp = Schema.Struct({ id: Schema.String, slug: Schema.String })
 export const ExecutorInventory = Schema.Struct({
@@ -95,11 +95,22 @@ export async function executor(state, { run, own, save, cleanEnv }) {
     packageManager: 'pnpm@12.4.2',
     dependencies: { '@electric-sql/pglite': '0.5.8' },
   })
-  await run(['pnpm', '--dir', inspector, 'install', '--ignore-workspace', '--ignore-scripts'], {
-    env: cleanEnv,
-    heavy: true,
-    log: state.evidence + '/inspector-install.json',
-  })
+  // Retain immutable package bytes across launches; inspector modules and all provider data
+  // still belong to this run. A disposable HOME otherwise downloads the same pinned tarball again.
+  await run(
+    [
+      'pnpm',
+      '--dir',
+      inspector,
+      'install',
+      '--ignore-workspace',
+      '--ignore-scripts',
+      '--store-dir',
+      root + '/.cache/verify-pnpm',
+      '--prefer-offline',
+    ],
+    { env: cleanEnv, heavy: true, log: state.evidence + '/inspector-install.json' },
+  )
   state.executorContainer = 'vivid-verify-executor-' + state.run
   await save()
   const catalog = await own(
