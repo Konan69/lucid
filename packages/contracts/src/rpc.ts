@@ -433,7 +433,6 @@ const SwitchWorkspace = Rpc.make('SwitchWorkspace', {
   success: MeResponse,
 })
 /** The build of the server that is answering (`build.ts`), for Settings to say beside its own. */
-const GetBuild = Rpc.make('GetBuild', { ...call, success: ServerBuild })
 const WatchBuild = Rpc.make('WatchBuild', { ...live, success: ServerBuild })
 const GetSettings = Rpc.make('GetSettings', { ...call, success: Settings })
 const WatchSettings = Rpc.make('WatchSettings', { ...live, success: Settings })
@@ -456,7 +455,6 @@ const SetAppearance = Rpc.make('SetAppearance', {
 })
 
 // ── People in a Company ────────────────────────────────────────────────────
-const ListPeople = Rpc.make('ListPeople', { ...call, success: PeopleResponse })
 const WatchPeople = Rpc.make('WatchPeople', { ...live, success: PeopleResponse })
 const InviteMember = Rpc.make('InviteMember', {
   ...call,
@@ -633,11 +631,6 @@ const ListArtifacts = Rpc.make('ListArtifacts', {
   payload: { threadId: ThreadId },
   success: ArtifactListResponse,
 })
-const WatchArtifacts = Rpc.make('WatchArtifacts', {
-  ...live,
-  payload: { threadId: ThreadId },
-  success: ArtifactListResponse,
-})
 const GetArtifact = Rpc.make('GetArtifact', {
   ...call,
   payload: GetArtifactRequest,
@@ -695,7 +688,6 @@ const PublishArtifactFile = Rpc.make('PublishArtifactFile', {
 })
 
 // ── What is waiting on the Person: questions and Approvals ─────────────────
-const GetInbox = Rpc.make('GetInbox', { ...call, success: Inbox })
 const WatchInbox = Rpc.make('WatchInbox', { ...live, success: Inbox })
 const DecideApproval = Rpc.make('DecideApproval', {
   payload: DecideApprovalRequest,
@@ -855,7 +847,6 @@ const CompleteHandoff = Rpc.make('CompleteHandoff', { ...handoffCall, payload: H
 const WithdrawHandoff = Rpc.make('WithdrawHandoff', { ...handoffCall, payload: HandoffIdRequest })
 
 // ── Rules and the audit record ─────────────────────────────────────────────
-const ListRules = Rpc.make('ListRules', { ...call, success: RuleListResponse })
 const WatchRules = Rpc.make('WatchRules', { ...live, success: RuleListResponse })
 const CreateRule = Rpc.make('CreateRule', {
   ...call,
@@ -863,14 +854,9 @@ const CreateRule = Rpc.make('CreateRule', {
   success: RuleResponse,
 })
 const DeleteRule = Rpc.make('DeleteRule', { ...call, payload: { id: RuleId } })
-const ListAudit = Rpc.make('ListAudit', { ...call, success: AuditListResponse })
 const WatchAudit = Rpc.make('WatchAudit', { ...live, success: AuditListResponse })
 
 // ── Notifications ──────────────────────────────────────────────────────────
-const ListNotifications = Rpc.make('ListNotifications', {
-  ...call,
-  success: NotificationListResponse,
-})
 const WatchNotifications = Rpc.make('WatchNotifications', {
   ...live,
   success: NotificationListResponse,
@@ -1373,7 +1359,6 @@ const ReadPage = Rpc.make('ReadPage', {
 
 // ── Finding things ─────────────────────────────────────────────────────────
 const Search = Rpc.make('Search', { ...call, payload: SearchRequest, success: SearchResponse })
-const ListSuggestions = Rpc.make('ListSuggestions', { ...call, success: SuggestionListResponse })
 const WatchSuggestions = Rpc.make('WatchSuggestions', { ...live, success: SuggestionListResponse })
 
 // ── Background work ────────────────────────────────────────────────────────
@@ -1402,7 +1387,6 @@ export const VividRpc = RpcGroup.make(
   Me,
   WatchMe,
   SetPersonName,
-  GetBuild,
   WatchBuild,
   CreateCompany,
   SwitchWorkspace,
@@ -1412,7 +1396,6 @@ export const VividRpc = RpcGroup.make(
   GetAppearance,
   WatchAppearance,
   SetAppearance,
-  ListPeople,
   WatchPeople,
   InviteMember,
   RevokeInvitation,
@@ -1445,7 +1428,6 @@ export const VividRpc = RpcGroup.make(
   CancelChildRun,
   FollowUpChildRun,
   ListArtifacts,
-  WatchArtifacts,
   GetArtifact,
   ReviseArtifact,
   RemoveArtifact,
@@ -1455,7 +1437,6 @@ export const VividRpc = RpcGroup.make(
   ReadDocument,
   InspectArtifactFile,
   PublishArtifactFile,
-  GetInbox,
   WatchInbox,
   DecideApproval,
   WithdrawApproval,
@@ -1468,13 +1449,10 @@ export const VividRpc = RpcGroup.make(
   FillHandoff,
   CompleteHandoff,
   WithdrawHandoff,
-  ListRules,
   WatchRules,
   CreateRule,
   DeleteRule,
-  ListAudit,
   WatchAudit,
-  ListNotifications,
   RegisterActivity,
   RegisterPushTarget,
   ListPushTargets,
@@ -1595,7 +1573,6 @@ export const VividRpc = RpcGroup.make(
   RunDisplayCode,
   ReadPage,
   Search,
-  ListSuggestions,
   WatchSuggestions,
   ListWork,
   WatchWork,

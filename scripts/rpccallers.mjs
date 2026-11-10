@@ -65,11 +65,18 @@ export function uncalledProcedures(root) {
   ).split('\0')
   const called = new Set()
   for (const path of new Set(files)) {
-    if (!/^(apps|packages)\/.*\.[cm]?[jt]sx?$/u.test(path)) continue
+    // Verification scripts exercise public product contracts and are production callers.
+    const verification = path.startsWith('.agents/skills/verify-vivid/scripts/')
+    if (!/\.[cm]?[jt]sx?$/u.test(path)) continue
+    if (!verification && !/^(apps|packages)\//u.test(path)) continue
     if (/^(apps\/server|packages\/contracts)\//u.test(path)) continue
     if (/(?:^|\/)(?:tests|__fixtures__)\/|\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(path)) continue
     walk(parseSource(path, NodeFS.readFileSync(NodePath.join(root, path), 'utf8')), (node) => {
       if (node.type !== 'CallExpression') return
+      if (verification && node.callee.type === 'Identifier' && node.callee.name === 'rpc') {
+        const tag = node.arguments[1]
+        if (isStringLiteral(tag)) called.add(tag.value)
+      }
       const name = memberName(node.callee)
       if (name !== undefined) called.add(name)
     })
