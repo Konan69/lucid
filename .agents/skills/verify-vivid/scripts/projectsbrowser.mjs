@@ -10,7 +10,7 @@ import {
 } from './projects.mjs'
 import { json, settled } from './wire.mjs'
 
-/** The page's "Where it stands" lines, read from the rendered page as term → text. */
+/** The rendered goal/next-step terms and the dated Progress list. */
 const standing = `(() => {
   const part = Array.from(document.querySelectorAll('section')).find((section) => section.querySelector('h2')?.innerText === 'Where it stands')
   if (!part) return null
@@ -74,6 +74,7 @@ export async function projectsBrowser(state, id, directory, { run, capture }) {
 
   await run(['reload'])
   await run(['wait', '--text', 'Where it stands'])
+  await run(['wait', '--text', project.work.progress.at(-1).text])
   const reloaded = await standingNow(run)
   assert.deepEqual(reloaded, drawn, 'The page changed after reload')
   await capture('reloaded')
