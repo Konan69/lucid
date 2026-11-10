@@ -10,7 +10,6 @@ import {
   type NotifyPersonRequest,
 } from '@vivid/contracts'
 import { requirePerson, requireVivid } from '../auth/access.ts'
-import { live } from '../live/query.ts'
 import { notifyPerson } from '../notifications/attention.ts'
 import { PushConfig } from './config.ts'
 import { PushTargets } from './targets.ts'
@@ -45,8 +44,6 @@ export const pushHandlers = {
   ListPushTargets: Effect.fn('Rpc.ListPushTargets')(function* () {
     return yield* loadTargets((yield* requirePerson()).person.id)
   }),
-  /** The existing live-query session-ended signal terminates revoked sessions and refreshes others. */
-  WatchPushTargets: () => live('WatchPushTargets', [], (actor) => loadTargets(actor.person.id)),
   /** Removes only the caller's target; guessed or removed ids remain harmless. */
   RemovePushTarget: Effect.fn('Rpc.RemovePushTarget')(function* ({
     id,

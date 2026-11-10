@@ -5,16 +5,18 @@ import {
   type ArtifactId,
   type ArtifactVersion,
 } from '@vivid/contracts'
-import { artifacts, LiveState, makeWhen, revising, thisReader } from '@vivid/state'
+import { artifacts, LiveState, makeWhen, removing, revising, thisReader } from '@vivid/state'
 import { Option, Predicate } from 'effect'
-import { Download, ExternalLink, PencilLine } from 'lucide-react'
+import { Download, ExternalLink, PencilLine, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import {
   artifactLive,
   closeEditor,
   downloadDocument,
   editDocument,
+  removeArtifact,
   saveDocument,
+  useRemoving,
   useRevising,
   type Asked,
 } from '../../data/artifact'
@@ -49,6 +51,9 @@ const when = makeWhen(thisReader())
  * Which version is read is the dialog's own choice and starts at the one it was opened on. Edit
  * is offered on the newest only: a revision is made from the newest, and the server refuses one
  * made from anything older.
+ *
+ * Delete removes the Artifact with every version, after the browser asks, as the Library asks
+ * before deleting a file (`screen/Library.tsx`). Once it is gone the live query says so here.
  */
 export function ArtifactViewer({
   opened,
@@ -137,7 +142,9 @@ function Shown({
 }) {
   const { artifact, shown, content, versions } = detail
   const editor = useRevising()
+  const deleting = useRemoving()
   const editing = revising.isEditing(editor, artifact.id)
+  const unremoved = removing.refusalOf(deleting, artifact.id)
   const newest = shown.number === artifact.version
   const holds = artifacts.holdsOf(content)
   return (
@@ -186,8 +193,24 @@ function Shown({
         </div>
         <Versions versions={versions} shown={shown.number} onPick={onPick} />
       </div>
+      {!editing && Option.isSome(unremoved) && (
+        <Alert variant="destructive">{unremoved.value}</Alert>
+      )}
       {!editing && (
         <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            variant="ghost"
+            className="me-auto"
+            disabled={removing.isWaiting(deleting)}
+            onClick={() => {
+              // The browser's own question, as the Library asks before deleting a file.
+              if (window.confirm(`Delete “${artifact.title}” and every version of it?`))
+                removeArtifact(artifact.id)
+            }}
+          >
+            <Trash2 />
+            Delete
+          </Button>
           {ArtifactContent.match(content, {
             Document: ({ body }) => (
               <>
