@@ -231,7 +231,7 @@ layer(testDatabaseLayer)((it) => {
             const gate = yield* Gate
             yield* Ref.set((yield* Observation).review, Review.cases.Unreviewed.make({}))
             expect(yield* gate.check(test.vivid, browserWrite, 'Ordinary', unbound)).toEqual(
-              GateDecision.cases.Allowed.make({}),
+              GateDecision.cases.Allowed.make({ basis: 'Unreviewed' }),
             )
             expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toHaveLength(0)
             expect(
@@ -446,7 +446,7 @@ layer(testDatabaseLayer)((it) => {
             yield* Ref.set((yield* Observation).judgment, JudgmentMode.cases.Failed.make({}))
             // An unjudged Allow can only loosen: the default stays in force and nothing asks.
             expect(yield* gate.check(test.vivid, desktopAction, 'Ordinary', unbound)).toEqual(
-              GateDecision.cases.Allowed.make({}),
+              GateDecision.cases.Allowed.make({ basis: 'Contained' }),
             )
             yield* rules.create(test.personal, {
               action: 'Ask before inspecting files',
@@ -494,10 +494,10 @@ layer(testDatabaseLayer)((it) => {
             }),
           })
           expect(yield* gate.check(test.vivid, desktopAction, 'Ordinary', unbound)).toEqual(
-            GateDecision.cases.Allowed.make({}),
+            GateDecision.cases.Allowed.make({ basis: 'Contained' }),
           )
           expect(yield* gate.check(test.vivid, browser, 'Ordinary', unbound)).toEqual(
-            GateDecision.cases.Allowed.make({}),
+            GateDecision.cases.Allowed.make({ basis: 'Contained' }),
           )
           expect((yield* loadAudit(test.personal)).entries).toEqual([])
           expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toEqual([])
@@ -525,7 +525,7 @@ layer(testDatabaseLayer)((it) => {
             })
             expect(
               yield* gate.check(test.vivid, test.connectionAction, 'Ordinary', unbound),
-            ).toEqual(GateDecision.cases.Allowed.make({}))
+            ).toEqual(GateDecision.cases.Allowed.make({ basis: 'AllowRule' }))
             const entries = (yield* loadAudit(test.personal)).entries
             expect(
               entries
@@ -556,7 +556,7 @@ layer(testDatabaseLayer)((it) => {
             )
             const send = ProposedAction.make({ ...test.connectionAction, effect: 'destructive' })
             expect(yield* (yield* Gate).check(test.vivid, send, 'Ordinary', unbound)).toEqual(
-              GateDecision.cases.Allowed.make({}),
+              GateDecision.cases.Allowed.make({ basis: 'Reviewed' }),
             )
             expect(yield* Ref.get(observed.reviewCalls)).toEqual([send])
             expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toEqual([])
@@ -579,7 +579,7 @@ layer(testDatabaseLayer)((it) => {
           const gate = yield* Gate
           yield* Ref.set((yield* Observation).review, Review.cases.Unreviewed.make({}))
           expect(yield* gate.check(test.vivid, test.connectionAction, 'Ordinary', unbound)).toEqual(
-            GateDecision.cases.Allowed.make({}),
+            GateDecision.cases.Allowed.make({ basis: 'Unreviewed' }),
           )
           const destructive = ProposedAction.make({
             ...test.connectionAction,
@@ -636,7 +636,7 @@ layer(testDatabaseLayer)((it) => {
           const observed = yield* Observation
           expect(
             yield* (yield* Gate).check(test.vivid, desktopAction, 'Ordinary', unbound),
-          ).toEqual(GateDecision.cases.Allowed.make({}))
+          ).toEqual(GateDecision.cases.Allowed.make({ basis: 'Contained' }))
           expect(yield* Ref.get(observed.reviewCalls)).toEqual([])
         }).pipe(Effect.scoped, Effect.provide(context))
       }),
@@ -655,7 +655,7 @@ layer(testDatabaseLayer)((it) => {
             scope: RuleScope.cases.Personal.make({}),
           })
           expect(yield* gate.check(test.vivid, read, 'Ordinary', unbound)).toEqual(
-            GateDecision.cases.Allowed.make({}),
+            GateDecision.cases.Allowed.make({ basis: 'Read' }),
           )
           yield* Ref.set((yield* Observation).judgment, JudgmentMode.cases.None.make({}))
           expect(

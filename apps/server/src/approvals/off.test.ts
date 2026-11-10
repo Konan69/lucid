@@ -52,7 +52,7 @@ layer(testDatabaseLayer)((it) => {
             }),
           })
           expect(yield* gate.check(test.vivid, action, 'Ordinary', unbound)).toEqual(
-            GateDecision.cases.Allowed.make({}),
+            GateDecision.cases.Allowed.make({ basis: 'Unreviewed' }),
           )
           const destructive = ProposedAction.make({ ...action, effect: 'destructive' })
           expect(
@@ -71,7 +71,7 @@ layer(testDatabaseLayer)((it) => {
           const test = yield* fixture()
           const gate = yield* Gate
           expect(yield* gate.check(test.vivid, test.connectionAction, 'Ordinary', unbound)).toEqual(
-            GateDecision.cases.Allowed.make({}),
+            GateDecision.cases.Allowed.make({ basis: 'Unreviewed' }),
           )
           const destructive = ProposedAction.make({
             ...test.connectionAction,
@@ -99,7 +99,7 @@ layer(testDatabaseLayer)((it) => {
             scope: RuleScope.cases.Personal.make({}),
           })
           expect(yield* gate.check(test.vivid, test.connectionAction, 'Ordinary', unbound)).toEqual(
-            GateDecision.cases.Allowed.make({}),
+            GateDecision.cases.Allowed.make({ basis: 'Unreviewed' }),
           )
           const asked = yield* rules.create(test.personal, {
             action: 'Ask before sending mail',

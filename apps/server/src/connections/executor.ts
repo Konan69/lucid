@@ -1,4 +1,3 @@
-import { Message } from '../observability/messages.ts'
 import * as NodeCrypto from 'node:crypto'
 import {
   ActionEffect,
@@ -2801,11 +2800,7 @@ const callPaused = Effect.fn('Executor.callPaused')(function* (
     .split('.')
     .map((part) => `[${JSON.stringify(part)}]`)
     .join('')}`
-  return yield* continueApproved(
-    mcp,
-    yield* mcp('call', { calls: { path, input: call.input } }, call.tool),
-    call.effect,
-  )
+  return fromMcp(yield* mcp('call', { calls: { path, input: call.input } }, call.tool), call.effect)
 })
 
 /** Preserve pauses and expiry before interpreting an ordinary provider result. */
@@ -2824,61 +2819,6 @@ const fromMcp = (outcome: McpCallOutcome, effect: ActionEffect) =>
         : ExecutorCallOutcome.cases.OutcomeUnknown.make({}),
   })
 
-/** The Gate or the Person's display press already authorized this invocation. Only answer
- * its saved request; a lost continuation is uncertain and never reissues the original call. */
-const continueApproved = Effect.fn('Executor.continueApproved')(function* (
-  mcp: ReturnType<typeof mcpCalls>,
-  initial: McpCallOutcome,
-  effect: ActionEffect,
-) {
-  let outcome = initial
-  let answered = false
-  while (McpCallOutcome.guards.Paused(outcome) && IntegrationPause.guards.Approval(outcome.pause)) {
-    answered = true
-    const pause = outcome.pause
-    const attributes = {
-      'vivid.executor.request_id': pause.requestId,
-      'vivid.executor.approval': 'Accepted',
-    }
-    yield* Effect.annotateCurrentSpan(attributes)
-    if (pause.expiresAt <= (yield* Clock.currentTimeMillis)) {
-      outcome = McpCallOutcome.cases.Expired.make({})
-      yield* Effect.logWarning(Message.executorContinuationFailed).pipe(
-        Effect.annotateLogs({
-          'vivid.executor.request_id': pause.requestId,
-          'vivid.executor.outcome': 'Expired',
-        }),
-      )
-      break
-    }
-    yield* Effect.logInfo(Message.executorApproval).pipe(Effect.annotateLogs(attributes))
-    const resumed = yield* mcp(
-      'resume',
-      {
-        requestId: pause.requestId,
-        response: { action: 'accept', content: {} },
-      },
-      null,
-    ).pipe(Effect.result)
-    if (Result.isFailure(resumed)) {
-      yield* Effect.logWarning(Message.executorContinuationFailed).pipe(
-        Effect.annotateLogs({
-          'vivid.executor.request_id': pause.requestId,
-          'vivid.executor.failure': resumed.failure._tag,
-        }),
-      )
-      const result =
-        resumed.failure instanceof ExecutorRejected
-          ? ExecutorCallOutcome.cases.Rejected.make({ message: resumed.failure.message })
-          : ExecutorCallOutcome.cases.OutcomeUnknown.make({})
-      return { ...result, approvalAnswered: true as const }
-    }
-    outcome = resumed.success
-  }
-  const result = fromMcp(outcome, effect)
-  return answered ? { ...result, approvalAnswered: true as const } : result
-})
-
 /** A response always names the saved request. Expiry and transport loss never start another call. */
 function makeResume(mcp: ReturnType<typeof mcpCalls>) {
   return Effect.fn('Executor.resume')(function* ({
@@ -2892,8 +2832,7 @@ function makeResume(mcp: ReturnType<typeof mcpCalls>) {
     const encoded = yield* encodeIntegrationResponse(response).pipe(
       Effect.mapError(() => ExecutorResponseInvalid.make({ service: 'connections', tool: null })),
     )
-    return yield* continueApproved(
-      mcp,
+    return fromMcp(
       yield* mcp('resume', { requestId: pause.requestId, response: encoded }, null).pipe(
         Effect.catchTags({
           ExecutorExecutionUncertain: () => Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),

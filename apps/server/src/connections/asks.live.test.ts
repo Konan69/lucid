@@ -1,3 +1,4 @@
+import { RuleStore } from '../rules/store.ts'
 import { actionRunnerLayer } from '../approvals/runner.ts'
 import { DeviceRegistry } from '../computers/device.ts'
 import { ComputerStore } from '../computers/store.ts'
@@ -14,6 +15,7 @@ import {
   IntegrationAnswerOutcome,
   ToolOutcome,
   AuditEvent,
+  RuleScope,
 } from '@vivid/contracts'
 import { ConfigProvider, Context, Effect, Layer, Predicate, Ref, Schema } from 'effect'
 import { HttpClient } from 'effect/http'
@@ -39,7 +41,7 @@ import { integrationAnswersLayer } from './asks.ts'
 import { gateLayer } from '../approvals/gate.ts'
 import { Review } from '../approvals/policy.ts'
 import { reviewerLayer } from '../approvals/review.ts'
-import { DecisionModel } from 'effect/ai'
+import { AiError, DecisionModel } from 'effect/ai'
 import { ScriptedAnswer } from '../decisions/testing.ts'
 import { Runtime } from '../runtime/client.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
@@ -217,12 +219,20 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
             },
           ])
           const observed = yield* Observation
+          const reviews = yield* Ref.make(0)
           const model = yield* DecisionModel.make({
             decide: () =>
               Effect.gen(function* () {
+                yield* Ref.update(reviews, (count) => count + 1)
                 const review = yield* Ref.get(observed.review)
                 if (!Review.guards.Reviewed(review))
-                  return yield* Effect.die('Expected scripted measurements')
+                  return yield* AiError.make({
+                    module: 'Proof',
+                    method: 'decide',
+                    reason: new AiError.InvalidRequestError({
+                      description: 'Scripted review unavailable',
+                    }),
+                  })
                 return {
                   answers: {
                     asked: ScriptedAnswer.cases.Probability.make({ probability: review.asked }),
@@ -402,6 +412,47 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
                 contained: 0.1,
               }),
             )
+            yield* Ref.set(observed.review, Review.cases.Unreviewed.make({ reason: 'Provider' }))
+            const fallbackMarker = crypto.randomUUID()
+            const beforeFallback = (yield* approvals.inThread(test.personalId)).length
+            const fallback = yield* start('approve', fallbackMarker)
+            if (!ToolOutcome.guards.ApprovalRequired(fallback.outcome))
+              return expect.fail('Expected one saved fallback Approval')
+            const fallbackId = fallback.outcome.approvalId
+            const fallbackApproval = (yield* approvals.inbox(test.personal)).find(
+              (item) => item.id === fallbackId,
+            )
+            if (fallbackApproval === undefined || fallbackApproval.action.continuation === null)
+              return expect.fail('Expected the paused Executor request')
+            expect((yield* approvals.inThread(test.personalId)).length).toBe(beforeFallback + 1)
+            expect(yield* inspect(fallbackMarker)).toEqual(
+              ExecutorCallOutcome.cases.Completed.make({ value: [] }),
+            )
+            yield* approvals.decide(test.personal, {
+              id: fallbackId,
+              digest: fallbackApproval.digest,
+              decision: ApprovalDecision.cases.AllowOnce.make({}),
+            })
+            expect(yield* inspect(fallbackMarker)).toEqual(
+              ExecutorCallOutcome.cases.Completed.make({
+                value: [{ marker: fallbackMarker, phase: 'approved' }],
+              }),
+            )
+            expect((yield* approvals.inThread(test.personalId)).length).toBe(beforeFallback + 1)
+            yield* Ref.set(
+              observed.review,
+              Review.cases.Reviewed.make({ asked: 0.95, beyond: 0.1, contained: 0.1 }),
+            )
+            const rules = yield* RuleStore
+            const allowRule = yield* rules.create(test.personal, {
+              action: 'Run the proof tool',
+              decision: 'Allow',
+              scope: RuleScope.cases.Personal.make({}),
+            })
+            const reviewedBefore = yield* Ref.get(reviews)
+            expect((yield* start('approve', crypto.randomUUID())).outcome._tag).toBe('Completed')
+            expect(yield* Ref.get(reviews)).toBe(reviewedBefore + 1)
+            yield* rules.remove(test.personal, allowRule.id)
             const deniedMarker = crypto.randomUUID()
             expect((yield* start('denied', deniedMarker)).outcome._tag).toBe('Rejected')
             expect(yield* inspect(deniedMarker)).toEqual(

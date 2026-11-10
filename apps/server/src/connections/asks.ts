@@ -1,7 +1,14 @@
+import type { ConnectionRecord } from './records.ts'
+import type { NotFound } from '@vivid/contracts'
+import { Gate, GateDecision, type GateBasis } from '../approvals/gate.ts'
+import { exposureOf } from './tools.ts'
+import { Message } from '../observability/messages.ts'
 import {
   ActionReceipt,
   ActionTarget,
   AuditEvent,
+  ApprovalBinding,
+  IntegrationPause,
   IntegrationAnswerOutcome,
   ProposedAction,
   ToolOutcome,
@@ -9,6 +16,7 @@ import {
   integrationExpiredMessage,
   integrationWaitingMessage,
   type IntegrationResponse,
+  type IntegrationResult,
 } from '@vivid/contracts'
 import { Clock, Effect, Layer, Option, Result } from 'effect'
 import { ApprovalStore } from '../approvals/store.ts'
@@ -17,7 +25,7 @@ import { Database, type DatabaseInfrastructureError } from '../database/client.t
 import { resultDigest, settle, originOf, release } from '../actions/journal.ts'
 import type { Actor } from '../auth/access.ts'
 import { ConnectionStore } from './store.ts'
-import { ExecutorCallOutcome } from './executor.ts'
+import { ExecutorCallOutcome, ExecutorRejected } from './executor.ts'
 import { ExecutorMembers, operationsOf } from './members.ts'
 import { Executor } from './executor.ts'
 import { IntegrationAnswers } from './answers.ts'
@@ -34,6 +42,20 @@ const pause = Effect.fn('IntegrationAsks.pause')(function* (actor: Actor, action
     threadId: Option.some((yield* originOf(action.continuation.operation)).threadId),
   }
   const request = action.continuation.pause
+  if (IntegrationPause.guards.Approval(request)) {
+    const row = yield* (yield* ConnectionStore).get(addressed, action.target.connectionId)
+    const approval = yield* (yield* ApprovalStore).raise(
+      addressed,
+      action,
+      ApprovalBinding.make({
+        connectionGeneration: row.authorizationGeneration,
+        preconditions: [],
+      }),
+    )
+    return yield* notRead(
+      ToolOutcome.cases.ApprovalRequired.make({ approvalId: approval.id, summary: action.summary }),
+    )
+  }
   const input = yield* (yield* InputStore).askIntegration(addressed, action)
   return yield* notRead(
     ToolOutcome.cases.InputRequired.make({
@@ -41,6 +63,140 @@ const pause = Effect.fn('IntegrationAsks.pause')(function* (actor: Actor, action
       questions: [request.form.message],
     }),
   )
+})
+
+/** Once authorized, successive pauses belong to the same saved invocation. */
+const resumeApproved = Effect.fn('IntegrationAsks.resumeApproved')(function* (
+  row: ConnectionRecord,
+  input: {
+    readonly pause: IntegrationPause
+    readonly effect: import('@vivid/contracts').ActionEffect
+    readonly basis: Extract<GateBasis, 'Reviewed' | 'PersonApproved' | 'PersonPress'>
+  },
+) {
+  let current = input.pause
+  while (IntegrationPause.guards.Approval(current)) {
+    const attributes = {
+      'vivid.executor.request_id': current.requestId,
+      'vivid.gate.basis': input.basis,
+    }
+    yield* Effect.annotateCurrentSpan(attributes)
+    yield* Effect.logInfo(Message.executorApproval).pipe(Effect.annotateLogs(attributes))
+    const resumed = yield* operationsOf(row).pipe(
+      Effect.flatMap((operation) =>
+        operation.resume({
+          pause: current,
+          response: { action: 'accept', content: {} },
+          effect: input.effect,
+        }),
+      ),
+      Effect.result,
+    )
+    if (Result.isFailure(resumed)) {
+      yield* Effect.logWarning(Message.executorContinuationFailed).pipe(
+        Effect.annotateLogs(attributes),
+      )
+      return Result.succeed(
+        resumed.failure instanceof ExecutorRejected
+          ? ExecutorCallOutcome.cases.Rejected.make({
+              message: resumed.failure.message,
+              approvalAnswered: true,
+            })
+          : ExecutorCallOutcome.cases.OutcomeUnknown.make({ approvalAnswered: true }),
+      )
+    }
+    const result = resumed.success
+    if (
+      !ExecutorCallOutcome.guards.Paused(result) ||
+      !IntegrationPause.guards.Approval(result.pause)
+    )
+      return Result.succeed({ ...result, approvalAnswered: true as const })
+    current = result.pause
+  }
+  return Result.succeed(ExecutorCallOutcome.cases.Paused.make({ pause: current }))
+})
+
+/** Approval metadata is consequence evidence, not permission. Only a review or the Person
+ * authorizes resumption; the fallback preserves the exact request for one Vivid Approval. */
+const approve = Effect.fn('IntegrationAsks.approve')(function* (
+  actor: Actor,
+  input: {
+    readonly action: ProposedAction
+    readonly pause: IntegrationPause
+    readonly basis: GateBasis
+  },
+): Effect.fn.Return<
+  Result.Result<typeof ExecutorCallOutcome.Type, import('@vivid/contracts').IntegrationResult>,
+  NotFound | InvalidRequest | DatabaseInfrastructureError,
+  Gate | ApprovalStore | InputStore | ConnectionStore | Database | Executor | ExecutorMembers
+> {
+  const action = input.action
+  if (!ActionTarget.guards.Connection(action.target))
+    return yield* new InvalidRequest({ message: 'Integration approval has no Connection.' })
+  const addressed =
+    action.continuation === null
+      ? actor
+      : {
+          ...actor,
+          threadId: Option.some((yield* originOf(action.continuation.operation)).threadId),
+        }
+  const row = yield* (yield* ConnectionStore).get(addressed, action.target.connectionId)
+  const basis = input.basis
+  if (basis === 'Unreviewed') return Result.fail(yield* pause(addressed, action))
+  if (basis === 'Read' || basis === 'AllowRule' || basis === 'Contained') {
+    const consequential = ProposedAction.make({
+      summary: action.summary,
+      rationale: action.rationale,
+      effect: 'destructive',
+      target: action.target,
+      continuation: action.continuation,
+    })
+    const decision = yield* (yield* Gate).check(
+      addressed,
+      consequential,
+      yield* exposureOf(addressed, row),
+      ApprovalBinding.make({
+        connectionGeneration: row.authorizationGeneration,
+        preconditions: [],
+      }),
+    )
+    return yield* GateDecision.match<
+      Effect.Effect<
+        Result.Result<typeof ExecutorCallOutcome.Type, IntegrationResult>,
+        NotFound | InvalidRequest | DatabaseInfrastructureError,
+        Gate | ApprovalStore | InputStore | ConnectionStore | Database | Executor | ExecutorMembers
+      >
+    >(decision, {
+      Allowed: ({ basis: reviewed }) =>
+        reviewed === 'Reviewed'
+          ? resumeApproved(row, { pause: input.pause, effect: action.effect, basis: reviewed })
+          : pause(addressed, action).pipe(Effect.map(Result.fail)),
+      ApprovalRequired: ({ approval }) =>
+        notRead(
+          ToolOutcome.cases.ApprovalRequired.make({
+            approvalId: approval.id,
+            summary: approval.action.summary,
+          }),
+        ).pipe(Effect.map(Result.fail)),
+      Blocked: Effect.fn('IntegrationAsks.declineBlocked')(function* ({ rule }) {
+        const declined = yield* operationsOf(row).pipe(
+          Effect.flatMap((operation) =>
+            operation.resume({
+              pause: input.pause,
+              response: { action: 'decline' },
+              effect: action.effect,
+            }),
+          ),
+          Effect.result,
+        )
+        if (Result.isFailure(declined))
+          return Result.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({}))
+        yield* record(action, IntegrationAnswerOutcome.cases.Declined.make({}))
+        return Result.fail(yield* notRead(ToolOutcome.cases.Blocked.make({ rule })))
+      }),
+    })
+  }
+  return yield* resumeApproved(row, { pause: input.pause, effect: action.effect, basis })
 })
 
 /** The saved operation is settled only by a provider answer or explicit uncertainty, never by waiting. */
@@ -94,9 +250,24 @@ const answer = Effect.fn('IntegrationAsks.answer')(function* (
     ),
     Effect.result,
   )
-  const result = Result.isSuccess(resumed)
+  let result = Result.isSuccess(resumed)
     ? resumed.success
     : ExecutorCallOutcome.cases.OutcomeUnknown.make({})
+  if (ExecutorCallOutcome.guards.Paused(result) && IntegrationPause.guards.Approval(result.pause)) {
+    const resolved = yield* approve(actor, {
+      action: ProposedAction.make({
+        summary: action.summary,
+        rationale: action.rationale,
+        effect: action.effect,
+        target: action.target,
+        continuation: { pause: result.pause, operation: saved.operation },
+      }),
+      pause: result.pause,
+      basis: IntegrationPause.guards.Approval(saved.pause) ? 'PersonApproved' : 'Read',
+    })
+    if (Result.isFailure(resolved)) return IntegrationAnswerOutcome.cases.Waiting.make({})
+    result = resolved.success
+  }
   if (result.approvalAnswered)
     yield* (yield* Audit).record(
       actor,
@@ -182,9 +353,17 @@ export const integrationAnswersLayer = Layer.effect(
   IntegrationAnswers,
   Effect.gen(function* () {
     const context = yield* Effect.context<
-      Database | ConnectionStore | Executor | ExecutorMembers | ApprovalStore | InputStore | Audit
+      | Database
+      | ConnectionStore
+      | Executor
+      | ExecutorMembers
+      | ApprovalStore
+      | InputStore
+      | Audit
+      | Gate
     >()
     return IntegrationAnswers.of({
+      approve: (actor, input) => approve(actor, input).pipe(Effect.provide(context)),
       settle: (action, outcome) => record(action, outcome).pipe(Effect.provide(context)),
       pause: (actor, action) => pause(actor, action).pipe(Effect.provide(context)),
       answer: (actor, action, response) =>

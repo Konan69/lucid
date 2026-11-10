@@ -153,7 +153,7 @@ const evidenceLayer = Layer.effect(
       onPublish: yield* Ref.make(Effect.void),
       states: yield* Ref.make<ReadonlyMap<MachineKey, ComputerState>>(new Map()),
       calls: yield* Ref.make<ReadonlyArray<MachineKey>>([]),
-      decisions: yield* Ref.make<GateDecision>(GateDecision.cases.Allowed.make({})),
+      decisions: yield* Ref.make<GateDecision>(GateDecision.cases.Allowed.make({ basis: 'Read' })),
       actions: yield* Ref.make<ReadonlyArray<ProposedAction>>([]),
       viewerReads: yield* Ref.make(0),
       screenRefused: yield* Ref.make(false),
@@ -1890,7 +1890,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
             'read',
             'write',
           ])
-          yield* Ref.set(evidence.decisions, GateDecision.cases.Allowed.make({}))
+          yield* Ref.set(evidence.decisions, GateDecision.cases.Allowed.make({ basis: 'Read' }))
           yield* Ref.set(evidence.lost, true)
           // An approved action whose receipt was lost is unknown, so it is never run a second time.
           expect(
@@ -1972,7 +1972,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
                 .pipe(asVivid(first)),
             ),
           ).toBe(true)
-          yield* Ref.set(evidence.decisions, GateDecision.cases.Allowed.make({}))
+          yield* Ref.set(evidence.decisions, GateDecision.cases.Allowed.make({ basis: 'Read' }))
           yield* Ref.set(
             evidence.beforeGateReturn,
             store.hold(first.id, true).pipe(

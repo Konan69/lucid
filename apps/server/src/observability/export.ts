@@ -262,6 +262,18 @@ const rulesOf = (): Rules => {
     ['vivid.executor.outcome', oneOf(['Expired'])],
     // Both writers use typed error tags, never diagnostic strings from the Integration.
     ['vivid.executor.failure', codeName],
+    [
+      'vivid.gate.basis',
+      oneOf([
+        'Reviewed',
+        'AllowRule',
+        'PersonApproved',
+        'PersonPress',
+        'Read',
+        'Unreviewed',
+        'Contained',
+      ]),
+    ],
     ['vivid.gate.decision', oneOf(Object.keys(gateDecisions))],
     ['vivid.approval.authority', oneOf(['PersonPress', 'Gate'])],
     ['vivid.review.state', oneOf(['Reviewed', 'Unreviewed'])],

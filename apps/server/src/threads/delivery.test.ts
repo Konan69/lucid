@@ -357,6 +357,7 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
   const integrations = Layer.succeed(
     IntegrationAnswers,
     IntegrationAnswers.of({
+      approve: () => Effect.die('Delivery tests dispatch no Integration approval'),
       pause: () => Effect.die('Delivery tests raise no Integration pause'),
       settle: () => Effect.void,
       answer: (_actor, _action, response) =>

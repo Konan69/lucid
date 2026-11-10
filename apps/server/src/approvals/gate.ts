@@ -34,8 +34,19 @@ import { Database, type DatabaseInfrastructureError } from '../database/client.t
  *   when that Person allows it.
  * - `Blocked`: a rule says never. `rule` is the rule's own wording, for Vivid to repeat.
  */
+export const GateBasis = Schema.Literals([
+  'Reviewed',
+  'AllowRule',
+  'PersonApproved',
+  'PersonPress',
+  'Read',
+  'Unreviewed',
+  'Contained',
+])
+export type GateBasis = typeof GateBasis.Type
+
 export const GateDecision = Schema.TaggedUnion({
-  Allowed: {},
+  Allowed: { basis: GateBasis },
   ApprovalRequired: { approval: Approval },
   Blocked: { rule: Schema.String },
 })
@@ -189,6 +200,7 @@ const allow = Effect.fn('Gate.allow')(function* (
   audit: Audit['Service'],
   actor: Actor,
   action: ProposedAction,
+  basis: GateBasis,
 ) {
   if (
     (ActionTarget.guards.Connection(action.target) && action.effect !== 'read') ||
@@ -199,7 +211,7 @@ const allow = Effect.fn('Gate.allow')(function* (
       AuditEvent.cases.ActionAllowed.make({ ...auditAction(action), effect: action.effect }),
     )
   }
-  return GateDecision.cases.Allowed.make({})
+  return GateDecision.cases.Allowed.make({ basis })
 })
 
 /** Raises the Approval the acting Person must answer; the turn ends until they do. */
@@ -223,6 +235,13 @@ const reviewable = (action: ProposedAction) =>
   action.effect === 'destructive' ||
   ActionTarget.guards.Connection(action.target) ||
   (ActionTarget.guards.Browser(action.target) && BrowseTarget.guards.Person(action.target.target))
+
+/** Only an actual judgment is reusable when a provider reveals new consequence evidence. */
+const basisOf = (review: Review): GateBasis =>
+  Review.match(review, {
+    Reviewed: () => 'Reviewed',
+    Unreviewed: () => 'Unreviewed',
+  })
 
 /** Record the judgment source and policy result without exporting action text or model scores. */
 const recordReview = Effect.fn('Gate.reviewDecision')(function* (
@@ -273,7 +292,7 @@ export const gateLayer = Layer.effect(
       yield* recordReview(review, outcome)
       if (outcome === 'Ask')
         return Option.some<GateDecision>(yield* ask(approvals, actor, action, bound))
-      return Option.some<GateDecision>(yield* allow(audit, actor, action))
+      return Option.some<GateDecision>(yield* allow(audit, actor, action, basisOf(review)))
     })
     /**
      * What is decided before rules: an ordinary read passes, and anything else in a Dreamer
@@ -287,7 +306,7 @@ export const gateLayer = Layer.effect(
       origin: ActionOrigin,
     ) {
       if (action.effect === 'read' && exposure === 'Ordinary')
-        return Option.some<GateDecision>(yield* allow(audit, actor, action))
+        return Option.some<GateDecision>(yield* allow(audit, actor, action, 'Read'))
       yield* requireNotDeclined({
         threadId: origin.threadId,
         runId: ActionOrigin.guards.RuntimeThread(origin) ? null : origin.runId,
@@ -368,13 +387,13 @@ export const gateLayer = Layer.effect(
             action.effect !== 'destructive' &&
             applicable.some((rule) => rule.decision === 'Allow')
           )
-            return yield* allow(audit, actor, action)
-          if (!reviewable(action)) return yield* allow(audit, actor, action)
+            return yield* allow(audit, actor, action, 'AllowRule')
+          if (!reviewable(action)) return yield* allow(audit, actor, action, 'Contained')
           const review = yield* reviewer.review(actor, action)
           const outcome = reviewOutcome(action.effect, review)
           yield* recordReview(review, outcome)
           if (outcome === 'Ask') return yield* ask(approvals, actor, action, prepared)
-          return yield* allow(audit, actor, action)
+          return yield* allow(audit, actor, action, basisOf(review))
         },
         (effect) =>
           effect.pipe(

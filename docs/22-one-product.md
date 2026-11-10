@@ -131,10 +131,11 @@ The runtime proposes; the server decides. Nothing consequential runs from model 
      or unavailable review after retry leave the action unreviewed: a write runs, a destructive
      action asks. Never, Company and ask-first rules still bind. Unwatched work still needs a
      contained review; sends, spending and deletes become Feed drafts.
-   - Executor's per-tool approval is machinery underneath. When a call reaches Executor, Vivid's
-     Gate already decided the model's action, or the Person pressed a display button. Vivid
-     accepts Executor's saved approval request and audits that allowance, without another ask.
-     A typed-input form still asks the Person; a provider denial remains a refusal.
+   - Executor's per-tool approval is machinery underneath. A Jev-reviewed action or the Person's
+     approval can answer its saved request at once. A read or an Allow-rule action goes back
+     through the Gate for a review when Executor reveals that it needs approval. An unreviewed
+     fallback asks the Person once, holding that same request. A typed-input form still asks
+     for information; a provider denial remains a refusal.
 6. **Ask** creates an **Approval**: the exact action, a digest of it, the Connection it will use, an
    expiry, and the Person who must decide. The turn ends. The Thread shows a card.
 7. The Person chooses **Allow once**, **Always allow** or **Deny**. Always allow adds the reviewer's
