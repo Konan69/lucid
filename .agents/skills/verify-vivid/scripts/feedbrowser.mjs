@@ -159,7 +159,6 @@ export async function feedBrowser(state, id, directory, browser) {
     await run(['wait', '--fn', visible])
     await observed.painted()
     await capture('ordinary-waiting')
-    await run(['eval', `Array.from(document.querySelectorAll('article')).find(card => card.getAttribute('aria-label') === ${JSON.stringify(title)}).scrollIntoView({block: 'center'})`])
     await run(['find', 'role', 'button', 'click', '--name', title, '--exact'])
     await run(['wait', '--url', '**/t/' + id])
     await run(['wait', '--text', 'Which colour should the verification use?'])
