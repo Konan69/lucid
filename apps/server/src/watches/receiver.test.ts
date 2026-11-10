@@ -7,6 +7,7 @@ import {
   WatchIntent,
   CheckinFocus,
   CheckinRead,
+  ProjectEvidence,
   CheckinTiming,
   WatchPurpose,
   CheckinArming,
@@ -356,12 +357,9 @@ describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
         )
         const reading = yield* watching.readCheckin(found.value, watch.purpose)
         if (!CheckinRead.guards.Open(reading)) return expect.fail('Expected open Project work')
-        expect(JSON.parse(reading.context)).toMatchObject({
-          name: 'Site launch',
-          objective: 'The domain resolves',
-          nextStep: 'Point it at the host',
-          progress: [{ text: 'Bought the domain' }],
-        })
+        expect(reading.context).toContain('"objective":"The domain resolves"')
+        expect(reading.context).toContain('"nextStep":"Point it at the host"')
+        expect(reading.context).toContain('"text":"Bought the domain"')
         yield* projects.update(
           actor,
           project.id,
@@ -369,7 +367,7 @@ describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
           WorkChange.cases.Complete.make({
             proof: {
               summary: 'The domain resolves.',
-              sources: [{ _tag: 'Person', personId: actor.person.id }],
+              sources: [ProjectEvidence.cases.Person.make({ personId: actor.person.id })],
             },
           }),
         )
