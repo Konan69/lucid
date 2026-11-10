@@ -34,7 +34,7 @@ import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import type * as HttpBody from 'effect/http/HttpBody'
 
 import { mcpCalls, McpCallOutcome, encodeIntegrationResponse } from './mcp.ts'
-import { toolRejectionMessage } from './message.ts'
+import { toolRejectionMessage, validationProblems } from './message.ts'
 import { retainCatalog } from './catalog.ts'
 import { accountBranch } from './envelope.ts'
 import { requiredSetting, settingSecret } from '../config.ts'
@@ -281,6 +281,7 @@ interface ListedTool {
 }
 export const ExecutorCallOutcome = Schema.TaggedUnion({
   Paused: { pause: IntegrationPause },
+  UncertainPause: {},
   Expired: {},
   Accepted: { value: Schema.Json },
   Completed: { value: Schema.Json },
@@ -603,7 +604,7 @@ export interface ExecutorConnectionOperations {
   readonly resume: (input: {
     readonly pause: IntegrationPause
     readonly response: IntegrationResponse
-  }) => Effect.Effect<typeof ExecutorCallOutcome.Type, ExecutorResponseInvalid>
+  }) => Effect.Effect<typeof ExecutorCallOutcome.Type, ExecutorFailure>
   /** Reclaim only resources the Connection store proved unreferenced under its database lock. */
   readonly prepareRetirement: (
     resources: typeof ExecutorRetired.Type,
@@ -961,6 +962,15 @@ function translateFailure(tag: typeof knownFailureTag.Type, tool: string | null)
     Uncertain: (): ExecutorFailure => ExecutorExecutionUncertain.make(context),
     Rejected: ({ message }): ExecutorFailure => ExecutorRejected.make({ ...context, message }),
   })
+}
+
+/** MCP carries the same failure vocabulary as REST, without trusting provider diagnostics. */
+export function mcpFailure(code: string, tool: string | null, problems: readonly string[]) {
+  if (code === 'InputInvalid' && tool !== null && problems.length > 0)
+    return ExecutorInputInvalid.make({ service: 'connections', tool, problems })
+  return isKnownFailureTag(code)
+    ? translateFailure(code, tool)
+    : ExecutorExecutionUncertain.make({ service: 'connections', tool })
 }
 
 /** Each decoder is compiled once per response shape at layer acquisition. No automatic retry is
@@ -2704,21 +2714,42 @@ function makeCall(
         .split('.')
         .map((part) => `[${JSON.stringify(part)}]`)
         .join('')}`
-      const outcome = yield* mcp('call', {
-        calls: {
-          path,
-          input: ToolAccount.match(selected.account, {
-            Direct: () => input,
-            Account: ({ accountId }) => ({ accountId, input }),
-          }),
+      const outcome = yield* mcp(
+        'call',
+        {
+          calls: {
+            path,
+            input: ToolAccount.match(selected.account, {
+              Direct: () => input,
+              Account: ({ accountId }) => ({ accountId, input }),
+            }),
+          },
         },
-      }).pipe(
+        tool,
+      ).pipe(
+        Effect.map(fromMcp),
         Effect.catchTags({
-          ExecutorTransportFailure: () => Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),
-          ExecutorResponseInvalid: () => Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),
+          ExecutorInputInvalid: ({ problems }) =>
+            Effect.succeed(
+              ExecutorCallOutcome.cases.Rejected.make({
+                message: 'Input did not match the tool schema. Correct its input and retry.',
+                problems: validationProblems(problems, [
+                  references.app,
+                  catalog.version,
+                  ...('account' in references ? [references.account] : []),
+                ]),
+              }),
+            ),
+
+          ExecutorExecutionUncertain: () =>
+            Effect.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({})),
+          ExecutorTransportFailure: () =>
+            Effect.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({})),
+          ExecutorResponseInvalid: () =>
+            Effect.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({})),
         }),
       )
-      return fromMcp(outcome)
+      return outcome
     },
     (effect) =>
       effect.pipe(
@@ -2737,7 +2768,10 @@ const fromMcp = (outcome: McpCallOutcome) =>
     Completed: ({ value }) => completedCall(value),
     Paused: ({ pause }) => ExecutorCallOutcome.cases.Paused.make({ pause }),
     Expired: () => ExecutorCallOutcome.cases.Expired.make({}),
-    Uncertain: () => ExecutorCallOutcome.cases.OutcomeUnknown.make({}),
+    Uncertain: ({ reason }) =>
+      reason === 'InvalidForm'
+        ? ExecutorCallOutcome.cases.UncertainPause.make({})
+        : ExecutorCallOutcome.cases.OutcomeUnknown.make({}),
   })
 
 /** A response always names the saved request. Expiry and transport loss never start another call. */
@@ -2752,8 +2786,9 @@ function makeResume(mcp: ReturnType<typeof mcpCalls>) {
       Effect.mapError(() => ExecutorResponseInvalid.make({ service: 'connections', tool: null })),
     )
     return fromMcp(
-      yield* mcp('resume', { requestId: pause.requestId, response: encoded }).pipe(
+      yield* mcp('resume', { requestId: pause.requestId, response: encoded }, null).pipe(
         Effect.catchTags({
+          ExecutorExecutionUncertain: () => Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),
           ExecutorTransportFailure: () => Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),
           ExecutorResponseInvalid: () => Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),
         }),

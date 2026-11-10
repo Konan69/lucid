@@ -149,6 +149,8 @@ const connection = Effect.fn('Code.useConnection')(function* (
         end: ActionApplied.guards.Accepted(receipt) ? 'accepted' : 'completed',
         receipt,
       }),
+    InputRequired: ({ requestId, questions }) =>
+      CallOutcome.cases.InputRequired.make({ requestId, questions, summary: request.summary }),
     ApprovalRequired: ({ approvalId, summary }) =>
       CallOutcome.cases.ApprovalRequired.make({ approvalId, summary }),
     Blocked: ({ rule }) => CallOutcome.cases.Blocked.make({ rule, summary: request.summary }),

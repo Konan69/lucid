@@ -1,3 +1,4 @@
+import { InputRequestId } from '@vivid/contracts'
 import {
   CodeCall,
   CodeOutcome,
@@ -44,6 +45,11 @@ export const CallOutcome = Schema.TaggedUnion({
     summary: Schema.String,
     /** The journal's receipt when the call sent an outward write; null otherwise. */
     receipt: Schema.NullOr(ActionReceipt),
+  },
+  InputRequired: {
+    requestId: InputRequestId,
+    questions: Schema.NonEmptyArray(Schema.String),
+    summary: Schema.String,
   },
   ApprovalRequired: { approvalId: ApprovalId, summary: Schema.String },
   Blocked: { rule: Schema.String, summary: Schema.String },
@@ -285,6 +291,17 @@ export class Execution {
           })
         return CallStep.cases.Continue.make({ value })
       },
+      InputRequired: ({ requestId, questions }) =>
+        this.latch(
+          () =>
+            CodeOutcome.cases.InputRequired.make({
+              requestId,
+              questions,
+              calls: this.calls.slice(),
+            }),
+          index,
+          CodeCall.make({ kind: call.kind, summary, end: 'needs input', receipt: null }),
+        ),
       ApprovalRequired: ({ approvalId }) =>
         this.latch(
           () =>

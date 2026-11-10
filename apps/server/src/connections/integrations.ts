@@ -430,62 +430,7 @@ export const testIntegration = Effect.fn('Connections.testIntegration')(
       summary: `Test the ${account} integration`,
       rationale: 'Confirm the integration works with one read-only call.',
     })
-    return ToolOutcome.match<TestIntegrationOutcome>(outcome.outcome, {
-      Accepted: () =>
-        TestIntegrationOutcome.cases.NotTested.make({
-          account,
-          tools: names,
-          reason: 'result not confirmed',
-        }),
-      Completed: () =>
-        TestIntegrationOutcome.cases.Tested.make({ account, tools: names, tool: tool.name }),
-      // The test call is a read, which the journal never answers in place of sending.
-      Repeated: () =>
-        TestIntegrationOutcome.cases.Tested.make({ account, tools: names, tool: tool.name }),
-      ApprovalRequired: ({ approvalId, summary }) =>
-        TestIntegrationOutcome.cases.ApprovalRequired.make({ approvalId, summary }),
-      Blocked: ({ rule }) => TestIntegrationOutcome.cases.Blocked.make({ rule }),
-      ScopeRequired: () =>
-        TestIntegrationOutcome.cases.Refused.make({
-          account,
-          tools: names,
-          tool: tool.name,
-          message: 'additional access required',
-        }),
-      PermissionDeclined: () =>
-        TestIntegrationOutcome.cases.Refused.make({
-          account,
-          tools: names,
-          tool: tool.name,
-          message: 'data permission declined',
-        }),
-      Unsupported: () =>
-        TestIntegrationOutcome.cases.Refused.make({
-          account,
-          tools: names,
-          tool: tool.name,
-          message: 'capability unsupported',
-        }),
-      ConnectionNotReady: () =>
-        TestIntegrationOutcome.cases.NotTested.make({
-          account,
-          tools: names,
-          reason: 'needs sign-in',
-        }),
-      Rejected: ({ message }) =>
-        TestIntegrationOutcome.cases.Refused.make({
-          account,
-          tools: names,
-          tool: tool.name,
-          message,
-        }),
-      OutcomeUnknown: () =>
-        TestIntegrationOutcome.cases.NotTested.make({
-          account,
-          tools: names,
-          reason: 'call failed',
-        }),
-    })
+    return testedOutcome(account, names, tool.name, outcome.outcome)
   },
   (effect) =>
     effect.pipe(
@@ -498,3 +443,73 @@ export const testIntegration = Effect.fn('Connections.testIntegration')(
       }),
     ),
 )
+
+/** Project every Integration result without reporting an unanswered form as a successful test. */
+function testedOutcome(
+  account: string,
+  names: readonly string[],
+  tool: string,
+  outcome: ToolOutcome,
+) {
+  return ToolOutcome.match<TestIntegrationOutcome>(outcome, {
+    Accepted: () =>
+      TestIntegrationOutcome.cases.NotTested.make({
+        account,
+        tools: names,
+        reason: 'result not confirmed',
+      }),
+    Completed: () =>
+      TestIntegrationOutcome.cases.Tested.make({ account, tools: names, tool: tool }),
+    // The test call is a read, which the journal never answers in place of sending.
+    Repeated: () => TestIntegrationOutcome.cases.Tested.make({ account, tools: names, tool: tool }),
+    InputRequired: () =>
+      TestIntegrationOutcome.cases.NotTested.make({
+        account,
+        tools: names,
+        reason: 'result not confirmed',
+      }),
+    ApprovalRequired: ({ approvalId, summary }) =>
+      TestIntegrationOutcome.cases.ApprovalRequired.make({ approvalId, summary }),
+    Blocked: ({ rule }) => TestIntegrationOutcome.cases.Blocked.make({ rule }),
+    ScopeRequired: () =>
+      TestIntegrationOutcome.cases.Refused.make({
+        account,
+        tools: names,
+        tool: tool,
+        message: 'additional access required',
+      }),
+    PermissionDeclined: () =>
+      TestIntegrationOutcome.cases.Refused.make({
+        account,
+        tools: names,
+        tool: tool,
+        message: 'data permission declined',
+      }),
+    Unsupported: () =>
+      TestIntegrationOutcome.cases.Refused.make({
+        account,
+        tools: names,
+        tool: tool,
+        message: 'capability unsupported',
+      }),
+    ConnectionNotReady: () =>
+      TestIntegrationOutcome.cases.NotTested.make({
+        account,
+        tools: names,
+        reason: 'needs sign-in',
+      }),
+    Rejected: ({ message }) =>
+      TestIntegrationOutcome.cases.Refused.make({
+        account,
+        tools: names,
+        tool: tool,
+        message,
+      }),
+    OutcomeUnknown: () =>
+      TestIntegrationOutcome.cases.NotTested.make({
+        account,
+        tools: names,
+        reason: 'call failed',
+      }),
+  })
+}

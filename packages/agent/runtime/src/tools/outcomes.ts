@@ -1,6 +1,4 @@
-import { Option } from 'effect'
-import { InputRequestMessage, integrationWaitingMessage } from '@vivid/contracts'
-import { Schema } from 'effect'
+import { integrationWaitingMessage } from '@vivid/contracts'
 import {
   ActionApplied,
   type ActionReceipt,
@@ -15,8 +13,6 @@ import {
 } from '@vivid/contracts'
 import * as views from './views.ts'
 import type { ToolResult } from './result.ts'
-
-const decodeInputMessage = Schema.decodeUnknownOption(InputRequestMessage)
 
 /** Approval is a real stop: the server already asked the person and will resume after their decision. */
 function approval({
@@ -92,18 +88,6 @@ const appliedWords = (receipt: ActionApplied) =>
 /** Provider records pass through untouched; settle bounds them without removing provider authority.
  * Each service outcome gives one truthful next step; an unknown side effect must never be retried blindly. */
 export function toolOutcome(result: IntegrationResult): ToolResult {
-  if (ToolOutcome.guards.Completed(result.outcome)) {
-    const input = decodeInputMessage(result.outcome.output)
-    if (Option.isSome(input))
-      return {
-        output: {
-          ...input.value,
-          message: integrationWaitingMessage,
-        },
-        terminate: true,
-        integration: result,
-      }
-  }
   const projected = ToolOutcome.match<ToolResult>(result.outcome, {
     Accepted: ({ output, receipt }) => ({
       output: {
@@ -123,6 +107,10 @@ export function toolOutcome(result: IntegrationResult): ToolResult {
         message: `This exact action was already sent, so it was not sent again. ${appliedWords(receipt)} Its earlier answer is not available here.`,
       },
       receipts: [receipt],
+    }),
+    InputRequired: ({ requestId, questions }) => ({
+      output: { kind: 'input-request', requestId, questions, message: integrationWaitingMessage },
+      terminate: true,
     }),
     ApprovalRequired: approval,
     Blocked: blocked,

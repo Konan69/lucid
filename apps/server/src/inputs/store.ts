@@ -1,4 +1,4 @@
-import * as SchemaRepresentation from 'effect/SchemaRepresentation'
+import * as Exit from 'effect/Exit'
 import {
   IntegrationAnswerOutcome,
   type AnswerIntegrationInputRequest,
@@ -9,7 +9,7 @@ import {
 import { IntegrationAnswers } from '../connections/answers.ts'
 import { integrationAnswerText } from '../connections/asks.ts'
 import * as NodeCrypto from 'node:crypto'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, or, sql } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
@@ -125,6 +125,13 @@ const Row = Schema.Union([
   }),
   Schema.Struct({
     ...fields,
+    status: Schema.Literal('expired'),
+    answeredBy: Schema.Null,
+    answers: Schema.Null,
+    settledAt: Schema.Finite,
+  }),
+  Schema.Struct({
+    ...fields,
     status: Schema.Literal('withdrawn'),
     answeredBy: Schema.Null,
     answers: Schema.Null,
@@ -152,6 +159,8 @@ const stateOf = (
   people: ReadonlyMap<PersonId, PersonSummary>,
 ): Effect.Effect<InputRequestState, DatabaseFailure> =>
   Row.match(row, {
+    expired: (value) =>
+      Effect.succeed(InputRequestState.cases.Expired.make({ expiredAt: value.settledAt })),
     waiting: () => Effect.succeed(InputRequestState.cases.Waiting.make({})),
     answering: () => Effect.succeed(InputRequestState.cases.Waiting.make({})),
     answered: (value) =>
@@ -208,6 +217,7 @@ export const inThread = Effect.fn('InputStore.inThread')(function* (threadId: Th
 })
 
 export interface InputStoreService {
+  readonly expire: Effect.Effect<void, NotFound | DatabaseInfrastructureError, IntegrationAnswers>
   readonly replay: Effect.Effect<void, DatabaseInfrastructureError>
   readonly inThread: (
     threadId: ThreadId,
@@ -421,82 +431,109 @@ const askIntegration = Effect.fn('Inputs.askIntegration')(function* (
   )
 })
 
-/** Invalid typed answers leave the Input request answerable and never reach Executor. */
-const validateIntegrationAnswer = Effect.fn('Inputs.validateIntegrationAnswer')(function* (
-  action: ProposedAction,
-  request: AnswerIntegrationInputRequest,
-) {
-  if (action.continuation === null || request.response.action !== 'accept') return
-  const requestedSchema = action.continuation.pause.form.requestedSchema
-  const decoder = yield* Effect.try({
-    try: () =>
-      SchemaRepresentation.fromJsonSchemaDocument({
-        dialect: 'draft-2020-12',
-        schema: requestedSchema,
-        definitions: {},
-      }),
-    catch: () => new InvalidRequest({ message: 'The Integration form schema could not be read.' }),
-  })
-  const formSchema = Schema.toEncoded(decoder)
-  yield* Schema.decodeEffect(formSchema)(request.response.content).pipe(
-    Effect.mapError(
-      () =>
-        new InvalidRequest({
-          message: 'Complete the Integration form with values matching its fields.',
-        }),
-    ),
-  )
-})
-
 /** Claim before resuming. A duplicate answer never resends the continuation, even after response loss. */
-const answerIntegration = Effect.fn('Inputs.answerIntegration')(function* (
-  actor: Actor,
-  request: AnswerIntegrationInputRequest,
+const answerIntegration = Effect.fn('Inputs.answerIntegration')(
+  function* (actor: Actor, request: AnswerIntegrationInputRequest) {
+    const database = yield* Database
+    const rows = yield* database.run(
+      database
+        .select({ request: inputRequests })
+        .from(inputRequests)
+        .innerJoin(threads, eq(threads.id, inputRequests.threadId))
+        .where(and(eq(inputRequests.id, request.id), inWorkspace(threads, actor)))
+        .limit(1),
+    )
+    const value = rows[0]
+    if (value === undefined) return yield* new NotFound({ message: 'Input request not found' })
+    const row = yield* decodeRow(value.request)
+    yield* requireThread(row.threadId, actor.person.id)
+    if (row.personId !== actor.person.id || row.integration === null)
+      return yield* new NotFound({ message: 'Integration input request not found' })
+    const claimed = yield* database.run(
+      database
+        .update(inputRequests)
+        .set({
+          status: 'answering',
+          integrationOutcome: yield* encodeStored(
+            IntegrationAnswerOutcome,
+            'Integration answer',
+          )(IntegrationAnswerOutcome.cases.Uncertain.make({})),
+        })
+        .where(and(eq(inputRequests.id, request.id), eq(inputRequests.status, 'waiting')))
+        .returning(),
+    )
+    if (claimed.length === 0)
+      return yield* new Conflict({
+        message: 'Integration question already answered or being answered.',
+      })
+    const action = row.integration
+    const held = yield* decodeRow(yield* returned(claimed, 'Claimed Input request'))
+    const addressed: Actor = { ...actor, by: 'vivid', threadId: Option.some(row.threadId) }
+    const ending = yield* Effect.gen(function* () {
+      const outcome = yield* (yield* IntegrationAnswers).answer(addressed, action, request.response)
+      const input = yield* finishIntegrationInput(held, outcome, actor.person.id)
+      return { request: input, outcome }
+    }).pipe(
+      Effect.catch(
+        Effect.fnUntraced(function* () {
+          const outcome = IntegrationAnswerOutcome.cases.Uncertain.make({})
+          yield* (yield* IntegrationAnswers).settle(action, outcome)
+          return { request: yield* finishIntegrationInput(held, outcome, actor.person.id), outcome }
+        }),
+      ),
+    )
+
+    yield* changed(actor, Topic.thread(row.threadId))
+    yield* replaySignals(signalWriter, Option.some([request.id])).pipe(
+      Effect.catch(() =>
+        Effect.logError('Integration answer delivery failed', { requestId: request.id }),
+      ),
+    )
+    return ending
+  },
+  (effect, _actor, request) =>
+    effect.pipe(
+      Effect.onExit((exit) =>
+        Exit.isFailure(exit) ? recoverIntegrationInput(request.id) : Effect.void,
+      ),
+      Effect.uninterruptible,
+    ),
+)
+
+/** A defect or interrupted owner has the same once-only uncertain ending as an expected failure. */
+const recoverIntegrationInput = Effect.fn('Inputs.recoverIntegration')(function* (
+  id: InputRequestId,
 ) {
   const database = yield* Database
-  const rows = yield* database.run(
+  const values = yield* database.run(
     database
-      .select({ request: inputRequests })
+      .select()
       .from(inputRequests)
-      .innerJoin(threads, eq(threads.id, inputRequests.threadId))
-      .where(and(eq(inputRequests.id, request.id), inWorkspace(threads, actor)))
+      .where(and(eq(inputRequests.id, id), eq(inputRequests.status, 'answering')))
       .limit(1),
   )
-  const value = rows[0]
-  if (value === undefined) return yield* new NotFound({ message: 'Input request not found' })
-  const row = yield* decodeRow(value.request)
-  yield* requireThread(row.threadId, actor.person.id)
-  if (row.personId !== actor.person.id || row.integration === null)
-    return yield* new NotFound({ message: 'Integration input request not found' })
-  yield* validateIntegrationAnswer(row.integration, request)
-  const claimed = yield* database.run(
-    database
-      .update(inputRequests)
-      .set({
-        status: 'answering',
-        integrationOutcome: yield* encodeStored(
-          IntegrationAnswerOutcome,
-          'Integration answer',
-        )(IntegrationAnswerOutcome.cases.Uncertain.make({})),
-      })
-      .where(and(eq(inputRequests.id, request.id), eq(inputRequests.status, 'waiting')))
-      .returning(),
-  )
-  if (claimed.length === 0)
-    return yield* new Conflict({
-      message: 'Integration question already answered or being answered.',
-    })
-  const addressed: Actor = { ...actor, by: 'vivid', threadId: Option.some(row.threadId) }
-  const outcome = yield* (yield* IntegrationAnswers).answer(
-    addressed,
-    row.integration,
-    request.response,
-  )
-  const body = integrationAnswerText(outcome)
+  const value = values[0]
+  if (value === undefined) return
+  const row = yield* decodeRow(value)
+  if (row.integration === null) return
+  const outcome = IntegrationAnswerOutcome.cases.Uncertain.make({})
+  yield* (yield* IntegrationAnswers).settle(row.integration, outcome)
+  yield* finishIntegrationInput(row, outcome, row.personId)
+})
+
+/** Every claimed input has a terminal row and an owed signal, including a failed or expired continuation. */
+const finishIntegrationInput = Effect.fn('Inputs.finishIntegration')(function* (
+  row: typeof Row.Type,
+  outcome: IntegrationAnswerOutcome,
+  answeredBy: PersonId | null,
+) {
+  const database = yield* Database
   const now = yield* Clock.currentTimeMillis
+  const body = integrationAnswerText(outcome)
+  const expired = answeredBy === null
   const signal = Signal.cases.Owed.make({
-    idempotencyKey: answerKey(request.id),
-    deciderId: actor.person.id,
+    idempotencyKey: answerKey(row.id),
+    deciderId: answeredBy,
     message: DeliveryMessage.cases.Signal.make({ cue: SignalCue.cases.Answer.make({ body }) }),
   })
   const updated = yield* database.transaction((tx) =>
@@ -504,9 +541,11 @@ const answerIntegration = Effect.fn('Inputs.answerIntegration')(function* (
       const written = yield* tx
         .update(inputRequests)
         .set({
-          status: 'answered',
-          answeredBy: actor.person.id,
-          answers: yield* encodeAnswers([InputAnswer.cases.Written.make({ words: body })]),
+          status: expired ? 'expired' : 'answered',
+          answeredBy,
+          answers: expired
+            ? null
+            : yield* encodeAnswers([InputAnswer.cases.Written.make({ words: body })]),
           settledAt: now,
           integrationOutcome: yield* encodeStored(
             IntegrationAnswerOutcome,
@@ -515,20 +554,42 @@ const answerIntegration = Effect.fn('Inputs.answerIntegration')(function* (
           signal: yield* encodeSignal(signal),
           signalDueAt: now,
         })
-        .where(and(eq(inputRequests.id, request.id), eq(inputRequests.status, 'answering')))
+        .where(and(eq(inputRequests.id, row.id), eq(inputRequests.status, row.status)))
         .returning()
       yield* announceFeed(tx, [row.threadId])
       return written
     }),
   )
-  yield* changed(actor, Topic.thread(row.threadId))
-  yield* replaySignals(signalWriter, Option.some([request.id])).pipe(
-    Effect.catch(() =>
-      Effect.logError('Integration answer delivery failed', { requestId: request.id }),
-    ),
+  return yield* returned(yield* view(updated), 'Settled Input request')
+})
+
+/** Unanswered pauses expire at the upstream deadline. An interrupted answer is uncertain and is never resumed by recovery. */
+const expireIntegrationInputs = Effect.fn('Inputs.expireIntegration')(function* () {
+  const database = yield* Database
+  const now = yield* Clock.currentTimeMillis
+  const values = yield* database.run(
+    database
+      .select()
+      .from(inputRequests)
+      .where(
+        and(
+          or(eq(inputRequests.status, 'waiting'), eq(inputRequests.status, 'answering')),
+          sql`(${inputRequests.integration}->'continuation'->'pause'->>'expiresAt')::numeric <= ${now}`,
+        ),
+      ),
   )
-  return { request: yield* returned(yield* view(updated), 'Input request'), outcome }
-}, Effect.uninterruptible)
+  for (const value of values) {
+    const row = yield* decodeRow(value)
+    if (row.integration === null) continue
+    const outcome =
+      row.status === 'answering'
+        ? IntegrationAnswerOutcome.cases.Uncertain.make({})
+        : IntegrationAnswerOutcome.cases.Expired.make({})
+    yield* (yield* IntegrationAnswers).settle(row.integration, outcome)
+    yield* finishIntegrationInput(row, outcome, row.status === 'answering' ? row.personId : null)
+    yield* (yield* Changes).publish([Topic.person(row.personId), Topic.thread(row.threadId)])
+  }
+})
 
 export const inputStoreLayer = Layer.effect(
   InputStore,
@@ -565,6 +626,7 @@ export const inputStoreLayer = Layer.effect(
         )
         return yield* run(view(rows.map((row) => row.request)))
       }),
+      expire: run(expireIntegrationInputs()),
       ask: (actor, request) => run(ask(actor, request, null)),
       askIntegration: (actor, action) => run(askIntegration(actor, action)),
       answerIntegration: (actor, request) => run(answerIntegration(actor, request)),

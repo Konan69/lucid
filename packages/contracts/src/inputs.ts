@@ -60,6 +60,7 @@ export type InputAnswer = typeof InputAnswer.Type
  */
 export const InputRequestState = Schema.TaggedUnion({
   Waiting: {},
+  Expired: { expiredAt: Schema.Finite },
   Answered: {
     answeredBy: PersonSummary,
     answers: Schema.NonEmptyArray(InputAnswer),

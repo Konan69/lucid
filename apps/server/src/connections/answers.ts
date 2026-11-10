@@ -17,6 +17,10 @@ export interface IntegrationAnswersService {
     actor: Actor,
     action: ProposedAction,
   ) => Effect.Effect<IntegrationResult, NotFound | InvalidRequest | DatabaseInfrastructureError>
+  readonly settle: (
+    action: ProposedAction,
+    outcome: IntegrationAnswerOutcome,
+  ) => Effect.Effect<void, NotFound | DatabaseInfrastructureError>
   readonly answer: (
     actor: Actor,
     action: ProposedAction,

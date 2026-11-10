@@ -12,12 +12,24 @@ import {
   ApprovalState,
   ProposedAction,
   ActionReceipt,
+  InputRequestState,
+  ToolCallId,
   ApprovalDecision,
   IntegrationAnswerOutcome,
-  InputRequestMessage,
   ToolOutcome,
+  DisplayCallPolicy,
 } from '@vivid/contracts'
-import { ConfigProvider, Context, Effect, Layer, Option, Predicate, Ref, Schema } from 'effect'
+import {
+  Clock,
+  ConfigProvider,
+  Context,
+  Effect,
+  Layer,
+  Option,
+  Predicate,
+  Ref,
+  Schema,
+} from 'effect'
 import { HttpClient } from 'effect/http'
 import { eq } from 'drizzle-orm'
 import { Database } from '../database/client.ts'
@@ -32,9 +44,8 @@ import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import { ExecutorCallOutcome, executorLayer } from './executor.ts'
 import { executorMembersLayer, operationsOf } from './members.ts'
 import { integrationAnswersLayer } from './asks.ts'
-import { runConnection } from './tools.ts'
+import { runConnection, useTool, useQueryTool } from './tools.ts'
 
-const decodeInputMessage = Schema.decodeUnknownEffect(InputRequestMessage)
 const decodeReceipt = Schema.decodeUnknownEffect(ActionReceipt)
 const decodeRequest = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ params: Schema.Struct({ name: Schema.String }) })),
@@ -80,6 +91,7 @@ export default defineApp({}, { tools: router({
     ctx.sql.exec('UPDATE effects SET phase = ? WHERE marker = ?', JSON.stringify(answer), marker);
     return answer;
   }),
+  question: query({input,description:'Ask without a write'}, async (ctx) => ctx.elicit({mode:'form',message:'Name the read',requestedSchema:{type:'object',properties:{name:{type:'string'}},required:['name']}})),
   inspect: query({input,description:'Read the proof effect'}, async (ctx, {marker}) => ctx.sql.exec('SELECT * FROM effects WHERE marker = ?', marker).toArray())
 })});`,
     },
@@ -134,9 +146,14 @@ const restart = Effect.fn('IntegrationAsksProof.restart')(function* () {
     let text = ''
     events.stdout.on('data', (chunk) => {
       text += String(chunk)
-      if (text.includes('health_status: healthy')) resume(Effect.void)
-      if (text.includes('health_status: unhealthy'))
+      if (text.includes('health_status: healthy')) {
+        events.kill()
+        resume(Effect.void)
+      }
+      if (text.includes('health_status: unhealthy')) {
+        events.kill()
         resume(Effect.die('Disposable Executor became unhealthy'))
+      }
     })
     events.on('error', (error) => resume(Effect.die(error)))
     return Effect.sync(() => {
@@ -225,10 +242,73 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
                 operation,
                 result: yield* runConnection(test.vivid, row, target, {
                   effect: 'write',
+                  policy: DisplayCallPolicy.cases.Press.make({}),
                   operation: Option.some(operation),
                 }),
               }
             })
+            const refused = yield* operations.call({
+              references: row.references,
+              tool: 'inspect',
+              input: {},
+            })
+            expect(ExecutorCallOutcome.guards.Rejected(refused)).toBe(true)
+            if (!ExecutorCallOutcome.guards.Rejected(refused))
+              return expect.fail('Expected ordinary input rejection')
+            expect(refused.problems.length).toBeGreaterThan(0)
+            const readId = ToolCallId.make(crypto.randomUUID())
+            const ordinary = yield* useTool(test.vivid, {
+              toolCallId: readId,
+              connectionId: row.id,
+              tool: 'inspect',
+              input: { marker: 'never-written' },
+              summary: 'Read proof',
+              rationale: 'Prove ordinary reads remain unjournaled',
+            })
+            expect(ordinary.outcome).toEqual(
+              ToolOutcome.cases.Completed.make({ output: [], receipt: null }),
+            )
+            expect(
+              yield* database.run(
+                database
+                  .select()
+                  .from(actions)
+                  .where(eq(actions.id, operationOf.call(test.personalId, readId))),
+              ),
+            ).toHaveLength(0)
+            const readPauseId = ToolCallId.make(crypto.randomUUID())
+            const readPause = yield* useTool(test.vivid, {
+              toolCallId: readPauseId,
+              connectionId: row.id,
+              tool: 'question',
+              input: { marker: 'read-question' },
+              summary: 'Name the read',
+              rationale: 'Prove a read acquires its journal only when paused',
+            })
+            if (!ToolOutcome.guards.InputRequired(readPause.outcome))
+              return expect.fail('Expected paused read')
+            expect(
+              yield* database.run(
+                database
+                  .select()
+                  .from(actions)
+                  .where(eq(actions.id, operationOf.call(test.personalId, readPauseId))),
+              ),
+            ).toHaveLength(1)
+            yield* inputs.answerIntegration(test.personal, {
+              id: readPause.outcome.requestId,
+              response: { action: 'accept', content: { name: 'Ada' } },
+            })
+            const pendingBeforeDraw = (yield* inputs.inbox(test.personal)).length
+            const drawn = yield* useQueryTool(test.vivid, {
+              connectionId: row.id,
+              tool: 'question',
+              input: { marker: 'draw-question' },
+              summary: 'Draw the question',
+              rationale: 'A draw cannot ask the Person',
+            })
+            expect(ToolOutcome.guards.Rejected(drawn.outcome)).toBe(true)
+            expect((yield* inputs.inbox(test.personal)).length).toBe(pendingBeforeDraw)
             const inspect = (marker: string) =>
               operations.call({ references: row.references, tool: 'inspect', input: { marker } })
             const parentTarget = ActionTarget.cases.Connection.make({
@@ -320,9 +400,9 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
               )
             }
             const typed = yield* start('input', crypto.randomUUID())
-            if (!ToolOutcome.guards.Completed(typed.result.outcome))
+            if (!ToolOutcome.guards.InputRequired(typed.result.outcome))
               return expect.fail('Expected Input request')
-            const message = yield* decodeInputMessage(typed.result.outcome.output)
+            const message = yield* Effect.succeed(typed.result.outcome)
             const request = (yield* inputs.inbox(test.personal)).find(
               (item) => item.id === message.requestId,
             )
@@ -355,7 +435,7 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
             const inputLost = yield* start('input', crypto.randomUUID())
             if (
               !ToolOutcome.guards.ApprovalRequired(approvalLost.result.outcome) ||
-              !ToolOutcome.guards.Completed(inputLost.result.outcome)
+              !ToolOutcome.guards.InputRequired(inputLost.result.outcome)
             )
               return expect.fail('Expected two pauses')
             const approvalId = approvalLost.result.outcome.approvalId
@@ -363,7 +443,7 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
               (item) => item.id === approvalId,
             )
             if (savedApproval === undefined) return expect.fail('Expected Approval')
-            const lostInput = yield* decodeInputMessage(inputLost.result.outcome.output)
+            const lostInput = yield* Effect.succeed(inputLost.result.outcome)
             yield* restart()
             const beforeLost = (yield* Ref.get(sent)).length
             const expiredApproval = yield* approvals.decide(test.personal, {
@@ -389,6 +469,116 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
               expect(ActionReceipt.guards.Unknown(receipt)).toBe(true)
               expect(receipt.operationId).toBe(id)
             }
+            const expiring = []
+            for (const tool of ['approve', 'input']) {
+              const parent = yield* approvals.raise(
+                test.vivid,
+                ProposedAction.make({
+                  summary: `Expire ${tool}`,
+                  rationale: 'Prove unanswered deadlines settle the original Approval',
+                  effect: 'write',
+                  target: ActionTarget.cases.Connection.make({
+                    connectionId: row.id,
+                    account: 'Proof',
+                    tool,
+                    input: { marker: crypto.randomUUID() },
+                  }),
+                }),
+                ApprovalBinding.make({
+                  connectionGeneration: row.authorizationGeneration,
+                  preconditions: [],
+                }),
+              )
+              yield* approvals.decide(test.personal, {
+                id: parent.id,
+                digest: parent.digest,
+                decision: ApprovalDecision.cases.AllowOnce.make({}),
+              })
+              expiring.push(parent.id)
+            }
+            const future = (yield* Clock.currentTimeMillis) + 16 * 60 * 1000
+            const actualClock = yield* Clock.clockWith(Effect.succeed)
+            const expiryClock: Clock.Clock = {
+              currentTimeMillisUnsafe: () => future,
+              currentTimeMillis: Effect.succeed(future),
+              currentTimeNanosUnsafe: () => BigInt(future) * 1_000_000n,
+              currentTimeNanos: Effect.succeed(BigInt(future) * 1_000_000n),
+              monotonicTimeNanosUnsafe: () => actualClock.monotonicTimeNanosUnsafe(),
+              monotonicTimeNanos: actualClock.monotonicTimeNanos,
+              sleep: (duration) => actualClock.sleep(duration),
+            }
+            const beforeExpiry = (yield* Ref.get(sent)).length
+            yield* Effect.all([approvals.expire, inputs.expire], { concurrency: 1 }).pipe(
+              Effect.provideService(Clock.Clock, expiryClock),
+            )
+            expect((yield* Ref.get(sent)).length).toBe(beforeExpiry)
+            for (const id of expiring) {
+              const parent = (yield* approvals.inThread(test.personalId)).find(
+                (item) => item.id === id,
+              )
+              if (parent === undefined || parent.integrationOutcome === null)
+                return expect.fail('Expected expired parent')
+              expect(ApprovalState.guards.OutcomeUnknown(parent.state)).toBe(true)
+              expect(IntegrationAnswerOutcome.guards.Expired(parent.integrationOutcome)).toBe(true)
+              const [saved] = yield* database.run(
+                database
+                  .select()
+                  .from(actions)
+                  .where(eq(actions.id, operationOf.approval(id))),
+              )
+              if (saved === undefined) return expect.fail('Expected original uncertain receipt')
+              expect(ActionReceipt.guards.Unknown(yield* decodeReceipt(saved.receipt))).toBe(true)
+            }
+            const expiredInputs = yield* inputs.inThread(test.personalId)
+            expect(expiredInputs.some((item) => InputRequestState.guards.Expired(item.state))).toBe(
+              true,
+            )
+            const doomed = yield* store.make(test.personal, {
+              ...app,
+              name: 'Failure after input claim',
+            })
+            const doomedRow = (yield* store.records(test.personal)).find(
+              (item) => item.id === doomed.connection.id,
+            )
+            if (doomedRow === undefined) return expect.fail('Expected disposable second Connection')
+            const failedOperation = operationOf.program()
+            const failedTarget = ActionTarget.cases.Connection.make({
+              connectionId: doomedRow.id,
+              account: 'Proof',
+              tool: 'input',
+              input: { marker: crypto.randomUUID() },
+            })
+            yield* claim({
+              id: failedOperation,
+              threadId: test.personalId,
+              runId: null,
+              approvalId: null,
+              target: failedTarget,
+            })
+            const asked = yield* runConnection(test.vivid, doomedRow, failedTarget, {
+              effect: 'write',
+              operation: Option.some(failedOperation),
+              policy: DisplayCallPolicy.cases.Press.make({}),
+            })
+            if (!ToolOutcome.guards.InputRequired(asked.outcome))
+              return expect.fail('Expected input before Connection removal')
+            yield* store.remove(test.personal, doomedRow.id)
+            const uncertain = yield* inputs.answerIntegration(test.personal, {
+              id: asked.outcome.requestId,
+              response: {
+                action: 'accept',
+                content: { name: 'Ada', count: 1, enabled: true, color: 'red' },
+              },
+            })
+            expect(IntegrationAnswerOutcome.guards.Uncertain(uncertain.outcome)).toBe(true)
+            expect(InputRequestState.guards.Answered(uncertain.request.state)).toBe(true)
+            const [failedReceipt] = yield* database.run(
+              database.select().from(actions).where(eq(actions.id, failedOperation)),
+            )
+            if (failedReceipt === undefined) return expect.fail('Expected failed claim receipt')
+            expect(ActionReceipt.guards.Unknown(yield* decodeReceipt(failedReceipt.receipt))).toBe(
+              true,
+            )
           }).pipe(Effect.provide(complete))
         }),
       { timeout: 240_000 },

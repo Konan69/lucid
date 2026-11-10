@@ -23,6 +23,10 @@ export const approvalSweeperLayer = Layer.effectDiscard(
           observed,
           Effect.catch(() => Effect.logError('Approval replay pass failed')),
         ),
+        inputs.expire.pipe(
+          observed,
+          Effect.catch(() => Effect.logError('Integration input expiry failed')),
+        ),
         inputs.replay.pipe(
           observed,
           Effect.catch(() => Effect.logError('Input replay pass failed')),

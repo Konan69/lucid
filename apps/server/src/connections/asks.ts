@@ -11,7 +11,7 @@ import {
   integrationWaitingMessage,
   type IntegrationResponse,
 } from '@vivid/contracts'
-import { Clock, Effect, Layer, Option } from 'effect'
+import { Clock, Effect, Layer, Option, Result } from 'effect'
 import { ApprovalStore } from '../approvals/store.ts'
 import { InputStore } from '../inputs/store.ts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
@@ -49,14 +49,9 @@ const pause = Effect.fn('IntegrationAsks.pause')(function* (actor: Actor, action
   }
   const input = yield* (yield* InputStore).askIntegration(addressed, action)
   return yield* notRead(
-    ToolOutcome.cases.Completed.make({
-      receipt: null,
-      output: {
-        kind: 'input-request',
-        requestId: input.id,
-        questions: [request.form.message],
-        message: integrationWaitingMessage,
-      },
+    ToolOutcome.cases.InputRequired.make({
+      requestId: input.id,
+      questions: [request.form.message],
     }),
   )
 })
@@ -86,6 +81,9 @@ const record = Effect.fn('IntegrationAsks.record')(function* (
     Declined: () => settle(ActionReceipt.cases.Unknown.make({ operationId, observedAt: now })),
     Cancelled: () => settle(ActionReceipt.cases.Unknown.make({ operationId, observedAt: now })),
   })
+  const origin = yield* originOf(operationId)
+  if (origin.approvalId !== null)
+    yield* (yield* ApprovalStore).completeIntegration(origin.approvalId, outcome)
 })
 
 /** A decision names the original request and the Connection's own caller. Nothing here reissues a call. */
@@ -98,14 +96,13 @@ const answer = Effect.fn('IntegrationAsks.answer')(function* (
     return yield* new InvalidRequest({ message: 'Integration question has no saved call.' })
   const row = yield* (yield* ConnectionStore).get(actor, action.target.connectionId)
   const saved = action.continuation
-  const result = yield* operationsOf(row).pipe(
+  const resumed = yield* operationsOf(row).pipe(
     Effect.flatMap((operation) => operation.resume({ pause: saved.pause, response })),
-    Effect.catchTags({
-      ExecutorResponseInvalid: () =>
-        Effect.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({})),
-      ServiceUnavailable: () => Effect.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({})),
-    }),
+    Effect.result,
   )
+  const result = Result.isSuccess(resumed)
+    ? resumed.success
+    : ExecutorCallOutcome.cases.OutcomeUnknown.make({})
   const outcome = yield* ExecutorCallOutcome.match<
     Effect.Effect<
       IntegrationAnswerOutcome,
@@ -138,6 +135,7 @@ const answer = Effect.fn('IntegrationAsks.answer')(function* (
       return IntegrationAnswerOutcome.cases.Waiting.make({})
     }),
     Expired: () => Effect.succeed(IntegrationAnswerOutcome.cases.Expired.make({})),
+    UncertainPause: () => Effect.succeed(IntegrationAnswerOutcome.cases.Uncertain.make({})),
     OutcomeUnknown: () =>
       Effect.succeed(
         response.action === 'accept'
@@ -153,9 +151,6 @@ const answer = Effect.fn('IntegrationAsks.answer')(function* (
       ),
   })
   yield* record(action, outcome)
-  const origin = yield* originOf(saved.operation)
-  if (origin.approvalId !== null)
-    yield* (yield* ApprovalStore).completeIntegration(actor, origin.approvalId, outcome)
   return outcome
 })
 
@@ -177,7 +172,7 @@ export const integrationAnswerText = (outcome: IntegrationAnswerOutcome) =>
     Waiting: () => integrationWaitingMessage,
     Uncertain: () =>
       'The Integration may or may not have acted. Check what happened before asking for it again.',
-  })
+  }).slice(0, 4000)
 
 /** Construct after the two question stores. Only answer methods need this bridge, so store acquisition is acyclic. */
 export const integrationAnswersLayer = Layer.effect(
@@ -187,6 +182,7 @@ export const integrationAnswersLayer = Layer.effect(
       Database | ConnectionStore | Executor | ExecutorMembers | ApprovalStore | InputStore
     >()
     return IntegrationAnswers.of({
+      settle: (action, outcome) => record(action, outcome).pipe(Effect.provide(context)),
       pause: (actor, action) => pause(actor, action).pipe(Effect.provide(context)),
       answer: (actor, action, response) =>
         answer(actor, action, response).pipe(Effect.provide(context)),

@@ -326,7 +326,6 @@ export interface ApprovalStoreService {
     IntegrationAnswers
   >
   readonly completeIntegration: (
-    actor: Actor,
     id: ApprovalId,
     outcome: IntegrationAnswerOutcome,
   ) => Effect.Effect<void, NotFound | DatabaseInfrastructureError>
@@ -335,7 +334,7 @@ export interface ApprovalStoreService {
     id: ApprovalId,
   ) => Effect.Effect<ThreadId, NotFound | Conflict | DatabaseInfrastructureError>
   readonly replay: Effect.Effect<void, DatabaseInfrastructureError>
-  readonly expire: Effect.Effect<void, DatabaseInfrastructureError>
+  readonly expire: Effect.Effect<void, NotFound | DatabaseInfrastructureError, IntegrationAnswers>
 }
 export class ApprovalStore extends Context.Service<ApprovalStore, ApprovalStoreService>()(
   'vivid/ApprovalStore',
@@ -529,7 +528,7 @@ const move = Effect.fn('Approvals.move')(function* (
         scope,
         eq(approvals.digest, request.digest),
         eq(approvals.status, 'pending'),
-        gt(approvals.expiresAt, now),
+        row.action.continuation === null ? gt(approvals.expiresAt, now) : undefined,
       ),
     )
     .returning()
@@ -553,6 +552,17 @@ const move = Effect.fn('Approvals.move')(function* (
  * no longer holds, the Approval is invalidated in that same transaction and the claim answers
  * `ApprovalChanged`; the invalidation commits even though the decision is refused.
  */
+/** Vivid's own deadline governs its proposals; a pending remote question answers with its explicit expiry outcome. */
+const requireUnexpired = Effect.fn('Approvals.requireUnexpired')(function* (
+  row: typeof Row.Type,
+  now: number,
+) {
+  if (Row.guards.expired(row)) return yield* new ApprovalExpired({ id: row.id })
+  if (row.action.continuation !== null) return
+  if (Row.guards.pending(row) && row.expiresAt <= now)
+    return yield* new ApprovalExpired({ id: row.id })
+})
+
 const claim = Effect.fn('Approvals.claim')(function* (
   actor: Actor,
   request: DecideApprovalRequest,
@@ -568,8 +578,7 @@ const claim = Effect.fn('Approvals.claim')(function* (
     return yield* new Conflict({ message: 'Approval digest differs' })
   if (Row.guards.invalidated(row)) return yield* new ApprovalChanged({ id: row.id })
   const now = yield* Clock.currentTimeMillis
-  if (Row.guards.expired(row) || (Row.guards.pending(row) && row.expiresAt <= now))
-    return yield* new ApprovalExpired({ id: row.id })
+  yield* requireUnexpired(row, now)
   yield* requireDecisionAuthority(actor, row, request, thread.audience)
   const action = yield* actionToRun(row, request.decision)
   const external =
@@ -738,7 +747,6 @@ const runJournaled = Effect.fn('Approvals.runJournaled')(function* <E, R>(
 
 /** Settle a live Integration answer under the question's existing SQL claim and delivery identity. */
 const finishIntegration = Effect.fn('Approvals.finishIntegration')(function* (
-  actor: Actor,
   row: typeof Row.Type,
   outcome: IntegrationAnswerOutcome,
 ) {
@@ -755,7 +763,7 @@ const finishIntegration = Effect.fn('Approvals.finishIntegration')(function* (
   })
   const signal = Signal.cases.Owed.make({
     idempotencyKey: `approval-${row.id}`,
-    deciderId: actor.person.id,
+    deciderId: row.decidedBy,
     message: DeliveryMessage.cases.Signal.make({ cue: SignalCue.cases.Answer.make({ body }) }),
   })
   const database = yield* Database
@@ -780,7 +788,11 @@ const finishIntegration = Effect.fn('Approvals.finishIntegration')(function* (
       .where(and(eq(approvals.id, row.id), eq(approvals.status, row.status)))
       .returning(),
   )
-  yield* changed(actor, Topic.thread(row.threadId))
+  yield* (yield* Changes).publish([
+    Topic.person(row.personId),
+    Topic.thread(row.threadId),
+    ...Option.toArray(Option.map(Option.fromNullOr(row.companyId), Topic.company)),
+  ])
   const approval = yield* returned(yield* view(updated), 'Approval')
   yield* deliver(approval.id)
   return approval
@@ -788,7 +800,6 @@ const finishIntegration = Effect.fn('Approvals.finishIntegration')(function* (
 
 /** The original Vivid Approval stays Executing while an app asks; its same operation supplies the ending. */
 const completeIntegration = Effect.fn('Approvals.completeIntegration')(function* (
-  actor: Actor,
   id: ApprovalId,
   outcome: IntegrationAnswerOutcome,
 ) {
@@ -800,9 +811,8 @@ const completeIntegration = Effect.fn('Approvals.completeIntegration')(function*
   const value = rows[0]
   if (value === undefined) return yield* new NotFound({ message: 'Approval not found' })
   const row = yield* decodeRow(value)
-  yield* requireThread(row.threadId, actor.person.id)
   if (!Row.guards.executing(row)) return
-  yield* finishIntegration(actor, row, outcome)
+  yield* finishIntegration(row, outcome)
 })
 
 /** Answer the saved request instead of running the approved action again. The ordinary claim fences duplicate decisions. */
@@ -821,7 +831,7 @@ const answerPausedApproval = Effect.fn('Approvals.answerIntegration')(function* 
     row.action,
     response,
   )
-  const approval = yield* finishIntegration(actor, row, outcome)
+  const approval = yield* finishIntegration(row, outcome)
   yield* (yield* Audit).record(
     actor,
     ApprovalDecision.isAnyOf(['Deny', 'Cancel'])(request.decision)
@@ -933,7 +943,10 @@ const raise = Effect.fn('Approvals.raise')(function* (
           digest,
           binding,
           status: 'pending',
-          expiresAt: now + 24 * 60 * 60 * 1000,
+          expiresAt:
+            action.continuation === null
+              ? now + 24 * 60 * 60 * 1000
+              : action.continuation.pause.expiresAt,
           createdAt: now,
         })
         .returning()
@@ -973,11 +986,31 @@ const recover = (
     const conclusion = ranOut
       ? Conclusion.cases.Expired.make({})
       : Conclusion.cases.OutcomeUnknown.make({})
+    const integration =
+      row.action.continuation === null
+        ? null
+        : ranOut
+          ? IntegrationAnswerOutcome.cases.Expired.make({})
+          : IntegrationAnswerOutcome.cases.Uncertain.make({})
+    const signal =
+      integration === null
+        ? owed(row.id, row.action.summary, conclusion, row.decidedBy)
+        : Signal.cases.Owed.make({
+            idempotencyKey: approvalKey(row.id),
+            deciderId: row.decidedBy,
+            message: DeliveryMessage.cases.Signal.make({
+              cue: SignalCue.cases.Answer.make({ body: integrationAnswerText(integration) }),
+            }),
+          })
     const updated = yield* tx
       .update(approvals)
       .set({
         ...ending,
-        signal: yield* encodeSignal(owed(row.id, row.action.summary, conclusion, row.decidedBy)),
+        signal: yield* encodeSignal(signal),
+        integrationOutcome:
+          integration === null
+            ? null
+            : yield* encodeStored(IntegrationAnswerOutcome, 'Integration ending')(integration),
         signalDueAt: now,
       })
       .where(eq(approvals.id, row.id))
@@ -1011,6 +1044,10 @@ const expire = Effect.fn('Approvals.expire')(function* () {
       return yield* Effect.forEach(expired.concat(abandoned), recover(tx, now))
     }),
   )
+  for (const row of rows) {
+    if (row.action.continuation !== null && row.integrationOutcome !== null)
+      yield* (yield* IntegrationAnswers).settle(row.action, row.integrationOutcome)
+  }
   yield* (yield* Changes).publish(
     rows.flatMap((row) =>
       [Topic.person(row.personId), Topic.thread(row.threadId)].concat(
@@ -1125,7 +1162,7 @@ export const approvalStoreLayer = Layer.effect(
       }),
       raise: (actor, action, binding) => run(raise(actor, action, binding)),
       decide: (actor, request) => run(decide(actor, request)),
-      completeIntegration: (actor, id, outcome) => run(completeIntegration(actor, id, outcome)),
+      completeIntegration: (id, outcome) => run(completeIntegration(id, outcome)),
       withdraw: (actor, id) => run(withdraw(actor, id)),
       expire: run(expire()),
       replay: run(replaySignals(signalWriter, Option.none())),
