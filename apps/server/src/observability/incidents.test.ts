@@ -114,7 +114,8 @@ it.live('says an Incident as one error issue with its fingerprint, closed tags a
       yield* incidents.record(refusedSend)
       return yield* Effect.currentSpan
     })
-    const span = yield* decide().pipe(Effect.provide(context), Effect.provide(logs.layer))
+    const logged = yield* Layer.build(logs.layer)
+    const span = yield* decide().pipe(Effect.provide(context), Effect.provide(logged))
 
     const sent = yield* events
     expect(sent).toHaveLength(1)
@@ -155,9 +156,10 @@ it.live('opens an issue for a typed failure by its impact, and none for a routin
     const refused = Effect.fn('Probe.refused')(function* () {
       return yield* new Forbidden({ message: 'normal refusal' })
     }, observeFailures('rpc'))
+    const logged = yield* Layer.build(logs.layer)
     yield* Effect.andThen(Effect.ignore(lost()), Effect.ignore(refused())).pipe(
       Effect.provide(context),
-      Effect.provide(logs.layer),
+      Effect.provide(logged),
     )
 
     const sent = yield* events

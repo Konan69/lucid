@@ -36,6 +36,12 @@ export const Message = {
   memberRefused: 'Executor member refused',
   executorNotReady: 'Executor selection not ready',
   connectionRemoved: 'Integration removed',
+  /** `computers/store.ts`: the provider did not answer a read; the read answered from the record. */
+  computerUnobserved: 'Computer could not be observed',
+  /** `computers/store.ts`: a running Computer's screen could not be had; the read went on without it. */
+  computerUnshown: 'Computer could not be shown',
+  /** `watches/lifecycle.ts`: Executor kept a subscription Vivid no longer has; the Watch moved on. */
+  watchUnsubscribed: 'Watch subscription not removed from Executor',
   /** `connections/catalog.ts`: one attempt to refresh the Integration catalog failed. */
   catalogAttempt: 'Integration catalog attempt failed',
   artifactRemoved: 'Artifact removed',

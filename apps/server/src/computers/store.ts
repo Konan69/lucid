@@ -2,6 +2,7 @@ import * as NodeCrypto from 'node:crypto'
 import { and, eq, getTableColumns, inArray, sql } from 'drizzle-orm'
 import {
   Array as Arr,
+  Cause,
   Clock,
   Context,
   Duration,
@@ -64,6 +65,8 @@ import {
   type IncidentsService,
 } from '../observability/incidents.ts'
 import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
+import { FailureAttribute, observeFailures, recordFailures } from '../observability/failure.ts'
+import { Message } from '../observability/messages.ts'
 import { egressChosen } from './egress/setting.ts'
 import { type Actor } from '../auth/access.ts'
 import { Gate, GateDecision, ActionOutcome, ActionOrigin, actionOrigin } from '../approvals/gate.ts'
@@ -710,10 +713,9 @@ const observations = (
     const observed = yield* observe(row.value.machine).pipe(Effect.result)
     // By the failure's name only; the read itself answers the caller with a state, not a failure.
     if (Result.isFailure(observed))
-      yield* Effect.logWarning('Computer could not be observed', {
-        failure: observed.failure._tag,
-        recorded: !isOutage(observed.failure),
-      })
+      yield* Effect.logWarning(Message.computerUnobserved).pipe(
+        Effect.annotateLogs(FailureAttribute.type, observed.failure._tag),
+      )
     if (Result.isFailure(observed) && isOutage(observed.failure))
       return {
         computer: wire(row.value, unanswered(row.value.since)),
@@ -757,7 +759,9 @@ const observations = (
     const shown = yield* machine.status(row.value.machine).pipe(Effect.result)
     if (Result.isSuccess(shown))
       return Computer.make(yield* reconcile(person, row.value, shown.success))
-    yield* Effect.logWarning('Computer could not be shown', { failure: shown.failure._tag })
+    yield* Effect.logWarning(Message.computerUnshown).pipe(
+      Effect.annotateLogs(FailureAttribute.type, shown.failure._tag),
+    )
     const { computer } = yield* observe(person)
     const facts = computer.state
     // Not running, or the provider could not be asked at all: the facts are the answer.
@@ -838,11 +842,9 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
         Effect.tap((ended) => (ended.standing ? rest(person) : Effect.void)),
         Effect.map((ended) => ended.refusal),
         (effect) => lock.withPermit(person, effect),
-        Effect.catch(() =>
-          Effect.logError('Computer startup state could not be persisted.').pipe(
-            Effect.as(Option.none<MachineNoCapacity>()),
-          ),
-        ),
+        // A lost write is said by its tag, as any failure answered at a boundary is.
+        observeFailures('schedule'),
+        Effect.orElseSucceed(() => Option.none<MachineNoCapacity>()),
         Effect.ensuring(forget(person)),
         Effect.forkIn(scope, { startImmediately: false }),
       )
@@ -1044,7 +1046,7 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
       Effect.andThen(Effect.sync(() => timers.delete(person))),
       Effect.andThen(settle),
       Effect.asVoid,
-      Effect.catch(() => Effect.logError('Computer idle stop could not be persisted.')),
+      observeFailures('schedule'), Effect.ignore,
       Effect.forkIn(scope, { startImmediately: false }),
     )
     timers.set(person, timer)
@@ -1071,8 +1073,8 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
       yield* activity(person)
       yield* arm(person)
     },
-    (effect, person) => state.lock.withPermit(person, effect),
-    Effect.catch(() => Effect.logError('Computer watch release could not be persisted.')),
+    (effect, person) =>
+      state.lock.withPermit(person, effect).pipe(observeFailures('schedule'), Effect.ignore),
   )
   /** The stream scope owns presence, including cancellation and disconnected clients. */
   const watching = Effect.fn('ComputerStore.watching')((person: PersonId) =>
@@ -1098,7 +1100,7 @@ const attached = Effect.fn('ComputerStore.attach')(function* (
     Effect.onError(() =>
       inactivity
         .arm(person)
-        .pipe(Effect.catch(() => Effect.logError('Computer idle deadline could not be restored.'))),
+        .pipe(observeFailures('schedule'), Effect.ignore),
     ),
   )
   yield* inactivity.watching(person)
@@ -1293,7 +1295,7 @@ export const computerStoreLayer = Layer.effect(
           Effect.ensuring(
             inactivity.activity(person).pipe(
               Effect.andThen(inactivity.arm(person)),
-              Effect.catch(() => Effect.logError('Computer activity could not be persisted.')),
+              observeFailures('schedule'), Effect.ignore,
             ),
           ),
         )
@@ -1304,7 +1306,7 @@ export const computerStoreLayer = Layer.effect(
     const recoverIdle = Effect.fn('ComputerStore.recoverIdle')((person: PersonId) =>
       inactivity
         .arm(person)
-        .pipe(Effect.catch(() => Effect.logError('Computer idle deadline could not be restored.'))),
+        .pipe(observeFailures('schedule'), Effect.ignore),
     )
     /** Startup never waits while holding the action permit needed by the boot worker. */
     const execute = Effect.fn('ComputerStore.execute')(
@@ -1857,7 +1859,8 @@ const failedExecution = (failure: MachineFailure | ReadinessFailure) =>
  * Record the infrastructure tag while allowing Approvals.decide to durably settle not-sent.
  * A failed settlement write still propagates from the Approval owner and cannot be hidden here. */
 const notSent = Effect.fn('Computer.notSent')(function* (failure: DatabaseInfrastructureError) {
-  yield* Effect.logError('Approved Computer action was not sent', failure._tag)
+  // Said as a failure answered at the runtime's boundary, so it is an issue and leaves the process.
+  yield* recordFailures('runtime')(Cause.fail(failure))
   return ActionOutcome.cases.Failed.make({
     reason: 'Nothing was sent, because the Computer record could not be read or updated.',
   })

@@ -4,7 +4,7 @@ import * as PersistedQueue from 'effect/persistence/PersistedQueue'
 import { Incident, NotificationId, PersonId, PushTargetId, RunId, ThreadId } from '@vivid/contracts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
 import { announce, Topic } from '../live/changes.ts'
-import { failureType } from '../observability/failure.ts'
+import { failureType, recordFailures } from '../observability/failure.ts'
 import { causeOf, hop, Incidents, recorder } from '../observability/incidents.ts'
 import { notifications } from './tables.ts'
 import { deliverTarget } from '../push/delivery.ts'
@@ -161,7 +161,8 @@ export const notificationDeliveryLayer = Layer.effectDiscard(
     Effect.forever,
     Effect.catchCauseIf(
       (cause) => !Cause.hasInterrupts(cause),
-      () => Effect.logWarning('Notification delivery consumer failed; restarting'),
+      // Said as a failure answered at a scheduled boundary; the consumer starts again below.
+      recordFailures('schedule'),
     ),
     Effect.repeat(Schedule.spaced('500 millis')),
     Effect.forkScoped,

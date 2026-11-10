@@ -22,7 +22,8 @@ import {
 import { companyColumnOf, type Actor } from '../auth/access.ts'
 import { ServerConfig } from '../config.ts'
 import { Changes, Topic } from '../live/changes.ts'
-import { observeFailures } from '../observability/failure.ts'
+import { FailureAttribute, observeFailures } from '../observability/failure.ts'
+import { Message } from '../observability/messages.ts'
 import { causeOf, hop, Incidents, incidentsLayer } from '../observability/incidents.ts'
 import { untraced } from '../observability/quiet.ts'
 import { WatchedApps, WatchConnectionRemoved } from './apps.ts'
@@ -190,7 +191,9 @@ function makeRevision(input: {
       })
       .pipe(
         Effect.tapError((failure) =>
-          Effect.logWarning('Previous Watch subscription could not be removed', failure._tag),
+          Effect.logWarning(Message.watchUnsubscribed).pipe(
+            Effect.annotateLogs(FailureAttribute.type, failure._tag),
+          ),
         ),
         Effect.ignore,
       )
@@ -306,7 +309,9 @@ const make = Effect.fn('Watches.make')(function* () {
     yield* apps.callerOf(found.value.connectionId).pipe(
       Effect.flatMap((caller) => events.unsubscribe(caller, subscriptionOf(found.value))),
       Effect.tapError((failure) =>
-        Effect.logWarning('Watch unsubscribe did not reach Executor', failure._tag),
+        Effect.logWarning(Message.watchUnsubscribed).pipe(
+          Effect.annotateLogs(FailureAttribute.type, failure._tag),
+        ),
       ),
       Effect.ignore,
     )
