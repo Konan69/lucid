@@ -162,7 +162,7 @@ export const firstWay = (data: LiveData): Way => ({
         }),
       ),
       Effect.as(Option.none<sending.Unarrival>()),
-      Effect.catchTag('Undelivered', ({ why }) => Effect.succeed(Option.some(why))),
+      Effect.catchTag('Undelivered', ({ why }) => Effect.succeedSome(why)),
     ),
   returned: (start) => {
     if (draft.in(start.place).length === 0) draft.keep(start.place, start.words)

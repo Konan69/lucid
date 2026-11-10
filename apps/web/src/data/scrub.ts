@@ -50,17 +50,23 @@ const named = Schema.optionalKey(Schema.Struct({ name: text, version: text }))
  * (`DEEPEST_CAUSE`), so the keys are finite and known, and a case or a source added to the
  * contract is admitted without a second list.
  */
-const incidentTags = Object.fromEntries([
+/** A tag an Incident's report adds: every one is a string of a closed set or of a fixed shape. */
+type IncidentTag = Schema.optionalKey<Schema.Codec<string>>
+
+/** The tags of the hop at place `n` of a cause. */
+const causeTags = (n: number): ReadonlyArray<readonly [string, IncidentTag]> => [
+  [`vivid.incident.cause.${n}.service`, Schema.optionalKey(IncidentSource)],
+  [`vivid.incident.cause.${n}.operation`, Schema.optionalKey(CodeName)],
+  [`vivid.incident.cause.${n}.tag`, Schema.optionalKey(CodeName)],
+  [
+    `vivid.incident.cause.${n}.status`,
+    Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[1-5][0-9]{2}$/u))),
+  ],
+]
+
+const incidentTags = Object.fromEntries<IncidentTag>([
   ['vivid.incident.kind', Schema.optionalKey(Schema.Literals(Struct.keys(Incident.cases)))],
-  ...Array.from({ length: DEEPEST_CAUSE }, (_, n) => [
-    [`vivid.incident.cause.${n}.service`, Schema.optionalKey(IncidentSource)],
-    [`vivid.incident.cause.${n}.operation`, Schema.optionalKey(CodeName)],
-    [`vivid.incident.cause.${n}.tag`, Schema.optionalKey(CodeName)],
-    [
-      `vivid.incident.cause.${n}.status`,
-      Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[1-5][0-9]{2}$/u))),
-    ],
-  ]).flat(),
+  ...Array.from({ length: DEEPEST_CAUSE }, (_, n) => causeTags(n)).flat(),
 ])
 
 /**

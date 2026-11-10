@@ -77,7 +77,7 @@ import {
   type Around,
 } from '../data/message'
 import { checkAction, useChecking } from '../data/checking'
-import { endingOf, newestRun, unheardOf } from '../data/outcome'
+import { endingOf, newestRun, unheardOf, UNSTARTED } from '../data/outcome'
 import { Stand, standIn } from '../data/stand'
 import { firstWay, UNDELIVERED, UNTITLED } from '../data/threads'
 import { bearer } from '../data/transport'
@@ -385,7 +385,6 @@ function useSend(
   })
   // The one delivery the foot of the conversation speaks of: the first that is not known to
   // have arrived. Sending it again sends everything that is not, in the order it was written.
-  // What a Person is told is the one thing they can act on, whatever the server said.
   const first = Option.fromUndefinedOr(drawn.unsent[0])
   const unsent = Option.map(first, ({ delivery }): Unsent => ({
     words: delivery.words,
@@ -395,13 +394,21 @@ function useSend(
   }))
   // One send is said once. When the server held its Run, that Run's ending under the
   // conversation says what happened (`endedOf`), and its "Try again" sends these same words
-  // under the same key; this phone adds nothing of its own (`sending.Unarrival`).
-  const unsaid = Option.filter(unsent, () =>
-    Option.exists(first, ({ why }) =>
+  // under the same key; this phone adds nothing of its own (`sending.Unarrival`). Otherwise
+  // this phone says it: the server's own sentence when it refused them, or that they are not
+  // known to have arrived.
+  const unsaid = Option.flatMap(first, ({ delivery, why }) =>
+    Option.map(
       outbox.Unarrival.match(why, {
-        Unstarted: () => false,
-        Refused: () => true,
-        Unconfirmed: () => true,
+        Unstarted: () => Option.none<string>(),
+        Refused: ({ words }) => Option.some(words),
+        Unconfirmed: () => Option.some(UNDELIVERED),
+      }),
+      (said): Unsent => ({
+        words: delivery.words,
+        pictures: delivery.pictures,
+        key: delivery.key,
+        why: said,
       }),
     ),
   )
@@ -1290,8 +1297,7 @@ const troubleOf = (at: {
 }): Option.Option<Trouble> =>
   Option.firstSomeOf([
     Option.map(at.lost, (unsent): Trouble => ({
-      message: unsent.why,
-      action: 'Send again',
+      ...lostSaid(unsent.why),
       onAct: () => {
         commit()
         at.onFirst()
@@ -1309,6 +1315,20 @@ const troubleOf = (at: {
       ? Option.some<Trouble>({ message: at.words, action: 'Try again', onAct: at.onOpen })
       : Option.none(),
   ])
+
+/**
+ * What first words that did not arrive say, and what their button is called. Their Thread's
+ * record is not read until they are with Vivid (`isSettled`), so when the server held their Run
+ * and the runtime never started it (`Unstarted`), it is here that the Run's ending is said, in
+ * its own words and with its own "Try again" (`UNSTARTED`): sent again under the Thread's key,
+ * it is that Run reserved again.
+ */
+const lostSaid = (why: outbox.Unarrival): Pick<Trouble, 'message' | 'action'> =>
+  outbox.Unarrival.match(why, {
+    Unstarted: () => ({ message: UNSTARTED.words, action: 'Try again' }),
+    Refused: ({ words }) => ({ message: words, action: 'Send again' }),
+    Unconfirmed: () => ({ message: UNDELIVERED, action: 'Send again' }),
+  })
 
 /** The key first words that did not arrive are drawn under, so they are drawn as not sent. */
 const lostKeys = (id: ThreadId, lost: Option.Option<First>): ReadonlyArray<string> =>
