@@ -544,8 +544,12 @@ function useAsking(up: Option.Option<InputRequest>) {
       request,
       drafting: draftingIn(request),
     })),
-    /** A request is waiting on this Person, whether or not its card is up yet. */
-    waiting: Option.isSome(up),
+    /**
+     * A question of Vivid's is waiting on this Person, whether or not its card is up yet, so what
+     * is sent is its reply. An Integration's is answered by its own form, so the composer stays
+     * "Message Vivid" for it.
+     */
+    waiting: Option.exists(up, (request) => request.integration === null),
     /** The answers to one request are on their way. */
     sendingTo: (id: InputRequestId) => Option.isSome(about(pending, id)),
     /** The answers to the request that is up are on their way, so nothing else is sent. */

@@ -390,10 +390,10 @@ export const EXPIRED_APPROVAL = 'Expired before you answered. Nothing was sent.'
  *   of the ending as the request's answer, not what the Person typed, so the bubble says only
  *   which button they pressed.
  */
-export type Ending = 'Expired' | 'Sent' | 'Skipped'
+type Ending = 'Expired' | 'Sent' | 'Skipped'
 
 /** The ending of an Integration's question, once it has one. */
-export const endingOf = (request: InputRequest): Option.Option<Ending> =>
+const endingOf = (request: InputRequest): Option.Option<Ending> =>
   InputRequestState.match(request.state, {
     Waiting: () => Option.none(),
     Withdrawn: () => Option.none(),
