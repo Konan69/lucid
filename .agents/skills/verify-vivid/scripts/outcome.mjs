@@ -73,10 +73,14 @@ async function feedDelivery(state, { integration, me }, directory, browser) {
     { app: integration.app, words: 'outcome feed delivery', name: 'provider-receipt' },
     path,
   )
-  const item = await posted(state, marker, path)
+  const published = await posted(state, marker, path)
+  const away = await settled(state, published.thread, 1, 'Completed', path)
+  // Posting can publish a Working card before the Run commits its completed outcome.
+  const feed = await rpc(state, 'ListFeed', undefined, path)
+  const item = feed.items.find((candidate) => candidate.card === published.card)
+  NodeAssert.ok(item, 'The posted card remains on the Feed after settlement')
   NodeAssert.equal(item._tag, 'Waiting', 'The posted card waits on the Person')
   NodeAssert.equal(item.seen, false)
-  const away = await settled(state, item.thread, 1, 'Completed', path)
   const [run] = away.runs
   NodeAssert.equal(item.post.provenance.postedBy, run.id, 'The background Run posted the card')
   NodeAssert.equal(run.outcome._tag, 'Completed', 'Undrawn, the result is only Completed')
