@@ -23,7 +23,6 @@ import { threadStoreLayer } from '../threads/store.ts'
 import { threads } from '../threads/tables.ts'
 import { PushAdapter } from './adapter.ts'
 import { PushConfig, type PushConfiguration } from './config.ts'
-import { incidentsLayer } from '../observability/incidents.ts'
 import { Push, pushLayer } from './delivery.ts'
 import { PushAcceptance, PushTargetGone, PushUncertain } from './receipts.ts'
 import { pushTargetsLayer } from './targets.ts'
@@ -91,11 +90,7 @@ const stores = Layer.mergeAll(
   threadStoreLayer,
   runStoreLayer,
 ).pipe(Layer.provideMerge(foundation))
-// The server's own recorder, so a rejected push is said as it is in production (`incidents.ts`).
-export const pushTestLayer = pushLayer.pipe(
-  Layer.provideMerge(stores),
-  Layer.provideMerge(incidentsLayer),
-)
+export const pushTestLayer = pushLayer.pipe(Layer.provideMerge(stores))
 
 /**
  * For suites whose claim is not push: a Notification is still recorded in the app, and delivery

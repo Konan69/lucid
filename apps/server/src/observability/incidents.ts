@@ -326,5 +326,11 @@ const record = Effect.fnUntraced(function* (incident: Incident) {
   })
 })
 
-/** The recorder's Layer. It holds nothing: see `record`. */
-export const incidentsLayer = Layer.succeed(Incidents, Incidents.of({ record }))
+/**
+ * The recorder. It holds nothing (see `record`), so a producer that is an exported program rather
+ * than a Layer provides it with `Effect.provideService` where it says Incidents.
+ */
+export const recorder = Incidents.of({ record })
+
+/** The recorder's Layer. */
+export const incidentsLayer = Layer.succeed(Incidents, recorder)

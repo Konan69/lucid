@@ -23,7 +23,7 @@ import { companyColumnOf, type Actor } from '../auth/access.ts'
 import { ServerConfig } from '../config.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { observeFailures } from '../observability/failure.ts'
-import { causeOf, hop, Incidents } from '../observability/incidents.ts'
+import { causeOf, hop, Incidents, incidentsLayer } from '../observability/incidents.ts'
 import { untraced } from '../observability/quiet.ts'
 import { WatchedApps, WatchConnectionRemoved } from './apps.ts'
 import { ExecutorEvents, type EventDefinition, type ExecutorEventsFailure } from './events.ts'
@@ -390,7 +390,9 @@ export class Watches extends Context.Service<Watches, Effect.Success<ReturnType<
   'vivid/Watches',
 ) {}
 
-export const watchesLayer = Layer.effect(Watches, make()).pipe(Layer.provide(owedStoreLayer))
+export const watchesLayer = Layer.effect(Watches, make()).pipe(
+  Layer.provide([owedStoreLayer, incidentsLayer]),
+)
 
 /**
  * The renewal worker: one pass every ten minutes, scoped to the server, with no detached timer.

@@ -56,7 +56,13 @@ import {
   type HandoffRefusalReason,
   Incident,
 } from '@vivid/contracts'
-import { causeOf, hop, Incidents, type IncidentsService } from '../observability/incidents.ts'
+import {
+  causeOf,
+  hop,
+  Incidents,
+  incidentsLayer,
+  type IncidentsService,
+} from '../observability/incidents.ts'
 import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
 import { egressChosen } from './egress/setting.ts'
 import { type Actor } from '../auth/access.ts'
@@ -1390,7 +1396,8 @@ export const computerStoreLayer = Layer.effect(
       ...ownMachine(state.machine, execute),
     })
   }),
-)
+  // The recorder holds no state (`incidents.ts`), so the Layer that says Incidents provides it.
+).pipe(Layer.provide(incidentsLayer))
 
 type ExecutionFailure = MachineFailure | ReadinessFailure | DatabaseInfrastructureError
 

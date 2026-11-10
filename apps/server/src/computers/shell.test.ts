@@ -65,10 +65,7 @@ import {
   computerShell,
   computerStoreLayer,
 } from './store.ts'
-import { incidentsLayer } from '../observability/incidents.ts'
 
-/** The store as the server composes it: its Incidents go to the real recorder. */
-const computerStores = computerStoreLayer.pipe(Layer.provide(incidentsLayer))
 /**
  * A Computer for tests that is a real SSH server on this machine (`ssh/peer.ts`): its shell and
  * its files are real, and they are reached through the same connection code a Boat machine is.
@@ -200,7 +197,7 @@ describe.skipIf(!testDatabaseConfigured || !peerAvailable)("Vivid's own Computer
         Effect.gen(function* () {
           const { server, machine } = yield* standIn()
           const actor = yield* acting()
-          const store = computerStores.pipe(
+          const store = computerStoreLayer.pipe(
             Layer.provide(Layer.succeed(Machine, machine)),
             Layer.provide(changesLayer),
           )
@@ -309,7 +306,7 @@ describe.skipIf(!testDatabaseConfigured || !peerAvailable)("Vivid's own Computer
       () =>
         Effect.gen(function* () {
           const { server, wakes, machine } = yield* standIn()
-          const store = computerStores.pipe(
+          const store = computerStoreLayer.pipe(
             Layer.provide(Layer.succeed(Machine, machine)),
             Layer.provide(changesLayer),
           )

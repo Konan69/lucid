@@ -25,7 +25,7 @@ import { approvals } from '../approvals/tables.ts'
 import { Database, decodeStored, encodeStored, returned } from '../database/client.ts'
 import { notifications } from '../notifications/tables.ts'
 import { observeFailures } from '../observability/failure.ts'
-import { causeOf, hop, Incidents } from '../observability/incidents.ts'
+import { causeOf, hop, Incidents, incidentsLayer, recorder } from '../observability/incidents.ts'
 import { canSee, findThread } from '../threads/access.ts'
 import { opensAt } from '../threads/place.ts'
 import { Presence } from '../threads/presence.ts'
@@ -332,7 +332,7 @@ export const deliverTarget = Effect.fn('Push.deliverTarget')(function* (input: {
     asks: yield* asksOf(notice),
   })
   yield* makeSend({ database, adapter, targets, presence, incidents })(notice, payload, target)
-})
+}, Effect.provideService(Incidents, recorder))
 
 export interface PushService {
   readonly deliver: (
@@ -348,7 +348,8 @@ export interface PushService {
   >
 }
 export class Push extends Context.Service<Push, PushService>()('vivid/Push') {}
-export const pushLayer = Layer.effect(Push, makePush())
+/** The recorder holds no state (`incidents.ts`), so the Layer that says Incidents provides it. */
+export const pushLayer = Layer.effect(Push, makePush()).pipe(Layer.provide(incidentsLayer))
 
 /** Expo recommends reading tickets after 15 minutes; this pass never repeats a send. */
 const makeReconcile = Effect.fn('Push.reconcile')(function* (services: DeliveryServices) {

@@ -5,7 +5,7 @@ import { Incident, NotificationId, PersonId, PushTargetId, RunId, ThreadId } fro
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
 import { announce, Topic } from '../live/changes.ts'
 import { failureType } from '../observability/failure.ts'
-import { causeOf, hop, Incidents } from '../observability/incidents.ts'
+import { causeOf, hop, Incidents, recorder } from '../observability/incidents.ts'
 import { notifications } from './tables.ts'
 import { deliverTarget } from '../push/delivery.ts'
 import { Settlement } from '../runtime/settlement.ts'
@@ -153,7 +153,7 @@ export const takeNotification = Effect.fn('Notifications.take')(function* () {
       ),
     ),
   )
-})
+}, Effect.provideService(Incidents, recorder))
 
 /** SDK finalizers retry each failed item; this scope also restarts a failed SQL consumer. */
 export const notificationDeliveryLayer = Layer.effectDiscard(
