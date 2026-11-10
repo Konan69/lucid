@@ -1,9 +1,8 @@
 import { ThreadId, type ProjectId } from '@vivid/contracts'
 import { sending, titleFromMessage } from '@vivid/state'
-import { Data, Effect, Option, Result } from 'effect'
+import { Data, Effect, Option } from 'effect'
 import { useMemo } from 'react'
-import { change, changing } from './app'
-import { live } from './live'
+import { change } from './app'
 import { beginThread, useSending, warmConversation } from './sending'
 import { offerNotifications } from './notifying'
 import { router } from '../router'
@@ -85,20 +84,6 @@ export function startThread(message: string, projectId: ProjectId | null = scope
   void router.navigate({ to: '/t/$id', params: { id } })
   return id
 }
-
-/**
- * Opens an empty Thread, for when the Person wants the page before the words. This describes the
- * opening; whoever calls it starts it, and reads where it is filed when it starts.
- */
-const openThread = (projectId: ProjectId | null = scope.filing()) =>
-  Effect.gen(function* () {
-    const id = ThreadId.make(crypto.randomUUID())
-    const created = yield* changing((client) =>
-      client.CreateThread({ id, title: 'New thread', projectId }),
-    )
-    if (Result.isSuccess(created)) void router.navigate({ to: '/t/$id', params: { id } })
-    return created
-  })
 
 /**
  * Tells Vivid to go on in a Thread once a card's wait is over ("GitHub is connected"). It is sent
