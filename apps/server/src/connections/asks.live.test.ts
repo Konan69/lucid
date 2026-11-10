@@ -436,14 +436,6 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
               }),
             )
 
-            yield* Ref.set(
-              observed.review,
-              Review.cases.Reviewed.make({
-                asked: 0.95,
-                beyond: 0.1,
-                contained: 0.1,
-              }),
-            )
             yield* Ref.set(observed.review, Review.cases.Unreviewed.make({ reason: 'Provider' }))
             const fallbackMarker = crypto.randomUUID()
             const beforeFallback = (yield* approvals.inThread(test.personalId)).length
