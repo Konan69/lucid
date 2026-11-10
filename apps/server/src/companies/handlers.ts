@@ -119,9 +119,6 @@ export const companyHandlers = {
       }),
     )
   }),
-  ListPeople: Effect.fn('Rpc.ListPeople')(function* () {
-    return yield* people(yield* requireActor())
-  }),
   WatchPeople: () => live('WatchPeople', [], people),
   /** The store commits its audit and notice before the external invitation notification. */
   InviteMember: Effect.fn('Rpc.InviteMember')(function* (request: InviteMembershipRequest) {

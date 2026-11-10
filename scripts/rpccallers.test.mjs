@@ -41,6 +41,13 @@ void NodeTest.test(
       ['Missing'],
     )
     NodeAssert.match(checkCallers(root).failures.join('\n'), /Missing has no production caller/u)
+    write(
+      '.agents/skills/verify-vivid/scripts/read.mjs',
+      `rpc(state, 'Missing', {}) // rpc(state, 'Read', {})`,
+    )
+    NodeAssert.deepEqual(uncalledProcedures(root), [])
+    write('.agents/skills/verify-vivid/scripts/read.mjs', `const text = "rpc(state, 'Missing')"`)
+    NodeAssert.match(checkCallers(root).failures.join('\n'), /Missing has no production caller/u)
     write('apps/cells/src/main.ts', "client['Missing']({})")
     NodeAssert.deepEqual(uncalledProcedures(root), [])
   },
