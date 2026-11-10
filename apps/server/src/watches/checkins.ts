@@ -17,6 +17,7 @@ import {
   WatchIntent,
   Watch,
   NotFound,
+  InvalidRequest,
   type ProjectId,
   type ConnectionId,
   type RunId,
@@ -155,15 +156,16 @@ const timerConfirmation = Effect.fn('Checkins.confirm')(function* (
   if (found === undefined || !WatchPurpose.guards.Checkin(found.watch.purpose)) return
   const planned = found.watch.purpose
   const read = receipt(output)
-  if (
-    Option.isNone(read) ||
-    read.value.operationKey !== key.value.operationKey ||
-    (CheckinTiming.guards.Chosen(planned.timing) && planned.timing.nextAt !== read.value.nextAt)
-  )
+  if (Option.isNone(read) || read.value.operationKey !== key.value.operationKey)
     return yield* new CheckinNotScheduled({
       watchId: found.watch.id,
       operationKey: key.value.operationKey,
       message: 'The check-in was not scheduled; nothing will wake Vivid for it yet.',
+    })
+  // A real provider arm at a different time needs a corrected plan, not another blind retry.
+  if (CheckinTiming.guards.Chosen(planned.timing) && planned.timing.nextAt !== read.value.nextAt)
+    return yield* new InvalidRequest({
+      message: `The timer is scheduled for ${new Date(read.value.nextAt).toISOString()} (${read.value.nextAt} epoch milliseconds), but this check-in expects ${new Date(planned.timing.nextAt).toISOString()} (${planned.timing.nextAt} epoch milliseconds). Revise the check-in to the intended instant, then arm that same instant with its newly returned operationKey. Retrying the old key keeps the provider's original time.`,
     })
   const purpose = WatchPurpose.cases.Checkin.make({
     focus: planned.focus,
