@@ -552,7 +552,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
       ),
     )
 
-    it.effect('denial and withdrawal leave actions untouched and preserve the terminal cards', () =>
+    it.effect('denial leaves actions untouched and preserves the terminal card', () =>
       scopedCase(
         trustTestServices,
         Effect.gen(function* () {
@@ -594,12 +594,8 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
               }),
             }),
           ])
-          const withdrawn = yield* store.raise(test.vivid, test.connectionAction, test.bound)
-          yield* store.withdraw(test.personal, withdrawn.id)
           const records = yield* store.inThread(test.personalId)
-          expect(records.map((row) => row.state._tag)).toEqual(
-            expect.arrayContaining(['Denied', 'Withdrawn']),
-          )
+          expect(records.map((row) => row.state._tag)).toEqual(['Denied'])
           expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
         }),
         'fresh',

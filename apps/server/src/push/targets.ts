@@ -187,7 +187,7 @@ export class PushTargets extends Context.Service<PushTargets, ReturnType<typeof 
   'vivid/PushTargets',
 ) {}
 
-/** Session deletion cascades; the auth Person-topic publication refreshes WatchPushTargets. */
+/** Session deletion cascades; the auth Person-topic publication refreshes open readers. */
 export const pushTargetsLayer = Layer.effect(
   PushTargets,
   Effect.gen(function* () {

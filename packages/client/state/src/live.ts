@@ -4,7 +4,6 @@ import type {
   ApprovalDecided,
   ApprovalExpired,
   OwedResultUndelivered,
-  SkillReadOnly,
 } from '@vivid/contracts'
 import type { HandoffFailure, InputAnswerFailure, RpcFailure } from '@vivid/contracts/rpc'
 import {
@@ -28,7 +27,6 @@ import * as AtomRegistry from 'effect/reactivity/AtomRegistry'
 /** Everything a product call can fail with: what the server said, or that it could not be reached. */
 export type ProductFailure =
   | RpcFailure
-  | SkillReadOnly
   // Only Vivid's own close of an owed record in the background meets it; a Person's press never does.
   | OwedResultUndelivered
   | ApprovalChanged
@@ -179,7 +177,6 @@ const FINAL = {
   Conflict: true,
   DatabaseFailure: true,
   DatabaseConstraintViolation: true,
-  SkillReadOnly: true,
   OwedResultUndelivered: true,
   InputAnswerCountMismatch: true,
   InputAnswerEmptyWords: true,

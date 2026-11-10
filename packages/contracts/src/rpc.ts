@@ -188,7 +188,6 @@ import {
 } from './failures.js'
 import {
   ArtifactId,
-  ApprovalId,
   ConnectionId,
   InvitationId,
   HandoffId,
@@ -278,8 +277,6 @@ import { StopAllWorkResponse, StopWorkResponse, WorkListResponse, WorkRef } from
 import { PatchSettingsRequest, Settings } from './settings.js'
 import { LocationNotShared, ShareLocationRequest } from './location.js'
 import {
-  SkillReadOnly,
-  PatchSkillRequest,
   SaveSkillRequest,
   SkillListResponse,
   SkillResponse,
@@ -380,7 +377,6 @@ const RegisterPushTarget = Rpc.make('RegisterPushTarget', {
   success: PushTargetResponse,
 })
 const ListPushTargets = Rpc.make('ListPushTargets', { ...call, success: PushTargetListResponse })
-const WatchPushTargets = Rpc.make('WatchPushTargets', { ...live, success: PushTargetListResponse })
 const RemovePushTarget = Rpc.make('RemovePushTarget', { ...call, payload: { id: PushTargetId } })
 const GetPushKey = Rpc.make('GetPushKey', { ...call, success: PushKeyResponse })
 const NotifyPerson = Rpc.make('NotifyPerson', {
@@ -694,8 +690,6 @@ const DecideApproval = Rpc.make('DecideApproval', {
   success: ApprovalResponse,
   error: Schema.Union([RpcFailure, ApprovalChanged, ApprovalExpired, ApprovalDecided]),
 })
-/** Withdraws an Approval the Person no longer wants decided, leaving the action undone. */
-const WithdrawApproval = Rpc.make('WithdrawApproval', { ...call, payload: { id: ApprovalId } })
 /** A read-only check of whether an uncertain outward operation took effect. It never sends anything. */
 const ReconcileAction = Rpc.make('ReconcileAction', {
   ...call,
@@ -1146,7 +1140,6 @@ const WatchMemoryForget = Rpc.make('WatchMemoryForget', {
 
 // ── Skills ─────────────────────────────────────────────────────────────────
 const ListSkills = Rpc.make('ListSkills', { ...call, success: SkillListResponse })
-const WatchSkills = Rpc.make('WatchSkills', { ...live, success: SkillListResponse })
 /** The names and "use when" lines Vivid chooses from, without the full text of each. */
 const ListSkillSummaries = Rpc.make('ListSkillSummaries', {
   ...call,
@@ -1161,17 +1154,6 @@ const SaveSkill = Rpc.make('SaveSkill', {
   ...call,
   payload: SaveSkillRequest,
   success: SkillResponse,
-})
-const PatchSkill = Rpc.make('PatchSkill', {
-  ...call,
-  error: Schema.Union([RpcFailure, SkillReadOnly]),
-  payload: { id: SkillId, patch: PatchSkillRequest },
-  success: SkillResponse,
-})
-const DeleteSkill = Rpc.make('DeleteSkill', {
-  ...call,
-  error: Schema.Union([RpcFailure, SkillReadOnly]),
-  payload: { id: SkillId },
 })
 
 // ── The Computer ───────────────────────────────────────────────────────────
@@ -1439,7 +1421,6 @@ export const VividRpc = RpcGroup.make(
   PublishArtifactFile,
   WatchInbox,
   DecideApproval,
-  WithdrawApproval,
   ReconcileAction,
   AskInput,
   AnswerInput,
@@ -1456,7 +1437,6 @@ export const VividRpc = RpcGroup.make(
   RegisterActivity,
   RegisterPushTarget,
   ListPushTargets,
-  WatchPushTargets,
   RemovePushTarget,
   GetPushKey,
   NotifyPerson,
@@ -1527,12 +1507,9 @@ export const VividRpc = RpcGroup.make(
   WatchMemoryForget,
   ExportMemory,
   ListSkills,
-  WatchSkills,
   ListSkillSummaries,
   ReadSkill,
   SaveSkill,
-  PatchSkill,
-  DeleteSkill,
   GetCapabilities,
   GetComputerHealth,
   RecoverComputer,

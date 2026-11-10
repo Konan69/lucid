@@ -330,10 +330,6 @@ export interface ApprovalStoreService {
     id: ApprovalId,
     outcome: IntegrationAnswerOutcome,
   ) => Effect.Effect<void, NotFound | DatabaseInfrastructureError>
-  readonly withdraw: (
-    actor: Actor,
-    id: ApprovalId,
-  ) => Effect.Effect<ThreadId, NotFound | Conflict | DatabaseInfrastructureError>
   readonly replay: Effect.Effect<void, DatabaseInfrastructureError>
   readonly expire: Effect.Effect<void, NotFound | DatabaseInfrastructureError, IntegrationAnswers>
 }
@@ -1140,36 +1136,6 @@ const settleRecovered = Effect.fn('Approvals.settleRecovered')(
     effect.pipe(Effect.catch(() => Effect.logError('Approval recovery notification failed'))),
 )
 
-/** Withdraw only pending work addressed to the caller, preserving the reason and timestamp. */
-const withdraw = Effect.fn('ApprovalStore.withdraw')(function* (actor: Actor, id: ApprovalId) {
-  const database = yield* Database
-  const scope = and(eq(approvals.id, id), ownedHere(approvals, actor))
-  const found = yield* database.run(database.select().from(approvals).where(scope).limit(1))
-  const value = found[0]
-  if (value === undefined) return yield* new NotFound({ message: 'Approval not found' })
-  const row = yield* decodeRow(value)
-  yield* requireThread(row.threadId, actor.person.id).pipe(
-    Effect.provideService(Database, database),
-  )
-  const rows = yield* database.transaction((tx) =>
-    Effect.gen(function* () {
-      const written = yield* tx
-        .update(approvals)
-        .set({
-          status: 'withdrawn',
-          finishedAt: yield* Clock.currentTimeMillis,
-          outcome: 'Withdrawn by the addressed Person',
-        })
-        .where(and(scope, eq(approvals.status, 'pending')))
-        .returning()
-      if (written.length > 0) yield* announceFeed(tx, [row.threadId])
-      return written
-    }),
-  )
-  if (rows.length === 0) return yield* new Conflict({ message: 'Approval already decided' })
-  return row.threadId
-})
-
 /** Acquires collaborators once; row decoding remains the sole vocabulary for every read surface. */
 export const approvalStoreLayer = Layer.effect(
   ApprovalStore,
@@ -1214,7 +1180,6 @@ export const approvalStoreLayer = Layer.effect(
       raise: (actor, action, binding) => run(raise(actor, action, binding)),
       decide: (actor, request) => run(decide(actor, request)),
       completeIntegration: (id, outcome) => run(completeIntegration(id, outcome)),
-      withdraw: (actor, id) => run(withdraw(actor, id)),
       expire: run(expire()),
       replay: run(replaySignals(signalWriter, Option.none())),
     })
