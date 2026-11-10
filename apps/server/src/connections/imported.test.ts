@@ -161,20 +161,9 @@ describe.skipIf(!testDatabaseConfigured)('An Integration added by address with s
             expect(outcome._tag).toBe('Completed')
             const calls = (yield* Ref.get(remote.requests))
               .slice(before)
-              .filter((request) => request.path === 'POST /mcp')
+              .filter((request) => request.path.endsWith('/tools/call'))
             expect(calls.map((request) => request.body)).toEqual([
-              expect.objectContaining({
-                method: 'tools/call',
-                params: expect.objectContaining({
-                  name: 'call',
-                  arguments: {
-                    calls: {
-                      path: expect.stringContaining('["read"]'),
-                      input: { accountId: 'account', input: {} },
-                    },
-                  },
-                }),
-              }),
+              expect.objectContaining({ tool: 'read', input: { accountId: 'account', input: {} } }),
             ])
 
             const { outcome: otherOutcome } = yield* useTool(personalActor, {

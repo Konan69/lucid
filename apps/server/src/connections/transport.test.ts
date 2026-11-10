@@ -193,15 +193,32 @@ const scenario = <E>(
     }
   }).pipe(Effect.scoped)
 
+const approvalRequiredReply = Schema.TaggedStruct('ToolApprovalRequired', {})
+const elicitationFailedReply = Schema.TaggedStruct('ToolElicitationFailed', {
+  reason: Schema.String,
+  mayHaveWritten: Schema.Boolean,
+})
+
 /** Direct call fixtures name an app that already exists, as their saved references do. */
 const calling = <E>(run: Parameters<typeof scenario<E>>[0]) =>
   scenario((remote) =>
-    Ref.set(remote.apps, [{ id: 'app', name: 'Call fixture' }]).pipe(Effect.andThen(run(remote))),
+    Effect.gen(function* () {
+      yield* Ref.set(remote.apps, [{ id: 'app', name: 'Call fixture' }])
+      yield* Ref.update(
+        remote.replies,
+        (all) =>
+          new Map([
+            ...all,
+            [
+              `POST ${hostedPrefix}/apps/app/tools/call`,
+              { status: 409, body: approvalRequiredReply.make({}) },
+            ],
+          ]),
+      )
+      yield* run(remote)
+    }),
   )
 
-const decodeFailureFixture = Schema.decodeUnknownSync(
-  Schema.Struct({ _tag: Schema.String, problems: Schema.optionalKey(Schema.Json) }),
-)
 const decodeMcpName = Schema.decodeUnknownSync(
   Schema.Struct({ params: Schema.Struct({ name: Schema.String }) }),
 )
@@ -212,61 +229,133 @@ const failRoute = Effect.fn('Executor.TransportTest.failRoute')(function* (
   path: string,
   reply: { readonly status: number; readonly body: Schema.Json },
 ) {
-  if (path === 'POST /apps/app/tools/call') {
-    const detail = decodeFailureFixture(reply.body)
-    yield* Ref.update(
-      remote.replies,
-      (all) =>
-        new Map([
-          ...all,
-          [
-            'POST /mcp',
-            {
-              status: 200,
-              body: {
-                jsonrpc: '2.0',
-                id: 1,
-                result: {
-                  structuredContent: {
-                    status: 'completed',
-                    execution: {
-                      ok: true,
-                      value: {
-                        ok: false,
-                        error: {
-                          kind: 'ToolFailure',
-                          message: 'secret-provider-diagnostic',
-                          response: {
-                            code: detail._tag,
-                            status: reply.status,
-                            message: 'secret-provider-diagnostic',
-                            problems: detail.problems === undefined ? [] : detail.problems,
-                            retryable: false,
-                            recovery: { action: 'Review input' },
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          ],
-        ]),
-    )
-    return
-  }
   yield* Ref.update(
     remote.replies,
     (replies) =>
       new Map([
         ...replies,
-        [`${path.split(' ')[0]} ${hostedPrefix}${path.slice(path.indexOf(' ') + 1)}`, reply],
+        [
+          path === 'POST /mcp'
+            ? path
+            : `${path.split(' ')[0]} ${hostedPrefix}${path.slice(path.indexOf(' ') + 1)}`,
+          reply,
+        ],
       ]),
   )
 })
 
 describe('Executor hosted transport', () => {
+  it.effect('returns an ordinary REST read over 100 KB without entering MCP', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        const value = 'x'.repeat(150_000)
+        yield* Ref.set(remote.result, value)
+        const result = yield* (yield* Executor)
+          .as(installationCaller)
+          .call({ references, tool: 'read', input: {} })
+        expect(result).toEqual(ExecutorCallOutcome.cases.Completed.make({ value }))
+        expect(
+          (yield* Ref.get(remote.requests)).filter((request) => request.path === 'POST /mcp'),
+        ).toHaveLength(0)
+      }),
+    ),
+  )
+
+  it.effect('switches once from the REST approval refusal to the same MCP call', () =>
+    calling((remote) =>
+      Effect.gen(function* () {
+        const result = yield* (yield* Executor)
+          .as(installationCaller)
+          .call({ references, tool: 'read', input: { marker: 'same-call' } })
+        expect(ExecutorCallOutcome.guards.Completed(result)).toBe(true)
+        const posts = (yield* Ref.get(remote.requests)).filter((request) =>
+          request.path.startsWith('POST'),
+        )
+        expect(posts.map((request) => request.path)).toEqual([
+          `POST ${hostedPrefix}/apps/app/tools/call`,
+          'POST /mcp',
+        ])
+        expect(requestAt(posts, 0).body).toEqual({
+          version: 'version',
+          kind: 'query',
+          tool: 'read',
+          input: { marker: 'same-call' },
+        })
+        expect(requestAt(posts, 1).body).toMatchObject({
+          params: {
+            name: 'call',
+            arguments: {
+              calls: { path: 'tools["slug-app"]["read"]', input: { marker: 'same-call' } },
+            },
+          },
+        })
+      }),
+    ),
+  )
+
+  for (const tool of ['read', 'write'] as const) {
+    it.effect(`keeps a truncated MCP ${tool} definite`, () =>
+      calling((remote) =>
+        Effect.gen(function* () {
+          yield* Ref.set(remote.paginated, true)
+          const message =
+            'The tool ran, but its 150001-byte result would pass the 100000-byte output limit.'
+          yield* Ref.set(
+            remote.replies,
+            new Map([
+              ...(yield* Ref.get(remote.replies)),
+              [
+                'POST /mcp',
+                {
+                  status: 200,
+                  body: {
+                    jsonrpc: '2.0',
+                    id: 1,
+                    result: {
+                      structuredContent: {
+                        status: 'completed',
+                        execution: {
+                          ok: true,
+                          value: { ok: false, error: { kind: 'Truncated', message } },
+                        },
+                      },
+                    },
+                  },
+                },
+              ],
+            ]),
+          )
+          const result = yield* (yield* Executor)
+            .as(installationCaller)
+            .call({ references, tool, input: {} })
+          expect(result).toEqual(
+            tool === 'read'
+              ? ExecutorCallOutcome.cases.Rejected.make({ message })
+              : ExecutorCallOutcome.cases.Completed.make({ value: null }),
+          )
+        }),
+      ),
+    )
+  }
+
+  it.effect('never reissues REST typed-input failure through MCP', () =>
+    calling((remote) =>
+      Effect.gen(function* () {
+        yield* failRoute(remote, 'POST /apps/app/tools/call', {
+          status: 409,
+          body: elicitationFailedReply.make({ reason: 'unavailable', mayHaveWritten: true }),
+        })
+        const result = yield* (yield* Executor)
+          .as(installationCaller)
+          .call({ references, tool: 'read', input: {} })
+        expect(ExecutorCallOutcome.guards.UncertainPause(result)).toBe(true)
+        expect(
+          (yield* Ref.get(remote.requests)).filter((request) => request.path === 'POST /mcp'),
+        ).toHaveLength(0)
+      }),
+    ),
+  )
+
   it.effect(
     'retains validation problems, removes sensitive detail, and permits a corrected retry',
     () =>
@@ -362,10 +451,7 @@ describe('Executor hosted transport', () => {
   it.effect('maps an MCP HTTP 401 before decoding its body', () =>
     calling((remote) =>
       Effect.gen(function* () {
-        yield* Ref.set(
-          remote.replies,
-          new Map([['POST /mcp', { status: 401, body: 'private-provider-diagnostic' }]]),
-        )
+        yield* failRoute(remote, 'POST /mcp', { status: 401, body: 'private-provider-diagnostic' })
         const refused = yield* (yield* Executor)
           .as(installationCaller)
           .call({ references, tool: 'read', input: {} })
@@ -379,26 +465,18 @@ describe('Executor hosted transport', () => {
   it.effect('keeps a pre-dispatch JSON-RPC refusal definite even with unrelated error data', () =>
     calling((remote) =>
       Effect.gen(function* () {
-        yield* Ref.set(
-          remote.replies,
-          new Map([
-            [
-              'POST /mcp',
-              {
-                status: 400,
-                body: {
-                  jsonrpc: '2.0',
-                  id: null,
-                  error: {
-                    code: -32602,
-                    message: 'private-provider-diagnostic',
-                    data: { field: 'private-value' },
-                  },
-                },
-              },
-            ],
-          ]),
-        )
+        yield* failRoute(remote, 'POST /mcp', {
+          status: 400,
+          body: {
+            jsonrpc: '2.0',
+            id: null,
+            error: {
+              code: -32602,
+              message: 'private-provider-diagnostic',
+              data: { field: 'private-value' },
+            },
+          },
+        })
         const refused = yield* (yield* Executor)
           .as(installationCaller)
           .call({ references, tool: 'read', input: {} })
@@ -427,6 +505,7 @@ describe('Executor hosted transport', () => {
             kind === 'call'
               ? operations.call({ references, tool: 'read', input: {} })
               : operations.resume({
+                  effect: 'read',
                   pause: IntegrationPause.cases.Input.make({
                     requestId: IntegrationRequestId.make(`elc_${crypto.randomUUID()}`),
                     expiresAt: now + 900_000,
@@ -456,37 +535,29 @@ describe('Executor hosted transport', () => {
     calling((remote) =>
       Effect.gen(function* () {
         for (const kind of ['UnknownTool', 'ToolFailure'] as const) {
-          yield* Ref.set(
-            remote.replies,
-            new Map([
-              [
-                'POST /mcp',
-                {
-                  status: 200,
-                  body: {
-                    jsonrpc: '2.0',
-                    id: 1,
-                    result: {
-                      structuredContent: {
-                        status: 'completed',
-                        execution: {
-                          ok: true,
-                          value: {
-                            ok: false,
-                            error: {
-                              kind,
-                              message: 'private-provider-diagnostic',
-                              response: { code: 'FutureFailure', status: 500, retryable: false },
-                            },
-                          },
-                        },
+          yield* failRoute(remote, 'POST /mcp', {
+            status: 200,
+            body: {
+              jsonrpc: '2.0',
+              id: 1,
+              result: {
+                structuredContent: {
+                  status: 'completed',
+                  execution: {
+                    ok: true,
+                    value: {
+                      ok: false,
+                      error: {
+                        kind,
+                        message: 'private-provider-diagnostic',
+                        response: { code: 'FutureFailure', status: 500, retryable: false },
                       },
                     },
                   },
                 },
-              ],
-            ]),
-          )
+              },
+            },
+          })
           const result = yield* (yield* Executor)
             .as(installationCaller)
             .call({ references, tool: 'read', input: {} })
@@ -500,36 +571,28 @@ describe('Executor hosted transport', () => {
   it.effect('marks an unreadable MCP input form as an uncertain pause', () =>
     calling((remote) =>
       Effect.gen(function* () {
-        yield* Ref.set(
-          remote.replies,
-          new Map([
-            [
-              'POST /mcp',
-              {
-                status: 200,
-                body: {
-                  jsonrpc: '2.0',
-                  id: 1,
-                  result: {
-                    structuredContent: {
-                      status: 'input-required',
-                      requestId: 'elc_invalid-form',
-                      expiresAt: 900_000,
-                      elicitation: {
-                        mode: 'form',
-                        message: 'Unsupported form',
-                        requestedSchema: {
-                          type: 'object',
-                          properties: { unsupported: { type: 'object' } },
-                        },
-                      },
-                    },
+        yield* failRoute(remote, 'POST /mcp', {
+          status: 200,
+          body: {
+            jsonrpc: '2.0',
+            id: 1,
+            result: {
+              structuredContent: {
+                status: 'input-required',
+                requestId: 'elc_invalid-form',
+                expiresAt: 900_000,
+                elicitation: {
+                  mode: 'form',
+                  message: 'Unsupported form',
+                  requestedSchema: {
+                    type: 'object',
+                    properties: { unsupported: { type: 'object' } },
                   },
                 },
               },
-            ],
-          ]),
-        )
+            },
+          },
+        })
         const result = yield* (yield* Executor)
           .as(installationCaller)
           .call({ references, tool: 'read', input: {} })

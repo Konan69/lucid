@@ -393,7 +393,12 @@ export class ExecutorAppNameTaken extends Schema.TaggedError<ExecutorAppNameTake
 /** An upstream 5xx or ToolCallFailed can follow external effects. */
 export class ExecutorExecutionUncertain extends Schema.TaggedError<ExecutorExecutionUncertain>()(
   'ExecutorExecutionUncertain',
-  errorContext,
+  {
+    ...errorContext,
+    cause: Schema.Literals(['Dispatch', 'Elicitation']).pipe(
+      Schema.withConstructorDefault(Effect.succeed('Dispatch')),
+    ),
+  },
   { title: 'Connection outcome unknown' },
 ) {}
 /** A sign-in cannot start without host configuration; preserve the pending foreign references. */
@@ -603,6 +608,7 @@ export interface ExecutorConnectionOperations {
   ) => Effect.Effect<typeof ExecutorCallOutcome.Type, ExecutorFailure>
   readonly resume: (input: {
     readonly pause: IntegrationPause
+    readonly effect: ActionEffect
     readonly response: IntegrationResponse
   }) => Effect.Effect<typeof ExecutorCallOutcome.Type, ExecutorFailure>
   /** Reclaim only resources the Connection store proved unreferenced under its database lock. */
@@ -792,7 +798,11 @@ const FailureMode = Schema.TaggedUnion({
   AccessDenied: {},
   Missing: { resource: Schema.Literals(['App', 'Version', 'Account']) },
   Conflict: {},
-  Uncertain: {},
+  Uncertain: {
+    cause: Schema.Literals(['Dispatch', 'Elicitation']).pipe(
+      Schema.withConstructorDefault(Effect.succeed('Dispatch')),
+    ),
+  },
   Rejected: { message: Schema.String },
   SetupRequired: {},
   ApprovalUnsupported: {},
@@ -883,7 +893,7 @@ const failureModes = {
   BuildMemoryExceeded: FailureMode.cases.Rejected.make({
     message: 'This Integration could not be built within the available memory.',
   }),
-  ToolElicitationFailed: uncertain,
+  ToolElicitationFailed: FailureMode.cases.Uncertain.make({ cause: 'Elicitation' }),
   RequestInvalid: FailureMode.cases.Rejected.make({
     message: 'The request is invalid for this installation.',
   }),
@@ -959,7 +969,8 @@ function translateFailure(tag: typeof knownFailureTag.Type, tool: string | null)
     OAuthClientAmbiguous: (): ExecutorFailure => ExecutorOAuthClientAmbiguous.make(context),
 
     Conflict: (): ExecutorFailure => ExecutorConflict.make(context),
-    Uncertain: (): ExecutorFailure => ExecutorExecutionUncertain.make(context),
+    Uncertain: ({ cause }): ExecutorFailure =>
+      ExecutorExecutionUncertain.make({ ...context, cause }),
     Rejected: ({ message }): ExecutorFailure => ExecutorRejected.make({ ...context, message }),
   })
 }
@@ -2682,9 +2693,7 @@ function discoveryFailed() {
   )
 }
 
-/** MCP has no discovery flag proving a tool cannot elicit, including reads. All tool calls use
- * model mode; management and discovery stay on REST. The account envelope is unchanged.
- */
+/** REST preserves full results and a pinned version. Only a pre-execution approval refusal starts MCP. */
 function makeCall(
   http: ExecutorHttp,
   discover: ReturnType<typeof makeDiscovery>,
@@ -2706,50 +2715,55 @@ function makeCall(
         return ExecutorCallOutcome.cases.Rejected.make({
           message: 'Tool not found. Discover the current tools.',
         })
-      const app = yield* http.readApp(
-        Effect.succeed(HttpClientRequest.get(`/apps/${query(references.app)}`)),
-        tool,
-      )
-      const path = `tools[${JSON.stringify(app.slug)}]${tool
-        .split('.')
-        .map((part) => `[${JSON.stringify(part)}]`)
-        .join('')}`
-      const outcome = yield* mcp(
-        'call',
-        {
-          calls: {
-            path,
-            input: ToolAccount.match(selected.account, {
-              Direct: () => input,
-              Account: ({ accountId }) => ({ accountId, input }),
+      const routed = ToolAccount.match(selected.account, {
+        Direct: () => input,
+        Account: ({ accountId }) => ({ accountId, input }),
+      })
+      return yield* http
+        .readCall(
+          post(`/apps/${query(references.app)}/tools/call`, {
+            version: catalog.version,
+            kind: selected.tool.effect === 'read' ? 'query' : 'mutation',
+            tool,
+            input: routed,
+          }),
+          tool,
+        )
+        .pipe(
+          Effect.map(completedCall),
+          Effect.catchTag('ExecutorApprovalUnsupported', () =>
+            callPaused(http, mcp, {
+              references,
+              tool,
+              input: routed,
+              effect: selected.tool.effect,
             }),
-          },
-        },
-        tool,
-      ).pipe(
-        Effect.map(fromMcp),
-        Effect.catchTags({
-          ExecutorInputInvalid: ({ problems }) =>
-            Effect.succeed(
-              ExecutorCallOutcome.cases.Rejected.make({
-                message: 'Input did not match the tool schema. Correct its input and retry.',
-                problems: validationProblems(problems, [
-                  references.app,
-                  catalog.version,
-                  ...('account' in references ? [references.account] : []),
-                ]),
-              }),
-            ),
-
-          ExecutorExecutionUncertain: () =>
-            Effect.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({})),
-          ExecutorTransportFailure: () =>
-            Effect.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({})),
-          ExecutorResponseInvalid: () =>
-            Effect.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({})),
-        }),
-      )
-      return outcome
+          ),
+          Effect.catchTags({
+            ExecutorInputInvalid: ({ problems }) =>
+              Effect.succeed(
+                ExecutorCallOutcome.cases.Rejected.make({
+                  message: 'Input did not match the tool schema. Correct its input and retry.',
+                  problems: validationProblems(problems, [
+                    references.app,
+                    catalog.version,
+                    ...('account' in references ? [references.account] : []),
+                  ]),
+                }),
+              ),
+            // REST supplies no elicitation handler. App code may have acted before ctx.elicit failed; never issue it again.
+            ExecutorExecutionUncertain: ({ cause }) =>
+              Effect.succeed(
+                cause === 'Elicitation'
+                  ? ExecutorCallOutcome.cases.UncertainPause.make({})
+                  : ExecutorCallOutcome.cases.OutcomeUnknown.make({}),
+              ),
+            ExecutorTransportFailure: () =>
+              Effect.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({})),
+            ExecutorResponseInvalid: () =>
+              Effect.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({})),
+          }),
+        )
     },
     (effect) =>
       effect.pipe(
@@ -2762,9 +2776,35 @@ function makeCall(
   )
 }
 
+/** The REST approval refusal precedes the selected handler, so the same pinned input may enter model-mode MCP once. */
+const callPaused = Effect.fn('Executor.callPaused')(function* (
+  http: ExecutorHttp,
+  mcp: ReturnType<typeof mcpCalls>,
+  call: {
+    readonly references: ExecutorActiveReferences
+    readonly tool: string
+    readonly input: Schema.Json
+    readonly effect: ActionEffect
+  },
+) {
+  const app = yield* http.readApp(
+    Effect.succeed(HttpClientRequest.get(`/apps/${query(call.references.app)}`)),
+    call.tool,
+  )
+  const path = `tools[${JSON.stringify(app.slug)}]${call.tool
+    .split('.')
+    .map((part) => `[${JSON.stringify(part)}]`)
+    .join('')}`
+  return fromMcp(yield* mcp('call', { calls: { path, input: call.input } }, call.tool), call.effect)
+})
+
 /** Preserve pauses and expiry before interpreting an ordinary provider result. */
-const fromMcp = (outcome: McpCallOutcome) =>
+const fromMcp = (outcome: McpCallOutcome, effect: ActionEffect) =>
   McpCallOutcome.match<typeof ExecutorCallOutcome.Type>(outcome, {
+    Truncated: ({ message }) =>
+      effect === 'read'
+        ? ExecutorCallOutcome.cases.Rejected.make({ message })
+        : ExecutorCallOutcome.cases.Completed.make({ value: null }),
     Completed: ({ value }) => completedCall(value),
     Paused: ({ pause }) => ExecutorCallOutcome.cases.Paused.make({ pause }),
     Expired: () => ExecutorCallOutcome.cases.Expired.make({}),
@@ -2779,6 +2819,7 @@ function makeResume(mcp: ReturnType<typeof mcpCalls>) {
   return Effect.fn('Executor.resume')(function* ({
     pause,
     response,
+    effect,
   }: Parameters<ExecutorConnectionOperations['resume']>[0]) {
     if (pause.expiresAt <= (yield* Clock.currentTimeMillis))
       return ExecutorCallOutcome.cases.Expired.make({})
@@ -2793,6 +2834,7 @@ function makeResume(mcp: ReturnType<typeof mcpCalls>) {
           ExecutorResponseInvalid: () => Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),
         }),
       ),
+      effect,
     )
   })
 }

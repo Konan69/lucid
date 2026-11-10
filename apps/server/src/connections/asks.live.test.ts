@@ -1,3 +1,4 @@
+import { connections } from './tables.ts'
 import { inputRequests } from '../inputs/tables.ts'
 import { actionRunnerLayer } from '../approvals/runner.ts'
 import { DeviceRegistry } from '../computers/device.ts'
@@ -85,7 +86,7 @@ export default defineApp({}, { tools: router({
     ctx.sql.exec('INSERT INTO effects VALUES (?, ?)', marker, 'approved');
     return {marker};
   }),
-  input: mutation({ input, description: 'Ask for typed values after acting' }, async (ctx, {marker}) => {
+  input: mutation({ input, description: 'Ask for typed values after approval', approval: always() }, async (ctx, {marker}) => {
     ctx.sql.exec('INSERT INTO effects VALUES (?, ?)', marker, 'before-input');
     const answer = await ctx.elicit({mode:'form', message:'Name and configure this result', requestedSchema:{
       type:'object', properties:{name:{type:'string',description:'Result name'},count:{type:'integer'},enabled:{type:'boolean'},color:{type:'string',enum:['red','blue']},note:{type:'string'}}, required:['name','count','enabled','color']
@@ -93,7 +94,9 @@ export default defineApp({}, { tools: router({
     ctx.sql.exec('UPDATE effects SET phase = ? WHERE marker = ?', JSON.stringify(answer), marker);
     return answer;
   }),
-  question: query({input,description:'Ask without a write'}, async (ctx) => ctx.elicit({mode:'form',message:'Name the read',requestedSchema:{type:'object',properties:{name:{type:'string'}},required:['name']}})),
+  question: query({input,description:'Ask without a write',approval:always()}, async (ctx) => ctx.elicit({mode:'form',message:'Name the read',requestedSchema:{type:'object',properties:{name:{type:'string'}},required:['name']}})),
+  large: query({input:object({}),description:'Read a complete large result'}, async () => 'x'.repeat(150_000)),
+  bare: mutation({input,description:'Act before an unsupported REST input request'}, async (ctx,{marker}) => { ctx.sql.exec('INSERT INTO effects VALUES (?, ?)',marker,'before-input'); return await ctx.elicit({mode:'form',message:'Unsafe to repeat',requestedSchema:{type:'object',properties:{name:{type:'string'}},required:['name']}}); }),
   inspect: query({input,description:'Read the proof effect'}, async (ctx, {marker}) => ctx.sql.exec('SELECT * FROM effects WHERE marker = ?', marker).toArray())
 })});`,
     },
@@ -249,6 +252,58 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
                 }),
               }
             })
+            const startInput = Effect.fn('IntegrationAsksProof.startInput')(function* (
+              marker: string,
+            ) {
+              const begun = yield* start('input', marker)
+              if (!ToolOutcome.guards.ApprovalRequired(begun.result.outcome))
+                return expect.fail('Expected REST to switch to an MCP Approval')
+              const id = begun.result.outcome.approvalId
+              const approval = (yield* approvals.inbox(test.personal)).find(
+                (item) => item.id === id,
+              )
+              if (approval === undefined) return expect.fail('Expected saved approval')
+              const answered = yield* approvals.decide(test.personal, {
+                id,
+                digest: approval.digest,
+                decision: ApprovalDecision.cases.AllowOnce.make({}),
+              })
+              expect(ApprovalState.guards.Succeeded(answered.state)).toBe(true)
+              if (answered.integrationOutcome === null)
+                return expect.fail('Expected waiting outcome')
+              expect(IntegrationAnswerOutcome.guards.Waiting(answered.integrationOutcome)).toBe(
+                true,
+              )
+              const request = (yield* inputs.inbox(test.personal)).find(
+                (item) =>
+                  item.integration !== null &&
+                  item.integration.continuation !== null &&
+                  item.integration.continuation.operation === begun.operation,
+              )
+              if (request === undefined) return expect.fail('Expected next Input request')
+              return { operation: begun.operation, request }
+            })
+            const largeBefore = (yield* Ref.get(sent)).length
+            expect(
+              yield* operations.call({ references: row.references, tool: 'large', input: {} }),
+            ).toEqual(ExecutorCallOutcome.cases.Completed.make({ value: 'x'.repeat(150_000) }))
+            expect((yield* Ref.get(sent)).length).toBe(largeBefore)
+            const bareMarker = crypto.randomUUID()
+            const bareBefore = (yield* Ref.get(sent)).length
+            const bare = yield* start('bare', bareMarker)
+            expect(ToolOutcome.guards.OutcomeUnknown(bare.result.outcome)).toBe(true)
+            expect((yield* Ref.get(sent)).length).toBe(bareBefore)
+            expect(
+              yield* operations.call({
+                references: row.references,
+                tool: 'inspect',
+                input: { marker: bareMarker },
+              }),
+            ).toEqual(
+              ExecutorCallOutcome.cases.Completed.make({
+                value: [{ marker: bareMarker, phase: 'before-input' }],
+              }),
+            )
             const refused = yield* operations.call({
               references: row.references,
               tool: 'inspect',
@@ -287,8 +342,8 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
               summary: 'Name the read',
               rationale: 'Prove a read acquires its journal only when paused',
             })
-            if (!ToolOutcome.guards.InputRequired(readPause.outcome))
-              return expect.fail('Expected paused read')
+            if (!ToolOutcome.guards.ApprovalRequired(readPause.outcome))
+              return expect.fail('Expected paused read approval')
             expect(
               yield* database.run(
                 database
@@ -297,8 +352,26 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
                   .where(eq(actions.id, operationOf.call(test.personalId, readPauseId))),
               ),
             ).toHaveLength(1)
+            const readApprovalId = readPause.outcome.approvalId
+            const readApproval = (yield* approvals.inbox(test.personal)).find(
+              (item) => item.id === readApprovalId,
+            )
+            if (readApproval === undefined) return expect.fail('Expected read Approval')
+            yield* approvals.decide(test.personal, {
+              id: readApproval.id,
+              digest: readApproval.digest,
+              decision: ApprovalDecision.cases.AllowOnce.make({}),
+            })
+            const readInput = (yield* inputs.inbox(test.personal)).find(
+              (item) =>
+                item.integration !== null &&
+                item.integration.continuation !== null &&
+                item.integration.continuation.operation ===
+                  operationOf.call(test.personalId, readPauseId),
+            )
+            if (readInput === undefined) return expect.fail('Expected read input')
             yield* inputs.answerIntegration(test.personal, {
-              id: readPause.outcome.requestId,
+              id: readInput.id,
               response: { action: 'accept', content: { name: 'Ada' } },
             })
             const pendingBeforeDraw = (yield* inputs.inbox(test.personal)).length
@@ -401,13 +474,8 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
                 }),
               )
             }
-            const typed = yield* start('input', crypto.randomUUID())
-            if (!ToolOutcome.guards.InputRequired(typed.result.outcome))
-              return expect.fail('Expected Input request')
-            const message = yield* Effect.succeed(typed.result.outcome)
-            const request = (yield* inputs.inbox(test.personal)).find(
-              (item) => item.id === message.requestId,
-            )
+            const typed = yield* startInput(crypto.randomUUID())
+            const request = typed.request
             if (
               request === undefined ||
               request.integration === null ||
@@ -434,18 +502,15 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
             )
             expect((yield* Ref.get(sent)).slice(typedBefore)).toEqual(['resume'])
             const approvalLost = yield* start('approve', crypto.randomUUID())
-            const inputLost = yield* start('input', crypto.randomUUID())
-            if (
-              !ToolOutcome.guards.ApprovalRequired(approvalLost.result.outcome) ||
-              !ToolOutcome.guards.InputRequired(inputLost.result.outcome)
-            )
+            const inputLost = yield* startInput(crypto.randomUUID())
+            if (!ToolOutcome.guards.ApprovalRequired(approvalLost.result.outcome))
               return expect.fail('Expected two pauses')
             const approvalId = approvalLost.result.outcome.approvalId
             const savedApproval = (yield* approvals.inbox(test.personal)).find(
               (item) => item.id === approvalId,
             )
             if (savedApproval === undefined) return expect.fail('Expected Approval')
-            const lostInput = yield* Effect.succeed(inputLost.result.outcome)
+            const lostInput = inputLost.request
             yield* restart()
             const beforeLost = (yield* Ref.get(sent)).length
             const expiredApproval = yield* approvals.decide(test.personal, {
@@ -457,7 +522,7 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
               return expect.fail('Expected expired outcome')
             expect(expiredApproval.integrationOutcome._tag).toBe('Expired')
             const expiredInput = yield* inputs.answerIntegration(test.personal, {
-              id: lostInput.requestId,
+              id: lostInput.id,
               response: { action: 'accept', content: values },
             })
             expect(expiredInput.outcome._tag).toBe('Expired')
@@ -496,6 +561,19 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
                 digest: parent.digest,
                 decision: ApprovalDecision.cases.AllowOnce.make({}),
               })
+              if (tool !== 'approve') {
+                const child = (yield* approvals.inbox(test.personal)).find(
+                  (item) =>
+                    item.action.continuation !== null &&
+                    item.action.continuation.operation === operationOf.approval(parent.id),
+                )
+                if (child === undefined) return expect.fail('Expected child Approval before input')
+                yield* approvals.decide(test.personal, {
+                  id: child.id,
+                  digest: child.digest,
+                  decision: ApprovalDecision.cases.AllowOnce.make({}),
+                })
+              }
               expiring.push(parent.id)
             }
             const future = (yield* Clock.currentTimeMillis) + 16 * 60 * 1000
@@ -562,27 +640,41 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
               operation: Option.some(failedOperation),
               policy: DisplayCallPolicy.cases.Press.make({}),
             })
-            if (!ToolOutcome.guards.InputRequired(asked.outcome))
-              return expect.fail('Expected input before Connection removal')
+            if (!ToolOutcome.guards.ApprovalRequired(asked.outcome))
+              return expect.fail('Expected approval before input')
+            const doomedApprovalId = asked.outcome.approvalId
+            const doomedApproval = (yield* approvals.inbox(test.personal)).find(
+              (item) => item.id === doomedApprovalId,
+            )
+            if (doomedApproval === undefined) return expect.fail('Expected child approval')
+            yield* approvals.decide(test.personal, {
+              id: doomedApproval.id,
+              digest: doomedApproval.digest,
+              decision: ApprovalDecision.cases.AllowOnce.make({}),
+            })
+            const doomedInput = (yield* inputs.inbox(test.personal)).find(
+              (item) =>
+                item.integration !== null &&
+                item.integration.continuation !== null &&
+                item.integration.continuation.operation === failedOperation,
+            )
+            if (doomedInput === undefined) return expect.fail('Expected Input request')
             // An unrelated caller cannot recover another Person's in-flight answer before winning a claim.
             yield* database.run(
               database
                 .update(inputRequests)
                 .set({ status: 'answering' })
-                .where(eq(inputRequests.id, asked.outcome.requestId)),
+                .where(eq(inputRequests.id, doomedInput.id)),
             )
             const denied = yield* inputs
               .answerIntegration(test.other, {
-                id: asked.outcome.requestId,
+                id: doomedInput.id,
                 response: { action: 'decline' },
               })
               .pipe(Effect.result)
             expect(Result.isFailure(denied)).toBe(true)
             const [stillHeld] = yield* database.run(
-              database
-                .select()
-                .from(inputRequests)
-                .where(eq(inputRequests.id, asked.outcome.requestId)),
+              database.select().from(inputRequests).where(eq(inputRequests.id, doomedInput.id)),
             )
             if (stillHeld === undefined) return expect.fail('Expected the addressed request')
             expect(stillHeld.status).toBe('answering')
@@ -590,11 +682,11 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
               database
                 .update(inputRequests)
                 .set({ status: 'waiting' })
-                .where(eq(inputRequests.id, asked.outcome.requestId)),
+                .where(eq(inputRequests.id, doomedInput.id)),
             )
             yield* store.remove(test.personal, doomedRow.id)
             const uncertain = yield* inputs.answerIntegration(test.personal, {
-              id: asked.outcome.requestId,
+              id: doomedInput.id,
               response: {
                 action: 'accept',
                 content: { name: 'Ada', count: 1, enabled: true, color: 'red' },
@@ -609,6 +701,64 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
             expect(ActionReceipt.guards.Unknown(yield* decodeReceipt(failedReceipt.receipt))).toBe(
               true,
             )
+            const failedApprovals = []
+            for (const decision of [
+              ApprovalDecision.cases.Deny.make({}),
+              ApprovalDecision.cases.Cancel.make({}),
+            ]) {
+              const parent = yield* approvals.raise(
+                test.vivid,
+                ProposedAction.make({
+                  summary: 'Answer a removed Integration',
+                  rationale: 'Prove failed Approval answers settle',
+                  effect: 'write',
+                  target: ActionTarget.cases.Connection.make({
+                    connectionId: row.id,
+                    account: 'Proof',
+                    tool: 'approve',
+                    input: { marker: crypto.randomUUID() },
+                  }),
+                }),
+                ApprovalBinding.make({
+                  connectionGeneration: row.authorizationGeneration,
+                  preconditions: [],
+                }),
+              )
+              yield* approvals.decide(test.personal, {
+                id: parent.id,
+                digest: parent.digest,
+                decision: ApprovalDecision.cases.AllowOnce.make({}),
+              })
+              const child = (yield* approvals.inbox(test.personal)).find(
+                (item) =>
+                  item.action.continuation !== null &&
+                  item.action.continuation.operation === operationOf.approval(parent.id),
+              )
+              if (child === undefined) return expect.fail('Expected pending child')
+              failedApprovals.push({ parent, child, decision })
+            }
+            yield* database.run(database.delete(connections).where(eq(connections.id, row.id)))
+            for (const { parent, child, decision } of failedApprovals) {
+              const settled = yield* approvals.decide(test.personal, {
+                id: child.id,
+                digest: child.digest,
+                decision,
+              })
+              expect(ApprovalState.guards.OutcomeUnknown(settled.state)).toBe(true)
+              const ended = (yield* approvals.inThread(test.personalId)).find(
+                (item) => item.id === parent.id,
+              )
+              if (ended === undefined) return expect.fail('Expected settled parent')
+              expect(ApprovalState.guards.OutcomeUnknown(ended.state)).toBe(true)
+              const [saved] = yield* database.run(
+                database
+                  .select()
+                  .from(actions)
+                  .where(eq(actions.id, operationOf.approval(parent.id))),
+              )
+              if (saved === undefined) return expect.fail('Expected original receipt')
+              expect(ActionReceipt.guards.Unknown(yield* decodeReceipt(saved.receipt))).toBe(true)
+            }
           }).pipe(Effect.provide(complete))
         }),
       { timeout: 240_000 },

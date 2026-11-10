@@ -1,3 +1,4 @@
+import * as Exit from 'effect/Exit'
 import * as Match from 'effect/Match'
 import { DeliveryMessage } from '../threads/conversation.ts'
 import { IntegrationAnswerOutcome, SignalCue } from '@vivid/contracts'
@@ -6,7 +7,7 @@ import { integrationAnswerText } from '../connections/asks.ts'
 import * as NodeCrypto from 'node:crypto'
 import * as Array from 'effect/Array'
 import * as Result from 'effect/Result'
-import { and, asc, eq, gt, lt, lte, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, lt, lte, or, isNull, sql } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
@@ -413,7 +414,14 @@ type PendingRow = typeof Row.cases.pending.Type
  * Approvals second (`stale.ts`), so both sides take locks in the same order and a claim racing a
  * change waits for it instead of deadlocking with it.
  */
-const drift = Effect.fn('Approvals.drift')(function* (tx: Transaction, row: PendingRow) {
+const drift = Effect.fn('Approvals.drift')(function* (
+  tx: Transaction,
+  row: PendingRow,
+  decision: ApprovalDecision,
+) {
+  // Declining a remote question never dispatches the stored action, even if its Connection disappeared.
+  if (row.action.continuation !== null && ApprovalDecision.isAnyOf(['Deny', 'Cancel'])(decision))
+    return Option.none<ApprovalInvalidation>()
   if (ActionTarget.guards.Connection(row.action.target)) {
     const connectionId = row.action.target.connectionId
     const [current] = yield* tx
@@ -587,7 +595,9 @@ const claim = Effect.fn('Approvals.claim')(function* (
       : Option.none<ApprovalInvalidation>()
   const end = yield* database.transaction((tx) =>
     Effect.gen(function* () {
-      const local = Row.guards.pending(row) ? yield* drift(tx, row) : Option.none()
+      const local = Row.guards.pending(row)
+        ? yield* drift(tx, row, request.decision)
+        : Option.none()
       const changedBy = Option.isNone(local) ? external : local
       if (Option.isNone(changedBy)) return yield* move(tx, row, { actor, request, now, action })
       yield* invalidatePending(tx, scope, changedBy.value)
@@ -615,7 +625,7 @@ const claim = Effect.fn('Approvals.claim')(function* (
 
 /** A refusal already knows its result; permission owes the result of the once-only action. */
 const decisionSignal = (row: typeof Row.Type, decision: ApprovalDecision, deciderId: PersonId) =>
-  ApprovalDecision.isAnyOf(['Deny', 'Cancel'])(decision)
+  row.action.continuation === null && ApprovalDecision.isAnyOf(['Deny', 'Cancel'])(decision)
     ? owed(row.id, row.action.summary, Conclusion.cases.Denied.make({}), deciderId)
     : Signal.cases.Awaiting.make({ idempotencyKey: approvalKey(row.id) })
 
@@ -755,7 +765,8 @@ const finishIntegration = Effect.fn('Approvals.finishIntegration')(function* (
   const status = IntegrationAnswerOutcome.match(outcome, {
     Completed: () => 'succeeded',
     Accepted: () => 'succeeded',
-    Waiting: () => 'executing',
+    Waiting: () => 'succeeded',
+    Rejected: () => 'failed',
     Declined: () => 'denied',
     Cancelled: () => 'denied',
     Expired: () => 'unknown',
@@ -772,17 +783,13 @@ const finishIntegration = Effect.fn('Approvals.finishIntegration')(function* (
       .update(approvals)
       .set({
         status,
-        outcome: status === 'succeeded' ? body : null,
-        finishedAt: status === 'denied' || status === 'executing' ? null : now,
+        outcome: status === 'succeeded' || status === 'failed' ? body : null,
+        finishedAt: status === 'denied' ? null : now,
         integrationOutcome: yield* encodeStored(
           IntegrationAnswerOutcome,
           'Integration approval answer',
         )(outcome),
-        signal: yield* encodeSignal(
-          status === 'executing'
-            ? Signal.cases.Awaiting.make({ idempotencyKey: approvalKey(row.id) })
-            : signal,
-        ),
+        signal: yield* encodeSignal(signal),
         signalDueAt: now,
       })
       .where(and(eq(approvals.id, row.id), eq(approvals.status, row.status)))
@@ -816,29 +823,66 @@ const completeIntegration = Effect.fn('Approvals.completeIntegration')(function*
 })
 
 /** Answer the saved request instead of running the approved action again. The ordinary claim fences duplicate decisions. */
-const answerPausedApproval = Effect.fn('Approvals.answerIntegration')(function* (
-  actor: Actor,
-  row: typeof Row.Type,
-  request: DecideApprovalRequest,
-) {
-  const response = ApprovalDecision.guards.Cancel(request.decision)
-    ? { action: 'cancel' as const }
-    : ApprovalDecision.guards.Deny(request.decision)
-      ? { action: 'decline' as const }
-      : { action: 'accept' as const, content: {} }
-  const outcome = yield* (yield* IntegrationAnswers).answer(
-    { ...actor, by: 'vivid' },
-    row.action,
-    response,
+const answerPausedApproval = Effect.fn('Approvals.answerIntegration')(
+  function* (actor: Actor, row: typeof Row.Type, request: DecideApprovalRequest) {
+    const response = ApprovalDecision.guards.Cancel(request.decision)
+      ? { action: 'cancel' as const }
+      : ApprovalDecision.guards.Deny(request.decision)
+        ? { action: 'decline' as const }
+        : { action: 'accept' as const, content: {} }
+    const approval = yield* Effect.gen(function* () {
+      const outcome = yield* (yield* IntegrationAnswers).answer(
+        { ...actor, by: 'vivid' },
+        row.action,
+        response,
+      )
+      return yield* finishIntegration(row, outcome)
+    }).pipe(
+      Effect.catch(
+        Effect.fnUntraced(function* () {
+          const outcome = IntegrationAnswerOutcome.cases.Uncertain.make({})
+          yield* (yield* IntegrationAnswers).settle(row.action, outcome)
+          return yield* finishIntegration(row, outcome)
+        }),
+      ),
+    )
+    yield* (yield* Audit).record(
+      actor,
+      ApprovalDecision.isAnyOf(['Deny', 'Cancel'])(request.decision)
+        ? AuditEvent.cases.ActionDenied.make(auditAction(row.action))
+        : AuditEvent.cases.ActionApproved.make(auditAction(row.action)),
+    )
+    return approval
+  },
+  (effect, _actor, row) =>
+    effect.pipe(
+      Effect.onExit((exit) => (Exit.isFailure(exit) ? recoverApprovalAnswer(row.id) : Effect.void)),
+    ),
+)
+
+/** Recovery belongs only to this winning answer claim. A terminal child or a later answer is never reopened. */
+const recoverApprovalAnswer = Effect.fn('Approvals.recoverAnswer')(function* (id: ApprovalId) {
+  const database = yield* Database
+  const values = yield* database.run(
+    database
+      .select()
+      .from(approvals)
+      .where(
+        and(
+          eq(approvals.id, id),
+          or(eq(approvals.status, 'executing'), eq(approvals.status, 'denied')),
+          isNull(approvals.integrationOutcome),
+        ),
+      )
+      .limit(1),
   )
-  const approval = yield* finishIntegration(row, outcome)
-  yield* (yield* Audit).record(
-    actor,
-    ApprovalDecision.isAnyOf(['Deny', 'Cancel'])(request.decision)
-      ? AuditEvent.cases.ActionDenied.make(auditAction(row.action))
-      : AuditEvent.cases.ActionApproved.make(auditAction(row.action)),
-  )
-  return approval
+  const value = values[0]
+  if (value === undefined) return
+  const row = yield* decodeRow(value)
+  if (row.action.continuation === null) return
+  const outcome = IntegrationAnswerOutcome.cases.Uncertain.make({})
+  yield* (yield* IntegrationAnswers).settle(row.action, outcome)
+  yield* finishIntegration(row, outcome)
 })
 
 /** Denials settle immediately; approvals execute the stored action exactly once after the SQL claim. */
@@ -1035,7 +1079,14 @@ const expire = Effect.fn('Approvals.expire')(function* () {
         .from(approvals)
         .where(
           and(
-            eq(approvals.status, 'executing'),
+            or(
+              eq(approvals.status, 'executing'),
+              and(
+                eq(approvals.status, 'denied'),
+                isNull(approvals.integrationOutcome),
+                sql`${approvals.action}->'continuation'->'pause' IS NOT NULL`,
+              ),
+            ),
             lt(approvals.decidedAt, now - 10 * 60 * 1000),
             sql`${approvals.integrationOutcome}->>'_tag' IS DISTINCT FROM 'Waiting'`,
           ),

@@ -15,7 +15,7 @@ import { Clock, Effect, Layer, Option, Result } from 'effect'
 import { ApprovalStore } from '../approvals/store.ts'
 import { InputStore } from '../inputs/store.ts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
-import { resultDigest, settle, originOf } from '../actions/journal.ts'
+import { resultDigest, settle, originOf, release } from '../actions/journal.ts'
 import type { Actor } from '../auth/access.ts'
 import { ConnectionStore } from './store.ts'
 import { ExecutorCallOutcome } from './executor.ts'
@@ -64,6 +64,7 @@ const record = Effect.fn('IntegrationAsks.record')(function* (
   if (action.continuation === null) return
   const operationId = action.continuation.operation
   const now = yield* Clock.currentTimeMillis
+  const origin = yield* originOf(operationId)
   yield* IntegrationAnswerOutcome.match(outcome, {
     Accepted: () => settle(ActionReceipt.cases.Accepted.make({ operationId, acceptedAt: now })),
     Completed: ({ value }) =>
@@ -74,6 +75,7 @@ const record = Effect.fn('IntegrationAsks.record')(function* (
           resultDigest: resultDigest(value),
         }),
       ),
+    Rejected: () => release(operationId),
     Waiting: () => Effect.void,
     Expired: () => settle(ActionReceipt.cases.Unknown.make({ operationId, observedAt: now })),
     Uncertain: () => settle(ActionReceipt.cases.Unknown.make({ operationId, observedAt: now })),
@@ -81,7 +83,6 @@ const record = Effect.fn('IntegrationAsks.record')(function* (
     Declined: () => settle(ActionReceipt.cases.Unknown.make({ operationId, observedAt: now })),
     Cancelled: () => settle(ActionReceipt.cases.Unknown.make({ operationId, observedAt: now })),
   })
-  const origin = yield* originOf(operationId)
   if (origin.approvalId !== null)
     yield* (yield* ApprovalStore).completeIntegration(origin.approvalId, outcome)
 })
@@ -97,7 +98,9 @@ const answer = Effect.fn('IntegrationAsks.answer')(function* (
   const row = yield* (yield* ConnectionStore).get(actor, action.target.connectionId)
   const saved = action.continuation
   const resumed = yield* operationsOf(row).pipe(
-    Effect.flatMap((operation) => operation.resume({ pause: saved.pause, response })),
+    Effect.flatMap((operation) =>
+      operation.resume({ pause: saved.pause, response, effect: action.effect }),
+    ),
     Effect.result,
   )
   const result = Result.isSuccess(resumed)
@@ -143,10 +146,10 @@ const answer = Effect.fn('IntegrationAsks.answer')(function* (
           : declined(response),
       ),
     NotReady: () => Effect.succeed(IntegrationAnswerOutcome.cases.Uncertain.make({})),
-    Rejected: () =>
+    Rejected: ({ message, problems }) =>
       Effect.succeed(
         response.action === 'accept'
-          ? IntegrationAnswerOutcome.cases.Uncertain.make({})
+          ? IntegrationAnswerOutcome.cases.Rejected.make({ message, problems })
           : declined(response),
       ),
   })
@@ -166,6 +169,7 @@ export const integrationAnswerText = (outcome: IntegrationAnswerOutcome) =>
     Accepted: ({ value }) =>
       `The Integration accepted the saved call; its result is not confirmed yet. ${JSON.stringify(value)}`,
     Completed: ({ value }) => `The Integration completed the saved call. ${JSON.stringify(value)}`,
+    Rejected: ({ message }) => message,
     Declined: () => 'The Person declined the Integration request. Do not repeat it.',
     Cancelled: () => 'The Person cancelled the Integration request. Do not repeat it.',
     Expired: () => integrationExpiredMessage,

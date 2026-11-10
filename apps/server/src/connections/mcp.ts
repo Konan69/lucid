@@ -86,6 +86,7 @@ const callResult = Schema.Union([
 
 export const McpCallOutcome = Schema.TaggedUnion({
   Completed: { value: Schema.Json },
+  Truncated: { message: Schema.String },
   Paused: { pause: IntegrationPause },
   Expired: {},
   Uncertain: {
@@ -259,6 +260,8 @@ const rejectedCall = Effect.fn('Executor.mcpFailure')(function* (
   failure: typeof diagnostic.Type,
   tool: string | null,
 ) {
+  if (failure.kind === 'Truncated')
+    return McpCallOutcome.cases.Truncated.make({ message: failure.message })
   if (failure.kind === 'UnknownTool') return yield* mcpFailure('ToolNotFound', tool, [])
   if (failure.kind !== 'ToolFailure' && failure.kind !== 'ExecutionFailure')
     return McpCallOutcome.cases.Uncertain.make({})

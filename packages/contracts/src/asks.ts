@@ -65,6 +65,7 @@ export type IntegrationResponse = typeof IntegrationResponse.Type
 /** Public ending of one answer. Expired deliberately says nothing about whether earlier work happened. */
 export const IntegrationAnswerOutcome = Schema.TaggedUnion({
   Completed: { value: Schema.Json },
+  Rejected: { message: Schema.String, problems: Schema.Array(Schema.String) },
   Accepted: { value: Schema.Json },
   Declined: {},
   Cancelled: {},
