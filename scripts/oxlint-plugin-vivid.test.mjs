@@ -609,6 +609,30 @@ void test('the root config makes a switch name every union member, default or no
 const incidentCases = [
   {
     rule: 'no-silent-failure',
+    mistake: 'client recorders and cell telemetry account for recovered Effect failures',
+    invalid: `program.pipe(Effect.catch((error) => Effect.void))
+program.pipe(Effect.catch((error) => Effect.void))
+program.pipe(Effect.catch((error) => Effect.void))
+program.pipe(Effect.catch((error) => Effect.void))`,
+    valid: `program.pipe(Effect.tapError((error) => recordFailure(recording, SEND, error)), Effect.ignore)
+program.pipe(Effect.tapError((error) => recording.record(clientFailure(error))), Effect.ignore)
+program.pipe(Effect.tapError((error) => record(Incident.cases.ClientFailed.make({ cause: hop(error) }))), Effect.ignore)
+program.pipe(Effect.tapError((error) => reports.record(CellFailure.cases.CellFailed.make({ personId, cause: hop(error) }), parent)), Effect.ignore)`,
+    findings: 4,
+    fix: /recordFailure.*CellReports\.record/u,
+  },
+  {
+    rule: 'no-ad-hoc-failure-log',
+    mistake: 'runtime/app.ts unavailable logs the tag as an ad hoc payload',
+    invalid: `const unavailable = (tag) =>
+  Effect.logError('Runtime request failed', tag).pipe(Effect.andThen(refuse('Unavailable', 503)))`,
+    valid: `const unavailable = (tag) =>
+  reports.record(CellFailure.cases.CellFailed.make({ personId, cause: [cellHop(ANSWER, tag)] }), parent).pipe(Effect.andThen(refuse('Unavailable', 503)))`,
+    findings: 1,
+    fix: /CellReports\.record.*telemetry\.ts/u,
+  },
+  {
+    rule: 'no-silent-failure',
     mistake: 'computers/store.ts MachineNotRunning passes its local handle by name',
     invalid: `const handle = (failure) => Effect.succeed(answer(failure))
 program.pipe(Effect.catchTags({ MachineNotRunning: handle }))`,

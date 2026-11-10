@@ -1276,10 +1276,10 @@ const failCalls = new Set(['die', 'fail', 'failCause', 'failSync'])
 const failureLogLevels = new Set(['logError', 'logFatal', 'logWarning'])
 /**
  * What reports a failure before it becomes a value: the recorder (`Incidents`, or the `incidents`
- * a producer yields it as), the reporters and the observers.
+ * a producer yields it as), the client recorders, cell telemetry, reporters and observers.
  */
 const reporterPattern =
-  /\b(?:[Ii]ncidents|withErrorReporting|ErrorReporter|recordRefusal|recordRunFailure|observeFailures)\b/u
+  /\b(?:[Ii]ncidents|withErrorReporting|ErrorReporter|recordRefusal|recordRunFailure|observeFailures|recordFailure|recording|ClientFailed|CellReports|CellFailure)\b/u
 /** `// Impact: Recovered, <why>` or `// Impact: Routine, <why>`: the site says what it decided. */
 const impactPattern = /\bImpact:\s*(?:Routine|Recovered)\b\W+\w[\s\S]{9,}/u
 const pascalCase = /^[A-Z][A-Za-z0-9]*$/u
@@ -1670,7 +1670,7 @@ const noSilentFailure = {
     schema: [],
     messages: {
       silent:
-        "{{form}} turns a failure into a value and nothing says so. Record it where it is decided, before it becomes a value: `Incidents.record(...)` (apps/server/src/observability/incidents.ts) or `Effect.withErrorReporting`. If it is the Person's own decision or was recovered from, say so above this line: `// Impact: Routine, <why>` or `// Impact: Recovered, <why>` (Impact in packages/contracts/src/monitoring.ts).",
+        "{{form}} turns a failure into a value and nothing says so. Record it where it is decided, before it becomes a value: `Incidents.record(...)` (apps/server/src/observability/incidents.ts) or `Effect.withErrorReporting`; clients use `recordFailure` and cells use `CellReports.record` (packages/agent/runtime/src/telemetry.ts). If it is the Person's own decision or was recovered from, say so above this line: `// Impact: Routine, <why>` or `// Impact: Recovered, <why>` (Impact in packages/contracts/src/monitoring.ts).",
     },
   },
   create(context) {
@@ -1717,7 +1717,7 @@ const isMessageConstant = (node) => {
  */
 const noAdHocFailureLog = rule(
   'Failure lines go through the recorder or a fixed Message constant.',
-  "`Effect.{{level}}` {{what}} reaches the backend as `[omitted]`. A Person's failed work is `Incidents.record(...)` and a failure at a boundary is `observeFailures`; any other line writes one `Message` constant (apps/server/src/observability/messages.ts) and puts closed attributes in `Effect.annotateLogs`.",
+  "`Effect.{{level}}` {{what}} reaches the backend as `[omitted]`. A Person's failed work is `Incidents.record(...)` on the server or `CellReports.record(...)` in cells (packages/agent/runtime/src/telemetry.ts), and a failure at a boundary is `observeFailures`; any other line writes one `Message` constant (apps/server/src/observability/messages.ts) and puts closed attributes in `Effect.annotateLogs`.",
   (report) => ({
     MemberExpression(node) {
       if (!isOwnedMember(node, new Set(['Effect']), failureLogLevels)) return
