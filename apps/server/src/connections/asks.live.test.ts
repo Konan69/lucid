@@ -197,7 +197,7 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
                 Layer.mergeAll(
                   Layer.mock(DeviceRegistry, {}),
                   Layer.mock(ComputerStore, {}),
-                  Layer.mock(Watches, { confirmTimer: () => Effect.sync(() => undefined) }),
+                  Layer.mock(Watches, { confirmTimer: () => Effect.undefined }),
                 ),
               ),
             ),
