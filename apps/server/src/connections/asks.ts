@@ -334,7 +334,10 @@ const answer = Effect.fn('IntegrationAsks.answer')(function* (
         continuation: { pause: result.pause, operation: saved.operation },
       }),
       pause: result.pause,
-      basis: IntegrationPause.guards.Approval(saved.pause) ? 'PersonApproved' : 'Read',
+      basis:
+        response.action === 'accept' && IntegrationPause.guards.Approval(saved.pause)
+          ? 'PersonApproved'
+          : 'Read',
     })
     if (Result.isFailure(resolved)) return IntegrationAnswerOutcome.cases.Waiting.make({})
     result = resolved.success
