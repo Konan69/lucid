@@ -1,3 +1,4 @@
+import { IntegrationAnswers } from '../connections/answers.ts'
 import {
   ActionApplied,
   BrowseOutcome,
@@ -148,6 +149,8 @@ const connection = Effect.fn('Code.useConnection')(function* (
         end: ActionApplied.guards.Accepted(receipt) ? 'accepted' : 'completed',
         receipt,
       }),
+    InputRequired: ({ requestId, questions }) =>
+      CallOutcome.cases.InputRequired.make({ requestId, questions, summary: request.summary }),
     ApprovalRequired: ({ approvalId, summary }) =>
       CallOutcome.cases.ApprovalRequired.make({ approvalId, summary }),
     Blocked: ({ rule }) => CallOutcome.cases.Blocked.make({ rule, summary: request.summary }),
@@ -348,6 +351,7 @@ export const codeCallsLayer = Layer.effect(
     // future dispatch requirements fail typecheck and the Run's Scope and parent span stay local.
     const context = Context.pick(
       CodeAuthority,
+      IntegrationAnswers,
       Gate,
       Executor,
       ExecutorMembers,
@@ -361,6 +365,7 @@ export const codeCallsLayer = Layer.effect(
     )(
       yield* Effect.context<
         | CodeAuthority
+        | IntegrationAnswers
         | Gate
         | Executor
         | ExecutorMembers

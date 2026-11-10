@@ -20,7 +20,7 @@ import { draftStoreLayer } from '../drafts/store.ts'
 import { feedHandlers } from '../feed/handlers.ts'
 import { dreamHandlers } from '../dreams/handlers.ts'
 import { feedStoreLayer } from '../feed/store.ts'
-import { inputHandlers } from '../inputs/handlers.ts'
+import { inputHandlers, answerIntegrationInput } from '../inputs/handlers.ts'
 import { libraryHandlers } from '../library/handlers.ts'
 import { memoryHandlers } from '../runtime/handlers.ts'
 import { notificationHandlers } from '../notifications/handlers.ts'
@@ -51,6 +51,7 @@ export const rpcHandlersLayer = Layer.mergeAll(
   // one by one beside it; together they are still total. A new call is added the same way, with
   // the omit list extended.
   VividRpc.omit(
+    'AnswerIntegrationInput',
     'Dream',
     'WatchArtifact',
     'WatchArtifactShelf',
@@ -94,6 +95,7 @@ export const rpcHandlersLayer = Layer.mergeAll(
     ...searchHandlers,
     ...feedHandlers,
   }),
+  VividRpc.toLayerHandler('AnswerIntegrationInput', answerIntegrationInput),
   VividRpc.toLayerHandler('Dream', dreamHandlers.Dream),
   VividRpc.toLayerHandler('WatchArtifact', artifactWatchHandlers.WatchArtifact),
   VividRpc.toLayerHandler('WatchArtifactShelf', artifactWatchHandlers.WatchArtifactShelf),

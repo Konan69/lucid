@@ -275,6 +275,19 @@ export const retainTarget = Effect.fn('Actions.retainTarget')(function* (
   yield* returned(rows, 'Dispatching action')
 })
 
+/** A paused approved call recovers its Thread from the operation that was claimed before dispatch. */
+export const originOf = Effect.fn('Actions.originOf')(function* (id: ActionOperationId) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .select({ threadId: actions.threadId, approvalId: actions.approvalId })
+      .from(actions)
+      .where(eq(actions.id, id))
+      .limit(1),
+  )
+  return yield* returned(rows, 'Integration operation')
+})
+
 /** Writes the one receipt of a claimed operation; a second settlement changes nothing. */
 export const settle = Effect.fn('Actions.settle')(function* (receipt: ActionReceipt) {
   const database = yield* Database

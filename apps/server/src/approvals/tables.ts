@@ -44,6 +44,7 @@ export const approvals = pgTable(
     decidedAt: epoch('decided_at'),
     finishedAt: epoch('finished_at'),
     outcome: text('outcome'),
+    integrationOutcome: jsonb('integration_outcome'),
     signal: jsonb('signal').notNull().default(storedNone),
     signalDueAt: epoch('signal_due_at').notNull().default(0),
     signalClaim: text('signal_claim'),

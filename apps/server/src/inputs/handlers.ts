@@ -1,3 +1,4 @@
+import type { AnswerIntegrationInputRequest } from '@vivid/contracts'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import type {
@@ -74,3 +75,10 @@ export const inputHandlers = {
     return { handoff: yield* withdrawHandoff(yield* personActor(), id) }
   }),
 }
+
+/** A typed form answers the saved Input request through its ordinary owner and Thread checks. */
+export const answerIntegrationInput = Effect.fn('Rpc.AnswerIntegrationInput')(function* (
+  request: AnswerIntegrationInputRequest,
+) {
+  return yield* (yield* InputStore).answerIntegration(yield* personActor(), request)
+})

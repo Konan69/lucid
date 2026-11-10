@@ -1,6 +1,8 @@
 import * as NodeCrypto from 'node:crypto'
 import {
   ActionEffect,
+  IntegrationPause,
+  IntegrationResponse,
   ConnectionId,
   ServiceAuthorization,
   ServiceId,
@@ -31,6 +33,7 @@ import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import type * as HttpBody from 'effect/http/HttpBody'
 
+import { mcpCalls, McpCallOutcome, encodeIntegrationResponse } from './mcp.ts'
 import { toolRejectionMessage, validationProblems } from './message.ts'
 import { retainCatalog } from './catalog.ts'
 import { accountBranch } from './envelope.ts'
@@ -277,6 +280,9 @@ interface ListedTool {
   readonly account: typeof ToolAccount.Type
 }
 export const ExecutorCallOutcome = Schema.TaggedUnion({
+  Paused: { pause: IntegrationPause },
+  UncertainPause: {},
+  Expired: {},
   Accepted: { value: Schema.Json },
   Completed: { value: Schema.Json },
   Rejected: {
@@ -387,7 +393,12 @@ export class ExecutorAppNameTaken extends Schema.TaggedError<ExecutorAppNameTake
 /** An upstream 5xx or ToolCallFailed can follow external effects. */
 export class ExecutorExecutionUncertain extends Schema.TaggedError<ExecutorExecutionUncertain>()(
   'ExecutorExecutionUncertain',
-  errorContext,
+  {
+    ...errorContext,
+    cause: Schema.Literals(['Dispatch', 'Elicitation']).pipe(
+      Schema.withConstructorDefault(Effect.succeed('Dispatch')),
+    ),
+  },
   { title: 'Connection outcome unknown' },
 ) {}
 /** A sign-in cannot start without host configuration; preserve the pending foreign references. */
@@ -595,6 +606,11 @@ export interface ExecutorConnectionOperations {
   readonly call: (
     input: typeof CallInput.Type,
   ) => Effect.Effect<typeof ExecutorCallOutcome.Type, ExecutorFailure>
+  readonly resume: (input: {
+    readonly pause: IntegrationPause
+    readonly effect: ActionEffect
+    readonly response: IntegrationResponse
+  }) => Effect.Effect<typeof ExecutorCallOutcome.Type, ExecutorFailure>
   /** Reclaim only resources the Connection store proved unreferenced under its database lock. */
   readonly prepareRetirement: (
     resources: typeof ExecutorRetired.Type,
@@ -782,7 +798,11 @@ const FailureMode = Schema.TaggedUnion({
   AccessDenied: {},
   Missing: { resource: Schema.Literals(['App', 'Version', 'Account']) },
   Conflict: {},
-  Uncertain: {},
+  Uncertain: {
+    cause: Schema.Literals(['Dispatch', 'Elicitation']).pipe(
+      Schema.withConstructorDefault(Effect.succeed('Dispatch')),
+    ),
+  },
   Rejected: { message: Schema.String },
   SetupRequired: {},
   ApprovalUnsupported: {},
@@ -873,7 +893,7 @@ const failureModes = {
   BuildMemoryExceeded: FailureMode.cases.Rejected.make({
     message: 'This Integration could not be built within the available memory.',
   }),
-  ToolElicitationFailed: uncertain,
+  ToolElicitationFailed: FailureMode.cases.Uncertain.make({ cause: 'Elicitation' }),
   RequestInvalid: FailureMode.cases.Rejected.make({
     message: 'The request is invalid for this installation.',
   }),
@@ -949,9 +969,19 @@ function translateFailure(tag: typeof knownFailureTag.Type, tool: string | null)
     OAuthClientAmbiguous: (): ExecutorFailure => ExecutorOAuthClientAmbiguous.make(context),
 
     Conflict: (): ExecutorFailure => ExecutorConflict.make(context),
-    Uncertain: (): ExecutorFailure => ExecutorExecutionUncertain.make(context),
+    Uncertain: ({ cause }): ExecutorFailure =>
+      ExecutorExecutionUncertain.make({ ...context, cause }),
     Rejected: ({ message }): ExecutorFailure => ExecutorRejected.make({ ...context, message }),
   })
+}
+
+/** MCP carries the same failure vocabulary as REST, without trusting provider diagnostics. */
+export function mcpFailure(code: string, tool: string | null, problems: readonly string[]) {
+  if (code === 'InputInvalid' && tool !== null && problems.length > 0)
+    return ExecutorInputInvalid.make({ service: 'connections', tool, problems })
+  return isKnownFailureTag(code)
+    ? translateFailure(code, tool)
+    : ExecutorExecutionUncertain.make({ service: 'connections', tool })
 }
 
 /** Each decoder is compiled once per response shape at layer acquisition. No automatic retry is
@@ -2652,7 +2682,7 @@ function makeResolveRemovalAccount(http: ExecutorHttp) {
   })
 }
 
-/** Discovery faults prove no tool invocation was sent and remain safe to retry. */
+/** A discovery failure precedes dispatch and therefore leaves the call safe to correct or retry. */
 function discoveryFailed() {
   return Effect.fail(
     ExecutorRejected.make({
@@ -2663,8 +2693,12 @@ function discoveryFailed() {
   )
 }
 
-/** Discover before dispatch to classify response loss; app identity and version stay explicit. */
-function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>) {
+/** REST preserves full results and a pinned version. Only a pre-execution approval refusal starts MCP. */
+function makeCall(
+  http: ExecutorHttp,
+  discover: ReturnType<typeof makeDiscovery>,
+  mcp: ReturnType<typeof mcpCalls>,
+) {
   return Effect.fn('Executor.call')(
     function* ({ references, tool, input }: typeof CallInput.Type) {
       if (ExecutorReferences.guards.ReconnectRequired(references))
@@ -2681,47 +2715,50 @@ function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>
         return ExecutorCallOutcome.cases.Rejected.make({
           message: 'Tool not found. Discover the current tools.',
         })
+      const routed = ToolAccount.match(selected.account, {
+        Direct: () => input,
+        Account: ({ accountId }) => ({ accountId, input }),
+      })
       return yield* http
         .readCall(
           post(`/apps/${query(references.app)}/tools/call`, {
             version: catalog.version,
             kind: selected.tool.effect === 'read' ? 'query' : 'mutation',
             tool,
-            // The account router takes the account beside the provider's input (`envelope.ts`).
-            input: ToolAccount.match(selected.account, {
-              Direct: () => input,
-              Account: ({ accountId }) => ({ accountId, input }),
-            }),
+            input: routed,
           }),
           tool,
         )
         .pipe(
           Effect.map(completedCall),
-          Effect.catchTag('ExecutorInputInvalid', ({ problems }) =>
-            Effect.succeed(
-              ExecutorCallOutcome.cases.Rejected.make({
-                message: 'Input did not match the tool schema. Correct its input and retry.',
-                problems: validationProblems(problems, [
-                  references.app,
-                  catalog.version,
-                  ...ExecutorReferences.match(references, {
-                    Public: () => [],
-                    ReconnectRequired: () => [],
-                    Authorized: ({ account }) => [account],
-                    Adopting: ({ account }) => [account],
-                    EnteringKey: () => [],
-                    SigningIn: () => [],
-                    OAuthSigningIn: () => [],
-                    GoogleSigningIn: () => [],
-                  }),
-                ]),
-              }),
-            ),
+          Effect.catchTag('ExecutorApprovalUnsupported', () =>
+            callPaused(http, mcp, {
+              references,
+              tool,
+              input: routed,
+              effect: selected.tool.effect,
+            }),
           ),
           Effect.catchTags({
+            ExecutorInputInvalid: ({ problems }) =>
+              Effect.succeed(
+                ExecutorCallOutcome.cases.Rejected.make({
+                  message: 'Input did not match the tool schema. Correct its input and retry.',
+                  problems: validationProblems(problems, [
+                    references.app,
+                    catalog.version,
+                    ...('account' in references ? [references.account] : []),
+                  ]),
+                }),
+              ),
+            // REST supplies no elicitation handler. App code may have acted before ctx.elicit failed; never issue it again.
+            ExecutorExecutionUncertain: ({ cause }) =>
+              Effect.succeed(
+                cause === 'Elicitation'
+                  ? ExecutorCallOutcome.cases.UncertainPause.make({})
+                  : ExecutorCallOutcome.cases.OutcomeUnknown.make({}),
+              ),
             ExecutorTransportFailure: () =>
-              Effect.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({})),
-            ExecutorExecutionUncertain: () =>
               Effect.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({})),
             ExecutorResponseInvalid: () =>
               Effect.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({})),
@@ -2737,6 +2774,69 @@ function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>
         }),
       ),
   )
+}
+
+/** The REST approval refusal precedes the selected handler, so the same pinned input may enter model-mode MCP once. */
+const callPaused = Effect.fn('Executor.callPaused')(function* (
+  http: ExecutorHttp,
+  mcp: ReturnType<typeof mcpCalls>,
+  call: {
+    readonly references: ExecutorActiveReferences
+    readonly tool: string
+    readonly input: Schema.Json
+    readonly effect: ActionEffect
+  },
+) {
+  const app = yield* http.readApp(
+    Effect.succeed(HttpClientRequest.get(`/apps/${query(call.references.app)}`)),
+    call.tool,
+  )
+  const path = `tools[${JSON.stringify(app.slug)}]${call.tool
+    .split('.')
+    .map((part) => `[${JSON.stringify(part)}]`)
+    .join('')}`
+  return fromMcp(yield* mcp('call', { calls: { path, input: call.input } }, call.tool), call.effect)
+})
+
+/** Preserve pauses and expiry before interpreting an ordinary provider result. */
+const fromMcp = (outcome: McpCallOutcome, effect: ActionEffect) =>
+  McpCallOutcome.match<typeof ExecutorCallOutcome.Type>(outcome, {
+    Truncated: ({ message }) =>
+      effect === 'read'
+        ? ExecutorCallOutcome.cases.Rejected.make({ message })
+        : ExecutorCallOutcome.cases.Completed.make({ value: null }),
+    Completed: ({ value }) => completedCall(value),
+    Paused: ({ pause }) => ExecutorCallOutcome.cases.Paused.make({ pause }),
+    Expired: () => ExecutorCallOutcome.cases.Expired.make({}),
+    Uncertain: ({ reason }) =>
+      reason === 'InvalidForm'
+        ? ExecutorCallOutcome.cases.UncertainPause.make({})
+        : ExecutorCallOutcome.cases.OutcomeUnknown.make({}),
+  })
+
+/** A response always names the saved request. Expiry and transport loss never start another call. */
+function makeResume(mcp: ReturnType<typeof mcpCalls>) {
+  return Effect.fn('Executor.resume')(function* ({
+    pause,
+    response,
+    effect,
+  }: Parameters<ExecutorConnectionOperations['resume']>[0]) {
+    if (pause.expiresAt <= (yield* Clock.currentTimeMillis))
+      return ExecutorCallOutcome.cases.Expired.make({})
+    const encoded = yield* encodeIntegrationResponse(response).pipe(
+      Effect.mapError(() => ExecutorResponseInvalid.make({ service: 'connections', tool: null })),
+    )
+    return fromMcp(
+      yield* mcp('resume', { requestId: pause.requestId, response: encoded }, null).pipe(
+        Effect.catchTags({
+          ExecutorExecutionUncertain: () => Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),
+          ExecutorTransportFailure: () => Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),
+          ExecutorResponseInvalid: () => Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),
+        }),
+      ),
+      effect,
+    )
+  })
 }
 
 /** Active app access carries separate deletion authority. Pending requests preserve their exact
@@ -3018,15 +3118,17 @@ const makeConnectionOperations = Effect.fn('Executor.connectionOperations')(func
   http: ExecutorHttp,
   availability: Effect.Success<ReturnType<typeof makeAuthorization>>,
   publicOnly: boolean,
+  mcp: ReturnType<typeof mcpCalls>,
 ) {
   const toolCache = yield* makeToolCache(http)
   const complete = makeComplete(http)
   const completeSignIn = makeCompleteSignIn(http)
   const remove = makeRemove(http)
-  const call = makeCall(http, toolCache.discover)
+  const call = makeCall(http, toolCache.discover, mcp)
   const install = yield* makeInstall(http)
   const registration = makeBegin(http, availability, install)
   const operations: ExecutorConnectionOperations = {
+    resume: makeResume(mcp),
     refresh: Cache.invalidateAll(toolCache.snapshots),
     appSlug: makeAppSlug(http),
     begin: registration.begin,
@@ -3118,6 +3220,7 @@ function connectionOperationsFor(
       remove: (references) => run((operations) => operations.remove(references)),
       tools: (references) => run((operations) => operations.tools(references)),
       call: (input) => run((operations) => operations.call(input)),
+      resume: (input) => run((operations) => operations.resume(input)),
       prepareRetirement: (resources) =>
         run((operations) => operations.prepareRetirement(resources)),
       retire: (input) => run((operations) => operations.retire(input)),
@@ -3149,6 +3252,16 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
       ),
       google,
     )
+  const mcpWith = (bearer: Redacted.Redacted) =>
+    mcpCalls(
+      HttpClient.mapRequest(transport, (request) =>
+        request.pipe(
+          HttpClientRequest.prependUrl(url),
+          HttpClientRequest.bearerToken(bearer),
+          HttpClientRequest.setHeader('X-Executor-Organization', organization),
+        ),
+      ),
+    )
   const http = httpWith(key)
   const remoteCatalog = yield* retainCatalog(makeCatalog(http)())
   const catalog = Effect.fn('Executor.installedCatalog')(function* () {
@@ -3177,7 +3290,7 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
     ]
   })
   const availability = yield* makeAuthorization(http, catalog)
-  const installation = yield* makeConnectionOperations(http, availability, publicOnly)
+  const installation = yield* makeConnectionOperations(http, availability, publicOnly, mcpWith(key))
   // Each member inspects sign-in setup with its own key: Executor answers OAuth setup only for
   // a caller that can use an app requiring that provider, and a member's apps are "Only me", so
   // the installation key is refused for them. Catalog display facts stay on `availability`.
@@ -3185,7 +3298,12 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
     lookup: Effect.fn('Executor.memberOperations')(function* (member: Redacted.Redacted<string>) {
       const memberHttp = httpWith(member)
       const memberAvailability = yield* makeAuthorization(memberHttp, catalog)
-      return yield* makeConnectionOperations(memberHttp, memberAvailability, publicOnly)
+      return yield* makeConnectionOperations(
+        memberHttp,
+        memberAvailability,
+        publicOnly,
+        mcpWith(member),
+      )
     }),
     idleTimeToLive: MEMBER_OPERATIONS_IDLE,
   })

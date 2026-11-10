@@ -1,3 +1,4 @@
+import { IntegrationAnswers } from '../connections/answers.ts'
 import { activitiesLayer } from '../activity/service.ts'
 import * as NodeCrypto from 'node:crypto'
 import { expect } from '@effect/vitest'
@@ -227,11 +228,15 @@ export const storeServices = Layer.merge(approvalStoreLayer, inputStoreLayer).pi
   Layer.provideMerge(policy),
 )
 /** Stateful observations and stores are acquired per case over the suite's shared database. */
-export const trustTestServices = Layer.merge(gateLayer, activitiesLayer).pipe(
-  Layer.provideMerge(storeServices),
-)
+export const trustTestServices = Layer.mergeAll(
+  gateLayer,
+  activitiesLayer,
+  Layer.mock(IntegrationAnswers, {}),
+).pipe(Layer.provideMerge(storeServices))
 /** Complete fixtures remain available to suites that compose their own dependency graph. */
-export const stores = storeServices.pipe(Layer.provideMerge(testDatabaseLayer))
+export const stores = Layer.merge(storeServices, Layer.mock(IntegrationAnswers, {})).pipe(
+  Layer.provideMerge(testDatabaseLayer),
+)
 export const trustTestLayer = trustTestServices.pipe(Layer.provideMerge(testDatabaseLayer))
 
 /** Teardown uses the same live adapter while its Layer is still scoped, and cleanup faults fail tests. */

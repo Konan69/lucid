@@ -1,3 +1,4 @@
+import { AnswerIntegrationInputRequest, AnswerIntegrationInputResponse } from './inputs.js'
 import { ActivityRegistration, ActivityUnavailable } from './activity.js'
 import { ReviseWatchRequest } from './watches.js'
 import {
@@ -779,6 +780,12 @@ export const InputAnswerFailure = Schema.Union([
 ])
 export type InputAnswerFailure = typeof InputAnswerFailure.Type
 
+const AnswerIntegrationInput = Rpc.make('AnswerIntegrationInput', {
+  ...call,
+  payload: AnswerIntegrationInputRequest,
+  success: AnswerIntegrationInputResponse,
+})
+
 const AnswerInput = Rpc.make('AnswerInput', {
   ...call,
   error: Schema.Union([RpcFailure, InputAnswerFailure]),
@@ -1455,6 +1462,7 @@ export const VividRpc = RpcGroup.make(
   ReconcileAction,
   AskInput,
   AnswerInput,
+  AnswerIntegrationInput,
   PrepareHandoff,
   BeginHandoff,
   FillHandoff,

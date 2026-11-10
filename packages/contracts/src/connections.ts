@@ -2,7 +2,7 @@ import { Effect, Match, Option, Schema } from 'effect'
 import { ActionApplied, ActionReceipt, ToolCallId } from './actions.js'
 import { ActionEffect } from './approvals.js'
 import { RuleDecision } from './rules.js'
-import { ApprovalId, ConnectionId, PersonSummary, ServiceId } from './identity.js'
+import { ApprovalId, InputRequestId, ConnectionId, PersonSummary, ServiceId } from './identity.js'
 
 /**
  * Whose account a Connection is.
@@ -483,6 +483,7 @@ export const ToolOutcome = Schema.TaggedUnion({
   Repeated: { receipt: ActionApplied },
   /** A Person must decide. The turn ends; the decision returns to the Thread. */
   ApprovalRequired: { approvalId: ApprovalId, summary: Schema.String },
+  InputRequired: { requestId: InputRequestId, questions: Schema.NonEmptyArray(Schema.String) },
   /** A rule forbids it. */
   Blocked: { rule: Schema.String },
   /** The Connection is not ready and must be authorized again. */

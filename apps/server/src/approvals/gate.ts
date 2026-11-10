@@ -1,3 +1,4 @@
+import type { IntegrationAnswers } from '../connections/answers.ts'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
@@ -118,6 +119,7 @@ export class Gate extends Context.Service<Gate, GateService>()('vivid/Gate') {}
 /** How an action that was allowed to run ended. `Unknown` is honest: it may or may not have happened. */
 export const ActionOutcome = Schema.TaggedUnion({
   Succeeded: { result: Schema.String },
+  Waiting: {},
   Failed: { reason: Schema.String },
   Unknown: {},
 })
@@ -147,7 +149,7 @@ export interface ActionRunnerService {
     readonly workspace: Workspace
     readonly action: ProposedAction
     readonly origin: ActionOrigin
-  }) => Effect.Effect<ActionOutcome, DatabaseInfrastructureError>
+  }) => Effect.Effect<ActionOutcome, DatabaseInfrastructureError, IntegrationAnswers>
 }
 
 /**

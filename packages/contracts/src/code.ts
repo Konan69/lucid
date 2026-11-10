@@ -1,3 +1,4 @@
+import { InputRequestId } from './identity.js'
 import * as Schema from 'effect/Schema'
 import { ActionReceipt } from './actions.js'
 import { ACCOUNT_HANDLE_MAX, DisplayToolKind } from './connections.js'
@@ -89,6 +90,7 @@ export const CodeCallEnd = Schema.Literals([
   'completed',
   'refused',
   'needs approval',
+  'needs input',
   'unknown',
 ] as const)
 export type CodeCallEnd = typeof CodeCallEnd.Type
@@ -139,6 +141,11 @@ export const CodeOutcome = Schema.TaggedUnion({
     ...CodeLogs.fields,
   },
   /** One call needs a Person's decision. The program has ended; the approved action runs alone. */
+  InputRequired: {
+    requestId: InputRequestId,
+    questions: Schema.NonEmptyArray(Schema.String),
+    calls: Schema.Array(CodeCall),
+  },
   ApprovalRequired: {
     approvalId: ApprovalId,
     summary: Schema.String,

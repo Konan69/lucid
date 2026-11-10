@@ -98,6 +98,7 @@ export function Replied({ request, me }: { request: InputRequest; me: PersonId }
   return InputRequestState.match(request.state, {
     Waiting: () => null,
     Withdrawn: () => null,
+    Expired: () => null,
     Answered: ({ answers, answeredBy }) => (
       <Animated.View entering={watched ? SAID : undefined}>
         <Said

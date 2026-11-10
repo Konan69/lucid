@@ -1,4 +1,6 @@
-import { Schema } from 'effect'
+import { Effect, Schema } from 'effect'
+import { IntegrationAnswerOutcome, IntegrationResponse } from './asks.js'
+import { ProposedAction } from './approvals.js'
 import {
   HandoffFieldId,
   HandoffId,
@@ -58,6 +60,7 @@ export type InputAnswer = typeof InputAnswer.Type
  */
 export const InputRequestState = Schema.TaggedUnion({
   Waiting: {},
+  Expired: { expiredAt: Schema.Finite },
   Answered: {
     answeredBy: PersonSummary,
     answers: Schema.NonEmptyArray(InputAnswer),
@@ -74,7 +77,13 @@ export const InputRequest = Schema.Struct({
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
   questions: Schema.NonEmptyArray(InputQuestion),
+  integration: Schema.NullOr(ProposedAction).pipe(
+    Schema.withConstructorDefault(Effect.succeed(null)),
+  ),
   askedOf: PersonSummary,
+  integrationOutcome: Schema.NullOr(IntegrationAnswerOutcome).pipe(
+    Schema.withConstructorDefault(Effect.succeed(null)),
+  ),
   state: InputRequestState,
   createdAt: Schema.Finite,
 }).annotate({ identifier: 'InputRequest', title: 'Input request' })
@@ -326,3 +335,16 @@ export const HandoffMessage = Schema.Struct({
   handoffId: HandoffId,
 }).annotate({ identifier: 'HandoffMessage', title: 'Handoff message' })
 export interface HandoffMessage extends Schema.Schema.Type<typeof HandoffMessage> {}
+
+/** Typed answers to an existing Integration Input request use its saved schema and continuation. */
+export const AnswerIntegrationInputRequest = Schema.Struct({
+  id: InputRequestId,
+  response: IntegrationResponse,
+})
+export type AnswerIntegrationInputRequest = typeof AnswerIntegrationInputRequest.Type
+export const AnswerIntegrationInputResponse = Schema.Struct({
+  request: InputRequest,
+  outcome: IntegrationAnswerOutcome,
+})
+
+export type AnswerIntegrationInputResponse = typeof AnswerIntegrationInputResponse.Type

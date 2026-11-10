@@ -1,3 +1,4 @@
+import { integrationAnswersLayer } from './connections/asks.ts'
 import { activitiesLayer } from './activity/service.ts'
 import { commandWorkerLayer } from './computers/commands.ts'
 import * as NodeHttp from 'node:http'
@@ -170,7 +171,8 @@ const serverProgram = Effect.gen(function* () {
     Layer.provideMerge(actionRunnerLayer),
     Layer.provideMerge(accounts),
   )
-  const decisions = gateLayer.pipe(Layer.provideMerge(reviewerLayer), Layer.provideMerge(trust))
+  const answering = integrationAnswersLayer.pipe(Layer.provideMerge(trust))
+  const decisions = gateLayer.pipe(Layer.provideMerge(reviewerLayer), Layer.provideMerge(answering))
   // A program runs on the Person's Computer, so its supervisor sits above the Computer store.
   const work = Layer.mergeAll(
     watchStoreLayer,

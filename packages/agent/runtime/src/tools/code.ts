@@ -58,6 +58,15 @@ function codeResult(
     Completed: ({ result, truncated, logs, logsTruncated }) => ({
       output: { ok: true, result, calls, truncated, logs, logsTruncated },
     }),
+    InputRequired: ({ requestId, questions }) => ({
+      output: {
+        kind: 'input-request',
+        requestId,
+        questions,
+        message: 'The Integration asked the Person and is waiting for their answer.',
+      },
+      terminate: true,
+    }),
     ApprovalRequired: ({ approvalId, summary: purpose }) => ({
       output: { ...views.approval({ approvalId, summary: purpose }), calls },
       terminate: true,

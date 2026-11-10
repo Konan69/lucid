@@ -188,6 +188,7 @@ export const displayToolResult = (outcome: ToolOutcome): DisplayToolResult =>
     Rejected: () =>
       failed('The Integration rejected this request. Check the information and try again.'),
     Blocked: () => failed('A rule prevents this action.'),
+    InputRequired: () => failed('This Integration needs your input in the Thread.'),
     ApprovalRequired: () => failed('This needs your approval in the Thread.'),
     ScopeRequired: () =>
       failed(
@@ -261,6 +262,7 @@ export const displayCodeResult = (outcome: DisplayCodeOutcome): DisplayToolResul
     : CodeOutcome.match(outcome, {
         Completed: ({ result }) =>
           displayToolResult(ToolOutcome.cases.Completed.make({ output: result, receipt: null })),
+        InputRequired: () => failed('This Integration needs your input in the Thread.'),
         ApprovalRequired: () => failed('This needs your approval in the Thread.'),
         Blocked: () => failed('A rule prevents this action.'),
         Failed: ({ failure }) => failed(programFailure(failure)),

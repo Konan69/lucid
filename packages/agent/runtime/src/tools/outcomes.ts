@@ -1,3 +1,4 @@
+import { integrationWaitingMessage } from '@vivid/contracts'
 import {
   ActionApplied,
   type ActionReceipt,
@@ -106,6 +107,10 @@ export function toolOutcome(result: IntegrationResult): ToolResult {
         message: `This exact action was already sent, so it was not sent again. ${appliedWords(receipt)} Its earlier answer is not available here.`,
       },
       receipts: [receipt],
+    }),
+    InputRequired: ({ requestId, questions }) => ({
+      output: { kind: 'input-request', requestId, questions, message: integrationWaitingMessage },
+      terminate: true,
     }),
     ApprovalRequired: approval,
     Blocked: blocked,

@@ -1,7 +1,13 @@
+import * as Exit from 'effect/Exit'
+import * as Match from 'effect/Match'
+import { DeliveryMessage } from '../threads/conversation.ts'
+import { IntegrationAnswerOutcome, SignalCue } from '@vivid/contracts'
+import { IntegrationAnswers } from '../connections/answers.ts'
+import { integrationAnswerText } from '../connections/asks.ts'
 import * as NodeCrypto from 'node:crypto'
 import * as Array from 'effect/Array'
 import * as Result from 'effect/Result'
-import { and, asc, eq, gt, lt, lte, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, lt, lte, or, isNull, sql } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
@@ -116,6 +122,7 @@ const fields = createSelectSchema(approvals, {
   id: ApprovalId,
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
+  integrationOutcome: Schema.NullOr(IntegrationAnswerOutcome),
   personId: PersonId,
   companyId: Schema.NullOr(CompanyId),
   action: ProposedAction,
@@ -215,7 +222,10 @@ const stateOf = (
             decidedBy,
             finishedAt: value.finishedAt,
             // The decision journaled its action under the Approval's own operation (`decide`).
-            operationId: operationOf.approval(value.id),
+            operationId:
+              value.action.continuation === null
+                ? operationOf.approval(value.id)
+                : value.action.continuation.operation,
           }),
         ),
       ),
@@ -257,6 +267,7 @@ const viewDecoded = Effect.fn('Approvals.viewDecoded')(function* (
         id: row.id,
         threadId: row.threadId,
         runId: row.runId,
+        integrationOutcome: row.integrationOutcome,
         action: row.action,
         digest: row.digest,
         binding: row.binding,
@@ -312,14 +323,19 @@ export interface ApprovalStoreService {
     | ApprovalChanged
     | ApprovalExpired
     | ApprovalDecided
-    | DatabaseInfrastructureError
+    | DatabaseInfrastructureError,
+    IntegrationAnswers
   >
+  readonly completeIntegration: (
+    id: ApprovalId,
+    outcome: IntegrationAnswerOutcome,
+  ) => Effect.Effect<void, NotFound | DatabaseInfrastructureError>
   readonly withdraw: (
     actor: Actor,
     id: ApprovalId,
   ) => Effect.Effect<ThreadId, NotFound | Conflict | DatabaseInfrastructureError>
   readonly replay: Effect.Effect<void, DatabaseInfrastructureError>
-  readonly expire: Effect.Effect<void, DatabaseInfrastructureError>
+  readonly expire: Effect.Effect<void, NotFound | DatabaseInfrastructureError, IntegrationAnswers>
 }
 export class ApprovalStore extends Context.Service<ApprovalStore, ApprovalStoreService>()(
   'vivid/ApprovalStore',
@@ -342,9 +358,17 @@ const requireDecisionAuthority = Effect.fn('Approvals.requireDecisionAuthority')
   request: DecideApprovalRequest,
   audience: string,
 ) {
+  if (
+    row.action.continuation !== null &&
+    (row.personId !== actor.person.id ||
+      ApprovalDecision.isAnyOf(['AlwaysAllow', 'AllowEdited'])(request.decision))
+  )
+    return yield* new InvalidRequest({
+      message: 'Only the addressed Person can answer the exact saved Integration call, once.',
+    })
   const personalBrowser = usesPersonalBrowser(row.action)
   if (
-    !ApprovalDecision.guards.Deny(request.decision) &&
+    !ApprovalDecision.isAnyOf(['Deny', 'Cancel'])(request.decision) &&
     personalBrowser &&
     row.personId !== actor.person.id
   )
@@ -390,7 +414,14 @@ type PendingRow = typeof Row.cases.pending.Type
  * Approvals second (`stale.ts`), so both sides take locks in the same order and a claim racing a
  * change waits for it instead of deadlocking with it.
  */
-const drift = Effect.fn('Approvals.drift')(function* (tx: Transaction, row: PendingRow) {
+const drift = Effect.fn('Approvals.drift')(function* (
+  tx: Transaction,
+  row: PendingRow,
+  decision: ApprovalDecision,
+) {
+  // Declining a remote question never dispatches the stored action, even if its Connection disappeared.
+  if (row.action.continuation !== null && ApprovalDecision.isAnyOf(['Deny', 'Cancel'])(decision))
+    return Option.none<ApprovalInvalidation>()
   if (ActionTarget.guards.Connection(row.action.target)) {
     const connectionId = row.action.target.connectionId
     const [current] = yield* tx
@@ -491,7 +522,9 @@ const move = Effect.fn('Approvals.move')(function* (
   const written = yield* tx
     .update(approvals)
     .set({
-      status: ApprovalDecision.guards.Deny(request.decision) ? 'denied' : 'executing',
+      status: ApprovalDecision.isAnyOf(['Deny', 'Cancel'])(request.decision)
+        ? 'denied'
+        : 'executing',
       action,
       decidedBy: actor.person.id,
       decidedAt: now,
@@ -503,7 +536,7 @@ const move = Effect.fn('Approvals.move')(function* (
         scope,
         eq(approvals.digest, request.digest),
         eq(approvals.status, 'pending'),
-        gt(approvals.expiresAt, now),
+        row.action.continuation === null ? gt(approvals.expiresAt, now) : undefined,
       ),
     )
     .returning()
@@ -527,6 +560,17 @@ const move = Effect.fn('Approvals.move')(function* (
  * no longer holds, the Approval is invalidated in that same transaction and the claim answers
  * `ApprovalChanged`; the invalidation commits even though the decision is refused.
  */
+/** Vivid's own deadline governs its proposals; a pending remote question answers with its explicit expiry outcome. */
+const requireUnexpired = Effect.fn('Approvals.requireUnexpired')(function* (
+  row: typeof Row.Type,
+  now: number,
+) {
+  if (Row.guards.expired(row)) return yield* new ApprovalExpired({ id: row.id })
+  if (row.action.continuation !== null) return
+  if (Row.guards.pending(row) && row.expiresAt <= now)
+    return yield* new ApprovalExpired({ id: row.id })
+})
+
 const claim = Effect.fn('Approvals.claim')(function* (
   actor: Actor,
   request: DecideApprovalRequest,
@@ -542,17 +586,18 @@ const claim = Effect.fn('Approvals.claim')(function* (
     return yield* new Conflict({ message: 'Approval digest differs' })
   if (Row.guards.invalidated(row)) return yield* new ApprovalChanged({ id: row.id })
   const now = yield* Clock.currentTimeMillis
-  if (Row.guards.expired(row) || (Row.guards.pending(row) && row.expiresAt <= now))
-    return yield* new ApprovalExpired({ id: row.id })
+  yield* requireUnexpired(row, now)
   yield* requireDecisionAuthority(actor, row, request, thread.audience)
   const action = yield* actionToRun(row, request.decision)
   const external =
-    Row.guards.pending(row) && !ApprovalDecision.guards.Deny(request.decision)
+    Row.guards.pending(row) && !ApprovalDecision.isAnyOf(['Deny', 'Cancel'])(request.decision)
       ? yield* externalDrift(actor, row)
       : Option.none<ApprovalInvalidation>()
   const end = yield* database.transaction((tx) =>
     Effect.gen(function* () {
-      const local = Row.guards.pending(row) ? yield* drift(tx, row) : Option.none()
+      const local = Row.guards.pending(row)
+        ? yield* drift(tx, row, request.decision)
+        : Option.none()
       const changedBy = Option.isNone(local) ? external : local
       if (Option.isNone(changedBy)) return yield* move(tx, row, { actor, request, now, action })
       yield* invalidatePending(tx, scope, changedBy.value)
@@ -580,7 +625,7 @@ const claim = Effect.fn('Approvals.claim')(function* (
 
 /** A refusal already knows its result; permission owes the result of the once-only action. */
 const decisionSignal = (row: typeof Row.Type, decision: ApprovalDecision, deciderId: PersonId) =>
-  ApprovalDecision.guards.Deny(decision)
+  row.action.continuation === null && ApprovalDecision.isAnyOf(['Deny', 'Cancel'])(decision)
     ? owed(row.id, row.action.summary, Conclusion.cases.Denied.make({}), deciderId)
     : Signal.cases.Awaiting.make({ idempotencyKey: approvalKey(row.id) })
 
@@ -600,19 +645,45 @@ const finish = Effect.fn('Approvals.finish')(function* (
   outcome: ActionOutcome,
 ) {
   const database = yield* Database
-  const ending = ActionOutcome.match(outcome, {
-    Succeeded: ({ result }): StoredOutcome => ({ status: 'succeeded', outcome: result }),
-    Failed: ({ reason }): StoredOutcome => ({ status: 'failed', outcome: reason }),
-    Unknown: (): StoredOutcome => ({
-      status: 'unknown',
-      outcome: null,
+  if (ActionOutcome.guards.Waiting(outcome)) {
+    const updated = yield* database.run(
+      database
+        .update(approvals)
+        .set({
+          integrationOutcome: yield* encodeStored(
+            IntegrationAnswerOutcome,
+            'Integration approval answer',
+          )(IntegrationAnswerOutcome.cases.Waiting.make({})),
+        })
+        .where(and(eq(approvals.id, row.id), eq(approvals.status, 'executing')))
+        .returning(),
+    )
+    if (updated.length > 0) return yield* returned(updated, 'Waiting Approval')
+    // A very fast answer may settle the original operation before its dispatch returns.
+    return yield* returned(
+      yield* database.run(
+        database.select().from(approvals).where(eq(approvals.id, row.id)).limit(1),
+      ),
+      'Answered Approval',
+    )
+  }
+  const ending = Match.value(outcome).pipe(
+    Match.tagsExhaustive({
+      Succeeded: ({ result }): StoredOutcome => ({ status: 'succeeded', outcome: result }),
+      Failed: ({ reason }): StoredOutcome => ({ status: 'failed', outcome: reason }),
+      Unknown: (): StoredOutcome => ({
+        status: 'unknown',
+        outcome: null,
+      }),
     }),
-  })
-  const conclusion = ActionOutcome.match<Conclusion>(outcome, {
-    Succeeded: ({ result }) => Conclusion.cases.Succeeded.make({ result }),
-    Failed: ({ reason }) => Conclusion.cases.Failed.make({ reason }),
-    Unknown: () => Conclusion.cases.OutcomeUnknown.make({}),
-  })
+  )
+  const conclusion = Match.value(outcome).pipe(
+    Match.tagsExhaustive({
+      Succeeded: ({ result }) => Conclusion.cases.Succeeded.make({ result }),
+      Failed: ({ reason }) => Conclusion.cases.Failed.make({ reason }),
+      Unknown: () => Conclusion.cases.OutcomeUnknown.make({}),
+    }),
+  )
   const now = yield* Clock.currentTimeMillis
   const rows = yield* database.run(
     database
@@ -669,6 +740,7 @@ const runJournaled = Effect.fn('Approvals.runJournaled')(function* <E, R>(
   const outcome = yield* run
   const now = yield* Clock.currentTimeMillis
   yield* ActionOutcome.match(outcome, {
+    Waiting: () => Effect.void,
     Succeeded: ({ result }) =>
       settle(
         ActionReceipt.cases.Completed.make({
@@ -683,6 +755,136 @@ const runJournaled = Effect.fn('Approvals.runJournaled')(function* <E, R>(
   return outcome
 })
 
+/** Settle a live Integration answer under the question's existing SQL claim and delivery identity. */
+const finishIntegration = Effect.fn('Approvals.finishIntegration')(function* (
+  row: typeof Row.Type,
+  outcome: IntegrationAnswerOutcome,
+) {
+  const body = integrationAnswerText(outcome)
+  const now = yield* Clock.currentTimeMillis
+  const status = IntegrationAnswerOutcome.match(outcome, {
+    Completed: () => 'succeeded',
+    Accepted: () => 'succeeded',
+    Waiting: () => 'succeeded',
+    Rejected: () => 'failed',
+    Declined: () => 'denied',
+    Cancelled: () => 'denied',
+    Expired: () => 'unknown',
+    Uncertain: () => 'unknown',
+  })
+  const signal = Signal.cases.Owed.make({
+    idempotencyKey: `approval-${row.id}`,
+    deciderId: row.decidedBy,
+    message: DeliveryMessage.cases.Signal.make({ cue: SignalCue.cases.Answer.make({ body }) }),
+  })
+  const database = yield* Database
+  const updated = yield* database.run(
+    database
+      .update(approvals)
+      .set({
+        status,
+        outcome: status === 'succeeded' || status === 'failed' ? body : null,
+        finishedAt: status === 'denied' ? null : now,
+        integrationOutcome: yield* encodeStored(
+          IntegrationAnswerOutcome,
+          'Integration approval answer',
+        )(outcome),
+        signal: yield* encodeSignal(signal),
+        signalDueAt: now,
+      })
+      .where(and(eq(approvals.id, row.id), eq(approvals.status, row.status)))
+      .returning(),
+  )
+  yield* (yield* Changes).publish([
+    Topic.person(row.personId),
+    Topic.thread(row.threadId),
+    ...Option.toArray(Option.map(Option.fromNullOr(row.companyId), Topic.company)),
+  ])
+  const approval = yield* returned(yield* view(updated), 'Approval')
+  yield* deliver(approval.id)
+  return approval
+})
+
+/** The original Vivid Approval stays Executing while an app asks; its same operation supplies the ending. */
+const completeIntegration = Effect.fn('Approvals.completeIntegration')(function* (
+  id: ApprovalId,
+  outcome: IntegrationAnswerOutcome,
+) {
+  if (IntegrationAnswerOutcome.guards.Waiting(outcome)) return
+  const database = yield* Database
+  const rows = yield* database.run(
+    database.select().from(approvals).where(eq(approvals.id, id)).limit(1),
+  )
+  const value = rows[0]
+  if (value === undefined) return yield* new NotFound({ message: 'Approval not found' })
+  const row = yield* decodeRow(value)
+  if (!Row.guards.executing(row)) return
+  yield* finishIntegration(row, outcome)
+})
+
+/** Answer the saved request instead of running the approved action again. The ordinary claim fences duplicate decisions. */
+const answerPausedApproval = Effect.fn('Approvals.answerIntegration')(
+  function* (actor: Actor, row: typeof Row.Type, request: DecideApprovalRequest) {
+    const response = ApprovalDecision.guards.Cancel(request.decision)
+      ? { action: 'cancel' as const }
+      : ApprovalDecision.guards.Deny(request.decision)
+        ? { action: 'decline' as const }
+        : { action: 'accept' as const, content: {} }
+    const approval = yield* Effect.gen(function* () {
+      const outcome = yield* (yield* IntegrationAnswers).answer(
+        { ...actor, by: 'vivid' },
+        row.action,
+        response,
+      )
+      return yield* finishIntegration(row, outcome)
+    }).pipe(
+      Effect.catch(
+        Effect.fnUntraced(function* () {
+          const outcome = IntegrationAnswerOutcome.cases.Uncertain.make({})
+          yield* (yield* IntegrationAnswers).settle(row.action, outcome)
+          return yield* finishIntegration(row, outcome)
+        }),
+      ),
+    )
+    yield* (yield* Audit).record(
+      actor,
+      ApprovalDecision.isAnyOf(['Deny', 'Cancel'])(request.decision)
+        ? AuditEvent.cases.ActionDenied.make(auditAction(row.action))
+        : AuditEvent.cases.ActionApproved.make(auditAction(row.action)),
+    )
+    return approval
+  },
+  (effect, _actor, row) =>
+    effect.pipe(
+      Effect.onExit((exit) => (Exit.isFailure(exit) ? recoverApprovalAnswer(row.id) : Effect.void)),
+    ),
+)
+
+/** Recovery belongs only to this winning answer claim. A terminal child or a later answer is never reopened. */
+const recoverApprovalAnswer = Effect.fn('Approvals.recoverAnswer')(function* (id: ApprovalId) {
+  const database = yield* Database
+  const values = yield* database.run(
+    database
+      .select()
+      .from(approvals)
+      .where(
+        and(
+          eq(approvals.id, id),
+          or(eq(approvals.status, 'executing'), eq(approvals.status, 'denied')),
+          isNull(approvals.integrationOutcome),
+        ),
+      )
+      .limit(1),
+  )
+  const value = values[0]
+  if (value === undefined) return
+  const row = yield* decodeRow(value)
+  if (row.action.continuation === null) return
+  const outcome = IntegrationAnswerOutcome.cases.Uncertain.make({})
+  yield* (yield* IntegrationAnswers).settle(row.action, outcome)
+  yield* finishIntegration(row, outcome)
+})
+
 /** Denials settle immediately; approvals execute the stored action exactly once after the SQL claim. */
 const decide = Effect.fn('Approvals.decide')(function* (
   actor: Actor,
@@ -693,7 +895,9 @@ const decide = Effect.fn('Approvals.decide')(function* (
   const audit = yield* Audit
   const event = auditAction(row.action)
   const decisionActor: Actor = { ...actor, threadId: Option.some(row.threadId) }
-  if (ApprovalDecision.guards.Deny(request.decision)) {
+  if (row.action.continuation !== null)
+    return yield* answerPausedApproval(decisionActor, row, request)
+  if (ApprovalDecision.isAnyOf(['Deny', 'Cancel'])(request.decision)) {
     yield* audit.record(decisionActor, AuditEvent.cases.ActionDenied.make(event))
     const approval = yield* returned(yield* view([row]), 'Approval')
     yield* deliver(approval.id)
@@ -720,6 +924,7 @@ const decide = Effect.fn('Approvals.decide')(function* (
   yield* audit.record(
     decisionActor,
     ActionOutcome.match(outcome, {
+      Waiting: (): AuditEvent => AuditEvent.cases.ActionApproved.make(event),
       Succeeded: (): AuditEvent => AuditEvent.cases.ActionApproved.make(event),
       Failed: (): AuditEvent => AuditEvent.cases.ActionFailed.make(event),
       Unknown: (): AuditEvent => AuditEvent.cases.ActionOutcomeUnknown.make(event),
@@ -782,7 +987,10 @@ const raise = Effect.fn('Approvals.raise')(function* (
           digest,
           binding,
           status: 'pending',
-          expiresAt: now + 24 * 60 * 60 * 1000,
+          expiresAt:
+            action.continuation === null
+              ? now + 24 * 60 * 60 * 1000
+              : action.continuation.pause.expiresAt,
           createdAt: now,
         })
         .returning()
@@ -822,11 +1030,31 @@ const recover = (
     const conclusion = ranOut
       ? Conclusion.cases.Expired.make({})
       : Conclusion.cases.OutcomeUnknown.make({})
+    const integration =
+      row.action.continuation === null
+        ? null
+        : ranOut
+          ? IntegrationAnswerOutcome.cases.Expired.make({})
+          : IntegrationAnswerOutcome.cases.Uncertain.make({})
+    const signal =
+      integration === null
+        ? owed(row.id, row.action.summary, conclusion, row.decidedBy)
+        : Signal.cases.Owed.make({
+            idempotencyKey: approvalKey(row.id),
+            deciderId: row.decidedBy,
+            message: DeliveryMessage.cases.Signal.make({
+              cue: SignalCue.cases.Answer.make({ body: integrationAnswerText(integration) }),
+            }),
+          })
     const updated = yield* tx
       .update(approvals)
       .set({
         ...ending,
-        signal: yield* encodeSignal(owed(row.id, row.action.summary, conclusion, row.decidedBy)),
+        signal: yield* encodeSignal(signal),
+        integrationOutcome:
+          integration === null
+            ? null
+            : yield* encodeStored(IntegrationAnswerOutcome, 'Integration ending')(integration),
         signalDueAt: now,
       })
       .where(eq(approvals.id, row.id))
@@ -850,12 +1078,27 @@ const expire = Effect.fn('Approvals.expire')(function* () {
         .select()
         .from(approvals)
         .where(
-          and(eq(approvals.status, 'executing'), lt(approvals.decidedAt, now - 10 * 60 * 1000)),
+          and(
+            or(
+              eq(approvals.status, 'executing'),
+              and(
+                eq(approvals.status, 'denied'),
+                isNull(approvals.integrationOutcome),
+                sql`${approvals.action}->'continuation'->'pause' IS NOT NULL`,
+              ),
+            ),
+            lt(approvals.decidedAt, now - 10 * 60 * 1000),
+            sql`${approvals.integrationOutcome}->>'_tag' IS DISTINCT FROM 'Waiting'`,
+          ),
         )
         .for('update', { skipLocked: true })
       return yield* Effect.forEach(expired.concat(abandoned), recover(tx, now))
     }),
   )
+  for (const row of rows) {
+    if (row.action.continuation !== null && row.integrationOutcome !== null)
+      yield* (yield* IntegrationAnswers).settle(row.action, row.integrationOutcome)
+  }
   yield* (yield* Changes).publish(
     rows.flatMap((row) =>
       [Topic.person(row.personId), Topic.thread(row.threadId)].concat(
@@ -932,14 +1175,16 @@ export const approvalStoreLayer = Layer.effect(
   ApprovalStore,
   Effect.gen(function* () {
     const database = yield* Database
-    const context = yield* Effect.context<
-      Database | Changes | Notifier | Audit | RuleStore | ActionRunner | Conversation
-    >()
-    const run = <A, E>(
+    const context = Context.omit(IntegrationAnswers)(
+      yield* Effect.context<
+        Database | Changes | Notifier | Audit | RuleStore | ActionRunner | Conversation
+      >(),
+    )
+    const run = <A, E, R>(
       effect: Effect.Effect<
         A,
         E,
-        Database | Changes | Notifier | Audit | RuleStore | ActionRunner | Conversation
+        R | Database | Changes | Notifier | Audit | RuleStore | ActionRunner | Conversation
       >,
     ) => Effect.provide(effect, context)
     return ApprovalStore.of({
@@ -968,6 +1213,7 @@ export const approvalStoreLayer = Layer.effect(
       }),
       raise: (actor, action, binding) => run(raise(actor, action, binding)),
       decide: (actor, request) => run(decide(actor, request)),
+      completeIntegration: (id, outcome) => run(completeIntegration(id, outcome)),
       withdraw: (actor, id) => run(withdraw(actor, id)),
       expire: run(expire()),
       replay: run(replaySignals(signalWriter, Option.none())),

@@ -1,4 +1,5 @@
-import { Array as Arr, Option, Schema } from 'effect'
+import { Array as Arr, Effect, Option, Schema } from 'effect'
+import { IntegrationAnswerOutcome, noIntegrationContinuation } from './asks.js'
 import { BrowserAction, DefaultBrowseTarget, DesktopAction } from './computers.js'
 import {
   ActionOperationId,
@@ -48,6 +49,7 @@ export const ProposedAction = Schema.Struct({
   rationale: Schema.String,
   effect: ActionEffect,
   target: ActionTarget,
+  continuation: noIntegrationContinuation,
 }).annotate({ identifier: 'ProposedAction', title: 'Proposed action' })
 export interface ProposedAction extends Schema.Schema.Type<typeof ProposedAction> {}
 
@@ -153,6 +155,9 @@ export type ApprovalState = typeof ApprovalState.Type
 /** Authorization for one consequential action, addressed to the one Person who may decide it. */
 export const Approval = Schema.Struct({
   id: ApprovalId,
+  integrationOutcome: Schema.NullOr(IntegrationAnswerOutcome).pipe(
+    Schema.withConstructorDefault(Effect.succeed(null)),
+  ),
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
   /** What Vivid asked to do; once a Person sent it edited (`AllowEdited`), what was sent. */
@@ -187,6 +192,7 @@ export const ApprovalDecision = Schema.TaggedUnion({
   AlwaysAllow: {},
   AllowEdited: { input: Schema.JsonObject },
   Deny: {},
+  Cancel: {},
 })
 export type ApprovalDecision = typeof ApprovalDecision.Type
 

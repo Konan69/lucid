@@ -1,3 +1,4 @@
+import { IntegrationAnswers } from '../connections/answers.ts'
 import * as NodeCrypto from 'node:crypto'
 import { RuntimeSubmissionId } from '@vivid/contracts'
 import { expect } from '@effect/vitest'
@@ -226,7 +227,10 @@ const trust = Layer.mergeAll(inputStoreLayer, approvalStoreLayer).pipe(
   ),
   Layer.provideMerge(conversation),
 )
-export const channelTestLayer = channelReceiverLayer.pipe(Layer.provideMerge(trust))
+export const channelTestLayer = Layer.merge(
+  channelReceiverLayer,
+  Layer.mock(IntegrationAnswers, {}),
+).pipe(Layer.provideMerge(trust))
 
 /** Cleanup failure is a failing test, never a warning hiding leaked fixtures. */
 const cleanupFailed = () => Effect.sync(() => expect.fail('Channel fixture cleanup failed'))

@@ -325,6 +325,7 @@ export function Replied({ request, me }: { request: InputRequest; me: PersonId }
   return InputRequestState.match(request.state, {
     Waiting: () => null,
     Withdrawn: () => null,
+    Expired: () => null,
     Answered: ({ answers, answeredBy: person }) =>
       person.id === me ? (
         <Said text={asking.repliedWords(answers)} mine pictures={NO_PICTURES} />

@@ -1,3 +1,5 @@
+import { Context } from 'effect'
+import { IntegrationAnswers } from '../connections/answers.ts'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
@@ -25,16 +27,18 @@ import { Watches } from '../watches/lifecycle.ts'
 export const actionRunnerLayer = Layer.effect(
   ActionRunner,
   Effect.gen(function* () {
-    const services = yield* Effect.context<
-      | Database
-      | ConnectionStore
-      | Executor
-      | ExecutorMembers
-      | ComputerStore
-      | ToolEffects
-      | DeviceRegistry
-      | Watches
-    >()
+    const services = Context.omit(IntegrationAnswers)(
+      yield* Effect.context<
+        | Database
+        | ConnectionStore
+        | Executor
+        | ExecutorMembers
+        | ComputerStore
+        | ToolEffects
+        | DeviceRegistry
+        | Watches
+      >(),
+    )
     const connections = yield* ConnectionStore
     return ActionRunner.of({
       inspect: (input) =>

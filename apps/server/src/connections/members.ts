@@ -454,6 +454,7 @@ function adoptedOperations(
     appSlug: (app) => execution.appSlug(app),
     tools: (references) => execution.tools(references),
     call: (input) => execution.call(input),
+    resume: (input) => execution.resume(input),
     status,
     refresh: execution.refresh,
     reviseMade: (app, files) =>

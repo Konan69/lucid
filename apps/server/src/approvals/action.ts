@@ -72,6 +72,7 @@ export const editedAction = (
   if (!same) return Option.none()
   return Option.some({
     summary: action.summary,
+    continuation: action.continuation,
     rationale: action.rationale,
     effect: action.effect,
     target: ActionTarget.cases.Connection.make({
