@@ -251,5 +251,5 @@ export const deadCodeRatchets = [
   { plugin: 'knip', rule: 'enumMembers', ceiling: 0 },
   { plugin: 'knip', rule: 'namespaceMembers', ceiling: 0 },
   { plugin: 'knip', rule: 'optionalPeerDependencies', ceiling: 0 },
-  { plugin: 'rpc', rule: 'uncalled', ceiling: 26 },
+  { plugin: 'rpc', rule: 'uncalled', ceiling: 8 },
 ]

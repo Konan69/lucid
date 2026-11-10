@@ -77,10 +77,6 @@ export const searchHandlers = {
       onSome: (found) => ({ results: [...ranked, ...found], messages: 'Searched' as const }),
     })
   }),
-  /** Suggestions use the same Actor-scoped loader as their subscription. */
-  ListSuggestions: Effect.fn('Rpc.ListSuggestions')(function* () {
-    return yield* loadSuggestions(yield* requireActor())
-  }),
   /** Workspace and domain changes refresh the deterministic suggestions through the change bus. */
   WatchSuggestions: () => live('WatchSuggestions', ['activity'], loadSuggestions),
 }

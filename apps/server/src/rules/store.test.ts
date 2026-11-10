@@ -2,7 +2,7 @@ import * as Layer from 'effect/Layer'
 import { describe, expect, layer } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
 import * as Result from 'effect/Result'
-import { AuditEvent, Forbidden, NotFound, RuleScope, SessionId } from '@vivid/contracts'
+import { AuditEvent, Forbidden, NotFound, RuleScope } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { fixture, trustTestServices } from '../approvals/testing.ts'
 import { loadAudit } from '../audit/store.ts'
@@ -88,17 +88,7 @@ layer(testDatabaseLayer)((it) => {
           )
           expect(Result.isFailure(created)).toBe(true)
           if (Result.isFailure(created)) expect(created.failure).toBeInstanceOf(Forbidden)
-          const listed = yield* ruleHandlers.ListRules().pipe(
-            Effect.provideService(
-              AuthContext,
-              AuthState.Person({
-                person: test.personal.person,
-                workspace: test.personal.workspace,
-                sessionId: SessionId.make('test-session'),
-              }),
-            ),
-          )
-          expect(listed.rules).toEqual([])
+          expect(yield* (yield* RuleStore).list(test.personal)).toEqual([])
           const rules = yield* RuleStore
           const owned = yield* rules.create(test.personal, {
             action: 'Ask before sending',
