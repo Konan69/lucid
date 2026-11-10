@@ -10,6 +10,7 @@ import { privateJson, readWorld } from './world.mjs'
 import { provenanceContext } from './provenance.mjs'
 import { score } from './scoring.mjs'
 import { decodeText } from './receipts.mjs'
+import { memberKey } from './member.mjs'
 
 const BehaviourRun = Schema.Struct({
   run: Schema.String,
@@ -103,15 +104,19 @@ async function freshPerson(state, label, directory) {
 }
 
 /** Provider reads observe actual committed effects. They do not run through the model. */
-async function appRead(state, integration, name, input) {
+async function appRead(state, integration, name, { input, key }) {
   const path = '/apps/' + encodeURIComponent(integration.app)
-  const tools = await executorRequest(state, path + '/tools', { schema: ExecutorTools })
+  const tools = await executorRequest(state, path + '/tools', {
+    schema: ExecutorTools,
+    memberKey: key,
+  })
   NodeAssert.ok(
     tools.items.some((tool) => tool.name === name),
     'Missing world read ' + name,
   )
   const response = await executorRequest(state, path + '/tools/call', {
     schema: ReadResult[name],
+    memberKey: key,
     body: { version: tools.version, kind: 'query', tool: name, input },
   })
   return response
@@ -119,16 +124,39 @@ async function appRead(state, integration, name, input) {
 
 /** A later ordinary read must find each send in its thread, beyond the sent-message journal. */
 async function effects(state, integrations, directory) {
+  if (Object.keys(integrations).length === 0) {
+    const empty = { mail: [], calendar: [], readBack: [] }
+    await json(directory + '/effects.json', empty)
+    return empty
+  }
+  const { person } = decodeText(
+    Schema.Struct({ person: Schema.String }),
+    await NodeFSP.readFile(directory + '/person.json', 'utf8'),
+  )
+  const key = await memberKey(state, person)
+  const ownerRefusals = []
+  for (const integration of Object.values(integrations)) {
+    const refusal = await executorRequest(
+      state,
+      '/apps/' + encodeURIComponent(integration.app) + '/tools',
+      {
+        expectedStatus: 403,
+      },
+    )
+    ownerRefusals.push({ app: integration.app, status: refusal.status })
+  }
+  await json(directory + '/owner-refusals.json', ownerRefusals)
   const mail = integrations.Mail
-    ? (await appRead(state, integrations.Mail, 'sent_messages', {})).messages
+    ? (await appRead(state, integrations.Mail, 'sent_messages', { input: {}, key })).messages
     : []
   const calendar = integrations.Calendar
-    ? (await appRead(state, integrations.Calendar, 'created_events', {})).events
+    ? (await appRead(state, integrations.Calendar, 'created_events', { input: {}, key })).events
     : []
   const readBack = []
   for (const message of mail) {
     const result = await appRead(state, integrations.Mail, 'read_thread', {
-      threadId: message.threadId,
+      input: { threadId: message.threadId },
+      key,
     })
     const stored = result.thread.messages.find((item) => item.id === message.id)
     readBack.push({
@@ -138,8 +166,8 @@ async function effects(state, integrations, directory) {
   }
   for (const event of calendar) {
     const result = await appRead(state, integrations.Calendar, 'list_events', {
-      start: event.start,
-      end: event.end,
+      input: { start: event.start, end: event.end },
+      key,
     })
     readBack.push({
       id: event.id,

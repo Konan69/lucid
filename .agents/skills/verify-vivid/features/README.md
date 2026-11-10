@@ -24,6 +24,7 @@ Read the touched feature before launching. A verdict belongs to the recorded com
 - [Workbook file publication](files.md).
 - [Watches](watch.md).
 - [Mail and Calendar behaviour](behaviour.md).
+- [Calendar work blocks](calendar.md).
 - [Integration grants and coverage](integrations.md).
 - [Check-ins](checkin.md).
 - [Library](library.md).
