@@ -68,7 +68,7 @@ export function contractImports(file, source) {
 const reachable = (schemas) => {
   const seen = new Set()
   const visit = (value) => {
-    if (!Predicate.isObject(value) || seen.has(value)) return
+    if (!Predicate.isObjectOrArray(value) || seen.has(value)) return
     seen.add(value)
     Object.values(value).forEach(visit)
   }
