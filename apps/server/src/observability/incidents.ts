@@ -96,7 +96,7 @@ const words =
   (members: ReadonlyArray<string>): Admits =>
   (value) =>
     Predicate.isString(value) && members.includes(value)
-const shaped =
+const patterned =
   (pattern: RegExp): Admits =>
   (value) =>
     Predicate.isString(value) && value.length <= 200 && pattern.test(value)
@@ -120,7 +120,7 @@ type IdField = {
 }[FieldOf<Incident>]
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
-const exactly = (...shapes: ReadonlyArray<string>) => new RegExp(`^(?:${shapes.join('|')})$`, 'u')
+const exactly = (...forms: ReadonlyArray<string>) => new RegExp(`^(?:${forms.join('|')})$`, 'u')
 
 /**
  * The shape each id's generators guarantee, so an id leaves only when it cannot be text anybody
@@ -139,7 +139,7 @@ const exactly = (...shapes: ReadonlyArray<string>) => new RegExp(`^(?:${shapes.j
  * - `connectionId`, `watchId`, `targetId`: `randomUUID` (`connections/store.ts`,
  *   `watches/lifecycle.ts`, `push/targets.ts`).
  */
-const idShapes = {
+const idPatterns = {
   personId: exactly('[A-Za-z0-9]{32}'),
   threadId: exactly(UUID, '(?:watch|dream)-[0-9a-f]{32}', `forget-${UUID}`),
   runId: exactly('(?:run|helper)_[0-9a-f]{64}'),
@@ -149,7 +149,7 @@ const idShapes = {
   targetId: exactly(UUID),
 } satisfies Record<IdField, RegExp>
 
-const isIdField = (field: string): field is IdField => Predicate.hasProperty(idShapes, field)
+const isIdField = (field: string): field is IdField => Predicate.hasProperty(idPatterns, field)
 
 /**
  * How a field is admitted: by the words its schema admits (`refusal.ts` `membersOf`), else by its
@@ -157,7 +157,7 @@ const isIdField = (field: string): field is IdField => Predicate.hasProperty(idS
  */
 const fieldRule = (field: string, schema: { readonly ast: SchemaAST.AST }): Option.Option<Admits> =>
   Option.orElse(Option.map(membersOf(schema.ast), words), () =>
-    isIdField(field) ? Option.some(shaped(idShapes[field])) : Option.none(),
+    isIdField(field) ? Option.some(patterned(idPatterns[field])) : Option.none(),
   )
 
 /** `<path joined by .>:<kind>` items joined by `,`, each step a code name or an index. */
@@ -220,7 +220,7 @@ const hopAttributes = (hop: IncidentHop, index: number): Array<readonly [string,
  * stdout has them all. `record` cannot fail, so a case whose fields will not encode is still said
  * by its kind and cause.
  */
-const attributesOf = (incident: Incident): Record<string, Scalar> => ({
+const attributesOf = (incident: Incident) => ({
   [INCIDENT_KIND]: incident._tag,
   ...Option.match(encodeIncident(incident), {
     onNone: () => ({}),
@@ -240,7 +240,7 @@ const rules = new Map(incidentExport)
 
 /** The attributes that may leave on an issue, each as a tag's text. */
 export const incidentTags = (
-  attributes: Readonly<Record<string, unknown>>,
+  attributes: NonNullable<Sentry.Event['tags']>,
 ): Record<string, string> =>
   Object.fromEntries(
     Object.entries(attributes).flatMap(([key, value]) => {

@@ -22,7 +22,10 @@ const operationTags = (tags: Sentry.Event['tags']) => {
  * OTLP export applies to the same key. Absent when none is left.
  */
 const keptTags = (tags: Sentry.Event['tags']) => {
-  const kept = { ...operationTags(tags), ...(tags === undefined ? {} : incidentTags(tags)) }
+  const kept = {
+    ...operationTags(tags),
+    ...Option.match(Option.fromUndefinedOr(tags), { onNone: () => ({}), onSome: incidentTags }),
+  }
   return Object.keys(kept).length === 0 ? undefined : kept
 }
 

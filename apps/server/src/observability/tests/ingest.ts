@@ -21,7 +21,7 @@ const decodeEvent = Schema.decodeUnknownEffect(Schema.fromJsonString(SentEvent))
  * A real HTTP receiver standing in for Sentry's ingest, and `issuesLayer` initialising the real SDK
  * against it, as `issues.test.ts` does. Every envelope the SDK posts is kept.
  */
-export const ingest = Effect.gen(function* () {
+export const ingest = Effect.fn('Ingest.start')(function* () {
   const received: Array<string> = []
   const receiver = NodeHttp.createServer((request, response) => {
     let body = ''
@@ -35,15 +35,15 @@ export const ingest = Effect.gen(function* () {
       response.end('{}')
     })
   })
+  const closed = Effect.callback<void>((resume) => {
+    receiver.close((error) => resume(error === undefined ? Effect.void : Effect.die(error)))
+  })
   yield* Effect.acquireRelease(
     Effect.callback<void>((resume) => {
       receiver.once('error', (error) => resume(Effect.die(error)))
       receiver.listen(0, '127.0.0.1', () => resume(Effect.void))
     }),
-    () =>
-      Effect.callback<void>((resume) => {
-        receiver.close((error) => resume(error === undefined ? Effect.void : Effect.die(error)))
-      }),
+    () => closed,
   )
   const address = receiver.address()
   if (address === null || Predicate.isString(address)) throw new Error('Missing receiver port')
@@ -60,7 +60,7 @@ export const ingest = Effect.gen(function* () {
   )
   const context = yield* Layer.build(Layer.mergeAll(issues, incidentsLayer))
   /** Waits for the SDK to post what it holds, then reads each envelope's event item. */
-  const events = Effect.gen(function* () {
+  const events = Effect.fn('Ingest.events')(function* () {
     expect(yield* Effect.promise(() => Promise.resolve(Sentry.flush(3000)))).toBe(true)
     return yield* Effect.forEach(received, (envelope) => {
       // An envelope is a header line, then an item header and its payload per item.
@@ -68,5 +68,5 @@ export const ingest = Effect.gen(function* () {
       return decodeEvent(payload ?? '')
     })
   })
-  return { context, events, received }
+  return { context, events: events(), received }
 })

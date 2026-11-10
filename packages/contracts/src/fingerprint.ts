@@ -55,6 +55,7 @@ import {
   InvalidRequest,
   LibrarySearchRequest,
   LocationSharing,
+  MadeIntegrationSource,
   MakeIntegrationOutcome,
   MakeIntegrationRequest,
   MemoryAddress,
@@ -140,7 +141,10 @@ import { ContractFingerprint } from './runtime.js'
  *
  * The gate's wire policy (`scripts/gate/wire.mjs`) fails when a schema imported by both
  * `apps/server/src` and `packages/agent/runtime/src` is not a key here, so a new shared schema is
- * registered where it is added and the fingerprint follows.
+ * registered where it is added and the fingerprint follows. That policy imports it by name, which
+ * the dead-code check cannot see.
+ *
+ * @public
  */
 export const wireSchemas = {
   ActionApplied,
@@ -197,6 +201,7 @@ export const wireSchemas = {
   InvalidRequest,
   LibrarySearchRequest,
   LocationSharing,
+  MadeIntegrationSource,
   MakeIntegrationOutcome,
   MakeIntegrationRequest,
   MemoryAddress,

@@ -152,6 +152,12 @@ const outcomeUnknown = (failure: ExecutorEventsFailure) =>
  */
 export const RECOVER_AFTER_MS = 60_000
 
+/** An unsubscribe that did not reach Executor: the Watch is already stopped for the Person. */
+const unsubscribeFailed = (failure: { readonly _tag: string }) =>
+  Effect.logWarning(Message.watchUnsubscribed).pipe(
+    Effect.annotateLogs(FailureAttribute.type, failure._tag),
+  )
+
 /** A revision owns its grant and compare-and-set; the ordinary lifecycle keeps its original key. */
 function makeRevision(input: {
   readonly store: WatchStore['Service']
@@ -190,11 +196,7 @@ function makeRevision(input: {
         url: previous.callbackUrl,
       })
       .pipe(
-        Effect.tapError((failure) =>
-          Effect.logWarning(Message.watchUnsubscribed).pipe(
-            Effect.annotateLogs(FailureAttribute.type, failure._tag),
-          ),
-        ),
+        Effect.tapError(unsubscribeFailed),
         Effect.ignore,
       )
     yield* publish(revised.value)
@@ -211,6 +213,24 @@ function findEvents(apps: WatchedApps['Service'], events: ExecutorEvents['Servic
     return eventsOfApp(yield* events.list(app.caller), app.appSlug)
   })
 }
+
+/**
+ * A Watch Executor says can never be subscribed, so it can no longer wake Vivid. Recorded once:
+ * only by the renewal whose stop changed the row.
+ */
+const stoppedForGood = (record: WatchRecord, failure: { readonly _tag: string }) =>
+  Incident.cases.WatchFailed.make({
+    personId: record.personId,
+    watchId: record.watch.id,
+    cause: causeOf(hop('executor', 'Watches.renewOne', failure._tag)),
+  })
+
+/**
+ * The renewal pass runs untraced (`watchRenewalLayer`); a Watch that is due is work, so each
+ * renewal is a trace of its own and an Incident it records has a trace to open.
+ */
+const ownTrace = <A, E, R>(renewal: Effect.Effect<A, E, R>) =>
+  renewal.pipe(Effect.withSpan('Watches.renewDue', { root: true }), Effect.withTracerEnabled(true))
 
 /** Build the service over its stores, Executor and the server's address and secret. */
 const make = Effect.fn('Watches.make')(function* () {
@@ -308,11 +328,7 @@ const make = Effect.fn('Watches.make')(function* () {
     if (Option.isNone(stopped)) return yield* new WatchMissing({})
     yield* apps.callerOf(found.value.connectionId).pipe(
       Effect.flatMap((caller) => events.unsubscribe(caller, subscriptionOf(found.value))),
-      Effect.tapError((failure) =>
-        Effect.logWarning(Message.watchUnsubscribed).pipe(
-          Effect.annotateLogs(FailureAttribute.type, failure._tag),
-        ),
-      ),
+      Effect.tapError(unsubscribeFailed),
       Effect.ignore,
     )
     yield* publish(stopped.value)
@@ -340,15 +356,7 @@ const make = Effect.fn('Watches.make')(function* () {
     const reason = renewalOutcome(renewed.failure)
     if (Option.isNone(reason)) return
     const stopped = yield* store.stop(record.watch.id, reason.value)
-    // The Watch can no longer wake Vivid. Said once: only the pass whose stop changed the row.
-    if (Option.isSome(stopped))
-      yield* incidents.record(
-        Incident.cases.WatchFailed.make({
-          personId: record.personId,
-          watchId: record.watch.id,
-          cause: causeOf(hop('executor', 'Watches.renewOne', renewed.failure._tag)),
-        }),
-      )
+    if (Option.isSome(stopped)) yield* incidents.record(stoppedForGood(record, renewed.failure))
     yield* publish(record)
   })
 
@@ -363,16 +371,7 @@ const make = Effect.fn('Watches.make')(function* () {
       activeBefore: now + RENEW_WITHIN_MS,
       pendingBefore: now - RECOVER_AFTER_MS,
     })
-    // The pass runs untraced (`watchRenewalLayer`); a Watch that is due is work, so each renewal is
-    // a trace of its own and an Incident it says has a trace to open.
-    const outcomes = yield* Effect.forEach(due, (record) =>
-      Effect.exit(
-        renewOne(record).pipe(
-          Effect.withSpan('Watches.renewDue', { root: true }),
-          Effect.withTracerEnabled(true),
-        ),
-      ),
-    )
+    const outcomes = yield* Effect.forEach(due, (record) => Effect.exit(ownTrace(renewOne(record))))
     for (const outcome of outcomes) yield* outcome
   })
 

@@ -521,7 +521,7 @@ export const guardedTracer = (inner: Tracer.Tracer, keys: Keys): Tracer.Tracer =
       // A parent this tracer did not make is not exported from here: it came from another process
       // (a client's RPC payload, a `traceparent`), so the span begins this process's part of the
       // trace (`REMOTE_PARENT`).
-      if (Option.exists(plain.parent, (parent) => parent._tag === 'ExternalSpan'))
+      if (Option.exists(plain.parent, (parent) => Predicate.isTagged(parent, 'ExternalSpan')))
         Result.try(() => made.attribute(REMOTE_PARENT, true))
       const span = guardedSpan({
         inner: made,

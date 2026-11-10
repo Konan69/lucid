@@ -39,7 +39,7 @@ class ProbeLost extends Schema.TaggedError<ProbeLost>()(
 
 it.live('says an Incident as one error issue with its fingerprint, closed tags and trace', () =>
   Effect.gen(function* () {
-    const { context, events } = yield* ingest
+    const { context, events } = yield* ingest()
     const logs = decisionLogs()
     const decide = Effect.fn('Probe.decide')(function* () {
       const incidents = yield* Incidents
@@ -52,14 +52,15 @@ it.live('says an Incident as one error issue with its fingerprint, closed tags a
     const sent = yield* events
     expect(sent).toHaveLength(1)
     const [event] = sent
-    expect(event?.level).toBe('error')
-    expect(event?.message).toBe('AdmissionFailed')
-    expect(event?.fingerprint).toEqual([
+    if (event === undefined) return yield* Effect.die('No event was sent')
+    expect(event.level).toBe('error')
+    expect(event.message).toBe('AdmissionFailed')
+    expect(event.fingerprint).toEqual([
       'AdmissionFailed',
       'server.AdmissionRefused',
       'cell.SchemaError',
     ])
-    expect(event?.tags).toEqual({
+    expect(event.tags).toEqual({
       'vivid.incident.kind': 'AdmissionFailed',
       'vivid.incident.personId': refusedSend.personId,
       'vivid.incident.threadId': refusedSend.threadId,
@@ -75,7 +76,7 @@ it.live('says an Incident as one error issue with its fingerprint, closed tags a
       'vivid.incident.cause.1.status': '400',
       'vivid.incident.cause.1.issues': 'delivery:MissingKey',
     })
-    expect(event?.contexts.trace).toEqual({ trace_id: span.traceId, span_id: span.spanId })
+    expect(event.contexts.trace).toEqual({ trace_id: span.traceId, span_id: span.spanId })
     const said = logs.recorded().filter((line) => line.includes(Message.incident))
     expect(said).toHaveLength(1)
     expect(said[0]).toContain('level=ERROR')
@@ -84,7 +85,7 @@ it.live('says an Incident as one error issue with its fingerprint, closed tags a
 
 it.live('opens an issue for a typed failure by its impact, and none for a routine refusal', () =>
   Effect.gen(function* () {
-    const { context, events } = yield* ingest
+    const { context, events } = yield* ingest()
     const logs = decisionLogs()
     const lost = Effect.fn('Probe.lost')(function* () {
       return yield* new ProbeLost({ message: 'PRIVATE_MARKER' })
@@ -99,7 +100,10 @@ it.live('opens an issue for a typed failure by its impact, and none for a routin
     )
 
     const sent = yield* events
-    expect(sent.map((event) => [event.level, event.tags?.['vivid.operation']])).toEqual([
+    expect(sent.map((event) => [
+        event.level,
+        event.tags === undefined ? undefined : event.tags['vivid.operation'],
+      ])).toEqual([
       ['error', 'Probe.lost'],
     ])
     const lines = logs.recorded().filter((line) => line.includes(Message.failure))

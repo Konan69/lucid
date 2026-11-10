@@ -1229,47 +1229,51 @@ const handoffFields = (
   }
 }
 
+/**
+ * Says an action's failure as the Incident it is when it means the Person's Computer could not be
+ * used (`unusable`), where Vivid's actions meet the Computer: every action, command, file call and
+ * handoff step goes through `execute` or `personal`, and its caller turns the failure into an
+ * outcome (`executionRefusals`), after which nothing else would say it. On 6 October 2026 every
+ * action on a Person's Computer was refused for seven hours and the log was silent.
+ */
+const unusableSaid =
+  (incidents: IncidentsService) =>
+  (person: PersonId) =>
+  <A, E extends { readonly _tag: string }, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.tapError(effect, (failure) =>
+      unusable(failure)
+        ? incidents.record(
+            Incident.cases.ComputerFailed.make({
+              personId: person,
+              step: 'Use',
+              cause: causeOf(hop('server', 'ComputerStore.execute', failure._tag)),
+            }),
+          )
+        : Effect.void,
+    )
+
+/** Resolve provider identity only after a current lifecycle and keyboard-ownership check. */
+const accessOf = (state: Effect.Success<ReturnType<typeof lifecycle>>) =>
+  Effect.fn('ComputerStore.access')(function* (person: PersonId) {
+    const row = yield* state.rows.load(person)
+    const { computer, outage } = yield* state.observe(person)
+    if (Option.isSome(outage)) return ComputerAccess.cases.Unavailable.make({ reason: notAnswering })
+    const result = accessTo(computer, computerMachineKey(person))
+    if (ComputerAccess.guards.Unavailable(result)) return result
+    if (Option.isNone(row))
+      return ComputerAccess.cases.Unavailable.make({ reason: 'The Computer is absent.' })
+    return ComputerAccess.cases.Ready.make({ key: row.value.machine })
+  })
+
 /** Capture provider and database dependencies once; callers need only the Computer authority. */
 export const computerStoreLayer = Layer.effect(
   ComputerStore,
   Effect.gen(function* () {
     const state = yield* lifecycle()
     const database = yield* Database
-    const incidents = yield* Incidents
-    /**
-     * Says an action's failure as the Incident it is when it means the Person's Computer could not
-     * be used (`unusable`), where Vivid's actions meet the Computer: every action, command, file
-     * call and handoff step goes through `execute` or `personal`, and its caller turns the failure
-     * into an outcome (`executionRefusals`), after which nothing else would say it. On 6 October
-     * 2026 every action on a Person's Computer was refused for seven hours and the log was silent.
-     */
-    const said =
-      (person: PersonId) =>
-      <A, E extends { readonly _tag: string }, R>(effect: Effect.Effect<A, E, R>) =>
-        Effect.tapError(effect, (failure) =>
-          unusable(failure)
-            ? incidents.record(
-                Incident.cases.ComputerFailed.make({
-                  personId: person,
-                  step: 'Use',
-                  cause: causeOf(hop('server', 'ComputerStore.execute', failure._tag)),
-                }),
-              )
-            : Effect.void,
-        )
+    const said = unusableSaid(yield* Incidents)
     const inactivity = state.rows.inactivity
-    /** Resolve provider identity only after a current lifecycle and keyboard-ownership check. */
-    const access = Effect.fn('ComputerStore.access')(function* (person: PersonId) {
-      const row = yield* state.rows.load(person)
-      const { computer, outage } = yield* state.observe(person)
-      if (Option.isSome(outage))
-        return ComputerAccess.cases.Unavailable.make({ reason: notAnswering })
-      const result = accessTo(computer, computerMachineKey(person))
-      if (ComputerAccess.guards.Unavailable(result)) return result
-      if (Option.isNone(row))
-        return ComputerAccess.cases.Unavailable.make({ reason: 'The Computer is absent.' })
-      return ComputerAccess.cases.Ready.make({ key: row.value.machine })
-    })
+    const access = accessOf(state)
     /** The session's Person owns the endpoint; a fresh screen check returns 404 for a lost machine without warming action status checks. */
     const screen = Effect.fn('ComputerStore.screen')(function* (person: PersonId) {
       const row = yield* state.rows.load(person)

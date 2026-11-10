@@ -73,9 +73,9 @@ export const IssueKind = Schema.Literals([
 export type IssueKind = typeof IssueKind.Type
 
 /** The most issues one hop carries; the rest are dropped, since the first already says what broke. */
-export const MOST_ISSUES = 8
+const MOST_ISSUES = 8
 /** The deepest path kept for one issue. */
-export const LONGEST_ISSUE_PATH = 8
+const LONGEST_ISSUE_PATH = 8
 
 /**
  * One reason a value did not decode, without the value: where in the schema it was, and what
@@ -289,8 +289,7 @@ export const DeliveryKind = Schema.Literals(['Words', ...Struct.keys(SignalCue.c
 export type DeliveryKind = typeof DeliveryKind.Type
 
 /** The Computer step that failed: making it run, or using it once it should have been running. */
-export const ComputerStep = Schema.Literals(['Start', 'Use'])
-export type ComputerStep = typeof ComputerStep.Type
+const ComputerStep = Schema.Literals(['Start', 'Use'])
 
 /**
  * Every way a Person's work did not happen, said once, where it is decided.

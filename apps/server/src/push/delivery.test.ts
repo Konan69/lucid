@@ -432,7 +432,7 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
       () =>
         withPush(
           Effect.gen(function* () {
-            const { events } = yield* ingest
+            const { events } = yield* ingest()
             const owner = yield* fixture()
             const targets = yield* PushTargets
             const probe = yield* PushProbe
@@ -458,7 +458,9 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
             expect(sent.map((event) => [event.level, event.fingerprint])).toEqual([
               ['error', ['PushUndelivered', 'push.PushUncertain']],
             ])
-            expect(sent[0]?.tags).toMatchObject({
+            const [event] = sent
+            if (event === undefined) return yield* Effect.die('No event was sent')
+            expect(event.tags).toMatchObject({
               'vivid.incident.kind': 'PushUndelivered',
               'vivid.incident.notificationId': input.id,
               'vivid.incident.targetId': target.id,

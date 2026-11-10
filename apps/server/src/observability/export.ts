@@ -485,9 +485,9 @@ const PARENT_REMOTE = 0x200
 /** A span as it is posted: Effect's, plus the flags `makeOtlpSpan` does not write. */
 type PostedSpan = ExportedSpan & { readonly flags: number }
 
-/** The flags of a span that keeps `parent`: its locality, which `guard.ts` marked. */
-const flagsOf = (span: ExportedSpan, parent: string | undefined) =>
-  parent === undefined
+/** The flags of a span: whether it keeps its parent, and that parent's locality (`guard.ts`). */
+const flagsOf = (span: ExportedSpan, keepsParent: boolean) =>
+  !keepsParent
     ? 0
     : span.attributes.some(({ key, value }) => key === REMOTE_PARENT && value.boolValue === true)
       ? PARENT_KNOWN | PARENT_REMOTE
@@ -533,7 +533,7 @@ const allowSpan =
         traceId: traceId.value,
         spanId: span.spanId,
         parentSpanId,
-        flags: flagsOf(span, parentSpanId),
+        flags: flagsOf(span, parentSpanId !== undefined),
         name: Option.match(said('http.route'), {
           onNone: () => spanName(span.name),
           onSome: (route) =>
