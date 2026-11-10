@@ -1,6 +1,5 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { AskInputRequest, SessionId, ShareThreadRequest, type ThreadId } from '@vivid/contracts'
-import { AuthContext, AuthState } from '@vivid/contracts/auth'
+import { AskInputRequest, ShareThreadRequest, type ThreadId } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
 import { Effect, Layer, Option } from 'effect'
 import type { Actor } from '../auth/access.ts'
@@ -12,7 +11,7 @@ import { changesLayer, topicsOf } from '../live/changes.ts'
 import { nextValue, observing } from '../live/testing.ts'
 import { ThreadStore, threadStoreLayer } from '../threads/store.ts'
 import { threads } from '../threads/tables.ts'
-import { approvalHandlers } from './handlers.ts'
+import { loadInbox } from './handlers.ts'
 import { ApprovalStore, approvalStoreLayer } from './store.ts'
 import { approvals } from './tables.ts'
 import { fixture, trustTestServices } from './testing.ts'
@@ -39,19 +38,6 @@ const question = AskInputRequest.make({
     },
   ],
 })
-
-/** Use the public combined loader; observing exercises the exact production watch without sessions. */
-const inbox = (actor: Actor) =>
-  approvalHandlers.GetInbox().pipe(
-    Effect.provideService(
-      AuthContext,
-      AuthState.Person({
-        person: actor.person,
-        workspace: actor.workspace,
-        sessionId: SessionId.make(crypto.randomUUID()),
-      }),
-    ),
-  )
 
 /** Read every owned request column so visibility changes cannot silently settle or rewrite records. */
 const records = Effect.fn('InboxPrivacy.records')(function* (threadId: ThreadId) {
@@ -95,7 +81,7 @@ layer(testDatabaseLayer)((it) => {
             )
             const request = yield* (yield* InputStore).ask(addressed, question)
             const before = yield* records(test.companyId)
-            const load = inbox(test.owner)
+            const load = loadInbox(test.owner)
             const expected = { approvals: [approval], requests: [request], handoffs: [] }
             const observation = yield* observing(topicsOf(test.owner), load)
             expect(observation.initial).toEqual(expected)
@@ -138,7 +124,7 @@ layer(testDatabaseLayer)((it) => {
               test.bound,
             )
             const request = yield* (yield* InputStore).ask(test.companyVivid, question)
-            const load = inbox(test.member)
+            const load = loadInbox(test.member)
             expect(yield* load).toEqual({
               approvals: [approval],
               requests: [request],

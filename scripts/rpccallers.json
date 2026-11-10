@@ -1,23 +1,5 @@
 {
-  "GetBuild": "Settings follows WatchBuild; retain the one-shot read contract pending caller review.",
-  "ListPeople": "People screens follow WatchPeople; retain the one-shot read contract pending caller review.",
-  "GetThread": "Thread screens follow WatchThread; retain the one-shot read contract pending caller review.",
-  "ListArtifacts": "Artifact screens use WatchArtifactShelf; review the legacy list contract before removing it.",
-  "WatchArtifacts": "Artifact screens use WatchArtifactShelf; review the legacy watch contract before removing it.",
-  "GetArtifact": "Artifact screens follow WatchArtifact; retain the one-shot read contract pending caller review.",
   "RemoveArtifact": "Wire the artifact deletion affordance to this procedure.",
-  "GetInbox": "Inbox follows WatchInbox; retain the one-shot read contract pending caller review.",
-  "ReconcileAction": "Wire uncertain action reconciliation to the action recovery affordance.",
   "AnswerIntegrationInput": "Wire Integration input prompts to this typed answer procedure (#227).",
-  "ListRules": "Rules screens follow WatchRules; retain the one-shot read contract pending caller review.",
-  "ListAudit": "Audit screens follow WatchAudit; retain the one-shot read contract pending caller review.",
-  "ListNotifications": "Notifications follow WatchNotifications; retain the one-shot read contract pending caller review.",
-  "ListPushTargets": "Wire Settings device inventory to the push target list.",
-  "ListFeed": "Feed follows WatchFeed; retain the one-shot read contract pending caller review.",
-  "NudgedOwed": "Wire the runtime Owed reminder receipt to the persisted nudge procedure.",
-  "ListLibrary": "Library follows WatchLibrary; retain the one-shot read contract pending caller review.",
-  "ListSkills": "Wire the skill management list to this procedure.",
-  "GetEgress": "Egress follows WatchEgress; retain the one-shot read contract pending caller review.",
-  "ListDevices": "Device screens follow WatchDevices; retain the one-shot read contract pending caller review.",
-  "ListSuggestions": "Suggestion screens follow WatchSuggestions; retain the one-shot read contract pending caller review."
+  "NudgedOwed": "Records a nudge actually sent; the send path does not yet carry the Owed id, so nothing can write it truthfully."
 }

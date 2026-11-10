@@ -2,14 +2,14 @@ import { Activities } from '../activity/service.ts'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import type { DecideApprovalRequest } from '@vivid/contracts'
-import { requireActor, requirePerson, type Actor } from '../auth/access.ts'
+import { requirePerson, type Actor } from '../auth/access.ts'
 import { InputStore } from '../inputs/store.ts'
 import { handoffsWaiting } from '../inputs/handoff.ts'
 import { live } from '../live/query.ts'
 import { ApprovalStore } from './store.ts'
 
-/** Both inbox entry points read the same addressed records in the Actor's current workspace. */
-const loadInbox = Effect.fn('Inbox.load')(function* (actor: Actor) {
+/** The live inbox reads addressed records in the Actor's current workspace. */
+export const loadInbox = Effect.fn('Inbox.load')(function* (actor: Actor) {
   return {
     approvals: yield* (yield* ApprovalStore).inbox(actor),
     requests: yield* (yield* InputStore).inbox(actor),
@@ -30,9 +30,6 @@ const decidingPerson = Effect.fn('Approvals.person')(function* () {
 })
 
 export const approvalHandlers = {
-  GetInbox: Effect.fn('Rpc.GetInbox')(function* () {
-    return yield* loadInbox(yield* requireActor())
-  }),
   WatchInbox: () => live('WatchInbox', ['activity'], loadInbox),
   /** The digest and pending claim are enforced in the store before any execution. */
   DecideApproval: Effect.fn('Rpc.DecideApproval')(function* (request: DecideApprovalRequest) {
