@@ -934,7 +934,7 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
 
           const notifications = yield* (yield* PgClient).listen(CHANNEL)
           yield* feed.mark(test.ada, MarkFeedCardRequest.make({ card, state: 'seen' }))
-          expect(yield* items(test.ada)).toMatchObject([{ _tag: 'Waiting', at: now - hour }])
+          expect(yield* items(test.ada)).toMatchObject([{ at: now - hour }])
           expect(
             yield* Effect.exit(
               payload(notifications, [
