@@ -22,6 +22,10 @@
  * Sentry. A token with only the `project:write` scope is enough (`project:write` is the lowest
  * scope that may create artifacts for a project).
  *
+ * `--required` first turns both skips into failures: a missing token or no directory to upload
+ * exits 1. The production pre-deploy (`infra/predeploy.mjs`) always passes it, because there a
+ * skip meant every production error arrived unreadable and nothing said so.
+ *
  * Maps for the web app are emitted hidden (`vite.config.ts`): the map file ships with the deploy
  * but no comment in the bundle points at it, so a browser that fetches the bundle never learns
  * the map's address and the sources stay unlisted. Injection adds the debug ID into the bundle
@@ -33,9 +37,12 @@ import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as NodeProcess from 'node:process'
 
-const [project, ...directories] = NodeProcess.argv.slice(2)
+const required = NodeProcess.argv[2] === '--required'
+const [project, ...directories] = NodeProcess.argv.slice(required ? 3 : 2)
 if (project === undefined || directories.length === 0) {
-  console.error('Usage: node scripts/sentry-upload.mjs <project> <directory> [<directory> ...]')
+  console.error(
+    'Usage: node scripts/sentry-upload.mjs [--required] <project> <directory> [<directory> ...]',
+  )
   NodeProcess.exit(1)
 }
 
@@ -43,15 +50,17 @@ if (project === undefined || directories.length === 0) {
 const org = 'vivid-7t'
 
 if (NodeProcess.env.SENTRY_AUTH_TOKEN === undefined) {
-  console.log(`sentry-upload: no SENTRY_AUTH_TOKEN, skipping the upload for ${project}`)
-  NodeProcess.exit(0)
+  console.log(
+    `sentry-upload: no SENTRY_AUTH_TOKEN, ${required ? 'cannot upload' : 'skipping the upload'} for ${project}`,
+  )
+  NodeProcess.exit(required ? 1 : 0)
 }
 
 // Only directories that exist take part, so a build whose output layout misses one does not fail.
 const uploaded = directories.filter((directory) => NodeFS.existsSync(directory))
 if (uploaded.length === 0) {
   console.log(`sentry-upload: none of [${directories.join(', ')}] exists, nothing to upload`)
-  NodeProcess.exit(0)
+  NodeProcess.exit(required ? 1 : 0)
 }
 
 /**
