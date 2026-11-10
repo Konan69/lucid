@@ -18,11 +18,14 @@ import {
   type PushSound,
   ThreadId,
   type PushTarget,
+  Incident,
+  type IncidentHop,
 } from '@vivid/contracts'
 import { approvals } from '../approvals/tables.ts'
 import { Database, decodeStored, encodeStored, returned } from '../database/client.ts'
 import { notifications } from '../notifications/tables.ts'
 import { observeFailures } from '../observability/failure.ts'
+import { causeOf, hop, Incidents } from '../observability/incidents.ts'
 import { canSee, findThread } from '../threads/access.ts'
 import { opensAt } from '../threads/place.ts'
 import { Presence } from '../threads/presence.ts'
@@ -119,6 +122,7 @@ interface DeliveryServices {
   readonly adapter: PushAdapter['Service']
   readonly targets: PushTargets['Service']
   readonly presence: Presence['Service']
+  readonly incidents: Incidents['Service']
 }
 
 /** A target's physical address never changes the unique logical send identity. */
@@ -151,6 +155,26 @@ const claim = Effect.fn('Push.claim')(function* (
   return claimed.length > 0
 })
 
+/**
+ * A notice the push service rejected for one of the Person's phones, or whose answer could not be
+ * told, said once where its receipt is decided: the receipt is a stored value nothing else reports.
+ * A phone that is gone, a Person who is present or signed out, are routine and not said.
+ */
+const undelivered = (
+  services: DeliveryServices,
+  notice: { readonly id: NotificationId; readonly personId: PersonId },
+  targetId: PushTarget['id'],
+  head: IncidentHop,
+) =>
+  services.incidents.record(
+    Incident.cases.PushUndelivered.make({
+      personId: notice.personId,
+      notificationId: notice.id,
+      targetId,
+      cause: causeOf(head),
+    }),
+  )
+
 /** The send boundary cannot atomically commit with an external provider; uncertain sends stop here. */
 const makeAttempt = (services: DeliveryServices) =>
   Effect.fn('Push.attempt')(function* (
@@ -173,8 +197,14 @@ const makeAttempt = (services: DeliveryServices) =>
           services.targets
             .remove(notice.personId, target.id)
             .pipe(Effect.as(PushReceipt.cases.Failed.make({ reason: 'Gone' }))),
-        PushRejected: () => Effect.succeed(PushReceipt.cases.Failed.make({ reason: 'Rejected' })),
-        PushUncertain: () => Effect.succeed(PushReceipt.cases.Failed.make({ reason: 'Uncertain' })),
+        PushRejected: (failure) =>
+          undelivered(services, notice, target.id, hop('push', 'Push.attempt', failure._tag)).pipe(
+            Effect.as(PushReceipt.cases.Failed.make({ reason: 'Rejected' })),
+          ),
+        PushUncertain: (failure) =>
+          undelivered(services, notice, target.id, hop('push', 'Push.attempt', failure._tag)).pipe(
+            Effect.as(PushReceipt.cases.Failed.make({ reason: 'Uncertain' })),
+          ),
       }),
     )
   })
@@ -229,8 +259,9 @@ const makePush = Effect.fn('Push.make')(function* () {
   const adapter = yield* PushAdapter
   const targets = yield* PushTargets
   const presence = yield* Presence
-  const send = makeSend({ database, adapter, targets, presence })
-  const reconcile = makeReconcile({ database, adapter, targets, presence })
+  const incidents = yield* Incidents
+  const send = makeSend({ database, adapter, targets, presence, incidents })
+  const reconcile = makeReconcile({ database, adapter, targets, presence, incidents })
   const deliver = Effect.fn('Push.deliver')(function* (
     personId: PersonId,
     notificationId: NotificationId,
@@ -273,6 +304,7 @@ export const deliverTarget = Effect.fn('Push.deliverTarget')(function* (input: {
   const adapter = yield* PushAdapter
   const targets = yield* PushTargets
   const presence = yield* Presence
+  const incidents = yield* Incidents
   const rows = yield* database.run(
     database
       .select()
@@ -299,7 +331,7 @@ export const deliverTarget = Effect.fn('Push.deliverTarget')(function* (input: {
     sound: SOUND[notice.kind],
     asks: yield* asksOf(notice),
   })
-  yield* makeSend({ database, adapter, targets, presence })(notice, payload, target)
+  yield* makeSend({ database, adapter, targets, presence, incidents })(notice, payload, target)
 })
 
 export interface PushService {
@@ -368,9 +400,22 @@ const settleReceipt = Effect.fn('Push.settleReceipt')(function* (
       row.delivery,
       PushReceipt.cases.Failed.make({ reason: 'Uncertain' }),
     )
+    yield* undelivered(
+      services,
+      { id: row.delivery.notificationId, personId: row.personId },
+      row.delivery.targetId,
+      hop('push', 'Push.settleReceipt', 'PushUncertain'),
+    )
     return
   }
   if (result.value === 'Gone') yield* services.targets.remove(row.personId, row.delivery.targetId)
+  if (result.value === 'Rejected')
+    yield* undelivered(
+      services,
+      { id: row.delivery.notificationId, personId: row.personId },
+      row.delivery.targetId,
+      hop('push', 'Push.settleReceipt', 'PushRejected'),
+    )
   const settled =
     result.value === 'Confirmed'
       ? PushReceipt.cases.Sent.make({
@@ -409,9 +454,6 @@ export const pushReceiptsLayer = Layer.effectDiscard(
     yield* push.reconcile.pipe(
       // Recorded before `ignore` discards the failure; the next minute's check is unchanged.
       observeFailures('schedule'),
-      Effect.tapError((error) =>
-        Effect.logWarning('Push receipts could not be checked', error._tag),
-      ),
       Effect.ignore,
       untraced,
       Effect.repeat(Schedule.spaced(RECEIPT_CADENCE)),

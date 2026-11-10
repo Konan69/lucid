@@ -86,7 +86,10 @@ import {
   computerStoreLayer,
   machineFailureReason,
 } from './store.ts'
+import { incidentsLayer } from '../observability/incidents.ts'
 
+/** The store as the server composes it: its Incidents go to the real recorder. */
+const computerStores = computerStoreLayer.pipe(Layer.provide(incidentsLayer))
 // Deliberate PNG fixture, not a claim that the guest was exercised.
 const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j9f8AAAAASUVORK5CYII='
@@ -923,7 +926,7 @@ const accountLayer = configured({
  * handlers, on one installation that has one machine. Only Boat itself is played, by the fixture
  * server above; the binding table, the adoption rule and the store's lifecycle are the real ones.
  */
-const accountsLayer = computerStoreLayer.pipe(
+const accountsLayer = computerStores.pipe(
   Layer.provideMerge(deviceLayer),
   Layer.provideMerge(
     Layer.mergeAll(
@@ -1189,7 +1192,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           const saved = yield* store.recover(actor(first), unsupported)
           expect(yield* store.recover(actor(first), unsupported)).toEqual(saved)
           const restarted = Context.get(
-            yield* Layer.build(Layer.fresh(computerStoreLayer)),
+            yield* Layer.build(Layer.fresh(computerStores)),
             ComputerStore,
           )
           expect(yield* restarted.recover(actor(first), unsupported)).toEqual(saved)

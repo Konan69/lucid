@@ -81,7 +81,7 @@ const KIND = attributeKey('kind')
  * field whose value is not known in advance: `ServiceId` is a branded `Schema.String`, and a
  * service can be one an Integration a Person imported gave its own name to.
  */
-const membersOf = (ast: SchemaAST.AST): Option.Option<ReadonlyArray<string>> => {
+export const membersOf = (ast: SchemaAST.AST): Option.Option<ReadonlyArray<string>> => {
   if (SchemaAST.isLiteral(ast))
     return Predicate.isString(ast.literal) ? Option.some([ast.literal]) : Option.none()
   if (SchemaAST.isUnion(ast)) return Option.map(Option.all(ast.types.map(membersOf)), Arr.flatten)

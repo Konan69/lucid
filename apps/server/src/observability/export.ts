@@ -2,6 +2,7 @@ import type { GateDecision } from '../approvals/gate.ts'
 import type { UnreviewedReason } from '../approvals/policy.ts'
 import { getTableName, isTable } from 'drizzle-orm'
 import { Commit, ModelFailureReason, GateBasis } from '@vivid/contracts'
+import * as Arr from 'effect/Array'
 import * as Clock from 'effect/Clock'
 import * as Cause from 'effect/Cause'
 import * as Duration from 'effect/Duration'
@@ -38,6 +39,7 @@ import {
   type Keys,
 } from './guard.ts'
 import { isCodeName, isMessage, Message, OMITTED } from './messages.ts'
+import { INCIDENT_KIND, incidentExport } from './incidents.ts'
 import { refusalExport } from './refusal.ts'
 
 /** The name every span and log line of this process is filed under. */
@@ -78,6 +80,30 @@ const text =
     Predicate.isString(value.stringValue) && allowed(value.stringValue)
       ? Option.some({ stringValue: value.stringValue })
       : Option.none()
+
+/**
+ * A string or an integer that `admits` accepts, kept as the kind of value it arrived as. An
+ * Incident's attributes are of both kinds (`incidents.ts` `incidentExport`).
+ */
+const scalar =
+  (admits: (value: string | number) => boolean): Rule =>
+  (value) => {
+    if (Predicate.isString(value.stringValue))
+      return admits(value.stringValue) ? Option.some({ stringValue: value.stringValue }) : Option.none()
+    if (Predicate.isNumber(value.intValue) && Number.isInteger(value.intValue))
+      return admits(value.intValue) ? Option.some({ intValue: value.intValue }) : Option.none()
+    return Option.none()
+  }
+
+/**
+ * A route template as Effect 4.0.2 `HttpRouter.ts` writes it on the request's span
+ * (`span.attribute("http.route", route.path)`), from the path a route was added with in code:
+ * `/api/watches/:id`, never the request's own path. Its shape is a path of letters, digits and
+ * `_ - . : * /`, so an id or a token a client sent cannot be one unless code declared it.
+ */
+const routeTemplate = text(
+  (candidate) => candidate.length <= 200 && /^\/[A-Za-z0-9_\-.:*/]*$/u.test(candidate),
+)
 
 /** One of a closed set of words. */
 const oneOf = (words: ReadonlyArray<string>) => text((candidate) => words.includes(candidate))
@@ -323,6 +349,8 @@ const rulesOf = (): Rules => {
     ['vivid.reconciliation.outcome', oneOf(['Applied', 'NotApplied', 'Inconclusive', 'Unchecked'])],
     ['vivid.reconciliation.retry', oneOf(['Unblocked', 'Blocked'])],
     ...refusalExport.map(([key, members]) => [key, oneOf(members)] as const),
+    ...incidentExport.map(([key, admits]) => [key, scalar(admits)] as const),
+    ['http.route', routeTemplate],
     ['vivid.action.operation_id', actionOperationId],
     ['vivid.action.effect', oneOf(['read', 'write', 'destructive'])],
     ['vivid.executor.request_id', executorRequestId],
@@ -440,8 +468,18 @@ const allowLink =
     ]
   }
 
+/** OTLP's `STATUS_CODE_ERROR`. */
+const ERROR_STATUS = 2
+
 /**
  * One span, rebuilt field by field.
+ *
+ * - A span on which an Incident was recorded (`incidents.ts`) has the error status, whatever its
+ *   effect returned: the outcome it decided was a Person's work not happening, and Effect 4.0.2
+ *   `OtlpTracer.ts` `makeOtlpSpan` reads the status from the exit alone.
+ * - A request's span is named by its method and the route it matched (`GET /api/watches/:id`),
+ *   both kept by the rules above, so the trace's transaction has a name a person can read. Effect
+ *   4.0.2 `HttpMiddleware.SpanNameGenerator` names it by the method alone, before routing.
  *
  * - The status keeps its code only. rc.116 `makeOtlpSpan` sets the message to the first error's
  *   own message.
@@ -459,6 +497,11 @@ const allowSpan =
     const traceId = traceIdOf(span.traceId)
     if (Option.isNone(traceId) || !isSpanId(span.spanId)) return []
     const links = span.links.flatMap(allowLink(rules))
+    const kept = attributesOf(rules, span.attributes)
+    const said = (key: string) =>
+      Arr.findFirst(kept.attributes, (pair) => pair.key === key).pipe(
+        Option.flatMap(({ value }) => Option.fromUndefinedOr(value.stringValue)),
+      )
     return [
       {
         traceId: traceId.value,
@@ -467,14 +510,17 @@ const allowSpan =
           span.parentSpanId !== undefined && isSpanId(span.parentSpanId)
             ? span.parentSpanId
             : undefined,
-        name: spanName(span.name),
+        name: Option.match(said('http.route'), {
+          onNone: () => spanName(span.name),
+          onSome: (route) => (METHODS.includes(span.name) ? `${span.name} ${route}` : spanName(span.name)),
+        }),
         kind: span.kind,
         startTimeUnixNano: span.startTimeUnixNano,
         endTimeUnixNano: span.endTimeUnixNano,
-        ...attributesOf(rules, span.attributes),
+        ...kept,
         events: span.events.map(allowEvent(rules)),
         droppedEventsCount: 0,
-        status: { code: span.status.code },
+        status: { code: Option.isSome(said(INCIDENT_KIND)) ? ERROR_STATUS : span.status.code },
         links,
         droppedLinksCount: span.links.length - links.length,
       },

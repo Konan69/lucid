@@ -1,5 +1,7 @@
 import { ServiceUnavailable } from '@vivid/contracts'
 import { Cause, Deferred, Duration, Effect, Exit, Option, Predicate, Ref, Schedule } from 'effect'
+import { FailureAttribute, recordFailures } from '../observability/failure.ts'
+import { Message } from '../observability/messages.ts'
 import type { ExecutorFailure, ExecutorServiceEntry } from './executor.ts'
 
 /** Cold pulls can recover from transport loss or a temporarily unavailable Executor. Three
@@ -54,7 +56,12 @@ export const retainCatalog = Effect.fn('Executor.catalogSnapshot')(function* (
             ),
           ),
         ),
-        Effect.tapError(() => Effect.logWarning('Connection catalog refresh failed')),
+        // One attempt; a transient one is tried again, so it is a warning, said by its tag.
+        Effect.tapError((failure) =>
+          Effect.logWarning(Message.catalogAttempt).pipe(
+            Effect.annotateLogs(FailureAttribute.type, failure._tag),
+          ),
+        ),
       ),
     )
     yield* Deferred.done(
@@ -80,12 +87,8 @@ export const retainCatalog = Effect.fn('Executor.catalogSnapshot')(function* (
           cause: Cause.Cause<ExecutorFailure>,
         ) {
           const error = Cause.findErrorOption(cause)
-          yield* Effect.logError('Connection catalog refresh failed; retaining refresh schedule', {
-            failure: Option.match(error, {
-              onNone: () => 'Defect',
-              onSome: (failure) => failure._tag,
-            }),
-          })
+          // Retries gave up: said as any failure that is answered is, so it leaves the process.
+          yield* recordFailures('schedule')(cause)
           const current = yield* Ref.get(snapshot)
           return Option.exists(error, catalogTransient) && Option.isNone(current)
             ? CATALOG_RETRY_DELAY

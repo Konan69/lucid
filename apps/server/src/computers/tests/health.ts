@@ -18,7 +18,10 @@ import { boatMachineLayer } from '../boat.ts'
 import { transport, type Transport } from '../boat/transport.ts'
 import { bindings } from '../boat/bindings.ts'
 import { computers, machineBindings } from '../tables.ts'
+import { incidentsLayer } from '../../observability/incidents.ts'
 
+/** The store as the server composes it: its Incidents go to the real recorder. */
+const computerStores = computerStoreLayer.pipe(Layer.provide(incidentsLayer))
 /** Cleanup can relinquish only this fixture’s exact holder generation. A different holder is
  * untouched. This removes test metadata, never the provided machine or its files/profile. */
 const releaseHolder = Effect.fn('ComputerHealthProof.release')(function* (
@@ -72,7 +75,7 @@ export const healthFixture = Effect.fn('ComputerHealthProof.fixture')(function* 
   }
   yield* database.run(database.insert(personTable).values(person))
   const context = yield* Layer.build(
-    computerStoreLayer.pipe(
+    computerStores.pipe(
       Layer.provideMerge(boatMachineLayer),
       Layer.provide(silentChangesLayer),
     ),

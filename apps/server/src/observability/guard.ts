@@ -12,7 +12,7 @@ import * as Result from 'effect/Result'
 import * as Tracer from 'effect/Tracer'
 import type { AnyValue } from 'effect/observability/OtlpResource'
 import type * as OtlpSerialization from 'effect/observability/OtlpSerialization'
-import { type FailureKind, summarize, UNTYPED } from './failure.ts'
+import { FailureAttribute, type FailureKind, summarize, UNTYPED } from './failure.ts'
 import { isCodeName, isMessage, OMITTED } from './messages.ts'
 
 /**
@@ -363,6 +363,19 @@ const standInCause = (cause: Cause.Cause<unknown>): Cause.Cause<unknown> =>
     }),
   )
 
+/**
+ * The type a failed span is classified by: its first defect's, else its first failure's, as its
+ * stand-in names it. A defect outranks a typed failure, as `failure.ts` `primaryOf` ranks them.
+ * Absent for a span that ended only by interruption.
+ */
+const primaryType = (cause: Cause.Cause<unknown>): Option.Option<string> => {
+  const reasons = firstOf(cause.reasons, MOST_REASONS)
+  return Option.firstSomeOf([
+    Option.map(Arr.findFirst(reasons, Cause.isDieReason), ({ defect }) => standIn('defect', defect).name),
+    Option.map(Arr.findFirst(reasons, Cause.isFailReason), ({ error }) => standIn('expected', error).name),
+  ])
+}
+
 /** A guarded span's parts: the exporter's span, and the plain options that span was made from. */
 interface Guarded extends Reading {
   readonly inner: Tracer.Span
@@ -385,7 +398,8 @@ interface Guarded extends Reading {
  *   for the first `MOST_EVENTS` events.
  * - `addLinks` forwards plain links while there is room under `MOST_LINKS`.
  * - `end` hands the inner span `Exit.void` for a success, since the value is the program's, and
- *   for a failure a cause of stand-ins (`standInCause`). The exit the program ends with is
+ *   for a failure a cause of stand-ins (`standInCause`), having written the primary failure's type
+ *   as `error.type` where nothing wrote one (`primaryType`). The exit the program ends with is
  *   neither: it is the one the runtime already holds, and this span's own `status` reports it.
  *   The status is kept here, not read back from the inner span, so that a span whose `end` threw
  *   still reads as ended (rc.116 `endSpan` asks) and nobody who reads `status.exit` is handed the
@@ -429,10 +443,14 @@ const guardedSpan = ({ inner, plain, keys, own }: Guarded): Tracer.Span => {
       ended = Option.some({ _tag: 'Ended', startTime: plain.startTime, endTime, exit })
       contained(() => {
         if (!Predicate.isBigInt(endTime)) return
-        inner.end(
-          endTime,
-          Exit.isSuccess(exit) ? Exit.void : Exit.failCause(standInCause(exit.cause)),
-        )
+        if (Exit.isSuccess(exit)) return inner.end(endTime, Exit.void)
+        // Every failed span says what failed, not only a boundary's (`failure.ts` `observeFailures`
+        // writes it there first, and that is kept): a nested Executor or database span carried
+        // only the tracer's `exception` event, whose type the export drops unless it is a fixed name.
+        const type = primaryType(exit.cause)
+        if (Option.isSome(type) && !inner.attributes.has(FailureAttribute.type))
+          inner.attribute(FailureAttribute.type, type.value)
+        inner.end(endTime, Exit.failCause(standInCause(exit.cause)))
       })
     },
     attribute: (key, value) => {

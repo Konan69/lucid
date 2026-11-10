@@ -98,7 +98,10 @@ import { handoffs } from '../inputs/tables.ts'
 import { Definition } from '../inputs/handoff.ts'
 import * as Schema from 'effect/Schema'
 import { deviceRequests, computers } from './tables.ts'
+import { incidentsLayer } from '../observability/incidents.ts'
 
+/** The store as the server composes it: its Incidents go to the real recorder. */
+const computerStores = computerStoreLayer.pipe(Layer.provide(incidentsLayer))
 /** Test authority records actual seam calls and can lose machines or command receipts deliberately. */
 interface EvidenceService {
   readonly commandResult: Ref.Ref<{
@@ -371,7 +374,7 @@ const runtimeTestLayer = Layer.merge(
   // These Threads start no helpers, so a Stop has none to stop.
   Layer.mock(ChildRuns, { stopThread: () => Effect.void }),
 )
-const testLayer = computerStoreLayer.pipe(
+const testLayer = computerStores.pipe(
   Layer.provideMerge(deviceLayer),
   Layer.provideMerge(runtimeTestLayer),
   Layer.provideMerge(dependencies),
@@ -1532,7 +1535,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
             const store = yield* ComputerStore
             yield* store.run(first.id, request)
             return (yield* store.get(first.id)).id
-          }).pipe((program) => scopedCase(computerStoreLayer, program, 'inherited')),
+          }).pipe((program) => scopedCase(computerStores, program, 'inherited')),
         )
         yield* TestClock.adjust('19 minutes')
         yield* Effect.scoped(
@@ -1543,7 +1546,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
             yield* TestClock.adjust('1 minute')
             expect(yield* Queue.take(evidence.stopped)).toBe(computerMachineKey(first.id))
             expect((yield* store.get(first.id)).state._tag).toBe('Stopped')
-          }).pipe((program) => scopedCase(computerStoreLayer, program, 'inherited')),
+          }).pipe((program) => scopedCase(computerStores, program, 'inherited')),
         )
         expect(yield* Ref.get(evidence.ensures)).toHaveLength(1)
       }).pipe(Effect.scoped, (program) => scopedCase(dependencies, program, 'fresh')),

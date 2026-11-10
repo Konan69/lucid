@@ -23,9 +23,12 @@ import { Changes, silentChangesLayer } from '../live/changes.ts'
 import { absentMachineLayer } from './testing.ts'
 import { ComputerStore, computerStoreLayer } from './store.ts'
 import { screenLifetime } from './screen.ts'
+import { incidentsLayer } from '../observability/incidents.ts'
 
+/** The store as the server composes it: its Incidents go to the real recorder. */
+const computerStores = computerStoreLayer.pipe(Layer.provide(incidentsLayer))
 const lifetimeDependencies = Layer.mergeAll(testDatabaseLayer, testConfigLayer, silentChangesLayer)
-const lifetimeStores = computerStoreLayer.pipe(
+const lifetimeStores = computerStores.pipe(
   Layer.provideMerge(lifetimeDependencies),
   Layer.provide(absentMachineLayer),
 )

@@ -46,8 +46,21 @@ export const impactSignal = {
   Recovered: { level: 'Warn', issue: false },
 } as const satisfies Record<Impact, { readonly level: LogLevel; readonly issue: boolean }>
 
+/** Clients mark these calls failed; the server owns the incident and its original causal stack. */
+export const isRemoteIncident = Schema.is(
+  Schema.Struct({
+    _tag: Schema.Union([
+      DatabaseFailure.fields._tag,
+      DatabaseUnavailable.fields._tag,
+      DatabaseConstraintViolation.fields._tag,
+      RuntimeUnavailable.fields._tag,
+      ServiceUnavailable.fields._tag,
+    ]),
+  }),
+)
+
 /** User decisions and stale-edit refusals are normal outcomes, unlike typed infrastructure failures. */
-export const isRoutineRefusal = Schema.is(
+const isRoutine = Schema.is(
   Schema.Struct({
     _tag: Schema.Union([
       Unauthenticated.fields._tag,
@@ -66,27 +79,11 @@ export const isRoutineRefusal = Schema.is(
   }),
 )
 
-/** Clients mark these calls failed; the server owns the incident and its original causal stack. */
-export const isRemoteIncident = Schema.is(
-  Schema.Struct({
-    _tag: Schema.Union([
-      DatabaseFailure.fields._tag,
-      DatabaseUnavailable.fields._tag,
-      DatabaseConstraintViolation.fields._tag,
-      RuntimeUnavailable.fields._tag,
-      ServiceUnavailable.fields._tag,
-    ]),
-  }),
-)
-
 /**
  * The impact of a typed failure that reached a boundary as the answer: `Routine` for the
- * refusals `isRoutineRefusal` names, `Incident` for every other. It is never `Recovered`, because a failure that
- * reached a boundary was not recovered from; a recorder that retries says `Recovered` itself.
- *
- * `isRoutineRefusal` is folded into this: its callers (`apps/server/src/observability/issues.ts`,
- * `apps/mobile/src/data/tracing.ts`) move to `impactOfFailure` and it is deleted in the same
- * change.
+ * refusals `isRoutine` names, `Incident` for every other. It is never `Recovered`, because a
+ * failure that reached a boundary was not recovered from; a recorder that retries says
+ * `Recovered` itself. It is the only reader of that set, so no caller can pick a level from it.
  */
 export const impactOfFailure = (failure: { readonly _tag: string }): Impact =>
-  isRoutineRefusal(failure) ? 'Routine' : 'Incident'
+  isRoutine(failure) ? 'Routine' : 'Incident'

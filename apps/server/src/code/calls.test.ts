@@ -84,14 +84,17 @@ import { CallOutcome, CodeProcess, codeProcessLayer } from './process.ts'
 import { WorkerMessage } from './protocol.ts'
 import { localCodeComputerLayer } from './testing.ts'
 import { codeSourceLayer } from './source.ts'
+import { incidentsLayer } from '../observability/incidents.ts'
 
+/** The store as the server composes it: its Incidents go to the real recorder. */
+const computerStores = computerStoreLayer.pipe(Layer.provide(incidentsLayer))
 const isRepositoryInput = Schema.is(Schema.Struct({ repoName: Schema.String }))
 const busyFailure = CodeFailure.cases.Busy.make({
   message: 'Vivid is busy with other work. Try again in a moment.',
 })
 
 const accounts = Layer.mergeAll(connectionTestLayer, trustTestLayer, absentMachineLayer)
-const computers = computerStoreLayer.pipe(
+const computers = computerStores.pipe(
   Layer.provideMerge(deviceLayer),
   Layer.provideMerge(accounts),
 )
