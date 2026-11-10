@@ -472,13 +472,13 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
               expect(receipt.operationId).toBe(id)
             }
             const expiring = []
-            for (const tool of ['approve', 'input']) {
+            for (const tool of ['approve', 'input', 'question']) {
               const parent = yield* approvals.raise(
                 test.vivid,
                 ProposedAction.make({
                   summary: `Expire ${tool}`,
                   rationale: 'Prove unanswered deadlines settle the original Approval',
-                  effect: 'write',
+                  effect: tool === 'question' ? 'read' : 'write',
                   target: ActionTarget.cases.Connection.make({
                     connectionId: row.id,
                     account: 'Proof',

@@ -403,8 +403,8 @@ const claimPausedRead = Effect.fn('Connections.claimPausedRead')(function* (
 ) {
   if (input.effect !== 'read' || Option.isNone(input.operation))
     return Option.none<import('@vivid/contracts').ActionReceipt>()
-  if (Option.isNone(actor.threadId))
-    return yield* new NotFound({ message: 'Integration question needs a Thread' })
+  // Approved reads already own a journal row; their runner intentionally carries no Thread on the Actor.
+  if (Option.isNone(actor.threadId)) return Option.none<import('@vivid/contracts').ActionReceipt>()
   const claimed = yield* claim({
     id: input.operation.value,
     threadId: actor.threadId.value,
