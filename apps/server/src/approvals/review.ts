@@ -18,7 +18,8 @@ import { personRequest, type PersonRequest } from './request.ts'
 const INPUT_CHARACTERS = 12_000
 
 /**
- * How long an action waits for its review, from the first read of the request to the answer.
+ * The limit for reading the request and for each provider attempt. A transient provider failure
+ * or timeout gets one immediate retry before Unreviewed; neither attempt gets a longer limit.
  * docs/22 gave the reviewer ten seconds, taken from Grok
  * Bot's Auto-review. Vivid's policy differs: an unreviewed write runs (`policy.ts`), so a slow
  * provider that still answers would hold every write on a Person's own Integration for up to ten
@@ -144,18 +145,33 @@ export const reviewerLayer = Layer.effect(
           const attempt = yield* decisionWouldAttempt.pipe(
             Effect.provideService(DecisionModel.DecisionModel, model),
           )
-          if (!attempt) return Review.cases.Unreviewed.make({})
+          if (!attempt) {
+            yield* Effect.logWarning('Action unreviewed', { reason: 'Unavailable' })
+            return Review.cases.Unreviewed.make({})
+          }
           // Arguments too long to show whole are not judged on a part of them.
-          if (shown(action).input.length > INPUT_CHARACTERS) return Review.cases.Unreviewed.make({})
+          if (shown(action).input.length > INPUT_CHARACTERS) {
+            yield* Effect.logWarning('Action unreviewed', { reason: 'ArgumentsTooLong' })
+            return Review.cases.Unreviewed.make({})
+          }
           const said = yield* personRequest(runtime, actor).pipe(
             Effect.provideService(Database, database),
+            Effect.timeoutOption(REVIEW_BUDGET),
           )
+          if (Option.isNone(said)) {
+            yield* Effect.logWarning('Action unreviewed', { reason: 'HistoryDeadline' })
+            return Review.cases.Unreviewed.make({})
+          }
           // Without the Person's words `asked` would be judged from Vivid's own account alone.
-          if (Option.isNone(said)) return Review.cases.Unreviewed.make({})
+          if (Option.isNone(said.value)) {
+            yield* Effect.logWarning('Action unreviewed', { reason: 'NoRequest' })
+            return Review.cases.Unreviewed.make({})
+          }
           const { answers } = yield* decideWithin(
             ActionReview,
-            reviewInput(said.value, action),
+            reviewInput(said.value.value, action),
             REVIEW_BUDGET,
+            1,
           ).pipe(Effect.provideService(DecisionModel.DecisionModel, model))
           // Numbers only: the action, the request and provider detail never reach the log.
           yield* Effect.logInfo('Action reviewed', {
@@ -179,20 +195,6 @@ export const reviewerLayer = Layer.effect(
                 ? Effect.void
                 : Effect.logWarning('Action unreviewed', { reason: error.reason })
               ).pipe(Effect.as(Review.cases.Unreviewed.make({}))),
-            ),
-            // One deadline for reading the request and asking: a slow history read must not
-            // add its own five seconds in front of the decision's budget.
-            Effect.timeoutOption(REVIEW_BUDGET),
-            Effect.flatMap(
-              Option.match({
-                onSome: (review) => Effect.succeed(review),
-                // The deadline is a real event (history or the provider was slow), so it gets
-                // the same one line a failed decision does.
-                onNone: () =>
-                  Effect.logWarning('Action unreviewed', { reason: 'Deadline' }).pipe(
-                    Effect.as(Review.cases.Unreviewed.make({})),
-                  ),
-              }),
             ),
           ),
       ),

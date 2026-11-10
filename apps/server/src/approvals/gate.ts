@@ -99,7 +99,7 @@ export interface GateService {
    * only when the Person did not ask for it and it reaches other people or cannot be undone. With
    * no review (decisions switched off or unavailable) a `write` runs and a `destructive` action
    * asks. An unjudged Never rule conservatively refuses; an unjudged Ask rule asks.
-   * Unwatched work asks before a non-read unless reviewed as contained. An unwatched destructive action always asks.
+   * Unwatched work asks before a non-read unless reviewed as contained.
    *
    * `bound` is what the action was prepared against: the sign-in of the Integration it uses and
    * the Thread documents whose text it carries. An Approval raised here is bound to it and goes
@@ -247,7 +247,7 @@ export const gateLayer = Layer.effect(
       )
       if (thread.place !== 'Background') return Option.none()
       const review = yield* reviewer.review(actor, action)
-      if (unwatchedOutcome(action.effect, review) === 'Ask')
+      if (unwatchedOutcome(review) === 'Ask')
         return Option.some<GateDecision>(yield* ask(approvals, actor, action, bound))
       return Option.some<GateDecision>(yield* allow(audit, actor, action))
     })

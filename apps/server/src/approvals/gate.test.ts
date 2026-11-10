@@ -54,6 +54,24 @@ layer(testDatabaseLayer)((it) => {
     const contained = Review.cases.Reviewed.make({ asked: 0.95, beyond: 0.1, contained: 0.95 })
     for (const [name, place, origin, review, effect, allowRule, expected] of [
       ['background send', 'Background', watch, reviewed, 'write', false, 'ApprovalRequired'],
+      [
+        'unasked contained destructive action',
+        'Conversation',
+        message,
+        Review.cases.Reviewed.make({ asked: 0.1, beyond: 0.1, contained: 0.95 }),
+        'destructive',
+        false,
+        'Allowed',
+      ],
+      [
+        'unreviewed destructive action',
+        'Conversation',
+        message,
+        unreviewed,
+        'destructive',
+        false,
+        'ApprovalRequired',
+      ],
       ['watched send', 'Conversation', message, reviewed, 'write', false, 'Allowed'],
       [
         'unreviewed background send',
@@ -75,13 +93,13 @@ layer(testDatabaseLayer)((it) => {
         'ApprovalRequired',
       ],
       [
-        'background delete with Allow',
+        'contained background destructive action with Allow',
         'Background',
         watch,
         contained,
         'destructive',
         true,
-        'ApprovalRequired',
+        'Allowed',
       ],
       [
         'expiry continuation',

@@ -122,9 +122,19 @@ The runtime proposes; the server decides. Nothing consequential runs from model 
      people, spends money or cannot be undone.
    - An **ask first** rule always asks. An **allow automatically** rule lets an undoable action run
      without a review; a destructive one is still reviewed. Neither bypasses a Never rule.
-   - The reviewer has ten seconds and one attempt. If it fails, times out, has no request to judge
-     against, or the arguments are too long to show whole, the action asks; it is never run
-     unreviewed and never silently dropped.
+   - **Decided, 10 November 2026.** Konan: "just because a tool is destructive does not mean it's a
+     bad thing." Jev's measurements decide reviewed actions; a contained action can run whatever
+     its effect label. Konan also asked: "Why would Jev not be able to review an action and why
+     would it skip? What if that's the action that destroys my entire life". A timeout or provider
+     failure gets one retry, with the same three-second limit per attempt. Reading the request
+     has its own three-second limit. Missing requests, oversized arguments, disabled decisions,
+     or unavailable review after retry leave the action unreviewed: a write runs, a destructive
+     action asks. Never, Company and ask-first rules still bind. Unwatched work still needs a
+     contained review; sends, spending and deletes become Feed drafts.
+   - Executor's per-tool approval is machinery underneath. When a call reaches Executor, Vivid's
+     Gate already decided the model's action, or the Person pressed a display button. Vivid
+     accepts Executor's saved approval request and audits that allowance, without another ask.
+     A typed-input form still asks the Person; a provider denial remains a refusal.
 6. **Ask** creates an **Approval**: the exact action, a digest of it, the Connection it will use, an
    expiry, and the Person who must decide. The turn ends. The Thread shows a card.
 7. The Person chooses **Allow once**, **Always allow** or **Deny**. Always allow adds the reviewer's

@@ -624,6 +624,7 @@ export const decideWithin = <
   definition: Decision.Definition<Input, Decisions>,
   input: Input['Type'],
   budget: Duration.Input,
+  retries: 0 | 1 = 0,
 ): Effect.Effect<
   DecisionModel.DecideResponse<Decisions>,
   DecisionUnavailable,
@@ -661,7 +662,22 @@ export const decideWithin = <
         )
       }
       return yield* restore(
-        completeAttempt(attemptDecision(definition, input, budget), state, admission),
+        completeAttempt(
+          attemptDecision(definition, input, budget).pipe(
+            Effect.retry({
+              times: retries,
+              while: (error) => {
+                const reason = unavailableReason(error)
+                if (reason !== 'TimedOut' && reason !== 'Provider') return false
+                return Effect.logWarning('Decision attempt failed', { reason }).pipe(
+                  Effect.as(true),
+                )
+              },
+            }),
+          ),
+          state,
+          admission,
+        ),
       )
     }),
   ).pipe(Effect.withSpan('Decisions.decide'))
