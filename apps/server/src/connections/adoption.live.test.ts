@@ -159,7 +159,7 @@ const liveLayers = (
             { method: request.method, path: new URL(request.url).pathname, principal },
           ])
           if (
-            request.url.includes('/accounts/app/') &&
+            request.url.includes('/accounts/app') &&
             (request.method === 'PUT' || (request.method === 'GET' && principal === 'member'))
           )
             yield* Ref.getAndSet(crash, Effect.void).pipe(Effect.flatMap((hook) => hook))
@@ -996,6 +996,7 @@ const unavailableAdoption = Effect.fn('AdoptionProof.unavailableAdoption')(funct
   const original = yield* row(id)
   if (!ExecutorReferences.guards.Authorized(original.references))
     return expect.fail('Expected account')
+  const context = yield* Effect.context<HttpClient.HttpClient>()
   yield* Ref.set(
     crash,
     Ref.set(
@@ -1005,7 +1006,11 @@ const unavailableAdoption = Effect.fn('AdoptionProof.unavailableAdoption')(funct
         `/apps/${original.references.app}/accounts/app/vividAdopted/${original.references.account}`,
         {},
         Schema.Json,
-      ).pipe(Effect.asVoid),
+      ).pipe(
+        Effect.provideContext(context),
+        Effect.result,
+        Effect.map((result) => expect(Result.isSuccess(result)).toBe(true)),
+      ),
     ),
   )
   expect(yield* adoptConnections()).toBe(true)
@@ -1084,7 +1089,10 @@ const lapsedLegacy = Effect.fn('AdoptionProof.lapsedLegacy')(function* (
       if (stored !== undefined) return yield* removeConnection(yield* decodeRow(stored))
       if (Option.isSome(held))
         yield* capturedRequest('DELETE', `/apps/${held.value}`, {}, Schema.Json)
-    }),
+    }).pipe(
+      Effect.result,
+      Effect.map((result) => expect(Result.isSuccess(result)).toBe(true)),
+    ),
   )
   const request = credential('Google')
   const files = madeFiles({
@@ -1132,7 +1140,11 @@ const lapsedLegacy = Effect.fn('AdoptionProof.lapsedLegacy')(function* (
       },
       Schema.Struct({ client: Schema.Struct({ id: Schema.String }) }),
     ),
-    (saved) => capturedRequest('DELETE', `/oauth-clients/${saved.client.id}`, {}, Schema.Json),
+    (saved) =>
+      capturedRequest('DELETE', `/oauth-clients/${saved.client.id}`, {}, Schema.Json).pipe(
+        Effect.result,
+        Effect.map((result) => expect(Result.isSuccess(result)).toBe(true)),
+      ),
   )
   const signIn = yield* capturedRequest(
     'POST',
@@ -1176,9 +1188,23 @@ const lapsedLegacy = Effect.fn('AdoptionProof.lapsedLegacy')(function* (
 const lapsed = Effect.fn('AdoptionProof.lapsed')(function* (
   actor: Actor,
   receipts: Ref.Ref<ReadonlyArray<Receipt>>,
+  crash: Ref.Ref<Effect.Effect<void>>,
 ) {
   const remote = yield* lapsedProvider()
   const legacy = yield* lapsedLegacy(actor, remote.origin)
+  yield* Ref.set(
+    crash,
+    row(legacy.id).pipe(
+      Effect.provideService(Database, yield* Database),
+      Effect.result,
+      Effect.map((result) => {
+        if (Result.isFailure(result)) return expect.fail('Expected prepared row')
+        const prepared = result.success
+        expect(prepared.executorPrincipal).toBe('installation')
+        expect(ExecutorReferences.guards.Adopting(prepared.references)).toBe(true)
+      }),
+    ),
+  )
   expect(yield* adoptConnections()).toBe(false)
   const moved = yield* row(legacy.id)
   expect(moved.executorPrincipal).toBe('adopted-account')
@@ -1200,11 +1226,12 @@ const lapsed = Effect.fn('AdoptionProof.lapsed')(function* (
   if (!ExecutorReferences.guards.Authorized(ready.references))
     return expect.fail('Expected account')
   expect(ready.references.account).toBe(legacy.references.account)
-  expect(ready.references.binding).toEqual({
-    _tag: 'Account',
-    scope: 'app',
-    requirement: 'vividAdopted',
-  })
+  expect(ready.references.binding).toEqual(
+    ExecutorBinding.cases.Account.make({
+      scope: 'app',
+      requirement: 'vividAdopted',
+    }),
+  )
   const offset = (yield* Ref.get(receipts)).length
   expect(
     yield* (yield* operationsOf(ready)).call({
@@ -1232,7 +1259,7 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Executor adoption', () => 
           const receipts = yield* Ref.make<ReadonlyArray<Receipt>>([])
           const crash = yield* Ref.make<Effect.Effect<void>>(Effect.void)
           const context = yield* Layer.build(liveLayers(crash, receipts))
-          yield* lapsed(actors.personalActor, receipts).pipe(Effect.provide(context))
+          yield* lapsed(actors.personalActor, receipts, crash).pipe(Effect.provide(context))
           yield* unavailableAdoption(actors.personalActor, crash).pipe(Effect.provide(context))
         }).pipe(Effect.scoped),
       { timeout: 240_000 },
