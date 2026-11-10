@@ -37,14 +37,17 @@ const timing = v.variant('kind', [
       v.number(),
       v.finite(),
       v.description(
-        'The next chosen instant, in epoch milliseconds. Use the response clock, the real deadline, or the timer Integration clock; never guess the current time.',
+        'The exact model-selected instant, in epoch milliseconds. Arm with remindAt for this exact nextAt. Use Requested for explicit Person timing, including relative delays. Never guess the current time.',
       ),
     ),
     why: text('Why this is the right time to revisit the open work.', 1000),
   }),
   v.object({
     kind: v.literal('Requested'),
-    request: text('The Person’s exact timing or recurrence request.', 1000),
+    request: text(
+      'The Person’s exact timing or recurrence request. For a relative delay, arm with remindIn using the timer Integration’s clock.',
+      1000,
+    ),
     timezone: text('Their known IANA time zone.', 200),
   }),
 ])
