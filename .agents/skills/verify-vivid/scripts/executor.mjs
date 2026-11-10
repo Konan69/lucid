@@ -188,7 +188,7 @@ export async function executor(state, { run, own, save, cleanEnv }) {
 }
 
 /** No authority enters logs. Direct calls are confined to this run's own Executor origin. */
-export async function executorRequest(state, path, { schema, body }) {
+export async function executorRequest(state, path, { schema, body, memberKey, expectedStatus }) {
   const config = decodeText(
     Configuration,
     await NodeFSP.readFile(state.scratch + '/executor.json', 'utf8'),
@@ -197,11 +197,21 @@ export async function executorRequest(state, path, { schema, body }) {
     `${config.origin}/api/organizations/${encodeURIComponent(config.organization)}${path}`,
     {
       method: body === undefined ? 'GET' : 'POST',
-      headers: { authorization: 'Bearer ' + config.key, 'content-type': 'application/json' },
+      headers: {
+        authorization: 'Bearer ' + (memberKey ?? config.key),
+        'content-type': 'application/json',
+      },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(120_000),
     },
   )
+  if (expectedStatus !== undefined) {
+    if (response.status !== expectedStatus)
+      throw new Error(
+        'Disposable Executor expected ' + expectedStatus + ', received ' + response.status,
+      )
+    return { status: response.status }
+  }
   if (!response.ok)
     throw new Error('Disposable Executor request failed ' + path + ' ' + response.status)
   return decodeText(schema, await response.text())
