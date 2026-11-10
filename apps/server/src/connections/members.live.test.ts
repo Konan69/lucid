@@ -74,7 +74,6 @@ const cleanup = <A, E, R>(operation: Effect.Effect<A, E, R>) =>
 const enabled = NodeProcess.env['VIVID_LIVE_EXECUTOR_MEMBERS'] === '1'
 const settings = ConfigProvider.layer(
   ConfigProvider.fromUnknown({
-    VIVID_TEST_CALLBACK_HOST: NodeProcess.env['VIVID_TEST_CALLBACK_HOST'],
     GOOGLE_CLIENT_ID: 'isolated-test-client',
     GOOGLE_CLIENT_SECRET: 'isolated-test-secret',
     VIVID_EXECUTOR_URL: NodeProcess.env['VIVID_TEST_EXECUTOR_URL'],
@@ -402,7 +401,7 @@ const adoptedAccount = Effect.fn('MembersProof.adoptedAccount')(function* (
   const subscription = {
     name: `${yield* owner.appSlug(references.app)}.changed`,
     arguments: {},
-    url: `http://${yield* Config.String('VIVID_TEST_CALLBACK_HOST')}:${server.address.port}/watch`,
+    url: `http://127.0.0.1:${server.address.port}/watch`,
   }
   const events = yield* ExecutorEvents
   yield* Effect.addFinalizer(() => cleanup(events.unsubscribe(watchCaller, subscription)))
@@ -482,7 +481,7 @@ const interrupted = Effect.fn('MembersProof.interrupted')(function* (
 describe.skipIf(!enabled || !testDatabaseConfigured)('Executor per-Person members', () => {
   layer(connectionTestLayer, { excludeTestServices: true, timeout: 240_000 })((it) => {
     it.effect(
-      'keeps adopted account member calls and owner status and Watch subscription',
+      'isolates members, preserves adopted call/status/Watch authority and resumes provisioning',
       () =>
         Effect.gen(function* () {
           const actors = yield* fixture()
@@ -494,35 +493,22 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Executor per-Person member
             Effect.gen(function* () {
               const client = yield* HttpClient.HttpClient
               const key = NodeProcess.env['VIVID_TEST_EXECUTOR_KEY']
-              return HttpClient.mapRequestEffect(client, (sent) =>
-                Ref.update(receipts, (all) => [
-                  ...all,
-                  {
-                    path: new URL(sent.url).pathname,
-                    owner: sent.headers['authorization'] === `Bearer ${key}`,
-                  },
-                ]).pipe(Effect.as(sent)),
+              return HttpClient.transform(client, (response, sent) =>
+                response.pipe(
+                  Effect.tap(() =>
+                    Ref.update(receipts, (all) => [
+                      ...all,
+                      {
+                        path: new URL(sent.url).pathname,
+                        owner: sent.headers['authorization'] === `Bearer ${key}`,
+                      },
+                    ]),
+                  ),
+                ),
               )
             }),
           ).pipe(Layer.provide(NodeHttpClient.layerUndici))
           const real = yield* Layer.build(realExecutor.pipe(Layer.provideMerge(transport)))
-          const built = yield* Layer.build(Layer.fresh(connectionStoreLayer)).pipe(
-            Effect.provide(real),
-          )
-          yield* adoptedAccount(actors.personalActor, receipts).pipe(
-            Effect.provide(Context.merge(real, built)),
-          )
-        }).pipe(Effect.scoped),
-      { timeout: 240_000 },
-    )
-    it.effect(
-      'isolates members, preserves installation calls, removes accounts and resumes provisioning',
-      () =>
-        Effect.gen(function* () {
-          const actors = yield* fixture()
-          const real = yield* Layer.build(
-            realExecutor.pipe(Layer.provideMerge(NodeHttpClient.layerUndici)),
-          )
           const built = yield* Layer.build(Layer.fresh(connectionStoreLayer)).pipe(
             Effect.provide(real),
           )
@@ -611,6 +597,7 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Executor per-Person member
             }
             const recovery = yield* fixture()
             yield* interrupted(recovery.personalActor.person.id, inventory)
+            yield* adoptedAccount(a, receipts)
           }).pipe(Effect.provide(context))
         }).pipe(Effect.scoped),
       { timeout: 240_000 },
