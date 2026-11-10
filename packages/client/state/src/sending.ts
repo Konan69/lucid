@@ -2,6 +2,7 @@ import { Machine } from '@typeonce/effect-machine'
 import { AtomMachine } from '@typeonce/effect-machine/reactivity'
 import { VividRpcClient } from '@vivid/client-runtime'
 import {
+  causeAfter,
   CodeName,
   CreateThreadRequest,
   Incident,
@@ -11,6 +12,7 @@ import {
   RunState,
   ThreadId,
   type ConversationMessage,
+  type IncidentCause,
   type IncidentHop,
   type IncidentSource,
   type ConversationState,
@@ -153,15 +155,19 @@ type SendFailure = Effect.Error<ReturnType<typeof asking>>
  * Who says a failed send, by every tag it can fail with. A tag added to `SendToThread` does not
  * compile until it is named here.
  *
- * `RuntimeUnavailable` is `Unstarted`: in a send it is raised only by the admission, after the
- * reservation, and the server ends the reserved Run before answering it (`admitRuntime` and its
- * `tapError`, `apps/server/src/threads/delivery.ts`). `Conflict` is the server's own sentence
+ * `DeliveryRefused` (the runtime answered and refused) and `RuntimeUnavailable` (the runtime's
+ * answer is still unknown after the server's retries) are `Unstarted`: in a send both are raised
+ * only by the admission, after the reservation, and the server ends the reserved Run before
+ * answering (`admitRuntime` and its `tapError`, `apps/server/src/threads/delivery.ts`). A refusal
+ * is never said as unavailability, but to the Person both are the same Run that never started,
+ * and its ending is what is said. `Conflict` is the server's own sentence
  * (another Person's reply in progress, a key reused for other words). Everything else names no Run
  * and no sentence for the Person.
  */
 const unarrivalOf = Match.type<SendFailure>().pipe(
   Match.tagsExhaustive({
     RuntimeUnavailable: () => Unarrival.cases.Unstarted.make({}),
+    DeliveryRefused: () => Unarrival.cases.Unstarted.make({}),
     Conflict: ({ message }) => Unarrival.cases.Refused.make({ words: message }),
     ConversationTooLarge: () => Unarrival.cases.Unconfirmed.make({}),
     Unauthenticated: () => Unarrival.cases.Unconfirmed.make({}),
@@ -179,6 +185,15 @@ const unarrivalOf = Match.type<SendFailure>().pipe(
     PicturesRequirePrivateThread: () => Unarrival.cases.Unconfirmed.make({}),
     RpcClientError: () => Unarrival.cases.Unconfirmed.make({}),
   }),
+)
+
+/**
+ * The chain the server gave a failed send, outermost first: its own hop, then the cell's. Only an
+ * admission's failures carry one; every other failure's root is the client's own hop.
+ */
+const causeOf = Match.type<SendFailure>().pipe(
+  Match.tag('DeliveryRefused', 'RuntimeUnavailable', ({ cause }) => Option.some(cause)),
+  Match.orElse(() => Option.none<IncidentCause>()),
 )
 
 /** The operation a failed send's first hop names: the span `delivering`'s `send` runs in. */
@@ -221,10 +236,18 @@ export const delivering = (run: Live['run'], recording: Recording): DeliveringSe
     const answered = Result.isFailure(once) ? yield* asked : once
     if (Result.isSuccess(answered)) return answered.success.run
     const refused = answered.failure
+    const hop: IncidentHop = {
+      service: recording.source,
+      operation: SEND,
+      tag: CodeName.make(refused._tag),
+    }
     if (impactOfFailure(refused) === 'Incident')
       yield* recording.record(
         Incident.cases.ClientFailed.make({
-          cause: [{ service: recording.source, operation: SEND, tag: CodeName.make(refused._tag) }],
+          cause: Option.match(causeOf(refused), {
+            onNone: () => [hop],
+            onSome: (chain) => causeAfter(hop, chain),
+          }),
         }),
       )
     return yield* new Undelivered({ why: unarrivalOf(refused) })
