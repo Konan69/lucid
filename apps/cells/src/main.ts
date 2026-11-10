@@ -96,7 +96,7 @@ const CARRIER_FAILED = CodeName.make('CarrierFailed')
 /**
  * Why a carrier job threw, outermost first: the event that failed (a request celld answered with
  * 500, or an alarm), then the work that threw. A Person that could not be opened never gets here:
- * its failed block resets the cell before celld delivers the event (`#open`'s caller).
+ * the opening says its own failure (`#opened`), and the job answers without saying it again.
  */
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a carrier job rejects with whatever was thrown.
 const carrierCause = (event: IncidentHop, work: CodeName, thrown: unknown): IncidentCause => [
@@ -433,16 +433,20 @@ export class Person extends DurableObject<CellState, Environment> {
    */
   // @effect-diagnostics-next-line asyncFunction:off -- The carrier runs native host jobs as Promises.
   async #answer(request: Request, head: Deferred.Deferred<Response, CarrierFailed>) {
-    const routed = await this.#route(request).then(Exit.succeed, (cause: unknown) => {
-      const event = {
-        service: 'cell',
-        operation: ANSWER,
-        tag: CARRIER_FAILED,
-        status: 500,
-      } as const
-      void this.#fail(carrierCause(event, ROUTE, cause), parentOf(request))
-      return failed(cause)
-    })
+    const routed = await this.#opened(Option.none()).then(
+      ({ runtime }) =>
+        this.#route(runtime, request).then(Exit.succeed, (cause: unknown) => {
+          const event = {
+            service: 'cell',
+            operation: ANSWER,
+            tag: CARRIER_FAILED,
+            status: 500,
+          } as const
+          void this.#fail(carrierCause(event, ROUTE, cause), parentOf(request))
+          return failed(cause)
+        }),
+      failed,
+    )
     if (Exit.isFailure(routed) || routed.value.body === null) {
       Deferred.doneUnsafe(head, routed)
       return
@@ -457,8 +461,7 @@ export class Person extends DurableObject<CellState, Environment> {
 
   /** Arm before the router can submit or abort work, as Pi's first-party DO example requires. */
   // @effect-diagnostics-next-line asyncFunction:off -- The carrier runs native host jobs as Promises.
-  async #route(request: Request) {
-    const { runtime } = await this.#opened(Option.none())
+  async #route(runtime: Opened['runtime'], request: Request) {
     if (request.method === 'POST')
       await this.#arm({ ...runtime.person.harness.wake(), active: true })
     const response = await runtime.fetch(request)
@@ -472,11 +475,16 @@ export class Person extends DurableObject<CellState, Environment> {
     void this.#opened(Option.none())
     const done = Deferred.makeUnsafe<void, CarrierFailed>()
     this.#carry(() =>
-      this.#wake()
-        .then(Exit.succeed, (cause: unknown) => {
-          void this.#fail(carrierCause(cellHop(ALARM, CARRIER_FAILED), WAKE, cause), Option.none())
-          return failed(cause)
-        })
+      this.#opened(Option.none())
+        .then(
+          ({ runtime }) =>
+            this.#wake(runtime).then(Exit.succeed, (cause: unknown) => {
+              const event = cellHop(ALARM, CARRIER_FAILED)
+              void this.#fail(carrierCause(event, WAKE, cause), Option.none())
+              return failed(cause)
+            }),
+          failed,
+        )
         .then((exit) => {
           Deferred.doneUnsafe(done, exit)
         }),
@@ -485,8 +493,7 @@ export class Person extends DurableObject<CellState, Environment> {
   }
 
   // @effect-diagnostics-next-line asyncFunction:off -- The carrier runs native host jobs as Promises.
-  async #wake() {
-    const { runtime } = await this.#opened(Option.none())
+  async #wake(runtime: Opened['runtime']) {
     await this.#arm({ ...runtime.person.harness.wake(), active: true })
     runtime.person.harness.resume()
     await this.#arm(runtime.person.harness.wake())

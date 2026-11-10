@@ -1,5 +1,6 @@
-import { RunFailure } from '@vivid/contracts'
+import { CodeName, type IncidentCause, RunFailure } from '@vivid/contracts'
 import { Option, Schema } from 'effect'
+import { cellHop } from './telemetry.ts'
 
 /**
  * Why a response could not be answered, in the product's closed words. This is the one place a
@@ -64,4 +65,37 @@ export const classify = (reason: string, detail: unknown) => {
       return { failure: classifyText(text, status), status }
     },
   })
+}
+
+const UNANSWERED = CodeName.make('Response.unanswered')
+const GENERATE = CodeName.make('Harness.generate')
+const UNNAMED = CodeName.make('Unanswered')
+const decodeReason = Schema.decodeUnknownOption(CodeName)
+
+/**
+ * Why one input was settled with no answer, for the cell's report. The first hop is Pi's reason
+ * (`model_error`, `no_model`, `faulted`, or a product category Vivid saved), read as a code name
+ * because Pi and Vivid write it from code. Only `model_error` is the provider's doing, so only it
+ * adds a `model` hop, tagged with the category and carrying the status the provider answered.
+ * The detail's text never leaves: `classify` reads it here and keeps only the category and status.
+ */
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Pi stores a failure's detail as JSON of any shape; `classify` decodes it.
+export const unansweredCause = (reason: string, detail: unknown) => {
+  const { failure, status } = classify(reason, detail)
+  const own = cellHop(
+    UNANSWERED,
+    Option.getOrElse(decodeReason(reason), () => UNNAMED),
+  )
+  const model = Option.match(status, {
+    onNone: () => ({ service: 'model', operation: GENERATE, tag: CodeName.make(failure) }) as const,
+    onSome: (code) =>
+      ({
+        service: 'model',
+        operation: GENERATE,
+        tag: CodeName.make(failure),
+        status: code,
+      }) as const,
+  })
+  const cause: IncidentCause = reason === 'model_error' ? [own, model] : [own]
+  return { failure, cause }
 }

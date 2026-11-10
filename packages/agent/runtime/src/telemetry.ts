@@ -6,6 +6,7 @@ import {
   type Impact,
   impactSignal,
   PersonId,
+  RunFailure,
 } from '@vivid/contracts'
 import {
   Config,
@@ -62,10 +63,14 @@ export type PiReport = typeof PiReport.Type
  * - `PiReported`: Pi reported a failure. `report` is Pi's word for it; the cause's hop names the
  *   task kind Pi was running (`vivid.learning`) or `Harness` when it names none, and the thrown
  *   value's class.
+ * - `ResponseFailed`: Pi settled a Person's input with no answer, for a reason other than a stop.
+ *   `failure` is the product's category (`failure.ts`); the cause names Pi's reason and, when the
+ *   model failed, the model hop with the status the provider answered.
  */
 export const CellFailure = Schema.TaggedUnion({
   CellFailed: { personId: PersonId, cause: IncidentCause },
   PiReported: { personId: PersonId, report: PiReport, cause: IncidentCause },
+  ResponseFailed: { personId: PersonId, failure: RunFailure, cause: IncidentCause },
 })
 export type CellFailure = typeof CellFailure.Type
 
@@ -74,6 +79,7 @@ const impactOf = (failure: CellFailure): Impact =>
   CellFailure.match(failure, {
     CellFailed: (): Impact => 'Incident',
     PiReported: ({ report }) => reportImpact[report],
+    ResponseFailed: (): Impact => 'Incident',
   })
 
 /**

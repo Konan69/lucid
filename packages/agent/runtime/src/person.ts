@@ -25,6 +25,7 @@ import { joinHooks } from './response.ts'
 import { followSettlements } from './settled.ts'
 import { helpers, type Helpers } from './children.ts'
 import { BuiltinSkills } from './skills.ts'
+import { unansweredCause } from './failure.ts'
 import { CellFailure, CellReports, cellHop, thrownTag } from './telemetry.ts'
 import { PiRejected } from './threads.ts'
 import { childTools } from './tools/children.ts'
@@ -204,6 +205,22 @@ export const openPerson = Effect.fn('Person.open')(function* (
     closeHarness,
   )
   const { quiet } = yield* followSettlements(harness, learn.start, dream.settled)
+  // An input Pi settles with no answer is said once, from the commit that settled it: the
+  // settlement route is read again by every wait, and a stop (`aborted`) is the Person's own.
+  const unfollow = harness.subscribeCommits((publication) => {
+    for (const change of publication.changes) {
+      if (change.type !== 'submission') continue
+      const record = change.value
+      if (record.type !== 'input' || record.status !== 'unanswered') continue
+      if (record.reason === 'aborted') continue
+      const failure = CellFailure.cases.ResponseFailed.make({
+        personId,
+        ...unansweredCause(record.reason, record.detail),
+      })
+      void run(reports.record(failure, Option.none()))
+    }
+  })
+  yield* Effect.addFinalizer(() => Effect.sync(unfollow))
   yield* Deferred.succeed(ready, harness)
   return {
     personId,
