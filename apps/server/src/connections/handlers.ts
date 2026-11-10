@@ -35,7 +35,7 @@ import {
 } from './integrations.ts'
 import { requireDiscordAccess, withoutDiscord } from './discord.ts'
 import { findTools, offerConnection, resolveTool, useDisplayTool, useVividTool } from './tools.ts'
-export { connectionRunner, runConnection } from './tools.ts'
+export { connectionRunner } from './tools.ts'
 
 /** Both inventory calls share the persisted Connection loader. */
 const load = Effect.fn('Connections.load')(function* (actor: Actor) {

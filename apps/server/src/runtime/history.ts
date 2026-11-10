@@ -41,7 +41,7 @@ const decodeAdmission = decodeStored(Admitted, 'Conversation Run receipt')
  * Only receipts named by this state are decoded, so old runtime receipts outside the Pi transcript
  * cannot break a new Thread read. Submission numbers are trusted only while the Person's Pi store
  * has not been reset or restored; receipts cannot distinguish store generations. A matching corrupt receipt remains a typed database failure. */
-export const attributedConversation = Effect.fn('Conversation.attribute')(function* (
+const attributedConversation = Effect.fn('Conversation.attribute')(function* (
   state: ConversationState,
   threadId: ThreadId,
 ) {

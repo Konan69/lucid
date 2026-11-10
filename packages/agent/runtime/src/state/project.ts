@@ -131,7 +131,7 @@ const resultOf = (entry: EntryRecord): Option.Option<ToolResultMessage> => {
  * place among that message's content. The runtime serves it (`pictures.ts`); the bytes
  * themselves never enter the state.
  */
-export const pictureId = (entry: number, index: number) => `${entry}-${index}`
+const pictureId = (entry: number, index: number) => `${entry}-${index}`
 
 /** Draw a Person's words and pictures with the sending client's key from `vivid.message`. */
 function personMessage(
@@ -709,12 +709,3 @@ export function projector() {
     }
   }
 }
-
-/**
- * A conversation as a screen reads it. Pure: the same view gives the same state. The system
- * prompt (`pi.system`), resets and compaction summaries, and every document but `pi.live` and
- * `pi.inbox` are never read, so the instruction, the context kept for a delivery and the record
- * of who started the Thread cannot reach a screen from here. What a Person, the model or a tool
- * wrote is copied as written; this does not read it for what it says.
- */
-export const project = (view: Viewed): Projected => projector()(view)

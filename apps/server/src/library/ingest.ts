@@ -16,7 +16,6 @@ const MAX_CHUNK_CHARACTERS = 1_400
 const CHUNK_OVERLAP_CHARACTERS = 180
 const PDF_FAILURE_MESSAGE = 'PDF text extraction failed'
 export const MAX_LIBRARY_FILE_BYTES = 10 * 1024 * 1024
-export const LIBRARY_FILE_TYPES = ['application/pdf', 'text/markdown', 'text/plain'] as const
 
 /** Every bounded extraction failure has a product sentence; unavailable infrastructure still fails. */
 const EXTRACTION_LIMIT_MESSAGES: Record<ExtractionLimitExceeded['limit'], string> = {
@@ -60,7 +59,7 @@ const chunkText = (text: string, page: number | null): ReadonlyArray<IndexedChun
   return chunks
 }
 
-export class LibraryIngestFailure extends Schema.TaggedError<LibraryIngestFailure>()(
+class LibraryIngestFailure extends Schema.TaggedError<LibraryIngestFailure>()(
   'LibraryIngestFailure',
   { message: Schema.String },
   { title: 'Library ingest failure' },

@@ -21,7 +21,7 @@ export class ConnectionAddressInvalid extends Schema.TaggedError<ConnectionAddre
   { title: 'Integration address refused' },
 ) {}
 /** Transport failure is distinct from a reachable page that is not an integration. */
-export class ConnectionAddressUnreachable extends Schema.TaggedError<ConnectionAddressUnreachable>()(
+class ConnectionAddressUnreachable extends Schema.TaggedError<ConnectionAddressUnreachable>()(
   'ConnectionAddressUnreachable',
   {},
   { title: 'Integration address unreachable' },
@@ -300,7 +300,7 @@ const destroyDispatcher = Effect.fn('Connections.destroyDispatcher')((agent: Und
 )
 
 /** Inspection and page reading share public-address policy but never Executor credentials. */
-export const makeConnectionAddressLayer = (resolve: AddressLookup) =>
+const makeConnectionAddressLayer = (resolve: AddressLookup) =>
   Layer.effect(
     ConnectionAddress,
     Effect.gen(function* () {

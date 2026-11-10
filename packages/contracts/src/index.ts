@@ -31,12 +31,10 @@ export * from './skills.js'
 export * from './threads.js'
 export * from './watches.js'
 export {
-  ApiError,
   Conflict,
   DatabaseConstraintViolation,
   DatabaseFailure,
   DatabaseUnavailable,
-  EmptyResponse,
   Forbidden,
   InvalidRequest,
   MailboxUnconfirmed,

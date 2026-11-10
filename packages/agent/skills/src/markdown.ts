@@ -83,7 +83,7 @@ function header(lines: ReadonlyArray<string>) {
 /** Parse only the scalar and literal-block grammar used by release files, matching the Pi
  * runtime's frontmatter.ts. General YAML is deliberately unsupported; malformed content is
  * a tagged authoring failure. Keep readMarkdown synchronous for the server's startup catalogue. */
-export const parseMarkdown = (
+const parseMarkdown = (
   runtimeName: BuiltinRuntimeName,
   source: string,
 ): Result.Result<typeof Markdown.Type, SkillMarkdownInvalid> => {

@@ -5,7 +5,7 @@ import spec from './parts.json' with { type: 'json' }
  * Whole displays the model can copy the shape of, built only from OpenUI's own parts. The test
  * parses each with OpenUI's parser, because a wrong example teaches every reply the same mistake.
  */
-export const EXAMPLES = [
+const EXAMPLES = [
   `A number, the months behind it, and a reply waiting on a yes:
 
 root = Col([kpi, chart, draft, acts], 3)
@@ -57,7 +57,7 @@ acts = Row([Button("Not now", @ToAssistant("Do not book the Air Peace flight yet
  * Displays that reach the Person's Integrations themselves (OpenUI's `Query` and `Mutation`). The
  * tool is named `tool@account`, with the tool and the account exactly as find_tools returned them.
  */
-export const TOOL_EXAMPLES = [
+const TOOL_EXAMPLES = [
   `A live list from an Integration that the Person can filter, with a form that writes back:
 
 root = Col([Title("Open issues", "lg"), search, list, add], 3)

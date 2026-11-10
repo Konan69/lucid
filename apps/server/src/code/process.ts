@@ -130,7 +130,7 @@ function supervisionTags<E>(cause: Cause.Cause<E>) {
 }
 
 /** Parent state is never supplied by the worker. Pending consequential calls are uncertain on loss. */
-export class Execution {
+class Execution {
   readonly calls: CodeCall[] = []
   readonly finished = Deferred.makeUnsafe<void>()
   // Until a real final frame arrives, buffered guest output may have been lost.

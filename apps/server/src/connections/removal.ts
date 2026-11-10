@@ -36,7 +36,7 @@ function activeResources(references: ExecutorActiveReferences): ConnectionResour
 }
 
 /** Resource identities are compared across every Person and Company, including unresolved rows. */
-export function storedResources(
+function storedResources(
   references: typeof import('./records.ts').storedRowSchema.Type.references,
 ): ConnectionResources {
   return ExecutorReferences.match(references, {

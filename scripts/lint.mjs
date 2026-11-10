@@ -21,7 +21,7 @@ const workersFrom = (setting) => (setting === undefined ? '1' : setting)
  * owns its internal worker count. The gate runs one lint process at a time and
  * names more Oxlint workers through VIVID_LINT_THREADS.
  */
-export function runLint(root, cwd, args, environment) {
+function runLint(root, cwd, args, environment) {
   const scope = NodePath.relative(root, cwd).split(NodePath.sep).join('/')
   if (scope === '..' || scope.startsWith('../') || NodePath.isAbsolute(scope)) {
     process.stderr.write('lint must run inside the Vivid workspace\n')

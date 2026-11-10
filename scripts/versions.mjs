@@ -6,12 +6,11 @@ import * as Schema from 'effect/Schema'
 import { parseJsonc } from './jsonc.mjs'
 import { hermesConfigErrors } from './hermes.mjs'
 
-export const versions = Object.freeze({
+const versions = Object.freeze({
   '@earendil-works/chord': '1.4.0',
   '@earendil-works/pi-ai': '1.4.0',
   '@earendil-works/pi-durable': '1.4.0',
   '@valibot/to-json-schema': '1.7.1',
-  '@effect/ai-openrouter': '4.0.2',
   '@effect/ai-typesafe': '4.0.2',
   '@maschwenk/tsrslint': '0.1.5',
   'tsc-rs': '0.8.0',
@@ -48,7 +47,6 @@ export const versions = Object.freeze({
   'expo-secure-store': '57.0.4',
   'expo-sharing': '57.0.24',
   'expo-system-ui': '57.0.4',
-  hono: '4.13.8',
   'lucide-react': '1.47.0',
   'lucide-react-native': '1.47.0',
   oxlint: '1.83.0',
@@ -338,7 +336,7 @@ function rootManifestErrors(manifest) {
 }
 
 /** Report Effect language-service plugin drift in the shared TypeScript config. */
-export function typeScriptConfigErrors(root) {
+function typeScriptConfigErrors(root) {
   const config = readTypeScriptConfig(root, 'tsconfig.base.json')
   const compilerOptions = config.compilerOptions === undefined ? {} : config.compilerOptions
   const plugins = compilerOptions.plugins === undefined ? [] : compilerOptions.plugins
@@ -366,7 +364,7 @@ export function typeScriptConfigErrors(root) {
 }
 
 /** Validate dependency lockstep and the native TypeScript/Effect compiler path. */
-export function validateVersions(root) {
+function validateVersions(root) {
   const rootManifest = readPackageManifest(root, 'package.json')
   const catalog = readWorkspaceMapping(root, 'catalog')
   const overrides = readWorkspaceMapping(root, 'overrides')

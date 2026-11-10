@@ -43,8 +43,8 @@ export interface SearchRequest extends Schema.Schema.Type<typeof SearchRequest> 
  * the Library answer: `Unavailable` lets a screen say so instead of passing silence off as no
  * match. `NotAsked` is the empty query, which lists recent Threads only.
  */
-export const MessagesSearched = Schema.Literals(['Searched', 'NotAsked', 'Unavailable'])
-export type MessagesSearched = typeof MessagesSearched.Type
+const MessagesSearched = Schema.Literals(['Searched', 'NotAsked', 'Unavailable'])
+type MessagesSearched = typeof MessagesSearched.Type
 
 /** Results in the order the palette shows them. An empty query returns what is most recent. */
 export const SearchResponse = Schema.Struct({

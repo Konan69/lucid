@@ -191,7 +191,7 @@ export const RUN_WORKING_LONG_MS = 20 * 60_000
  * Pending Watch runs every ten minutes after a one-minute grace (`watches/lifecycle.ts` `renew`,
  * `RECOVER_AFTER_MS`), so two missed passes mean the Integration is not confirming it.
  */
-export const WATCH_UNCONFIRMED_MS = 21 * 60_000
+const WATCH_UNCONFIRMED_MS = 21 * 60_000
 
 /** An Integration's own state as a failure, when it is one. */
 const integrationFailure = (state: ConnectionState): Option.Option<WorkFailure> =>

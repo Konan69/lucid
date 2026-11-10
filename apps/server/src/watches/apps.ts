@@ -76,7 +76,7 @@ export class WatchConnectionRemoved extends Schema.TaggedError<WatchConnectionRe
 ) {}
 
 /** An account, the slug of the app dedicated to it, and the caller its events are reached as. */
-export interface WatchedApp {
+interface WatchedApp {
   readonly connectionId: ConnectionId
   readonly appSlug: string
   readonly caller: ExecutorCaller

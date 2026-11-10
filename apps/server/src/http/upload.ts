@@ -38,21 +38,21 @@ export class UploadTooLarge extends Schema.TaggedError<UploadTooLarge>()(
 ) {}
 
 /** Invalid multipart syntax is HTTP 400; retrying the same bytes cannot repair it. */
-export class UploadMalformed extends Schema.TaggedError<UploadMalformed>()(
+class UploadMalformed extends Schema.TaggedError<UploadMalformed>()(
   'UploadMalformed',
   {},
   { title: 'Library upload cannot be parsed' },
 ) {}
 
 /** Temporary storage failure is HTTP 500 and may succeed when retried. */
-export class UploadUnstored extends Schema.TaggedError<UploadUnstored>()(
+class UploadUnstored extends Schema.TaggedError<UploadUnstored>()(
   'UploadUnstored',
   {},
   { title: 'Library upload could not be persisted' },
 ) {}
 
 /** The connection ended before the request body did, so no response can reach the Person. */
-export class UploadAbandoned extends Schema.TaggedError<UploadAbandoned>()(
+class UploadAbandoned extends Schema.TaggedError<UploadAbandoned>()(
   'UploadAbandoned',
   {},
   { title: 'Library upload ended before its body' },

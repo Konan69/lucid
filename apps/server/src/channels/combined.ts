@@ -28,7 +28,7 @@ const supervised = (provider: ChannelProvider['Service']) =>
   )
 
 /** The provider that advertises a channel also owns its enrolments, code address and sends. */
-export const combineChannels = (providers: ReadonlyArray<ChannelProvider['Service']>) => {
+const combineChannels = (providers: ReadonlyArray<ChannelProvider['Service']>) => {
   const selected = (channel: Channel) =>
     providers.find((provider) => provider.channels.includes(channel))
   return ChannelProvider.of({

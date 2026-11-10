@@ -7,7 +7,7 @@ export const ACTIVATE_SKILL = 'activate_skill'
 export const READ_SKILL_FILE = 'read_skill_file'
 
 /** The catalogue heading matches the instructions that direct the model to Available Skills. */
-export function skillsSection(skills: ReadonlyArray<LoadedSkill>) {
+function skillsSection(skills: ReadonlyArray<LoadedSkill>) {
   return [
     '## Available Skills',
     '',
@@ -24,7 +24,7 @@ export function skillsSection(skills: ReadonlyArray<LoadedSkill>) {
  * the task without its rules. So the refusal says where saved procedures are read, as `read_skill`
  * says where built-ins are activated (`tools/skills.ts`).
  */
-export function activate(skills: ReadonlyArray<LoadedSkill>, name: string) {
+function activate(skills: ReadonlyArray<LoadedSkill>, name: string) {
   const skill = skills.find((entry) => entry.name === name)
   if (skill === undefined)
     return `Skill "${name}" is not a built-in skill. If it is a saved procedure from your response context, read it with read_skill and follow it. Built-in skills: ${skills.map((entry) => entry.name).join(', ')}.`
@@ -66,7 +66,7 @@ const encodeFileMissing = Schema.encodeOption(SkillFileMissing)
 /** One reference file's contents, or the refusal the model reads: the sentence always, and the
  * typed error beside it when it encodes, as `read_skill` refuses (`tools/skills.ts`). An unknown
  * skill gets activation's own answer, which lists the names. */
-export function readFile(skills: ReadonlyArray<LoadedSkill>, name: string, path: string) {
+function readFile(skills: ReadonlyArray<LoadedSkill>, name: string, path: string) {
   const skill = skills.find((entry) => entry.name === name)
   if (skill === undefined) return activate(skills, name)
   const file = skill.files.find((entry) => entry.name === path)

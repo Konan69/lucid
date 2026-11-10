@@ -18,7 +18,7 @@ export const Completion = Schema.TaggedUnion({
 })
 export type Completion = typeof Completion.Type
 
-export class TitleGenerationIncomplete extends Schema.TaggedError<TitleGenerationIncomplete>()(
+class TitleGenerationIncomplete extends Schema.TaggedError<TitleGenerationIncomplete>()(
   'TitleGenerationIncomplete',
   { operation: Schema.String, reason: Schema.String, outputCharacters: Schema.Int },
   { title: 'Incomplete title generation' },
@@ -80,29 +80,6 @@ const complete = Effect.fn('TitleModel.complete')(function* (
     return Completion.cases.BudgetReached.make({ text: first.message.content })
   return Completion.cases.Finished.make({ text: first.message.content })
 })
-
-/** The schema determines whether a budget-limited response is complete; a finished JSON value is usable, while truncated JSON retains its precise failure. */
-export function completionDecoder<A>(
-  decode: (text: string) => Effect.Effect<A, Schema.SchemaError>,
-  operation: string,
-) {
-  return Effect.fn('TitleModel.decode')(function* (completion: Completion) {
-    return yield* decode(completion.text).pipe(
-      Effect.mapError(() =>
-        Completion.match(completion, {
-          Finished: (): ProviderMalformed | TitleGenerationIncomplete =>
-            ProviderMalformed.make({ operation }),
-          BudgetReached: ({ text }) =>
-            TitleGenerationIncomplete.make({
-              operation,
-              reason: 'length',
-              outputCharacters: text.length,
-            }),
-        }),
-      ),
-    )
-  })
-}
 
 export interface TitleModelService {
   readonly complete: (input: {

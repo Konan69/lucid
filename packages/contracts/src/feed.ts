@@ -48,8 +48,8 @@ const said = { title: Title, words: Words, actions: Actions }
  * where it came from" (`muse/docs/calls-texts-notifications.md:125`). Vivid writes it; the server
  * keeps what started the work separately, in `FeedProvenance`.
  */
-export const FeedFrom = Schema.NonEmptyString.check(Schema.isMaxLength(120))
-export type FeedFrom = typeof FeedFrom.Type
+const FeedFrom = Schema.NonEmptyString.check(Schema.isMaxLength(120))
+type FeedFrom = typeof FeedFrom.Type
 
 /**
  * How soon a card may interrupt the Person. `ordinary`: it goes on the Feed silently, and at most

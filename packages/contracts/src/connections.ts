@@ -579,7 +579,7 @@ export interface ConnectionRequestMessage extends Schema.Schema.Type<
  * asked, in milliseconds: an account that was there before does not answer the request, so only
  * one begun after that moment does.
  */
-export const AnotherAccount = Schema.Struct({ askedAt: Schema.Finite })
+const AnotherAccount = Schema.Struct({ askedAt: Schema.Finite })
 export const AnotherAccountMessage = Schema.Struct({
   kind: Schema.Literal('connection-request'),
   service: ServiceId,
@@ -595,8 +595,8 @@ export const AnotherAccountMessage = Schema.Struct({
  * - `Service`: the service at all. Any ready account the Person has on it answers.
  * - `Another`: one more account than the Person has now. None of the present ones answers.
  */
-export const ConnectionWanted = Schema.Literals(['Service', 'Another'])
-export type ConnectionWanted = typeof ConnectionWanted.Type
+const ConnectionWanted = Schema.Literals(['Service', 'Another'])
+type ConnectionWanted = typeof ConnectionWanted.Type
 
 /** Vivid offering a service it needs for the request in front of it. */
 export const OfferConnectionRequest = Schema.Struct({

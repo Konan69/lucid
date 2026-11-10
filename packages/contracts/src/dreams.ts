@@ -24,8 +24,8 @@ export type DreamKey = typeof DreamKey.Type
 /** Open the Background Thread one Dreamer run reads in. The Person and workspace are the caller's. */
 export const OpenDreamRequest = Schema.Struct({ key: DreamKey, pass: DreamPass })
 export type OpenDreamRequest = typeof OpenDreamRequest.Type
-export const OpenDreamResponse = Schema.Struct({ threadId: ThreadId })
-export type OpenDreamResponse = typeof OpenDreamResponse.Type
+const OpenDreamResponse = Schema.Struct({ threadId: ThreadId })
+type OpenDreamResponse = typeof OpenDreamResponse.Type
 
 /**
  * What the Dreamer learned that is useful and new, or the blocker the Person must clear, as it

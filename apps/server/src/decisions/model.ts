@@ -18,7 +18,7 @@ import { TypeSafeClient, TypeSafeDecisionModel } from '@effect/ai-typesafe'
 import { serverModelGateway } from '../config.ts'
 
 /** docs/22, “The trust loop”: the reviewer has ten seconds and one attempt. */
-export const DECISION_TIMEOUT = '10 seconds'
+const DECISION_TIMEOUT = '10 seconds'
 
 /** The most questions accepted in a calibrated gateway request with headroom: twenty
  * succeeded and thirty-nine were rejected with HTTP 400 on 4 Oct 2026. This is the tested
@@ -93,7 +93,7 @@ const DECISION_BACKOFF = '30 seconds'
  * 1773ms (effects), versus 1389ms in the earlier relevance cohort. 2200ms adds
  * 427ms (24%) above the larger observed sample. A shorter timeout is evidence
  * only about that caller's optional-work budget, never process-wide health. */
-export const DECISION_OUTAGE_MINIMUM_MILLIS = 2200
+const DECISION_OUTAGE_MINIMUM_MILLIS = 2200
 /** Recovery owns a 2500ms budget independently of the caller's remaining time.
  * This leaves 727ms (41%) above the measured 1773ms warm maximum and exceeds
  * the calibrated outage-evidence floor; a short discovery cannot starve recovery. */

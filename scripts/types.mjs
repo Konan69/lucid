@@ -7,7 +7,7 @@ const repositoryRoot = NodePath.resolve(
   '..',
 )
 
-export const typeChecker = 'node_modules/tsc-rs/bin/tsc-rs'
+const typeChecker = 'node_modules/tsc-rs/bin/tsc-rs'
 
 /**
  * Turbo already restores declaration prerequisites and hashes source contents.
@@ -19,7 +19,7 @@ export const typeChecker = 'node_modules/tsc-rs/bin/tsc-rs'
  * TURBO_HASH is the documented task marker:
  * https://turborepo.dev/docs/reference/system-environment-variables
  */
-export function runTypes(root, cwd, projects, environment) {
+function runTypes(root, cwd, projects, environment) {
   const compiler = NodePath.join(root, typeChecker)
   const selected = projects.length === 0 ? ['tsconfig.json'] : projects
   const commands =

@@ -15,7 +15,7 @@ import { cellNodes } from '../runtime/transport.ts'
  * The Person's conversation runtime did not answer the search: unreachable, refused, or an answer
  * that did not decode. Search says the words were not searched rather than that nothing matched.
  */
-export class MessagesUnreachable extends Schema.TaggedError<MessagesUnreachable>()(
+class MessagesUnreachable extends Schema.TaggedError<MessagesUnreachable>()(
   'MessagesUnreachable',
   {},
   { title: 'Conversation words could not be searched' },

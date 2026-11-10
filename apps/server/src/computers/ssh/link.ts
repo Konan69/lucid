@@ -53,8 +53,8 @@ export class LinkKeyRefused extends Schema.TaggedError<LinkKeyRefused>()(
 ) {}
 
 /** Why the machine's file system refused a read or a write, in the words a caller can act on. */
-export const FileRefusal = Schema.Literals(['missing', 'denied', 'directory', 'large', 'other'])
-export type FileRefusal = typeof FileRefusal.Type
+const FileRefusal = Schema.Literals(['missing', 'denied', 'directory', 'large', 'other'])
+type FileRefusal = typeof FileRefusal.Type
 
 /** A file operation the machine answered with a refusal. The connection is fine. */
 export class LinkFileRefused extends Schema.TaggedError<LinkFileRefused>()(
@@ -82,7 +82,7 @@ export class LinkPortClosed extends Schema.TaggedError<LinkPortClosed>()(
 export type LinkFailure = LinkUnreachable | LinkHostMismatch | LinkKeyRefused
 
 /** How a command ended. `timedOut` is this side's deadline; the exit code is then absent. */
-export interface LinkRun {
+interface LinkRun {
   readonly stdout: string
   readonly stderr: string
   readonly exitCode: number | null
@@ -92,7 +92,7 @@ export interface LinkRun {
 }
 
 /** How a command that was spoken with ended. `timedOut` is the machine's own deadline for it. */
-export interface LinkEnd {
+interface LinkEnd {
   readonly exitCode: number | null
   readonly timedOut: boolean
 }
@@ -102,7 +102,7 @@ export interface LinkEnd {
  * can be written to its standard input. An SSH command channel carries both directions, so a
  * program on the machine and the server need nothing else between them.
  */
-export interface LinkConversation {
+interface LinkConversation {
   /** Standard output as text, in the pieces it arrives in. It ends when the command ends, and
    * fails `LinkRunLost` when the connection went first. */
   readonly output: Stream.Stream<string, LinkRunLost>
@@ -153,7 +153,7 @@ export const OUTPUT_BYTES = 262_144
 export const FILE_BYTES = 10_485_760
 
 /** `value` as one word of a POSIX shell command. */
-export const shellWord = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`
+const shellWord = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`
 
 /**
  * The comment on every key line Vivid puts on a machine, declared once: it is written on the key

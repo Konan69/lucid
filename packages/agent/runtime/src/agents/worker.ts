@@ -26,7 +26,7 @@ const READING: ReadonlyArray<ToolName> = [
   Tool.list_memory,
   Tool.search_memory,
 ]
-export const WORKER_TOOLS = {
+const WORKER_TOOLS = {
   Researcher: [...READING, Tool.search_threads, Tool.read_thread],
   ReadOnly: [Tool.read, Tool.grep, Tool.glob, ...READING, Tool.read_skill],
   Executor: [

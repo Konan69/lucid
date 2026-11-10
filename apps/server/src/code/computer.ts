@@ -41,7 +41,7 @@ export interface Guest {
 }
 
 /** The Person's Computer could not be used for a program. Nothing was started on it. */
-export class CodeComputerUnavailable extends Schema.TaggedError<CodeComputerUnavailable>()(
+class CodeComputerUnavailable extends Schema.TaggedError<CodeComputerUnavailable>()(
   'CodeComputerUnavailable',
   // The tag of what refused, never its message: provider text can carry private commands.
   { reason: Schema.String },
@@ -49,7 +49,7 @@ export class CodeComputerUnavailable extends Schema.TaggedError<CodeComputerUnav
 ) {}
 
 /** The server's own runner file cannot be read: a broken installation, found at start. */
-export class CodeRunnerMissing extends Schema.TaggedError<CodeRunnerMissing>()(
+class CodeRunnerMissing extends Schema.TaggedError<CodeRunnerMissing>()(
   'CodeRunnerMissing',
   {},
   { title: 'The program runner is missing from this installation' },

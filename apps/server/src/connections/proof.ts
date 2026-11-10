@@ -197,9 +197,7 @@ export default defineApp({ user: { accounts: { service: service.many() } } }, as
 
 const Authorization = Schema.Struct({ id: Schema.NonEmptyString })
 const Account = Schema.Struct({ id: ExecutorAccountId })
-export const AccountRecords = Schema.Array(
-  Schema.Struct({ subject: Schema.String, by: Schema.String }),
-)
+const AccountRecords = Schema.Array(Schema.Struct({ subject: Schema.String, by: Schema.String }))
 const decodeAccountRecords = Schema.decodeUnknownEffect(AccountRecords)
 
 /**

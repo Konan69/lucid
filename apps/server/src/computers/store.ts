@@ -613,6 +613,7 @@ export interface ComputerAttachment {
 }
 
 /** A bounded wake wait is distinct from takeover, provider absence and failed startup. */
+/** @public recovery.ts names this failure through an import type. */
 export class ComputerWakeTimedOut extends Schema.TaggedError<ComputerWakeTimedOut>()(
   'ComputerWakeTimedOut',
   { person: PersonId },
@@ -620,12 +621,14 @@ export class ComputerWakeTimedOut extends Schema.TaggedError<ComputerWakeTimedOu
 ) {}
 
 /** Takeover is a human ownership decision, never a reason to retry startup. */
+/** @public recovery.ts names this failure through an import type. */
 export class ComputerHeld extends Schema.TaggedError<ComputerHeld>()(
   'ComputerHeld',
   { person: PersonId },
   { title: 'The Person is using the Computer' },
 ) {}
 /** A failed startup needs an explicit restart, preserving its recorded failure reason. */
+/** @public recovery.ts names this failure through an import type. */
 export class ComputerStartFailed extends Schema.TaggedError<ComputerStartFailed>()(
   'ComputerStartFailed',
   { person: PersonId, reason: Schema.String },

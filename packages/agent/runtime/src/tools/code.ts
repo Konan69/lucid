@@ -90,7 +90,7 @@ function codeResult(
 }
 
 /** Public text is projected just like a Computer page; no credential or session can enter this call. */
-export function pageOutcome(outcome: ReadPageOutcome): ToolResult {
+function pageOutcome(outcome: ReadPageOutcome): ToolResult {
   return ReadPageOutcome.match<ToolResult>(outcome, {
     Read: ({ address, title, text: content, truncated }) => ({
       output: {

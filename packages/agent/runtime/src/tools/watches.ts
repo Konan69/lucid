@@ -21,7 +21,7 @@ import { modelText } from './views.ts'
  */
 
 /** Model-visible in every Watch tool's description, without an agent edit. */
-export const instructions =
+const instructions =
   'When a Person wants to know or act when something happens in an Integration, find its events, then watch one with the instruction of what to do; say what you are watching. For a check-in, create with Checkin purpose, subscribe first, then arm the timer with its returned operationKey. It is scheduled only after the actual timer receipt confirms it. Do not put operationKey into subscription filters; the server matches timer payloads to their persisted keys. When woken by an event, act on the instruction; if nothing needs the Person, finish without a reply.'
 
 /** A Watch as the model reads it: names and words, never its id or subscription. */

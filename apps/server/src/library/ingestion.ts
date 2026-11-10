@@ -23,7 +23,7 @@ export const INGESTION_QUEUE_NAME = 'library-ingestion'
  * are silently dead-lettered before the handler. G3: a persistently faulty exhaustion write stays
  * pending until recovery or G1. rc.116 PersistedQueue.ts:390-392,1729-1755,1811 supplies these gaps.
  */
-export const ATTEMPT_CEILING = 2147483647
+const ATTEMPT_CEILING = 2147483647
 export const ingestionBackoff = Schedule.min([
   Schedule.exponential('1 second'),
   Schedule.spaced('5 minutes'),

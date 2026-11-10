@@ -45,7 +45,7 @@ const mismatched = () =>
  * A push service or Expo being down is a different fact: it is a typed failure of the one send
  * that met it (`PushSendError`), recorded on that delivery, and the next send tries again.
  */
-export const loadPushConfiguration = Effect.fn('PushConfig.load')(function* () {
+const loadPushConfiguration = Effect.fn('PushConfig.load')(function* () {
   const configuration = {
     publicKey: yield* requiredSetting(
       'VIVID_PUSH_VAPID_PUBLIC',

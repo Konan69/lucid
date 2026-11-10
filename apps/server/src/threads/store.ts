@@ -49,7 +49,7 @@ type ThreadStoreError = DatabaseInfrastructureError
 type ThreadChangeError = ThreadStoreError | NotFound | Forbidden | InvalidRequest | Conflict
 
 /** Removes Markdown syntax so list previews remain compact and readable. */
-export const plainPreview = (markdown: string) =>
+const plainPreview = (markdown: string) =>
   markdown
     .replace(/```[\s\S]*?```/gu, ' code ')
     .replace(/!\[[^\]]*\]\([^)]*\)/gu, '')

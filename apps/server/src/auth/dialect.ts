@@ -78,7 +78,7 @@ type RemovalStep = typeof RemovalStep.Type
  * PostgreSQL or the driver rejected a removal step. A rejected commit does not establish whether
  * PostgreSQL committed; preserve the failure without claiming the session is still present.
  */
-export class SessionRemovalFailed extends Schema.TaggedError<SessionRemovalFailed>()(
+class SessionRemovalFailed extends Schema.TaggedError<SessionRemovalFailed>()(
   'SessionRemovalFailed',
   { step: RemovalStep, cause: Schema.Defect() },
   { title: 'Session removal failed' },
@@ -106,14 +106,14 @@ export class UnrecognisedDelete extends Schema.TaggedError<UnrecognisedDelete>()
 ) {}
 
 /** Kysely's public builder produced no `returning` node, so no removal could be announced. */
-export class SessionReceiptUnavailable extends Schema.TaggedError<SessionReceiptUnavailable>()(
+class SessionReceiptUnavailable extends Schema.TaggedError<SessionReceiptUnavailable>()(
   'SessionReceiptUnavailable',
   {},
   { title: 'Session removal receipt is unavailable' },
 ) {}
 
 /** The driver was handed a connection it did not acquire, so its transaction state is unknown. */
-export class ForeignConnection extends Schema.TaggedError<ForeignConnection>()(
+class ForeignConnection extends Schema.TaggedError<ForeignConnection>()(
   'ForeignConnection',
   {},
   { title: 'Connection was not acquired from this driver' },

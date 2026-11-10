@@ -70,7 +70,7 @@ export function commandErrors(file, source) {
     : []
 }
 
-export function compilerPolicy(root) {
+function compilerPolicy(root) {
   const files = NodeChildProcess.execFileSync(
     'git',
     ['ls-files', '-z', '--cached', '--others', '--exclude-standard'],

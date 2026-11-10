@@ -27,14 +27,14 @@ import { parseDeployTarget } from '../targets.ts'
  */
 
 /** The destination already holds different state for the stage; a deploy has written it since. */
-export class StateCopyRefused extends Schema.TaggedError<StateCopyRefused>()(
+class StateCopyRefused extends Schema.TaggedError<StateCopyRefused>()(
   'StateCopyRefused',
   { stack: Schema.String, stage: Schema.String, message: Schema.String },
   { title: 'State copy refused' },
 ) {}
 
 /** A value read back from the store differs from the one written. */
-export class StateCopyMismatch extends Schema.TaggedError<StateCopyMismatch>()(
+class StateCopyMismatch extends Schema.TaggedError<StateCopyMismatch>()(
   'StateCopyMismatch',
   { fqn: Schema.String, message: Schema.String },
   { title: 'State copy mismatch' },

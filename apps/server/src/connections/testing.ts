@@ -83,7 +83,7 @@ export const readTool = ExecutorTool.make({
   effect: 'read',
   input: {},
 })
-export const writeTool = ExecutorTool.make({
+const writeTool = ExecutorTool.make({
   name: 'write',
   description: 'Write records',
   effect: 'write',
@@ -533,7 +533,7 @@ export const hostedService = ServiceId.make('test/service')
 export const hostedReturnAddress = 'https://vivid.example.test/api/connections/return'
 const hostedRemoved = { removed: true }
 /** An MCP tool lists its input as an object schema; with no required field `{}` satisfies it. */
-export const hostedTools = [
+const hostedTools = [
   {
     name: 'read',
     description: 'Read records',

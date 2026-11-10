@@ -273,7 +273,7 @@ export function computerTools(runTool: RunTool, run: RunScoped) {
 }
 
 /** The tools whose results carry a picture. */
-export function pictureTools(runTool: RunTool) {
+function pictureTools(runTool: RunTool) {
   return [
     desktopModelTool(runTool),
     browseModelTool(runTool),

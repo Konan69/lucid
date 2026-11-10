@@ -87,7 +87,7 @@ interface StoredInvitation extends Schema.Schema.Type<typeof StoredInvitation> {
 const decodeStoredInvitation = decodeStored(StoredInvitation, 'invitation')
 
 /** What an administrative change did, so the caller can tell the People it touched. */
-export interface MemberChange {
+interface MemberChange {
   readonly member: Member
   readonly companyId: CompanyId
 }

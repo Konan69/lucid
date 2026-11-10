@@ -22,13 +22,13 @@ import { ContentBlock, FlueRecord, type AttachmentRef } from './records.ts'
  * A response's metadata as the fold knows it: everything `vivid.response` holds but `inputs`,
  * which name Pi's submission and entry ids and so are added by the carry once it has them.
  */
-export type Measured = Omit<ResponseData, 'inputs'>
+type Measured = Omit<ResponseData, 'inputs'>
 
 /** How a Flue submission ended (`submission_settled.outcome`), the runtime's `ResponseData.outcome`. */
-export type Outcome = 'completed' | 'failed' | 'aborted'
+type Outcome = 'completed' | 'failed' | 'aborted'
 
 /** A delivery the response answered, by its Flue submission id, and how that submission settled. */
-export interface Input {
+interface Input {
   readonly submission: string
   readonly outcome: Outcome
 }
@@ -69,14 +69,14 @@ export interface Carried {
 }
 
 /** A file Flue kept (`flue_attachments`): its type and its bytes, by attachment id. */
-export interface Kept {
+interface Kept {
   readonly mimeType: string
   readonly bytes: Uint8Array
 }
 export type Attachments = ReadonlyMap<string, Kept>
 
 /** The stream does not begin with its root conversation's birth, so it names no creator. */
-export class StreamStartMissing extends Schema.TaggedError<StreamStartMissing>()(
+class StreamStartMissing extends Schema.TaggedError<StreamStartMissing>()(
   'StreamStartMissing',
   { threadId: Schema.String },
   { title: 'Flue stream does not begin with its conversation' },
@@ -87,7 +87,7 @@ export class StreamStartMissing extends Schema.TaggedError<StreamStartMissing>()
 }
 
 /** A block's deltas are not numbered 0, 1, 2… or not as many as its completion says. */
-export class DeltaGap extends Schema.TaggedError<DeltaGap>()(
+class DeltaGap extends Schema.TaggedError<DeltaGap>()(
   'DeltaGap',
   { recordId: Schema.String, blockId: Schema.String, expected: Schema.Int, found: Schema.Int },
   { title: 'Flue block deltas are not contiguous' },
@@ -114,7 +114,7 @@ const Misplacement = Schema.Literals([
 ])
 
 /** A record that does not follow from the ones before it in the log. */
-export class RecordOutOfPlace extends Schema.TaggedError<RecordOutOfPlace>()(
+class RecordOutOfPlace extends Schema.TaggedError<RecordOutOfPlace>()(
   'RecordOutOfPlace',
   { recordId: Schema.String, recordType: Schema.String, rule: Misplacement },
   { title: 'Flue record does not follow its log' },
@@ -125,7 +125,7 @@ export class RecordOutOfPlace extends Schema.TaggedError<RecordOutOfPlace>()(
 }
 
 /** A message names a file that was not kept for this stream and conversation. */
-export class AttachmentMissing extends Schema.TaggedError<AttachmentMissing>()(
+class AttachmentMissing extends Schema.TaggedError<AttachmentMissing>()(
   'AttachmentMissing',
   { attachmentId: Schema.String },
   { title: 'Flue attachment is missing' },
@@ -136,7 +136,7 @@ export class AttachmentMissing extends Schema.TaggedError<AttachmentMissing>()(
 }
 
 /** A kept file's size or SHA-256 digest differs from the reference to it. */
-export class AttachmentMismatch extends Schema.TaggedError<AttachmentMismatch>()(
+class AttachmentMismatch extends Schema.TaggedError<AttachmentMismatch>()(
   'AttachmentMismatch',
   { attachmentId: Schema.String, check: Schema.Literals(['size', 'digest']) },
   { title: 'Flue attachment does not match its reference' },
@@ -147,7 +147,7 @@ export class AttachmentMismatch extends Schema.TaggedError<AttachmentMismatch>()
 }
 
 /** A file that is not a picture. Pi's messages carry pictures only (pi-ai `ImageContent`). */
-export class AttachmentUnsupported extends Schema.TaggedError<AttachmentUnsupported>()(
+class AttachmentUnsupported extends Schema.TaggedError<AttachmentUnsupported>()(
   'AttachmentUnsupported',
   { attachmentId: Schema.String, mimeType: Schema.String },
   { title: 'Flue attachment is not a picture' },
@@ -162,7 +162,7 @@ export class AttachmentUnsupported extends Schema.TaggedError<AttachmentUnsuppor
  * type as both (`modelDelivery`), and the runtime's entry keeps one (`SignalData.type`), so such a
  * signal could not be written without choosing between them.
  */
-export class SignalUnreadable extends Schema.TaggedError<SignalUnreadable>()(
+class SignalUnreadable extends Schema.TaggedError<SignalUnreadable>()(
   'SignalUnreadable',
   { recordId: Schema.String, signalType: Schema.String },
   { title: 'Flue signal has no matching tag' },
@@ -178,7 +178,7 @@ export class SignalUnreadable extends Schema.TaggedError<SignalUnreadable>()(
  * has no such pair and would drop the partial, so a Thread holding either signal is not carried
  * rather than carried without it. None of production's Threads has one.
  */
-export class RecoveryPairUnsupported extends Schema.TaggedError<RecoveryPairUnsupported>()(
+class RecoveryPairUnsupported extends Schema.TaggedError<RecoveryPairUnsupported>()(
   'RecoveryPairUnsupported',
   { recordId: Schema.String, signalType: Schema.String },
   { title: 'Flue stream recovery pair is not carried' },
@@ -193,7 +193,7 @@ export class RecoveryPairUnsupported extends Schema.TaggedError<RecoveryPairUnsu
  * (`dispatch-*.mjs` 1033, 2448); Pi runs and shows tool calls only under `toolUse`, so the calls
  * would vanish from the screen. None of production's Threads has one.
  */
-export class ToolBatchUnderStop extends Schema.TaggedError<ToolBatchUnderStop>()(
+class ToolBatchUnderStop extends Schema.TaggedError<ToolBatchUnderStop>()(
   'ToolBatchUnderStop',
   { recordId: Schema.String, stopReason: Schema.String },
   { title: 'Flue tool batch under a stop reason Pi does not run' },
@@ -207,7 +207,7 @@ export class ToolBatchUnderStop extends Schema.TaggedError<ToolBatchUnderStop>()
  * A submission settled `completed` with no model message to be its answer. Pi settles a done
  * input with the entry that answered it (`SubmissionSettlement.answer`), so there is none to name.
  */
-export class AnswerMissing extends Schema.TaggedError<AnswerMissing>()(
+class AnswerMissing extends Schema.TaggedError<AnswerMissing>()(
   'AnswerMissing',
   { submissionId: Schema.String },
   { title: 'Flue submission completed without a reply' },

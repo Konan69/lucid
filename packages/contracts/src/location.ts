@@ -13,7 +13,7 @@ import { Schema } from 'effect'
  */
 
 /** The longest place name kept: a district, a city and a country fit with room to spare. */
-export const LOCATION_PLACE_MAX = 120
+const LOCATION_PLACE_MAX = 120
 
 /**
  * The place a reading was in, in words, as the device resolved it ("Lekki, Lagos, Nigeria").

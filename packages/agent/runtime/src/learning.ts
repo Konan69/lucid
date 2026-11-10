@@ -82,7 +82,7 @@ export const worthwhile = Decision.make({
 })
 
 /** The ten-second provider budget bounds an optional decision, never the Person's response. */
-export const consider = Effect.fn('Learning.consider')(function* (exchange: Exchange) {
+const consider = Effect.fn('Learning.consider')(function* (exchange: Exchange) {
   return yield* DecisionModel.decide(worthwhile, { input: exchange }).pipe(
     Effect.map((result) => result.answers.keep.probability >= 0.5),
     Effect.timeout('10 seconds'),

@@ -9,7 +9,7 @@ import { Database } from '../database/client.ts'
 import { FeedStore, markTold } from './store.ts'
 
 /** What a notice quotes of a post: a said card's words; a drawn card is its drawing, with none. */
-export const bodyOf = (post: PostRequest) =>
+const bodyOf = (post: PostRequest) =>
   PostRequest.match(post, { Drawn: () => '', Said: ({ words }) => words })
 
 export const feedHandlers = {

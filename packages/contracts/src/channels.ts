@@ -92,6 +92,7 @@ export class ChannelAddressTaken extends Schema.TaggedError<ChannelAddressTaken>
 ) {}
 
 /** The provider's plan has no room for another enrolled Person. */
+/** @public The RPC declaration emitter must name this error in ConnectChannel failures. */
 export class ChannelLimitReached extends Schema.TaggedError<ChannelLimitReached>()(
   'ChannelLimitReached',
   { channel: Channel },

@@ -36,7 +36,7 @@ const decodeRetryAfter = Schema.decodeUnknownOption(RetryAfter)
 const RawMessage = Schema.Struct({ channel_id: Schema.NonEmptyString, content: Schema.String })
 const decodeRaw = Schema.decodeUnknownOption(RawMessage)
 
-export const discordInbound = (botId: string, message: Message): Option.Option<ChannelInbound> => {
+const discordInbound = (botId: string, message: Message): Option.Option<ChannelInbound> => {
   if (message.author.isBot || message.author.isMe) return Option.none()
   const dm = message.threadId.startsWith('discord:@me:')
   if (!dm && message.isMention !== true) return Option.none()

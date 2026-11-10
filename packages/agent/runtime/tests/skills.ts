@@ -5,7 +5,7 @@ import { parseSkill } from '../src/frontmatter.ts'
 import { BuiltinSkills, skillsExtension } from '../src/skills.ts'
 
 /** A shipped skill file is missing from the installation: a packaging fault, found at startup. */
-export class SkillUnreadable extends Schema.TaggedError<SkillUnreadable>()(
+class SkillUnreadable extends Schema.TaggedError<SkillUnreadable>()(
   'SkillUnreadable',
   { name: Schema.String },
   { title: 'Shipped skill file unreadable' },
@@ -48,7 +48,7 @@ const readFiles = Effect.fn('Skills.readFiles')(function* (name: string) {
 })
 
 /** The manifest is the catalogue's order, the same for every Person and every response. */
-export const loadSkills = Effect.fn('Skills.load')(function* () {
+const loadSkills = Effect.fn('Skills.load')(function* () {
   return yield* Effect.forEach(manifest, (entry) =>
     Effect.all([readSkill(entry.runtimeName), readFiles(entry.runtimeName)]).pipe(
       Effect.flatMap(([content, files]) => parseSkill(content, entry.runtimeName, files)),

@@ -58,7 +58,7 @@ import { childRuns } from './tables.ts'
  * How many helpers one Run may have at work at once. Four parallel reads already outrun what one
  * answer can use; more mostly spends the Person's model budget (Child Runs scope, section 4).
  */
-export const HELPERS_PER_RUN = 4
+const HELPERS_PER_RUN = 4
 
 /** The longest helper answer a result delivery carries; the whole answer stays readable in Pi. */
 const RESULT_LIMIT = 12_000
@@ -66,7 +66,7 @@ const RESULT_LIMIT = 12_000
 type Row = typeof childRuns.$inferSelect
 
 /** Who is reporting on a helper: Vivid, acting for a Person, in one Thread. */
-export interface Reporter {
+interface Reporter {
   readonly personId: PersonId
   readonly threadId: ThreadId
 }
@@ -125,7 +125,7 @@ export interface ChildRunsService {
 }
 
 /** A follow-up for a helper: its words, who sent them, and the sender's idempotency key. */
-export interface FollowUp {
+interface FollowUp {
   readonly message: string
   readonly by: ChildSender
   readonly key: string
