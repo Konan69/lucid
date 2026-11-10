@@ -11,6 +11,7 @@ import {
   ThreadId,
 } from './identity.js'
 import { DreamPass } from './dreams.js'
+import { FeedCardId } from './feed.js'
 import { HandoffRequest, InputRequest } from './inputs.js'
 import {
   CheckinRead,
@@ -262,12 +263,19 @@ export const RunState = Schema.TaggedUnion({
 export type RunState = typeof RunState.Type
 
 /**
- * Proof that the Person a Run acted for saw its final response. `Thread`: their own app drew that
- * exact response in the Thread and said so. A channel provider's delivery confirmation would be
- * another case; none returns one today, so there is none.
+ * Proof that the Person a Run acted for saw its result.
+ *
+ * - `Thread`: their own app drew that exact response in the Thread and said so.
+ * - `Feed`: their own Feed drew, whole and in front, the card this Run posted, and said so by
+ *   marking it seen or done (`MarkFeedCard`). Background work reaches the Person there, not in a
+ *   Thread nobody opens; the post alone proves only publication.
+ *
+ * A channel provider's delivery confirmation would be another case; none returns one today, so
+ * there is none.
  */
 export const RunDeliveryReceipt = Schema.TaggedUnion({
   Thread: { person: PersonSummary, acknowledgedAt: Schema.Finite, responseId: RunId },
+  Feed: { person: PersonSummary, acknowledgedAt: Schema.Finite, card: FeedCardId },
 })
 export type RunDeliveryReceipt = typeof RunDeliveryReceipt.Type
 
