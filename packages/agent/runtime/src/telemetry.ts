@@ -45,8 +45,7 @@ const reportImpact = {
 } as const satisfies Record<ReportInfo['type'], Impact>
 
 /** Pi's closed word for what it reported, read from `reportImpact` so the two cannot drift. */
-export const PiReport = Schema.Literals(Struct.keys(reportImpact))
-export type PiReport = typeof PiReport.Type
+const PiReport = Schema.Literals(Struct.keys(reportImpact))
 
 /**
  * A failure inside a Person's cell, said where the cell decides it. These are not `Incident`

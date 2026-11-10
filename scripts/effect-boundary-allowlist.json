@@ -40,6 +40,11 @@
     "symbols": ["describeRequest", "bodyOf", "fetchResponse", "witness"]
   },
   {
+    "file": "packages/agent/runtime/src/telemetry.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["send", "try"]
+  },
+  {
     "file": "packages/agent/runtime/src/person.ts",
     "classification": "third-party-adapter",
     "symbols": ["run", "closeHarness", "openPerson"]
@@ -153,6 +158,9 @@
       "#carryUntilQuiet",
       "#route",
       "#wake",
+      "#opened",
+      "#hold",
+      "#fail",
       "<module>"
     ]
   },
