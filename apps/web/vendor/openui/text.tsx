@@ -2,7 +2,7 @@ import { defineComponent } from "@openuidev/react-lang";
 import { ArrowUpRight } from "lucide-react";
 import { Fragment } from "react";
 import { z } from "zod/v4";
-import { inline, MarkdownBlocks } from "./markdown";
+import { inline } from "./markdown";
 import { children, color, cx, fg, webUrl } from "./style";
 
 const str = (value: unknown) => (value == null ? "" : String(value));
@@ -164,15 +164,4 @@ export const List = defineComponent({
       </Tag>
     );
   },
-});
-
-export const Markdown = defineComponent({
-  name: "Markdown",
-  props: z.object({ text: z.string() }),
-  description: "Prose with headings, lists, quotes, code and tables.",
-  component: ({ props }) => (
-    <div className="iui-markdown">
-      <MarkdownBlocks text={str(props.text)} />
-    </div>
-  ),
 });
