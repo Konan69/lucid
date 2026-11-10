@@ -1,5 +1,5 @@
 import { ArtifactContent, type ArtifactDetail } from '@vivid/contracts'
-import { artifacts, LiveState, makeWhen, opening, revising, thisReader } from '@vivid/state'
+import { artifacts, LiveState, makeWhen, opening, removing, revising, thisReader } from '@vivid/state'
 import { Option, Predicate } from 'effect'
 import { Check, PencilLine, Share } from 'lucide-react-native'
 import { useState } from 'react'
@@ -8,8 +8,10 @@ import {
   closeEditor,
   editDocument,
   openFile,
+  removeArtifact,
   saveDocument,
   useOpening,
+  useRemoving,
   useRevising,
   type Asked,
 } from '../../data/artifact'
@@ -19,7 +21,7 @@ import { useTheme } from '../../theme'
 import { Row, Section } from '../../ui/List'
 import { Prose } from '../../ui/Prose'
 import { Sheet } from '../../ui/Sheet'
-import { Button, Field, Label, Notice, radius, Skeleton } from '../../ui/ui'
+import { Button, confirmDestructive, Field, Label, Notice, radius, Skeleton } from '../../ui/ui'
 import { storedFile, usePictureSource, writtenFile } from './Look'
 
 const when = makeWhen(thisReader())
@@ -33,6 +35,9 @@ const when = makeWhen(thisReader())
  *
  * Which version is read is the sheet's own choice and starts at the one it was opened on. Edit is
  * offered on the newest only: the server refuses a revision made from anything older.
+ *
+ * Delete, under the versions, asks first and removes the Artifact with every version, as the
+ * Library's "Delete file" does (`screen/Library.tsx`). Once it is gone the live query says so here.
  */
 export function ArtifactViewer({ asked, onClose }: { asked: Asked; onClose: () => void }) {
   const data = useLiveData()
@@ -91,12 +96,14 @@ function Shown({
   const data = useLiveData()
   const editor = useRevising()
   const sharing = useOpening()
+  const deleting = useRemoving()
   const { artifact, shown, content } = detail
   const editing = revising.isEditing(editor, artifact.id)
   const newest = shown.number === artifact.version
   const key = `${artifact.id}@${shown.number}`
   const unopened = opening.failureOf(sharing, key)
   const busy = opening.isWaiting(sharing)
+  const unremoved = removing.refusalOf(deleting, artifact.id)
   const line = `${artifacts.holdsLine(artifacts.holdsOf(content), shown.number)} · ${artifacts.madeByWords(shown.madeBy)}`
   if (editing && ArtifactContent.guards.Document(content)) {
     return (
@@ -173,6 +180,26 @@ function Shown({
         File: ({ output }) => <FilePicture detail={detail} kind={artifacts.fileKind(output)} />,
       })}
       <Versions detail={detail} onPick={onPick} />
+      {Option.isSome(unremoved) && <Notice message={unremoved.value} />}
+      <Section>
+        {/* While a deletion is on its way the row is text, not a control; the machine refuses too. */}
+        {removing.isWaiting(deleting) ? (
+          <Row title="Deleting…" danger />
+        ) : (
+          <Row
+            title="Delete"
+            danger
+            onPress={() =>
+              confirmDestructive({
+                title: `Delete “${artifact.title}”?`,
+                detail: 'Every version of it will be deleted. This cannot be undone.',
+                action: 'Delete',
+                onConfirm: () => removeArtifact(data, artifact.id),
+              })
+            }
+          />
+        )}
+      </Section>
     </Sheet>
   )
 }

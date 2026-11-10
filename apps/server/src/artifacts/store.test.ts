@@ -33,6 +33,8 @@ import { Runtime } from '../runtime/client.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
 import { runs, threadParticipants, threads } from '../threads/tables.ts'
 import { ArtifactStore, artifactStoreLayer } from './store.ts'
+import { artifactHandlers } from './handlers.ts'
+import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { artifactVersions, artifacts } from './tables.ts'
 import { keepInspection, publishArtifactFile } from './files.ts'
 import { capturedFile, FileCapture } from './render.ts'
@@ -903,6 +905,45 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
             ),
           ).toEqual([])
           return yield* Effect.void
+        }),
+    )
+
+    it.effect(
+      'removes through RemoveArtifact for the signed-in Person, then reads NotFound, never for a Run',
+      () =>
+        Effect.gen(function* () {
+          const { person, threadId } = yield* fixture()
+          const store = yield* ArtifactStore
+          yield* store.write(person.id, threadId, {
+            toolCallId: documentCall,
+            title: 'Delete from the viewer',
+            body: 'First',
+          })
+          const [written] = yield* store.list(person.id, threadId)
+          if (written === undefined) return yield* Effect.die('Document missing')
+          const workspace = Workspace.cases.Personal.make({})
+          // Vivid in a Run cannot delete what the Person keeps; only their own press does.
+          const fromRun = yield* artifactHandlers
+            .RemoveArtifact({ id: written.id })
+            .pipe(
+              Effect.provideService(AuthContext, AuthState.Vivid({ person, workspace, threadId })),
+              Effect.flip,
+            )
+          expect(fromRun._tag).toBe('Forbidden')
+          expect((yield* store.get(person.id, { id: written.id })).artifact.id).toBe(written.id)
+          const signedIn = AuthState.Person({
+            person,
+            workspace,
+            sessionId: SessionId.make(NodeCrypto.randomUUID()),
+          })
+          yield* artifactHandlers
+            .RemoveArtifact({ id: written.id })
+            .pipe(Effect.provideService(AuthContext, signedIn))
+          // The viewer's WatchArtifact reads this same answer and says the Artifact was removed.
+          expect((yield* Effect.flip(store.get(person.id, { id: written.id })))._tag).toBe(
+            'NotFound',
+          )
+          expect(yield* store.list(person.id, threadId)).toEqual([])
         }),
     )
   })

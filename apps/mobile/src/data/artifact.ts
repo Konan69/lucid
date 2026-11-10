@@ -1,11 +1,11 @@
 import { useAtomValue } from '@effect/atom-react'
 import { VividRpcClient } from '@vivid/client-runtime'
 import type { ArtifactId } from '@vivid/contracts'
-import { opening, revising, type makeLive } from '@vivid/state'
+import { opening, removing, revising, type makeLive } from '@vivid/state'
 import { Effect, Layer, Predicate, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { openArtifactFile, shareMarkdown } from './documents'
-import { confirm, tick } from './haptics'
+import { confirm, tick, warn } from './haptics'
 import { useLiveData, type LiveData } from './live'
 import type { SignedIn } from './session'
 
@@ -110,12 +110,46 @@ export const openFile = (
 }
 
 /**
+ * Deleting an Artifact (`@vivid/state` `removing`), one for the session. The viewer's live query
+ * says it is gone once the server has removed it; a refusal stays beside its actions.
+ */
+const makeRemoving = (engine: ReturnType<typeof makeLive>) => {
+  const remover = removing.make(
+    Layer.succeed(removing.Remover, {
+      remove: Effect.fn('Artifact.remove')(function* (removal: removing.Removal) {
+        const result = yield* engine.run(
+          VividRpcClient.use((client) => client.RemoveArtifact({ id: removal.id })),
+        )
+        return yield* Result.isSuccess(result)
+          ? Effect.void
+          : Effect.fail(new removing.Unremoved({ removal }))
+      }),
+    }),
+  )
+  engine.registry.mount(remover.reading)
+  return remover
+}
+
+/** Where deleting stands, for every viewer. */
+export const useRemoving = () => useAtomValue(useLiveData().artifacts.removing.reading)
+
+/** The Person confirmed Delete. A press while one is on its way is not taken. */
+export const removeArtifact = (data: LiveData, id: ArtifactId) => {
+  warn()
+  data.registry.set(
+    data.artifacts.removing.send,
+    data.artifacts.removing.remove({ attempt: removing.AttemptId.make(randomUUID()), id }),
+  )
+}
+
+/**
  * Everything about Artifacts the session keeps: one Artifact at the version asked for with every
- * version there is, the Person's shelf of them for the Library, and the two machines.
+ * version there is, the Person's shelf of them for the Library, and the three machines.
  */
 export const makeArtifacts = (engine: ReturnType<typeof makeLive>, session: SignedIn) => ({
   one: engine.family(askedKey, (client, asked: Asked) => client.WatchArtifact(asked)),
   shelf: engine.query((client) => client.WatchArtifactShelf()),
   revising: makeRevising(engine),
   opening: makeOpening(engine, session),
+  removing: makeRemoving(engine),
 })
