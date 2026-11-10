@@ -45,7 +45,7 @@ The reconstructed renderer was inspected at:
 `/home/kixey/refs/grok-bot-0.39-reconstructed/recovered/frontend/dist/renderer/assets`.
 
 The actual `Ole` semantic Sand table and `mf`/`T1`/`cd` primitive palettes in
-`index-BOQal1n5.js` were extracted into `design-reference/grok-sand.ts`:
+`index-BOQal1n5.js` were extracted into `design-reference/vivid-reference.ts`:
 132 semantic entries per appearance, with source SHA-256 recorded in that file.
 Light defaults were also compared with `index-9_2GMuRe.css`, and the bot-creation
 and plugins screenshots were inspected.

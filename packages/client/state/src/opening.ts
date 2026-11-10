@@ -141,15 +141,6 @@ export const make = (services: Layer.Layer<Opener>) => {
   return { ...atoms, reading, open: Events.Open }
 }
 
-/** Whether this file is on its way to another app: its control is held, and the machine refuses. */
-export const isOpening = (reading: Reading, key: string) =>
-  Reading.match(reading, {
-    Starting: () => true,
-    Idle: () => false,
-    Opening: (opening) => opening.key === key,
-    Failed: () => false,
-  })
-
 /** Why this file did not open, when the last press on it did not. */
 export const failureOf = (reading: Reading, key: string): Option.Option<string> =>
   Reading.match(reading, {

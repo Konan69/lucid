@@ -126,7 +126,7 @@ type KeyFields = {
 }
 
 /** A key going down: with the text it types, or raw when it types none. */
-export type KeyDown = KeyFields & { readonly commands: ReadonlyArray<string> } & (
+type KeyDown = KeyFields & { readonly commands: ReadonlyArray<string> } & (
     | { readonly type: 'rawKeyDown' }
     | { readonly type: 'keyDown'; readonly text: string; readonly unmodifiedText: string }
   )

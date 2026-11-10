@@ -25,7 +25,7 @@ const sameYear = (one: number, other: number): boolean =>
  * in another). "Yesterday" is the app's own word, like the rest of its copy: the phone's engine
  * (Hermes) has no `Intl.RelativeTimeFormat` to ask for the locale's.
  */
-export const whenIn = (locale: Intl.LocalesArgument) => {
+const whenIn = (locale: Intl.LocalesArgument) => {
   const time = new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' })
   const day = new Intl.DateTimeFormat(locale, {
     day: 'numeric',

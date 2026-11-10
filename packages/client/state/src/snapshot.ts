@@ -104,7 +104,7 @@ const encode = Schema.encodeOption(SnapshotJson)
  * caller erases it, undrawn; a device's storage is input like any other. A snapshot with no
  * recorded expiry does not decode, so it is erased like the rest.
  */
-export const readSnapshot = (stored: Option.Option<string>, origin: string, now: number) =>
+const readSnapshot = (stored: Option.Option<string>, origin: string, now: number) =>
   Option.filter(
     Option.flatMap(stored, decode),
     (snapshot) => snapshot.origin === origin && snapshot.expiresAt > now,
@@ -120,7 +120,7 @@ export const readSnapshot = (stored: Option.Option<string>, origin: string, now:
  * moment later either way. `total` is the length of the encoded text in UTF-16 units, which is
  * what both stores hold; a Person's fifty drafts can each run to pages, and are what it is for.
  */
-export const LIMITS = { threads: 200, projects: 200, notifications: 100, total: 400_000 } as const
+const LIMITS = { threads: 200, projects: 200, notifications: 100, total: 400_000 } as const
 
 /** A list, when it is short enough to keep whole. */
 const within = <Value>(
@@ -135,7 +135,7 @@ const within = <Value>(
  * neither stops the writer; the caller erases what the store held, which is now older than
  * what it could not write.
  */
-export const writeSnapshot = (snapshot: Snapshot): Option.Option<string> =>
+const writeSnapshot = (snapshot: Snapshot): Option.Option<string> =>
   Option.filter(
     encode({
       version: snapshot.version,
@@ -173,7 +173,7 @@ export type Verdict = Data.TaggedEnum<{
 }>
 export const Verdict = Data.taggedEnum<Verdict>()
 
-export const judge = (snapshot: Snapshot, me: MeResponse): Verdict => {
+const judge = (snapshot: Snapshot, me: MeResponse): Verdict => {
   if (snapshot.me.person.id !== me.person.id) return Verdict.OtherPerson()
   return workspaceKey(snapshot.me.workspace) === workspaceKey(me.workspace)
     ? Verdict.Same()
@@ -192,7 +192,7 @@ export const judge = (snapshot: Snapshot, me: MeResponse): Verdict => {
  * runs, never a copy made when the change was offered. T3's own note stands: do not debounce
  * upstream of this, or an older state can be held back while a newer one waits.
  */
-export const keepLatest = Effect.fn('Snapshot.keepLatest')(function* (
+const keepLatest = Effect.fn('Snapshot.keepLatest')(function* (
   changes: Queue.Dequeue<void>,
   persist: Effect.Effect<void>,
 ) {

@@ -197,11 +197,6 @@ export class VividRpcClient extends Context.Service<VividRpcClient, VividRpcClie
     )
 }
 
-/** Opens the signed-in Person's first Thread through the shared schema-derived transport. */
-export const openFirstThread = Effect.fn('VividRpcClient.openFirstThread')(function* () {
-  return yield* (yield* VividRpcClient).OpenFirstThread()
-})
-
 /** Ask for a meaningfully improved title through the shared transport on every client surface. */
 export const regenerateThreadTitle = Effect.fn('VividRpcClient.regenerateThreadTitle')(function* (
   thread: ThreadId,

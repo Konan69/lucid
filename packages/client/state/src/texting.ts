@@ -36,7 +36,7 @@ export const KNOWN_BY = {
  * number with so it can be read. The server decides whether what is left is a number it can
  * reach; this only stops "+234 801 234 5678" being refused for its spacing.
  */
-export const typedAddress = (written: string) => written.replaceAll(/[\s().-]/gu, '')
+const typedAddress = (written: string) => written.replaceAll(/[\s().-]/gu, '')
 
 /**
  * Gives the Person's own number to a channel, or nothing on a channel that learns the account from
@@ -70,7 +70,7 @@ export const disconnectChannel = Effect.fn('Texting.disconnect')(function* (chan
  * own answer is laid over the live list (`LiveQuery.expect`) so the screen moves the moment the
  * server replies, and does not show the old standing until the watch catches up.
  */
-export const withLink = (current: ChannelListResponse, link: ChannelLink): ChannelListResponse => ({
+const withLink = (current: ChannelListResponse, link: ChannelLink): ChannelListResponse => ({
   channels: current.channels.map((known) => (known.channel === link.channel ? link : known)),
 })
 
@@ -117,7 +117,7 @@ export const textingUnreached = 'Vivid could not be reached, so nothing was chan
  * own words; anything else (the socket dropped, the session ended) is Vivid not being reached,
  * and the same promise holds: nothing was changed.
  */
-export const textingRefusal = (failure: TextingFailure): string =>
+const textingRefusal = (failure: TextingFailure): string =>
   isChannelFailure(failure) ? SAID[failure._tag](failure.channel) : textingUnreached
 
 /**

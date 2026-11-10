@@ -92,7 +92,7 @@ export interface Drafts extends Schema.Schema.Type<typeof Drafts> {}
 /** How many are kept. The oldest goes first, so a device never grows a draft for every Thread. */
 const KEPT = 50
 
-export const noDrafts: Drafts = { version: 3, entries: [], marks: [], pending: [] }
+const noDrafts: Drafts = { version: 3, entries: [], marks: [], pending: [] }
 
 /**
  * Whose drafts, and in which workspace. The server takes both from who is calling and a
@@ -150,13 +150,13 @@ const named = (person: string, workspace: string, place: DraftPlace): string =>
  * not say whether a Thread's draft missing from that list had been cleared or simply belonged
  * elsewhere.
  */
-export const whereOf = (scope: DraftScope, place: DraftPlace): string =>
+const whereOf = (scope: DraftScope, place: DraftPlace): string =>
   named(scope.person, wordOf(scope.workspace), place)
 
 const threadOf = Schema.decodeUnknownOption(ThreadId)
 
 /** The place a name stands for, when it is this Person's in this workspace. */
-export const placeOf = (scope: DraftScope, where: string): Option.Option<DraftPlace> => {
+const placeOf = (scope: DraftScope, where: string): Option.Option<DraftPlace> => {
   const mine = prefixOf(scope.person, wordOf(scope.workspace))
   if (!where.startsWith(mine)) return Option.none()
   const rest = where.slice(mine.length)

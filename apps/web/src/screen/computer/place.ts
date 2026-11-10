@@ -46,7 +46,7 @@ const between = (value: number, least: number, most: number) =>
  * less the gap on both sides. A room smaller than the smallest window wins, so the window never
  * hangs off the page.
  */
-export const sizeWithin = (size: Size, room: Size): Size => {
+const sizeWithin = (size: Size, room: Size): Size => {
   const widest = Math.max(1, room.width - GAP * 2)
   const tallest = Math.max(1, room.height - GAP * 2)
   return {

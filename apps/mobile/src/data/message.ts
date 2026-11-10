@@ -227,7 +227,7 @@ export const momentOf = (message: ConversationMessage): Option.Option<number> =>
 // ── What Vivid did ─────────────────────────────────────────────────────────
 
 /** One thing Vivid did, as a line of the list a reply's steps open into. */
-export interface Step {
+interface Step {
   readonly id: string
   readonly label: string
   readonly detail: Option.Option<string>
@@ -265,7 +265,7 @@ const ON_COMPUTER = new Set([
  * them: Hermes 250829098.0.17, the one this app is built with, lists iterator helpers as not
  * yet done (`doc/Features.md` at that tag). Node has them, so the tests could not see it.
  */
-export const stepsOf = (tools: ReadonlyArray<ToolPart>): ReadonlyArray<Step> =>
+const stepsOf = (tools: ReadonlyArray<ToolPart>): ReadonlyArray<Step> =>
   tools.flatMap((tool) => {
     const standing = STANDING[tool.state]
     const described = describeToolCall(
@@ -292,7 +292,7 @@ export const stepsOf = (tools: ReadonlyArray<ToolPart>): ReadonlyArray<Step> =>
  * The step Vivid is on: the newest one still in progress, and only while the reply is being
  * written. A call left "running" in a reply that has ended was abandoned, not in progress.
  */
-export const currentStepOf = (steps: ReadonlyArray<Step>, working: boolean): Option.Option<Step> =>
+const currentStepOf = (steps: ReadonlyArray<Step>, working: boolean): Option.Option<Step> =>
   working
     ? Option.fromUndefinedOr(steps.findLast((step) => step.standing === 'running'))
     : Option.none()

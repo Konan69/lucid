@@ -134,16 +134,7 @@ export const progressOf = (project: Project): ReadonlyArray<ProjectProgress> =>
  * The colours a Project's mark can wear: Vivid's face hues, in the order they are dealt. Violet
  * and gray are left out: the product's look has no violet, and gray is what "no Project" reads as.
  */
-export const HUES = [
-  'blue',
-  'green',
-  'orange',
-  'magenta',
-  'cyan',
-  'yellow',
-  'red',
-  'brown',
-] as const
+const HUES = ['blue', 'green', 'orange', 'magenta', 'cyan', 'yellow', 'red', 'brown'] as const
 export type Hue = (typeof HUES)[number]
 
 /**
@@ -164,7 +155,7 @@ export const hueOf = (id: ProjectId): Hue => {
  * work under it, so a Thread filed in a Project inside it still belongs. A circular chain cannot
  * loop: a Project already gathered is not gathered again.
  */
-export const within = (projects: ReadonlyArray<Project>, id: ProjectId): ReadonlySet<ProjectId> => {
+const within = (projects: ReadonlyArray<Project>, id: ProjectId): ReadonlySet<ProjectId> => {
   const gathered = new Set<ProjectId>([id])
   let grew = true
   while (grew) {

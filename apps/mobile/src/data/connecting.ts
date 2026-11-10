@@ -38,7 +38,7 @@ import { launch } from './app'
  * page, which is where a trip made on the phone used to end (the owner, 7 October 2026). Coming
  * back to the front is what the app listens for; the link itself carries nothing the app reads.
  */
-export const HERE: SignInSurface = 'Phone'
+const HERE: SignInSurface = 'Phone'
 
 /** What a card is owed when its attempt ends in an account: its Thread is carried on. */
 export type CarryOn = (connection: Connection) => void
@@ -413,5 +413,3 @@ export function makeConnecting(session: Session) {
     },
   }
 }
-
-export type Connecting = ReturnType<typeof makeConnecting>

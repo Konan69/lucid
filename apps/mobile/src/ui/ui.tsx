@@ -510,60 +510,6 @@ export function Segmented<Value extends string>({
   )
 }
 
-/**
- * A choice between more named things than fit on one line. They wrap, so a long label or a
- * larger text size makes another row instead of a clipped one.
- */
-export function Chips<Value extends string>({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string
-  value: Value
-  options: ReadonlyArray<{ readonly value: Value; readonly label: string }>
-  onChange: (value: Value) => void
-}) {
-  const { colors: c } = useTheme()
-  const fill = (selected: boolean, pressed: boolean) => {
-    if (selected) return c['thread-selected']
-    return pressed ? c['wash-pressed'] : c.card
-  }
-  return (
-    <View accessibilityRole="radiogroup" accessibilityLabel={label} style={styles.wrap}>
-      {options.map((option) => {
-        const selected = option.value === value
-        return (
-          <Press
-            key={option.value}
-            accessibilityRole="radio"
-            accessibilityState={{ selected }}
-            onPress={() => {
-              if (selected) return
-              tick()
-              onChange(option.value)
-            }}
-            style={({ pressed }) => ({
-              minHeight: TARGET,
-              paddingHorizontal: 14,
-              justifyContent: 'center',
-              borderRadius: TARGET / 2,
-              borderWidth: EDGE,
-              borderColor: selected ? c.primary : c.border,
-              backgroundColor: fill(selected, pressed),
-            })}
-          >
-            <Label size="label" tone={selected ? 'ink' : 'ink-2'}>
-              {option.label}
-            </Label>
-          </Press>
-        )
-      })}
-    </View>
-  )
-}
-
 /** The widths a skeleton's bars take, so a loading list looks like a list and not a barcode. */
 const BAR_WIDTHS = ['72%', '54%', '64%', '46%', '58%'] as const
 

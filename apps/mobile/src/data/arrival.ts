@@ -62,11 +62,7 @@ interface Listed {
  * opened from a notification) is not asked for until they come back to Home, so nothing takes
  * them away from where they went.
  */
-export const shouldAsk = (
-  standing: Arrival,
-  threads: LiveState<Listed>,
-  onHome: boolean,
-): boolean =>
+const shouldAsk = (standing: Arrival, threads: LiveState<Listed>, onHome: boolean): boolean =>
   Arrival.$is('Unasked')(standing) &&
   onHome &&
   LiveState.$is('Ready')(threads) &&
@@ -80,7 +76,7 @@ export const shouldAsk = (
  * Thread cannot be opened from there. So an existing Thread is only gone to when this
  * workspace's list has it, which happens when another device opened it a moment ago.
  */
-export const destination = (
+const destination = (
   answer: OpenFirstThreadResult,
   isListed: (id: ThreadId) => boolean,
 ): Option.Option<ThreadId> =>

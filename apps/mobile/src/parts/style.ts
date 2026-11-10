@@ -226,7 +226,7 @@ const OPENUI = {
   },
 } as const
 
-export function skin(dark: boolean): Skin {
+function skin(dark: boolean): Skin {
   const theme = dark ? OPENUI.dark : OPENUI.light
   const family = theme.chart
   const token = {

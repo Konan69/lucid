@@ -104,7 +104,7 @@ export interface Way {
  * made twice, and the words go out under the Thread's own key (`firstKey`), so the server takes a
  * second attempt as the same delivery and never as a second message.
  */
-export const deliver = Effect.fn('First.deliver')(function* (
+const deliver = Effect.fn('First.deliver')(function* (
   way: Way,
   firsts: Firsts,
   id: ThreadId,

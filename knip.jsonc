@@ -1,7 +1,13 @@
 {
   "$schema": "./node_modules/knip/schema.json",
-  // Agent skills are reference material, not shipped application entry points.
-  "ignore": [".agents/**", "scripts/__fixtures__/**", "tools/oxlint/anti-slop/vendor/**"],
+  "ignore": [
+    // Agent skills are reference material, not shipped application entry points.
+    ".agents/**",
+    "scripts/__fixtures__/**",
+    "tools/oxlint/anti-slop/vendor/**",
+    // Third-party copies kept unchanged (apps/mobile/vendor/README.md); their exports are the library's own.
+    "apps/mobile/vendor/**",
+  ],
   // These binaries are host prerequisites, not packages to add to a manifest.
   "ignoreBinaries": ["mkfifo", "ssh-keygen", "agent-browser"],
   "includeEntryExports": true,
@@ -22,6 +28,10 @@
     "tools/oxlint/*/index.ts": ["exports"],
     "apps/desktop/scripts/packed.mjs": ["exports"],
     "apps/cells/src/main.ts": ["exports"],
+    // TanStack Router writes this file; its route-map types are its own public shape.
+    "apps/web/src/tree.gen.ts": ["types"],
+    // A reference file: its values are read by people comparing tokens, not imported.
+    "apps/mobile/design-reference/*.ts": ["exports"],
   },
   "workspaces": {
     ".": {
@@ -81,6 +91,8 @@
         "index.ts",
         "app.config.ts",
         "modules/*/index.ts",
+        // Extracted design tokens kept as the reference DESIGN-SOURCES.md cites; no app code imports them.
+        "design-reference/*.ts",
         "scripts/*.mjs",
         "**/*.test.{ts,tsx}",
       ],

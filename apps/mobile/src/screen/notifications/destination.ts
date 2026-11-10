@@ -46,9 +46,9 @@ export const destinationOf = (row: NoticeRow, gone: ReadonlySet<ThreadId>): Dest
   })
 
 /** Whether pressing the row opens a Thread. */
-export const opens = Destination.$is('Thread')
+const opens = Destination.$is('Thread')
 /** Whether pressing the row opens an invitation, in its sheet over the list. */
-export const invites = Destination.$is('Invitation')
+const invites = Destination.$is('Invitation')
 
 /**
  * Whether a row answers a press at all. One that leads somewhere always does. One that leads

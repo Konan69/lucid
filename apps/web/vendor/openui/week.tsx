@@ -8,7 +8,7 @@ import { z } from 'zod/v4'
  * the way they should read ("Tue", "21"), so no calendar or time zone is worked out here: the
  * display already said them in the Person's own.
  */
-export const weekDays = z.array(
+const weekDays = z.array(
   z.object({
     day: z.string(),
     date: z.union([z.string(), z.number()]),
@@ -25,7 +25,7 @@ const MOST_DOTS = 3
  * The day the strip opens on: the one the display marked, else the first with something on it,
  * else the first. Read on every render, so a mark that arrives while the reply streams is taken.
  */
-export const openingDay = (days: ReadonlyArray<Day>) => {
+const openingDay = (days: ReadonlyArray<Day>) => {
   const marked = days.findIndex((day) => day.marked === true)
   if (marked !== -1) return marked
   const busy = days.findIndex((day) => (day.items ?? []).length > 0)

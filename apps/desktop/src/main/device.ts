@@ -28,19 +28,19 @@ import { DeviceLink } from '../shared/device.ts'
 import { ServerSettings } from '../shared/settings.ts'
 
 /** Nobody is signed in on this connection. The link rests until a session appears. */
-export class LinkSignedOut extends Schema.TaggedError<LinkSignedOut>()(
+class LinkSignedOut extends Schema.TaggedError<LinkSignedOut>()(
   'LinkSignedOut',
   {},
   { title: 'Nobody is signed in' },
 ) {}
 /** The server would not let this app listen as that Device. Enrolling again says why. */
-export class LinkRefused extends Schema.TaggedError<LinkRefused>()(
+class LinkRefused extends Schema.TaggedError<LinkRefused>()(
   'LinkRefused',
   {},
   { title: 'The server refused the link' },
 ) {}
 /** The connection failed or the server could not answer. Worth trying again later. */
-export class LinkDown extends Schema.TaggedError<LinkDown>()(
+class LinkDown extends Schema.TaggedError<LinkDown>()(
   'LinkDown',
   {},
   { title: 'The link is down' },
@@ -92,7 +92,7 @@ const linkFailure = (failure: { readonly _tag: string }): LinkFailure => {
 }
 
 /** The link's calls over the shared client (`packages/client/rpc`), for one installation. */
-export const deviceServer = (
+const deviceServer = (
   client: VividRpcClientService,
   identity: { readonly installation: InstallationId; readonly name: DeviceName },
 ): DeviceServer => ({
@@ -112,7 +112,7 @@ export const deviceServer = (
 })
 
 /** The live endpoint of a chosen server: the same origin, on the socket scheme. */
-export const liveAddress = (origin: string) => `${origin.replace(/^http/u, 'ws')}/api/live`
+const liveAddress = (origin: string) => `${origin.replace(/^http/u, 'ws')}/api/live`
 
 /**
  * Opens the live connection as the app's own signed-in session.
@@ -207,10 +207,7 @@ export interface DeviceLinkDependencies {
  * How long to wait before trying again: a second, doubling, never more than half a minute. The
  * same shape the server uses for its own retries (`Schedule.min` of an exponential and a cap).
  */
-export const reconnect = Schedule.min([
-  Schedule.exponential('1 second'),
-  Schedule.spaced('30 seconds'),
-])
+const reconnect = Schedule.min([Schedule.exponential('1 second'), Schedule.spaced('30 seconds')])
 
 /**
  * Keeps this computer linked to Vivid for as long as its Person allows it.

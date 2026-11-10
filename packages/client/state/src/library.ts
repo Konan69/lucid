@@ -3,7 +3,6 @@ import {
   LibraryUploadResponse,
   RuntimeErrorResponse,
   Workspace,
-  type LibraryFolder,
   type LibraryFolderId,
   type LibraryItem,
   type LibraryItemId,
@@ -26,7 +25,7 @@ import { Effect, Option, Result, Schema } from 'effect'
 
 export type LibraryList = typeof LibraryListResponse.Type
 export type SearchResult = typeof LibrarySearchResult.Type
-export type { LibraryFolder, LibraryItem, LibraryShelf }
+export type { LibraryItem, LibraryShelf }
 
 /** A shelf and what it is called where the Person is working. */
 export interface ShelfChoice {

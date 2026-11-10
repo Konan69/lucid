@@ -54,7 +54,7 @@ export interface PageOutline {
  * applies to its outline (apps/server/src/computers/boat/browser.ts, `browse`), so a page reads
  * the same length on either machine.
  */
-export const OUTLINE_LIMIT = 32_768
+const OUTLINE_LIMIT = 32_768
 
 /** Roles that carry no words of their own; their children are read in their place. */
 const SILENT_ROLES = new Set(['none', 'generic', 'InlineTextBox', 'LineBreak', 'RootWebArea'])
@@ -139,7 +139,7 @@ function spoken(node: AccessibilityNode, parentName: string): boolean {
 }
 
 /** What the outline says in place of what a password field holds. */
-export const HIDDEN = '(hidden)'
+const HIDDEN = '(hidden)'
 
 /**
  * One line of the outline: role, name in quotes, current value, states. A secret field's value

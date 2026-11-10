@@ -70,7 +70,7 @@ const custody = makeCustody({
 export const adopt = custody.adopt
 
 /** Ends this device's authority: out of the app at once, then out of the store. */
-export const drop = custody.drop
+const drop = custody.drop
 
 /**
  * Signs out: out of the app at once, then the server and the store are told side by side

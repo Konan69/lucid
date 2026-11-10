@@ -78,5 +78,3 @@ export function makeSending(engine: Live) {
     stopped: (thread: ThreadId): void => sending.stopped(engine.registry, machines(thread)),
   }
 }
-
-export type Sending = ReturnType<typeof makeSending>

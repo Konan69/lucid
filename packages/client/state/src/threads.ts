@@ -8,20 +8,6 @@ import {
 } from '@vivid/contracts'
 import { Option } from 'effect'
 
-export type RuntimeConversation = Omit<Thread, 'id'> & { id: string }
-
-/** Converts Message markdown into the compact preview used by Thread lists. */
-export function plainPreview(markdown: string) {
-  return markdown
-    .replace(/```[\s\S]*?```/g, ' code ')
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/^\s{0,3}(?:#{1,6}|>|[-+*]|\d+\.)\s+/gm, '')
-    .replace(/[*_~`]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
 /** A web address written out in a message: its scheme, host and anything after the host. */
 const ADDRESS = /\bhttps?:\/\/(?:www\.)?([^\s/?#]+)[^\s]*/gi
 

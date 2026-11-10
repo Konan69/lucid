@@ -24,7 +24,7 @@ const decodeHealth = HttpClientResponse.schemaBodyJson(
 )
 
 /** Verify the existing /health contract without treating an arbitrary web page as Vivid. */
-export const probeServer = Effect.fn('DesktopServer.probe')(
+const probeServer = Effect.fn('DesktopServer.probe')(
   function* (origin: ServerAddress) {
     const response = yield* HttpClient.get(`${origin}/health`)
     if (response.status !== 200) return ServerChoice.cases.NotVivid.make({})

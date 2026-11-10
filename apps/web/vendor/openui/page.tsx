@@ -4,14 +4,14 @@ import { useState } from 'react'
 import { z } from 'zod/v4'
 
 /** An absolute http or https address, the only kind a card opens; anything else is not a link. */
-export const pageAddress = (value: string): Option.Option<URL> =>
+const pageAddress = (value: string): Option.Option<URL> =>
   Option.filter(
     Option.liftThrowable((text: string) => new URL(text.trim()))(value),
     (url) => url.protocol === 'http:' || url.protocol === 'https:',
   )
 
 /** The site a page is on, as its address says it, when the display did not name it. */
-export const siteOf = (url: URL) => url.hostname.replace(/^www\./u, '')
+const siteOf = (url: URL) => url.hostname.replace(/^www\./u, '')
 
 /**
  * A web page as a card: its picture, the site, its title and a few lines of what it says, the

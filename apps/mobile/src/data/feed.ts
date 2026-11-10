@@ -29,12 +29,6 @@ const presses = Atom.make((get): Presses => {
 export const usePresses = <Value>(select: (state: Presses) => Value): Value =>
   select(useAtomValue(presses))
 
-/** The press on one card, when this session holds one. */
-export const pressOn =
-  (card: FeedCardId) =>
-  (state: Presses): Option.Option<feed.Press> =>
-    Option.fromUndefinedOr(state.presses.get(card))
-
 /** A new accepted press restarts this timer; disposing the session cancels it. */
 const pleasing = Atom.keepAlive(Atom.fn(() => Effect.sleep('3500 millis')))
 

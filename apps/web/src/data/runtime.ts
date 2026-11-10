@@ -1,21 +1,7 @@
 import { VividRpcClient } from '@vivid/client-runtime'
-import { makeLink, makeLive, type ProductFailure } from '@vivid/state'
-import type { Effect } from 'effect'
+import { makeLink, makeLive } from '@vivid/state'
 import { Layer } from 'effect'
-import * as RpcClientError from 'effect/rpc/RpcClientError'
 import * as Socket from 'effect/socket/Socket'
-
-export type { ProductFailure }
-
-/** An Effect program the web runtime can run. */
-export type Program<Value> = Effect.Effect<Value, ProductFailure, VividRpcClient>
-
-/** Turns a browser-only transport failure into the same failure the screens already draw. */
-export function clientFailure(message: string, cause: unknown): RpcClientError.RpcClientError {
-  return RpcClientError.RpcClientError.make({
-    reason: RpcClientError.RpcClientDefect.make({ message, cause }),
-  })
-}
 
 /**
  * The live endpoint on the origin the page came from. The app never names a server: in

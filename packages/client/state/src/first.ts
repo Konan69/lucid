@@ -18,7 +18,7 @@ const wordsOf = (message: Worded): string =>
     .join('\n\n')
 
 /** Only a Person's message saying the first words can replace their stand-in row. */
-export const saysWords = (message: Worded, words: string): boolean =>
+const saysWords = (message: Worded, words: string): boolean =>
   message.role === 'user' && wordsOf(message).trim() === words.trim()
 
 /**

@@ -52,7 +52,7 @@ export const runningFrom = (reported: Reported): Running => {
  * An update's id as it is said: its first eight characters, which is how one is quoted when two
  * people compare what they are running. The whole id is a UUID nobody reads.
  */
-export const shortId = (id: string): string => id.slice(0, 8)
+const shortId = (id: string): string => id.slice(0, 8)
 
 /**
  * The line Settings shows for what is running. The moment is written with its date whatever the

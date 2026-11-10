@@ -42,14 +42,14 @@ export const ThemeSurfaces = Schema.Struct({
 export interface ThemeSurfaces extends Schema.Schema.Type<typeof ThemeSurfaces> {}
 
 /** The shared token file could not be read from its development or packaged location. */
-export class ThemeTokensReadFailed extends Schema.TaggedError<ThemeTokensReadFailed>()(
+class ThemeTokensReadFailed extends Schema.TaggedError<ThemeTokensReadFailed>()(
   'ThemeTokensReadFailed',
   { path: Schema.String },
   { title: 'Desktop theme tokens could not be read' },
 ) {}
 
 /** Required native-window or face colors are absent or malformed in the shared token file. */
-export class ThemeTokensInvalid extends Schema.TaggedError<ThemeTokensInvalid>()(
+class ThemeTokensInvalid extends Schema.TaggedError<ThemeTokensInvalid>()(
   'ThemeTokensInvalid',
   { path: Schema.String },
   { title: 'Desktop theme tokens are invalid' },

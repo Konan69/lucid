@@ -57,7 +57,7 @@ instead of `undefined`. RN 0.85's Fabric command bridge rejects the latter as
 The actual renderer's semantic Sand table was extracted as an audit reference,
 including primitive palettes and source hash. Vivid web remains the active design
 source; see [DESIGN-SOURCES.md](./DESIGN-SOURCES.md) and
-[design-reference/grok-sand.ts](./design-reference/grok-sand.ts).
+[design-reference/vivid-reference.ts](./design-reference/vivid-reference.ts).
 
 ## Where each file lives in Vivid
 

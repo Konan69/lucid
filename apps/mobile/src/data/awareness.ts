@@ -1,7 +1,7 @@
 import { requireOptionalNativeModule } from 'expo'
 import { Platform } from 'react-native'
 
-export interface NativeTokenEvent {
+interface NativeTokenEvent {
   readonly kind: 'Start' | 'Update'
   readonly token: string
 }

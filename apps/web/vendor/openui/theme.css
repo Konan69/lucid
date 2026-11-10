@@ -16,8 +16,6 @@
   --iui-faint: #8f8f8f;
   --iui-border: #e7e7e7;
   --iui-border-strong: #cecece;
-  --iui-range-track: #e5e5e5;
-  --iui-range-thumb: #303030;
   --iui-focus: #0285ff;
   --iui-shadow: 0 4px 20px rgb(0 0 0 / 6%);
   --iui-shadow-sm: 0 1px 3px rgb(0 0 0 / 5%);
@@ -67,8 +65,6 @@
   --iui-faint: #8c8c8c;
   --iui-border: #383838;
   --iui-border-strong: #4d4d4d;
-  --iui-range-track: #3a3a3a;
-  --iui-range-thumb: #ececec;
   --iui-focus: #4ea2ff;
   --iui-shadow: 0 4px 20px rgb(0 0 0 / 35%);
   --iui-shadow-sm: 0 1px 3px rgb(0 0 0 / 30%);
