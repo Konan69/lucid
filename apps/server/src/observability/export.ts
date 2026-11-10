@@ -180,7 +180,7 @@ const TABLES: ReadonlyArray<string> = [
  * unknown prefixes; these identifiers locate continuations and never contain their arguments. */
 const executorRequestId = text((candidate) => /^(apr|elc)_[A-Za-z0-9-]{1,100}$/.test(candidate))
 const actionOperationId = text((candidate) =>
-  /^(call|approval|program)-[A-Za-z0-9_.:-]{1,500}$/.test(candidate),
+  /^(approval|program)-[A-Za-z0-9_.:-]{1,500}$/.test(candidate),
 )
 const gateDecisions = { Allowed: true, ApprovalRequired: true, Blocked: true } satisfies Record<
   GateDecision['_tag'],
@@ -326,12 +326,10 @@ const rulesOf = (): Rules => {
     ['vivid.action.operation_id', actionOperationId],
     ['vivid.action.effect', oneOf(['read', 'write', 'destructive'])],
     ['vivid.executor.request_id', executorRequestId],
-    ['vivid.executor.approval', oneOf(['Accepted'])],
     // Both writers use typed error tags, never diagnostic strings from the Integration.
     ['vivid.executor.failure', codeName],
     ['vivid.gate.basis', oneOf(GateBasis.literals)],
     ['vivid.gate.decision', oneOf(Object.keys(gateDecisions))],
-    ['vivid.approval.authority', oneOf(['PersonPress', 'Gate'])],
     ['vivid.review.state', oneOf(['Reviewed', 'Unreviewed'])],
     ['vivid.review.reason', oneOf(['None', ...Object.keys(reviewReasons)])],
     ['vivid.review.outcome', oneOf(['Run', 'Ask'])],

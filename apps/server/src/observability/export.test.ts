@@ -2077,7 +2077,13 @@ it.effect(
           const poisoned = Object.fromEntries(
             Object.keys(attributes).map((key) => [key, CREDENTIAL]),
           )
-          yield* Effect.annotateCurrentSpan({ ...poisoned, 'vivid.executor.request': CREDENTIAL })
+          yield* Effect.annotateCurrentSpan({
+            ...poisoned,
+            'vivid.executor.request': CREDENTIAL,
+            'vivid.action.operation_id': `call-${id}-runtime-call`,
+            'vivid.executor.approval': 'Accepted',
+            'vivid.approval.authority': 'PersonPress',
+          })
           yield* Effect.logInfo(Message.integrationAnswer).pipe(Effect.annotateLogs(poisoned))
         })
         const { spans, lines, text } = yield* exported(Effect.andThen(probe(), secret()))
