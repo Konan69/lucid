@@ -471,7 +471,9 @@ const pauseConnection = Effect.fn('Connections.pause')(function* (
       actor,
       ProposedAction.make({
         summary: input.summary,
-        rationale: input.pause.form.message,
+        // Executor's own approval message names the operation and its raw arguments; the head
+        // already says what the call does, so the Person is shown no second line.
+        rationale: '',
         effect: input.effect,
         target,
         continuation: { pause: input.pause, operation: input.operation.value },
