@@ -146,7 +146,7 @@ type Settled = SubmissionRecord & { readonly type: 'input' }
 export const DREAMING_TASK = 'vivid.dreaming'
 
 /** The next 03:00 after `now` in `timezone`, and that night's local date. None for an unknown zone. */
-export function nextNight(now: number, timezone: string) {
+function nextNight(now: number, timezone: string) {
   return Option.map(DateTime.makeZoned(now, { timeZone: timezone }), (zoned) => {
     const tonight = DateTime.setParts(zoned, {
       hour: NIGHT_HOUR,

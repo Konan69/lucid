@@ -2,7 +2,7 @@
  * the native adapter. Cookies arrive only through SSH stdin. The command and its sole receipt
  * carry no secrets. Failure stages use exit codes without printing private values.
  * Storage.setCookies and Storage.getCookies are the public browser-endpoint CDP methods. */
-export const signInGuest = String.raw`
+const signInGuest = String.raw`
 const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),childProcess=require('node:child_process');
 const session='Vivid-signin-'+require('node:crypto').randomUUID(),nativeCalls=new Set();
 let failureStage=10,nativeUsed=false,finishing=false,consentAttempt;

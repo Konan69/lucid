@@ -10,7 +10,7 @@ export const LibraryShelf = Schema.Literals(['Mine', 'Company'] as const)
 export type LibraryShelf = typeof LibraryShelf.Type
 
 /** Closed Library processing lifecycle values encoded by the current HTTP protocol. */
-export const LibraryItemStatus = Schema.Literals(['processing', 'ready', 'failed'] as const)
+const LibraryItemStatus = Schema.Literals(['processing', 'ready', 'failed'] as const)
 
 /** Library item metadata returned by list and mutation routes. */
 export const LibraryItem = Schema.Struct({
@@ -58,12 +58,7 @@ export const LibraryListQuery = Schema.Struct({
   shelf: LibraryShelf,
   folderId: Schema.optionalKey(LibraryFolderId),
 })
-/** Source-name query for Library content lookup. */
-export const LibrarySourceQuery = Schema.Struct({ name: Schema.String })
-/** Library item path parameters. */
-export const LibraryItemParams = Schema.Struct({ id: LibraryItemId })
-/** Library folder path parameters. */
-export const LibraryFolderParams = Schema.Struct({ id: LibraryFolderId })
+
 /** Library list response. */
 export const LibraryListResponse = Schema.Struct({
   documents: Schema.Array(LibraryItem),

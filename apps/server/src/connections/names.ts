@@ -6,7 +6,7 @@ import type { ConnectionRecord } from './records.ts'
  * Person called it, else who the service says signed in. The Person's word comes first because it
  * is theirs: an account they named "Work" is "Work" to them whatever address is behind it.
  */
-export const distinction = (row: Pick<ConnectionRecord, 'name' | 'identity'>) =>
+const distinction = (row: Pick<ConnectionRecord, 'name' | 'identity'>) =>
   Option.orElse(Option.fromNullOr(row.name), () => Option.fromNullOr(row.identity))
 
 /**

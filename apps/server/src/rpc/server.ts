@@ -45,7 +45,7 @@ import { liveProtocolLayer } from './link.ts'
  * in `packages/contracts/src/rpc.ts` with no handler here leaves `rpcServerLayer` a requirement it
  * cannot meet, and does not compile.
  */
-export const rpcHandlersLayer = Layer.mergeAll(
+const rpcHandlersLayer = Layer.mergeAll(
   // The whole group in one `toLayer` passed TypeScript's instantiation depth (TS2589) at 193
   // calls, so the Dreamer's call, the two live Artifact reads and the Watch calls are provided
   // one by one beside it; together they are still total. A new call is added the same way, with

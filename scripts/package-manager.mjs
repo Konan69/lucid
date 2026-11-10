@@ -5,7 +5,7 @@ import * as NodeURL from 'node:url'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 
-export const packageManagerVersion = '12.4.2'
+const packageManagerVersion = '12.4.2'
 const ignoredDirectories = new Set([
   '.git',
   '.cache',
@@ -29,7 +29,7 @@ const decodePackageManagerDocument = Schema.decodeUnknownSync(
 )
 
 /** Find lockfiles that would let another package manager resolve a different dependency graph. */
-export function findForeignLockfiles(root) {
+function findForeignLockfiles(root) {
   const found = []
   const pending = [root]
 
@@ -50,7 +50,7 @@ export function findForeignLockfiles(root) {
 }
 
 /** Enforce the repository's package-manager pin and pnpm 12 configuration ownership. */
-export function validatePackageManager(root) {
+function validatePackageManager(root) {
   const errors = []
   const manifest = decodePackageManagerDocument(
     NodeFS.readFileSync(NodePath.join(root, 'package.json'), 'utf8'),

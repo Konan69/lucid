@@ -12,14 +12,14 @@ import type { ProviderId } from './protocol.ts'
 import type { Transport } from './transport.ts'
 import { ActionReceipt } from './receipt.ts'
 
-export const Cursor = Schema.Struct({ source: Schema.String, x: Schema.Int, y: Schema.Int })
+const Cursor = Schema.Struct({ source: Schema.String, x: Schema.Int, y: Schema.Int })
 const Focus = Schema.Struct({ window: Schema.NullOr(Schema.String) })
 const decodeFocus = Schema.decodeUnknownEffect(Schema.fromJsonString(Focus))
 
 /** Cua's list_windows does not identify focus (stacking order is not focus).
  * Query X11's actual active-window property using the guest's existing Xlib; install nothing.
  * Only this fixed program reaches argv; titles are response data. */
-export const focusCommand = `python3 - <<'VIVID_FOCUS'
+const focusCommand = `python3 - <<'VIVID_FOCUS'
 import ctypes as c, json
 x=c.CDLL('libX11.so.6')
 x.XOpenDisplay.argtypes=[c.c_char_p]; x.XOpenDisplay.restype=c.c_void_p

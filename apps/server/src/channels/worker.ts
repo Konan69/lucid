@@ -12,7 +12,7 @@ export const channelBackoff = Schedule.exponential(RECONNECT_INITIAL).pipe(
   Schedule.modifyDelay(({ duration }) => Effect.succeed(Duration.min(duration, RECONNECT_CEILING))),
 )
 /** Progress is the reconnect input; reset the policy without losing the scoped connection lifetime. */
-export const channelReconnect = Schedule.fromStep(
+const channelReconnect = Schedule.fromStep(
   Effect.gen(function* () {
     let step = yield* Schedule.toStep(channelBackoff)
     return Effect.fn('Channels.reconnectStep')(function* (now: number, received: boolean) {

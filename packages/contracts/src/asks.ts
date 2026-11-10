@@ -43,11 +43,11 @@ export const IntegrationPause = Schema.TaggedUnion({
 export type IntegrationPause = typeof IntegrationPause.Type
 
 /** The journal identity belongs to the original call, across every question and answer. */
-export const IntegrationContinuation = Schema.Struct({
+const IntegrationContinuation = Schema.Struct({
   pause: IntegrationPause,
   operation: ActionOperationId,
 })
-export type IntegrationContinuation = typeof IntegrationContinuation.Type
+type IntegrationContinuation = typeof IntegrationContinuation.Type
 
 /** Answers are supplied by the Person, never reconstructed by the model. */
 export const IntegrationResponse = Schema.Union([

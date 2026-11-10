@@ -11,7 +11,7 @@ type Snapshot = typeof Page.Type
 type Ref = Snapshot['refs'][number]
 
 /** What a binding keeps of an address: its digest, so the address and its query are not kept. */
-export const addressDigest = (address: string) =>
+const addressDigest = (address: string) =>
   NodeCrypto.createHash('sha256').update(address).digest('hex')
 
 /** Never start the browser for a handoff: its fields are on a page Vivid already has open. */

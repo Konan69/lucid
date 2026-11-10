@@ -61,7 +61,7 @@ const validateDestination = Effect.fn('PushTargets.validate')(function* (
 })
 
 /** Provider credentials are never copied into identifiers, ownership fields or model results. */
-export const addressHash = (destination: PushDestination) =>
+const addressHash = (destination: PushDestination) =>
   NodeCrypto.createHash('sha256')
     .update(
       PushDestination.match(destination, {

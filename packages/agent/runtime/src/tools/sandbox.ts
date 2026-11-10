@@ -164,7 +164,7 @@ export interface ShellResult {
   readonly stderr: string
   readonly exitCode: number
 }
-export interface ShellOptions {
+interface ShellOptions {
   readonly timeoutMs?: number
   readonly cwd?: string
   readonly env?: Readonly<Record<string, string>>

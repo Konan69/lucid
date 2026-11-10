@@ -117,7 +117,7 @@ const KNOWING = [
  * The instruction for one response, from the context frozen for it. The lines and their order
  * are main's `Vivid()`: the voice, the name line, the date line, then every rule.
  */
-export function instructions(response: Pick<Kept, 'acting' | 'context'>) {
+function instructions(response: Pick<Kept, 'acting' | 'context'>) {
   const { context } = response
   // A person's own time zone decides what "tomorrow at 9" means. Without one, say so in UTC.
   const timezone = context.timezone.length > 0 ? context.timezone : 'UTC'

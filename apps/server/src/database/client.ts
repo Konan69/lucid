@@ -160,9 +160,3 @@ export const encodeStored = <S extends Schema.Constraint>(schema: S, subject: st
       ),
     )
 }
-
-/**
- * A record assembled from database columns on its way into a wire schema. Columns are only ever
- * these scalars, so a decoder that takes this cannot be handed an arbitrary object.
- */
-export type PersistedFields = Readonly<Record<string, string | number | boolean | null>>

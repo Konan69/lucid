@@ -34,7 +34,7 @@ export type Review = typeof Review.Type
  * that claimed the Person asked. 0.5 is the middle of that empty band. Twelve cases is a small
  * sample: widen the live cases before moving this.
  */
-export const ASKED_THRESHOLD = 0.5
+const ASKED_THRESHOLD = 0.5
 
 /**
  * At or above this, the action reaches someone or something the request did not name, and being
@@ -42,14 +42,14 @@ export const ASKED_THRESHOLD = 0.5
  * second recipient scored asked 0.93. Same live runs: actions that matched their request scored
  * 0.09 to 0.14, the hidden recipient 0.94 to 0.95. 0.5 is the middle of that band.
  */
-export const BEYOND_THRESHOLD = 0.5
+const BEYOND_THRESHOLD = 0.5
 
 /**
  * At or above this, an action Vivid chose on its own is contained and runs. Same live runs:
  * a draft and a label on the Person's own mail scored 0.95 to 1.00; every send, payment and
  * delete scored 0.00 to 0.12. 0.5 is the middle of that band.
  */
-export const CONTAINED_THRESHOLD = 0.5
+const CONTAINED_THRESHOLD = 0.5
 
 export const ReviewOutcome = Schema.Literals(['Run', 'Ask'] as const)
 export type ReviewOutcome = typeof ReviewOutcome.Type

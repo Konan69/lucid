@@ -15,7 +15,7 @@ import * as NodeChildProcess from 'node:child_process'
  */
 
 /** The status GitHub's workflow looks for. One name, shared with `quality.yml`. */
-export const CONTEXT = 'gate'
+const CONTEXT = 'gate'
 
 /**
  * Whether a passed run is one to sign: the whole gate, on exactly the commit being pushed.
@@ -26,7 +26,7 @@ export const signable = (options) =>
   options.mode === 'full' && options.only === undefined && options.committed === true
 
 /** `owner/name` from a GitHub remote address, in either form git writes it. */
-export function repositoryOf(address) {
+function repositoryOf(address) {
   const match = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/u.exec(address.trim())
   return match === null ? undefined : match[1]
 }

@@ -25,7 +25,7 @@ import {
   Conflict,
   InvalidRequest,
 } from '@vivid/contracts'
-import { createInsertSchema, createSelectSchema } from 'drizzle-orm/effect-schema'
+import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import { Database, type DatabaseInfrastructureError, returned } from '../database/client.ts'
 import { folderOperations } from './folders.ts'
 import {
@@ -51,17 +51,17 @@ export type LibraryFailure =
   | Conflict
   | InvalidRequest
 
-export const LibraryDocumentRow = createSelectSchema(libraryDocuments)
-export const LibraryDocumentInsert = createInsertSchema(libraryDocuments)
+const LibraryDocumentRow = createSelectSchema(libraryDocuments)
+
 // Drizzle's generated scalar schemas erase $type brands; restore and validate stored ownership.
 const FolderRow = createSelectSchema(libraryFolders, {
   personId: PersonId,
   companyId: Schema.NullOr(CompanyId),
 })
-export const LibraryChunkInsert = createInsertSchema(libraryChunks)
+
 type LibrarySearchResult = typeof LibrarySearchResultSchema.Type
-export type PatchLibraryFolderInput = typeof PatchLibraryFolderRequest.Type
-export type PatchLibraryItemInput = typeof PatchLibraryItemRequest.Type
+type PatchLibraryFolderInput = typeof PatchLibraryFolderRequest.Type
+type PatchLibraryItemInput = typeof PatchLibraryItemRequest.Type
 
 export interface StoredLibraryItem extends LibraryItem {
   readonly bytes: Uint8Array
@@ -74,8 +74,8 @@ export interface IndexedChunk {
 }
 
 export type LibraryDatabase = Database['Service']
-export type LibraryDocumentRow = typeof libraryDocuments.$inferSelect
-export type LibraryFolderRow = typeof libraryFolders.$inferSelect
+type LibraryDocumentRow = typeof libraryDocuments.$inferSelect
+type LibraryFolderRow = typeof libraryFolders.$inferSelect
 export type DecodeItem = (
   row: LibraryDocumentRow,
 ) => Effect.Effect<LibraryItem, DatabaseInfrastructureError>

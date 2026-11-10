@@ -9,7 +9,7 @@ import * as NodeURL from 'node:url'
  * line into that file; Codex and the other harnesses read `AGENTS.md`. Rules written in both
  * drift apart, so they live once, in `AGENTS.md`, and `CLAUDE.md` only imports it.
  */
-export const importLine = '@AGENTS.md\n'
+const importLine = '@AGENTS.md\n'
 
 /**
  * List the tracked instruction files. Git is the source because untracked reference checkouts
@@ -29,7 +29,7 @@ function trackedInstructionFiles(root) {
  * import line, and that no `CLAUDE.md` stands without the file it imports. Each error names the
  * file to change and what to write.
  */
-export function validateInstructions(root, files = trackedInstructionFiles(root)) {
+function validateInstructions(root, files = trackedInstructionFiles(root)) {
   const errors = []
   const present = new Set(files)
   for (const file of files.toSorted((left, right) => left.localeCompare(right))) {

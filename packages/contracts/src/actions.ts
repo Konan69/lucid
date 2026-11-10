@@ -16,10 +16,10 @@ export type ToolCallId = typeof ToolCallId.Type
  * Integration Vivid has today returns one; the case exists so an adapter that can is not forced to
  * call its confirmation Completed.
  */
-export const ActionDeliveryReceipt = Schema.TaggedUnion({
+const ActionDeliveryReceipt = Schema.TaggedUnion({
   Provider: { confirmedAt: Schema.Finite },
 })
-export type ActionDeliveryReceipt = typeof ActionDeliveryReceipt.Type
+type ActionDeliveryReceipt = typeof ActionDeliveryReceipt.Type
 
 /**
  * What one outward operation is known to have done, chosen by the adapter that sent it and never

@@ -37,7 +37,7 @@ const maxEncodedLength = 4 * Math.ceil(maxBytes / 3)
 const base64 = /^[A-Za-z0-9+/]*={0,2}$/u
 
 /** Signatures identify these four formats without trusting extensions or a client-supplied MIME. */
-export function pictureType(bytes: Uint8Array): Option.Option<PictureMediaType> {
+function pictureType(bytes: Uint8Array): Option.Option<PictureMediaType> {
   const data = NodeBuffer.Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   if (data.subarray(0, 8).equals(NodeBuffer.Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])))
     return Option.some('image/png')

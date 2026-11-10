@@ -1,11 +1,11 @@
 import { Schema } from 'effect'
 
 /** Read-only facts from a Computer's installed payload, never package names or executable paths. */
-export const ComputerApp = Schema.Struct({
+const ComputerApp = Schema.Struct({
   name: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(80)),
   purpose: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
 })
-export type ComputerApp = typeof ComputerApp.Type
+type ComputerApp = typeof ComputerApp.Type
 
 /** Absence of a running, verified Computer must never become an invented release inventory. */
 export const ComputerInventory = Schema.TaggedUnion({

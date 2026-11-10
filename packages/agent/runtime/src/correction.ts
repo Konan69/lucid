@@ -28,7 +28,7 @@ const parser = createParser(spec.schema, spec.root)
  * by the display's place in the answer and the statement it is in. Displays are found with the
  * stretch finder the surfaces draw with; one still arriving is not judged.
  */
-export const faultsOf = (answer: AssistantMessage) => {
+const faultsOf = (answer: AssistantMessage) => {
   const text = answer.content.flatMap((part) => (part.type === 'text' ? [part.text] : []))
   const displays = text.flatMap((said) =>
     stretches(said).flatMap((stretch) =>
@@ -63,9 +63,9 @@ const correctionOf = (faults: ReadonlyArray<string>) =>
  * Its request id names the run's first input, so a run writes one, and a later generation of the
  * same run finds the record of an earlier task and does not ask again.
  */
-export const CORRECTION_ENTRY = 'vivid.correction'
-export const CorrectionData = Schema.Struct({ task: Schema.Int, text: Schema.String })
-export interface CorrectionData extends Schema.Schema.Type<typeof CorrectionData> {}
+const CORRECTION_ENTRY = 'vivid.correction'
+const CorrectionData = Schema.Struct({ task: Schema.Int, text: Schema.String })
+interface CorrectionData extends Schema.Schema.Type<typeof CorrectionData> {}
 const decodeCorrection = Schema.decodeUnknownOption(CorrectionData)
 
 /**

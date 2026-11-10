@@ -20,7 +20,7 @@ export interface Listed {
 }
 
 /** A file Flue kept for a stream, with the conversation it belongs to. */
-export interface StoredFile {
+interface StoredFile {
   readonly attachmentId: string
   readonly conversationId: string
   readonly mimeType: string
@@ -35,7 +35,7 @@ export interface Logged {
 }
 
 /** The source database could not be read. The cause stays in the process; it is never printed. */
-export class SourceUnavailable extends Schema.TaggedError<SourceUnavailable>()(
+class SourceUnavailable extends Schema.TaggedError<SourceUnavailable>()(
   'SourceUnavailable',
   { cause: Schema.Defect() },
   { title: 'Flue database is unavailable' },
@@ -46,7 +46,7 @@ export class SourceUnavailable extends Schema.TaggedError<SourceUnavailable>()(
  * instance the Thread id, at path `agents/vivid/<id>`. Listing stops: such a stream is not one
  * this import knows how to place.
  */
-export class StreamIdentityInvalid extends Schema.TaggedError<StreamIdentityInvalid>()(
+class StreamIdentityInvalid extends Schema.TaggedError<StreamIdentityInvalid>()(
   'StreamIdentityInvalid',
   { path: Schema.String },
   { title: 'Flue stream is not a Vivid Thread' },

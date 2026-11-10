@@ -5,10 +5,6 @@ import { live } from '../live/query.ts'
 import { NotificationStore } from './store.ts'
 
 export const notificationHandlers = {
-  /** List and Watch share one recipient/workspace projection. */
-  ListNotifications: Effect.fn('Rpc.ListNotifications')(function* () {
-    return yield* (yield* NotificationStore).list(yield* requireActor())
-  }),
   /** Workspace changes re-scope the subscription through the shared live-query authority. */
   WatchNotifications: () =>
     live('WatchNotifications', ['notifications'], (actor) =>

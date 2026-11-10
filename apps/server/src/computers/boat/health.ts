@@ -32,7 +32,7 @@ const decodeGuest = Schema.decodeEffect(Schema.fromJsonString(Guest))
 const decodeRecovery = Schema.decodeEffect(Schema.fromJsonString(MachineRecovery))
 /** Passive probes install nothing, start nothing, and never read history, page content or secrets
  * into their receipt. The fixed network endpoint follows the selected egress without starting it. */
-export const healthCommand = (egress: boolean) => String.raw`python3 - <<'VIVID_HEALTH'
+const healthCommand = (egress: boolean) => String.raw`python3 - <<'VIVID_HEALTH'
 import os,pathlib,json,subprocess,re,time,email.utils,urllib.request
 probes=[]
 def passed(component,observed): probes.append({'component':component,'result':{'_tag':'Passed','observed':observed}})

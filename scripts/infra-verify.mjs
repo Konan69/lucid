@@ -58,14 +58,14 @@ const decodeContainerCommand = Schema.decodeUnknownSync(
 const source = (root, relativePath) =>
   NodeFS.readFileSync(NodePath.join(root, relativePath), 'utf8')
 
-export const readTargetDocument = (root = defaultRoot) => {
+const readTargetDocument = (root = defaultRoot) => {
   const targetSource = source(root, 'infra/targets.ts')
   const match = targetSource.match(/deploymentTargetsJson = String\.raw`([\s\S]*?)`/)
   assert.notEqual(match, null, 'infra/targets.ts must expose deploymentTargetsJson')
   return decodeTargetDocument(match[1])
 }
 
-export const validateTargets = (targets) => {
+const validateTargets = (targets) => {
   assert.deepEqual(
     Object.keys(targets).toSorted((left, right) => left.localeCompare(right)),
     targetKeys.toSorted((left, right) => left.localeCompare(right)),
@@ -116,7 +116,7 @@ const extractEnvironmentNames = (text) =>
  * the deploy graph: a host variable of the same name would replace it. A stage the last one does
  * not descend from (a build stage it only copies files out of) sets nothing in the image.
  */
-export const imageSettings = (dockerfile) => {
+const imageSettings = (dockerfile) => {
   const stages = []
   for (const line of dockerfile.split('\n')) {
     const from = /^FROM\s+(\S+)(?:\s+AS\s+(\S+))?/i.exec(line)
@@ -139,7 +139,7 @@ export const imageSettings = (dockerfile) => {
  * name when either sets it. The server image wires a name only the server reads: the runtime is
  * another image, so a name it reads too must still be sent to it by a graph.
  */
-export const unwiredNames = ({ serverNames, runtimeNames, wiringSource, serverImage }) =>
+const unwiredNames = ({ serverNames, runtimeNames, wiringSource, serverImage }) =>
   [...new Set([...serverNames, ...runtimeNames])].filter(
     (name) =>
       !(serverImage.has(name) && !runtimeNames.has(name)) &&
@@ -366,7 +366,7 @@ const watches = (pattern, path) => {
  * inputs without production ever being rebuilt. The Dockerfile and `.dockerignore` are inputs
  * too, though no `COPY` names them.
  */
-export const unwatchedPaths = (dockerfile, dockerfilePath, patterns, configInputs) =>
+const unwatchedPaths = (dockerfile, dockerfilePath, patterns, configInputs) =>
   [
     ...new Set([...copiedPaths(dockerfile), ...configInputs, dockerfilePath, '.dockerignore']),
   ].filter((path) => !patterns.some((pattern) => watches(pattern, path)))
@@ -430,7 +430,7 @@ const assertContainerPolicy = (root) => {
 }
 
 /** The authored cell target owns Person SQLite. Provider packaging is a separate infra concern. */
-export const assertRuntimePolicy = (config, cell) => {
+const assertRuntimePolicy = (config, cell) => {
   assert.match(config, /"main": "src\/main.ts"/, 'cells must name their native Worker entry')
   assert.match(config, /"name": "PERSONS", "class_name": "Person"/, 'Person cells must be bound')
   assert.match(config, /"new_sqlite_classes": \["Person"\]/, 'Person cells must own SQLite')
@@ -471,7 +471,7 @@ const assertRepositoryPolicy = (root) => {
   )
 }
 
-export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
+const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
   validateTargets(readTargetDocument(root))
   assertPackagePolicy(decodePackageDocument(source(root, 'package.json')))
   const stackSource = source(root, 'alchemy.run.ts')

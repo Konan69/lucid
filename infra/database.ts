@@ -5,7 +5,7 @@ import * as Schema from 'effect/Schema'
 import * as Docker from 'alchemy/Docker'
 import type { DeploymentTarget } from './targets.ts'
 
-export class DatabaseConfigurationError extends Schema.TaggedError<DatabaseConfigurationError>()(
+class DatabaseConfigurationError extends Schema.TaggedError<DatabaseConfigurationError>()(
   'DatabaseConfigurationError',
   {
     variable: Schema.Literal('DATABASE_URL'),

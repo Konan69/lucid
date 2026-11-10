@@ -22,7 +22,7 @@ import {
 } from './title.ts'
 
 /** Bound provider work independently of the history read for both background naming and the awaited RPC. */
-export const TITLE_MODEL_TIMEOUT = '30 seconds'
+const TITLE_MODEL_TIMEOUT = '30 seconds'
 
 type TitleFailure =
   | ThreadTitleHistoryUnavailable

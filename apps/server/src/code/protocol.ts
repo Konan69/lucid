@@ -30,6 +30,5 @@ export class PipeFailure extends Schema.TaggedError<PipeFailure>()(
   { title: 'Program pipe failure' },
 ) {}
 
-export const decodeParent = Schema.decodeUnknownEffect(Schema.fromJsonString(ParentMessage))
 export const decodeWorker = Schema.decodeUnknownEffect(Schema.fromJsonString(WorkerMessage))
 export const encodeParent = Schema.encodeEffect(Schema.fromJsonString(ParentMessage))

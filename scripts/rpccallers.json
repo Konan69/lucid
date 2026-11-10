@@ -1,0 +1,10 @@
+{
+  "RemoveArtifact": "Wire the artifact deletion affordance to this procedure.",
+  "WithdrawApproval": "Wire approval withdrawal to the approval requester affordance.",
+  "AnswerIntegrationInput": "Wire Integration input prompts to this typed answer procedure (#227).",
+  "WatchPushTargets": "Wire Settings device inventory to push target updates.",
+  "NudgedOwed": "Records a nudge actually sent; the send path does not yet carry the Owed id, so nothing can write it truthfully.",
+  "WatchSkills": "Wire the skill management list to live updates.",
+  "PatchSkill": "Wire the skill editor save action to this procedure.",
+  "DeleteSkill": "Wire the skill management delete action to this procedure."
+}

@@ -58,7 +58,7 @@ const LONGEST_TEXT = 2_048
  * How much of a text `redact` reads: twice what it keeps. Nothing past this is looked at, so what
  * `redact` costs does not depend on how long a failure's message is.
  */
-export const LONGEST_SCAN = LONGEST_TEXT * 2
+const LONGEST_SCAN = LONGEST_TEXT * 2
 /** Longest path kept of an address. A path is where a webhook's token sits, so it is not kept whole. */
 const LONGEST_PATH = 200
 const LONGEST_MESSAGE = 1_000
@@ -154,9 +154,6 @@ const redactions: ReadonlyArray<Redaction> = [
   ],
 ]
 
-/** The patterns `redact` runs, for the test that checks how each is built. */
-export const redactionPatterns: ReadonlyArray<RegExp> = redactions.map(([pattern]) => pattern)
-
 /**
  * Removes credentials, address query strings and personal identifiers from the diagnostic text
  * written to stdout, and bounds it. It is not what keeps text out of the export: that is the
@@ -181,7 +178,7 @@ export const redactionPatterns: ReadonlyArray<RegExp> = redactions.map(([pattern
  * This is defence in depth for the server's own log, as in the reference: prose can still hold
  * private data, so messages on typed errors must stay technical.
  */
-export const redact = (value: string): string =>
+const redact = (value: string): string =>
   redactions
     .reduce(
       (text, [pattern, replace]) => text.replace(pattern, replace),
@@ -501,7 +498,7 @@ export const FailureOutcome = Data.taggedEnum<FailureOutcome>()
  * concurrent work, a failing finalizer or a failure during recovery each add one, and each is a
  * separate thing that went wrong, so each is reported. Interruptions are left out.
  */
-export const failuresOf = <E>(cause: Cause.Cause<E>): ReadonlyArray<FailureOutcome> =>
+const failuresOf = <E>(cause: Cause.Cause<E>): ReadonlyArray<FailureOutcome> =>
   cause.reasons.flatMap((reason): ReadonlyArray<FailureOutcome> => {
     if (Cause.isDieReason(reason))
       return [FailureOutcome.Defect({ summary: summarize('defect', reason.defect) })]
@@ -515,7 +512,7 @@ export const failuresOf = <E>(cause: Cause.Cause<E>): ReadonlyArray<FailureOutco
  * it is the one that needs a person to look, and `RpcServer` treats a cause with any `Die` as
  * fatal for the same reason. Absent when the cause holds only interruptions.
  */
-export const primaryOf = (failures: ReadonlyArray<FailureOutcome>): Option.Option<FailureOutcome> =>
+const primaryOf = (failures: ReadonlyArray<FailureOutcome>): Option.Option<FailureOutcome> =>
   Option.orElse(Arr.findFirst(failures, FailureOutcome.$is('Defect')), () => Arr.head(failures))
 
 const kindOf: (failure: FailureOutcome) => FailureKind = FailureOutcome.$match({

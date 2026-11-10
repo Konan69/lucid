@@ -10,7 +10,7 @@ const repositoryRoot = NodePath.resolve(
   '..',
 )
 const initialSnapshotId = '00000000-0000-0000-0000-000000000000'
-export const migrationOwners = Object.freeze(['apps/server', 'apps/server#product'])
+const migrationOwners = Object.freeze(['apps/server', 'apps/server#product'])
 
 const MigrationManifest = Schema.Struct({
   scripts: Schema.Struct({
@@ -115,7 +115,7 @@ function migrationErrors({ owner, migrationsPath, directory, previousId, ids }) 
 }
 
 /** Validate one Drizzle owner's generated SQL/snapshot chain without rewriting generated state. */
-export function validateMigrationOwner(root, owner) {
+function validateMigrationOwner(root, owner) {
   const paths = ownerPaths(root, owner)
   const config = NodeFS.readFileSync(paths.config, 'utf8')
   const manifest = decodeManifestText(NodeFS.readFileSync(paths.manifest, 'utf8'))
@@ -141,7 +141,7 @@ export function validateMigrationOwner(root, owner) {
 }
 
 /** Validate both existing migration owners in deterministic migration order. */
-export function validateMigrations(root = repositoryRoot) {
+function validateMigrations(root = repositoryRoot) {
   return migrationOwners.map((owner) => validateMigrationOwner(root, owner))
 }
 

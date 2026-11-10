@@ -52,7 +52,7 @@ export function delivered(
 }
 
 /** Missing documents offer only the titles in the acting Thread; found documents retain Markdown. */
-export function read(outcome: ReadDocumentOutcome) {
+function read(outcome: ReadDocumentOutcome) {
   return ReadDocumentOutcome.match<Schema.Json>(outcome, {
     Found: ({ title, version, body }) => ({
       ok: true,
@@ -123,6 +123,6 @@ export function documentTools(runTool: RunTool) {
 }
 
 /** Compose durable-writing guidance alongside show's display guidance, without duplicating tool descriptions. */
-export const instructions =
+const instructions =
   'For a Word document, PDF or PNG deliverable, create the file on the Computer, then use inspect_file. Look at its returned preview, fix defects and inspect again, then publish_file with that inspection and a short visual review. The preview of DOCX/PDF shows the first page; check later pages on the Computer before publishing a multi-page file. Keep the editable source with exports. Never claim a file is delivered from a Computer path alone. Use write_document for something the Person will keep, come back to or edit: a report, plan, proposal, meeting notes or long draft. Use Markdown and a clear title. An answer read once belongs in your reply. Writing the same title again revises the document; send its whole revised body and an optional sentence about what changed. Use read_document to read it before working on it in a later turn; if it is Missing, choose one of the returned titles.'
 documentTools.instructions = instructions

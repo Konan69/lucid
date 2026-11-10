@@ -1,7 +1,7 @@
 import { appsVersion } from './framework.ts'
 import { Schema } from 'effect'
 
-export const keyedMcpVersion = '1.30.0'
+const keyedMcpVersion = '1.30.0'
 
 /** Public transport policy is data; secrets never enter this source-generation boundary. */
 export const KeyedTransport = Schema.Struct({
@@ -14,7 +14,7 @@ export const KeyedService = Schema.Struct({
   ...KeyedTransport.fields,
   instruction: Schema.NonEmptyString,
 })
-export const KeyedApp = Schema.Struct({ name: Schema.NonEmptyString, ...KeyedTransport.fields })
+const KeyedApp = Schema.Struct({ name: Schema.NonEmptyString, ...KeyedTransport.fields })
 
 /** Port the proven defineProvider/secrets + mcpRouter mechanism, keeping Executor responsible
  * for credential storage and header injection. A fixed account identifier and JSON literals

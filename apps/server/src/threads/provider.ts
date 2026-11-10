@@ -3,7 +3,7 @@ import { HttpClient, HttpClientRequest, Headers } from 'effect/http'
 import type { serverModelGateway } from '../config.ts'
 
 /** Preserve provider rate-limit evidence without inventing a retry delay. */
-export class TitleRateLimited extends Schema.TaggedError<TitleRateLimited>()(
+class TitleRateLimited extends Schema.TaggedError<TitleRateLimited>()(
   'TitleRateLimited',
   {
     message: Schema.String,
@@ -12,13 +12,13 @@ export class TitleRateLimited extends Schema.TaggedError<TitleRateLimited>()(
   { title: 'Title model rate limited' },
 ) {}
 
-export class TitleProviderUnavailable extends Schema.TaggedError<TitleProviderUnavailable>()(
+class TitleProviderUnavailable extends Schema.TaggedError<TitleProviderUnavailable>()(
   'TitleProviderUnavailable',
   { message: Schema.String },
   { title: 'Title model unavailable' },
 ) {}
 
-export class ProviderRejected extends Schema.TaggedError<ProviderRejected>()(
+class ProviderRejected extends Schema.TaggedError<ProviderRejected>()(
   'TitleProviderRejected',
   {
     operation: Schema.String,

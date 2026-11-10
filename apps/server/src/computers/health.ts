@@ -51,7 +51,7 @@ export function probeFailure(failure: MachineFailure): ComputerProbeFailure {
 }
 
 /** Shared projection makes shallow reads passive and leaves lifecycle distinct from deep health. */
-export const computerHealth = Effect.fn('Computer.health')(function* (input: {
+const computerHealth = Effect.fn('Computer.health')(function* (input: {
   readonly state: ComputerLifecycle
   readonly heldByPerson: boolean
   readonly depth: ComputerHealthDepth

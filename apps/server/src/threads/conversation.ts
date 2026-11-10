@@ -23,7 +23,7 @@ import type { DatabaseInfrastructureError } from '../database/client.ts'
  * check-in's timer, a card's carry-on, a finished handoff, a Settings forget, a Dreamer finding, a
  * helper's result.
  */
-export const ServerCue = Schema.Union([
+const ServerCue = Schema.Union([
   SignalCue.cases.Approval,
   SignalCue.cases.Answer,
   SignalCue.cases.Watch,
@@ -35,7 +35,7 @@ export const ServerCue = Schema.Union([
   SignalCue.cases.Dream,
   SignalCue.cases.ChildResult,
 ])
-export type ServerCue = typeof ServerCue.Type
+type ServerCue = typeof ServerCue.Type
 
 /**
  * What is being put in front of Vivid.
@@ -139,7 +139,7 @@ export interface SignalDelivery extends Delivery {
 }
 
 /** Channel transport enters the same admission policy with the linked Person as its actor. */
-export interface ChannelDelivery extends Delivery {
+interface ChannelDelivery extends Delivery {
   readonly message: typeof DeliveryMessage.cases.ChannelText.Type
 }
 export type ServerDelivery = SignalDelivery | ChannelDelivery

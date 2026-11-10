@@ -42,10 +42,7 @@ const carriedOf = (
 }
 
 /** The old fold stays one-off; its output becomes the product route's native entry drafts. */
-export const historyThread = (
-  carried: Carried,
-  failures: Logged['failures'],
-): RuntimeHistoryThread =>
+const historyThread = (carried: Carried, failures: Logged['failures']): RuntimeHistoryThread =>
   RuntimeHistoryThread.make({
     threadId: carried.threadId,
     origin: carried.origin,

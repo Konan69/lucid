@@ -22,7 +22,7 @@ export class NameAmbiguous extends Schema.TaggedError<NameAmbiguous>()(
 const folded = (label: string) => label.trim().toLowerCase()
 
 /** Reserve original labels too, so a literal “Draft (2)” cannot collide with a generated suffix. */
-export function distinct(labels: readonly string[]): readonly string[] {
+function distinct(labels: readonly string[]): readonly string[] {
   const reserved = new Set(labels.map(folded))
   const used = new Set<string>()
   return labels.map((label) => {
@@ -57,23 +57,6 @@ export function named<A>(
 function numbered<A>(items: readonly A[], label: (item: A) => string) {
   const names = distinct(items.map(label))
   return Arr.zip(items, names).map(([item, name]) => ({ item, name }))
-}
-
-/** Showing and resolving both sort immutable creation time and identity before numbering duplicates. */
-export function inventory<A extends { readonly createdAt: number; readonly id: string }>(
-  items: readonly A[],
-  label: (item: A) => string,
-) {
-  return numbered(
-    Arr.sort(
-      items,
-      Order.combine(
-        Order.mapInput(Order.Number, (item: A) => item.createdAt),
-        Order.mapInput(Order.String, (item: A) => item.id),
-      ),
-    ),
-    label,
-  )
 }
 
 /** Provider catalogs have no creation time; their immutable service key fixes duplicate naming. */

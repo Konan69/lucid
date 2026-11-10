@@ -12,7 +12,7 @@ import { InfrastructureEnvironmentError, requiredSecret } from './env.ts'
  * the wrong store, stack or stage was named; a plan from there would create every resource again,
  * a second empty PostgreSQL included.
  */
-export class StackStateMissing extends Schema.TaggedError<StackStateMissing>()(
+class StackStateMissing extends Schema.TaggedError<StackStateMissing>()(
   'StackStateMissing',
   { stack: Schema.String, stage: Schema.String, message: Schema.String },
   { title: 'Stack state is missing' },
@@ -23,7 +23,7 @@ export class StackStateMissing extends Schema.TaggedError<StackStateMissing>()(
  * decrypt that way (`alchemy/src/Cloudflare/StateStore/Store.ts`, `decryptEntry`), and Alchemy's
  * planner takes an absent record for a resource to create, so it is a failure and never absence.
  */
-export class StateRecordUnreadable extends Schema.TaggedError<StateRecordUnreadable>()(
+class StateRecordUnreadable extends Schema.TaggedError<StateRecordUnreadable>()(
   'StateRecordUnreadable',
   { fqn: Schema.String, message: Schema.String },
   { title: 'State record unreadable' },

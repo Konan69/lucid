@@ -2,8 +2,8 @@ import * as Config from 'effect/Config'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 
-export const DeployTargetName = Schema.Literals(['local', 'preview', 'production'] as const)
-export type DeployTargetName = typeof DeployTargetName.Type
+const DeployTargetName = Schema.Literals(['local', 'preview', 'production'] as const)
+type DeployTargetName = typeof DeployTargetName.Type
 
 /**
  * Who owns PostgreSQL for a target: the local Docker container, Railway's managed service, or an
@@ -46,7 +46,7 @@ export type DeploymentTarget = typeof DeploymentTargetSchema.Type
  * One machine-readable source keeps the Effect decoder and the plain-Node
  * offline verifier on identical target metadata without importing TypeScript.
  */
-export const deploymentTargetsJson = String.raw`{
+const deploymentTargetsJson = String.raw`{
   "local": {
     "key": "local",
     "runnable": true,
@@ -108,7 +108,7 @@ export const deploymentTargetsJson = String.raw`{
  * selector, and it is told apart from `InvalidDeployTarget` so nobody is sent to fix a variable
  * that was right.
  */
-export class DeploymentTargetsInvalid extends Schema.TaggedError<DeploymentTargetsInvalid>()(
+class DeploymentTargetsInvalid extends Schema.TaggedError<DeploymentTargetsInvalid>()(
   'DeploymentTargetsInvalid',
   { message: Schema.String },
   { title: 'Deployment targets are invalid' },
@@ -124,7 +124,7 @@ const deploymentTargets = decodeDeploymentTargetsJson(deploymentTargetsJson).pip
   ),
 )
 
-export class InvalidDeployTarget extends Schema.TaggedError<InvalidDeployTarget>()(
+class InvalidDeployTarget extends Schema.TaggedError<InvalidDeployTarget>()(
   'InvalidDeployTarget',
   {
     variable: Schema.Literal('VIVID_DEPLOY_TARGET'),
@@ -135,7 +135,7 @@ export class InvalidDeployTarget extends Schema.TaggedError<InvalidDeployTarget>
   { title: 'Invalid deploy target' },
 ) {}
 
-export class RemoteDeploymentDisabled extends Schema.TaggedError<RemoteDeploymentDisabled>()(
+class RemoteDeploymentDisabled extends Schema.TaggedError<RemoteDeploymentDisabled>()(
   'RemoteDeploymentDisabled',
   {
     target: DeployTargetName,

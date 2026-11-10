@@ -86,7 +86,7 @@ export class Delivered extends Context.Service<Delivered, Ref.Ref<ReadonlyArray<
  * Use production Conversation and RunStore. Only the external runtime and observers unrelated
  * to background Watches stand in. Repeated deliveries must reach the real SQL admission logic.
  */
-export const conversationLayer = Layer.effectContext(
+const conversationLayer = Layer.effectContext(
   Effect.gen(function* () {
     const database = yield* Database
     const config = yield* ServerConfig
@@ -140,7 +140,7 @@ export const conversationLayer = Layer.effectContext(
 )
 
 /** One call Executor received, and the answer the test gives it. */
-export type Subscribed = {
+type Subscribed = {
   readonly name: string
   readonly arguments: WatchArguments
   readonly url: string
@@ -148,14 +148,14 @@ export type Subscribed = {
 }
 
 /** A subscription Executor granted. */
-export type Grant = { readonly id: string; readonly refreshBefore: Date }
+type Grant = { readonly id: string; readonly refreshBefore: Date }
 
 /**
  * What the stand-in Executor answers subscribe with: a grant, a failure, or a grant Vivid never
  * hears of. `lost` records the grant at Executor and then never answers, as when Vivid's process
  * dies, or its request is interrupted, after Executor subscribed and before the Watch was activated.
  */
-export type Answer = Grant | ExecutorEventsFailure | { readonly lost: Grant }
+type Answer = Grant | ExecutorEventsFailure | { readonly lost: Grant }
 
 /** The calls made to the stand-in Executor and the answers it gives, controlled by the test. */
 export interface ExecutorControl {
@@ -168,7 +168,7 @@ export interface ExecutorControl {
 export class Executor extends Context.Service<Executor, ExecutorControl>()('test/WatchExecutor') {}
 
 /** An app with slug `mail` declaring `message.received`, filtered by folder. */
-export const definitions: ReadonlyArray<EventDefinition> = [
+const definitions: ReadonlyArray<EventDefinition> = [
   {
     name: 'mail.message.received',
     description: 'A message arrived.',
@@ -181,7 +181,7 @@ export const definitions: ReadonlyArray<EventDefinition> = [
  * Executor answered by the test. Subscribe offers what it was asked, then waits for the test's
  * answer, a grant or a failure: the window in which the real Executor POSTs its challenge.
  */
-export const executorLayer = Layer.effectContext(
+const executorLayer = Layer.effectContext(
   Effect.gen(function* () {
     const subscribed = yield* Queue.unbounded<Subscribed>()
     const answers = yield* Queue.unbounded<Answer>()
@@ -242,7 +242,7 @@ const fixtureConnection = Effect.fn('WatchTest.fixtureConnection')(function* (ac
 })
 
 /** Resolve real Connection rows and names; only the foreign app slug stands in. */
-export const appsLayer = Layer.effect(
+const appsLayer = Layer.effect(
   WatchedApps,
   Effect.gen(function* () {
     const database = yield* Database

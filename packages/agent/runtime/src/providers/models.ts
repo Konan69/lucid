@@ -7,6 +7,7 @@ import { DEFAULT_MODEL, provider as opencode } from './opencode.ts'
 import { provider as rehearsal } from './rehearsal.ts'
 
 /** An undeclared selection cannot silently change the model a Person asked Vivid to use. */
+/** @public The declaration emitter must name this error in modelsLayer failures. */
 export class ModelUnavailable extends Schema.TaggedError<ModelUnavailable>()(
   'ModelUnavailable',
   { model: Schema.String },

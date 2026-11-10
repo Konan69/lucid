@@ -25,7 +25,7 @@ import { find } from './history.ts'
 import { ArtifactStore } from './store.ts'
 import { inspectArtifactFile, publishArtifactFile } from './files.ts'
 
-/** Listing and watching share the same Thread access check, repeated after each invalidation. */
+/** List only Artifacts in a Thread the Actor can access. */
 const load = Effect.fn('Artifacts.load')(function* (actor: Actor, threadId: ThreadId) {
   return ArtifactListResponse.make({
     artifacts: [...(yield* (yield* ArtifactStore).list(actor.person.id, threadId))],
@@ -68,8 +68,6 @@ export const artifactHandlers = {
   }) {
     return yield* load(yield* requireActor(), threadId)
   }),
-  WatchArtifacts: ({ threadId }: { readonly threadId: ThreadId }) =>
-    live('WatchArtifacts', [], (actor) => load(actor, threadId), [Topic.thread(threadId)]),
   GetArtifact: Effect.fn('Rpc.GetArtifact')(function* (request: typeof GetArtifactRequest.Type) {
     return yield* (yield* ArtifactStore).get((yield* requireActor()).person.id, request)
   }),

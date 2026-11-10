@@ -35,8 +35,8 @@ import { LiveTally, type Moved } from './tally.ts'
  * turn reloading each of a Person's twenty open queries three times, and their session twenty
  * times each, for three queries that had anything new to send.
  */
-export const Part = Schema.Literals(['activity', 'notifications', 'drafts', 'feed', 'artifacts'])
-export type Part = typeof Part.Type
+const Part = Schema.Literals(['activity', 'notifications', 'drafts', 'feed', 'artifacts'])
+type Part = typeof Part.Type
 
 type Owner = `p:${string}` | `c:${string}` | `t:${string}`
 
@@ -193,7 +193,7 @@ export const announce = Effect.fn('Changes.announce')(function* (
  * Whether a notification names an owner a subscriber asked for, wide or in a part it reads.
  * A subscriber names owners; a narrowed topic among them is read as its owner.
  */
-export const touches = (topics: ReadonlyArray<string>, reads: Reads) => {
+const touches = (topics: ReadonlyArray<string>, reads: Reads) => {
   const wanted = new Set(topics.map((topic) => moving(topic).owner))
   const read = new Set<string>(reads)
   return (moved: ReadonlyArray<string>) =>

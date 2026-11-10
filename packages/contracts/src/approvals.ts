@@ -231,15 +231,6 @@ export class ApprovalDecided extends Schema.TaggedError<ApprovalDecided>()(
 ) {}
 
 export const ApprovalResponse = Schema.Struct({ approval: Approval })
-export const ApprovalListResponse = Schema.Struct({ approvals: Schema.Array(Approval) })
-
-/** What a Thread shows in place of a tool result while an Approval is open. */
-export const ApprovalRequestMessage = Schema.Struct({
-  kind: Schema.Literal('approval-request'),
-  approvalId: ApprovalId,
-  summary: Schema.String,
-}).annotate({ identifier: 'ApprovalRequestMessage', title: 'Approval request message' })
-export interface ApprovalRequestMessage extends Schema.Schema.Type<typeof ApprovalRequestMessage> {}
 
 const isText = Schema.is(Schema.String)
 const isTexts = Schema.is(Schema.Array(Schema.String))
@@ -259,7 +250,7 @@ const NAMES = {
 } as const
 
 /** One field of a draft: the key it is sent under, and its words as the Person edits them. */
-export interface SendDraftField {
+interface SendDraftField {
   readonly key: string
   readonly text: string
 }

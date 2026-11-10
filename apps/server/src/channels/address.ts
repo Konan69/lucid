@@ -2,7 +2,7 @@ import { Channel, ChannelAddress } from '@vivid/contracts'
 import { Effect, Schema } from 'effect'
 
 /** Identity normalization failure stays distinct from a missing Integration or transport failure. */
-export class InvalidChannelAddress extends Schema.TaggedError<InvalidChannelAddress>()(
+class InvalidChannelAddress extends Schema.TaggedError<InvalidChannelAddress>()(
   'InvalidChannelAddress',
   { channel: Channel },
   { title: 'Invalid channel address' },

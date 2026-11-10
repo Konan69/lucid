@@ -34,7 +34,7 @@ const ToolInput = Schema.Union([
   ),
   Schema.Json,
 ])
-export const decodeToolInput = Schema.decodeUnknownEffect(ToolInput)
+const decodeToolInput = Schema.decodeUnknownEffect(ToolInput)
 const decodeToolCallId = Schema.decodeUnknownEffect(ToolCallId)
 const decodeMadeRequest = Schema.decodeEffect(MakeIntegrationRequest)
 

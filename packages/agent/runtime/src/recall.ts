@@ -54,7 +54,7 @@ const textOf = (message: Shown) =>
     .trim()
 
 /** What the Person and Vivid said in one Thread, oldest first. A Thread never spoken in has none. */
-export const saidIn: (
+const saidIn: (
   harness: Harness,
   threadId: ThreadId,
 ) => Effect.Effect<ReadonlyArray<Said>, PiRejected> = Effect.fn('Recall.saidIn')(function* (
@@ -93,7 +93,7 @@ const wordsOf = (text: string) =>
  * last word typed also matches as a prefix, so results appear as the Person types. Every word of
  * the query must be in the message. A query with no letters or digits matches nothing.
  */
-export const matcher = (query: string) => {
+const matcher = (query: string) => {
   const terms = wordsOf(query).map(({ word }) => word)
   const last = terms.length - 1
   const hits = (term: string, position: number, word: string) =>

@@ -68,7 +68,7 @@ const entriesThrough = Effect.fn('StateLink.entriesThrough')(function* (
  * and starts after the newest entry already held, so the whole transcript is read once, when the
  * link starts.
  */
-export const transcript = (conversation: Pick<Conversation, 'entries'>) => {
+const transcript = (conversation: Pick<Conversation, 'entries'>) => {
   const entries: EntryRecord[] = []
   return {
     entries,
