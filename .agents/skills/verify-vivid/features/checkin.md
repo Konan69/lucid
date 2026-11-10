@@ -6,7 +6,7 @@ Run Launch, Doctor, `verify feature checkin`, `verify browser checkin`, then Cle
 
 The HTTP journey asks Vivid to track an owed report and "check on this tomorrow at 9" in Africa/Lagos. It requires a Checkin Watch whose arming is Confirmed, with the actual timer operationKey and the requested nextAt. The saved `use_tool` result must carry that receipt. Subscription success or a sentence from the model is insufficient.
 
-It changes the request to the timer's shortest positive delay. A WatchWatches subscription observes the new operation's Confirmed state. The real timer fires without the recipe invoking its emitting mutation. WatchFeed and WatchThread then prove one check-in-origin Run, a real open-work read and the requested Feed post. No sleeps or polling decide success.
+It changes the request to the timer's shortest positive delay. A WatchWork subscription observes the new operation's Confirmed state. The real timer fires without the recipe invoking its emitting mutation. WatchFeed and WatchThread then prove one check-in-origin Run, a real open-work read and the requested Feed post. No sleeps or polling decide success.
 
 Evidence stays in `checkin/`. `clock-time-receipt.json` records the tomorrow-at-nine arm. `proof.json` records both scheduling receipts, the Watch, the firing Run and its Feed item. `firing-history.json` retains the actual background tool calls.
 

@@ -1,6 +1,8 @@
 import * as NodeAssert from 'node:assert/strict'
 import {
+  BackgroundWork,
   CheckinArming,
+  CreateProjectRequest,
   CheckinFocus,
   CheckinTiming,
   ProjectChange,
@@ -18,7 +20,7 @@ export async function projectChecks(state, id, directory) {
   const created = await rpc(
     state,
     'CreateProject',
-    { name, parentProjectId: null },
+    CreateProjectRequest.make({ name, parentProjectId: null }),
     directory,
     'check-project-created',
   )
@@ -82,13 +84,14 @@ export async function projectChecks(state, id, directory) {
   // Observe arming before completing, so the next real timer firing reads the completed source.
   const ready = Promise.withResolvers()
   const confirmation = observe(state, {
-    tag: 'WatchWatches',
+    tag: 'WatchWork',
     payload: null,
     accept: (value) => {
       ready.resolve()
-      return value.watches.some(
+      return value.work.some(
         (entry) =>
-          entry.id === watch.id &&
+          BackgroundWork.guards.Watch(entry) &&
+          entry.watch === watch.id &&
           WatchPurpose.guards.Checkin(entry.purpose) &&
           CheckinArming.guards.Confirmed(entry.purpose.arming) &&
           entry.purpose.arming.nextAt > Date.now() &&
@@ -120,9 +123,10 @@ export async function projectChecks(state, id, directory) {
   NodeAssert.equal(completed.work._tag, 'Completed')
   await settled(state, id, 6, 'Completed', directory)
   const ended = await observe(state, {
-    tag: 'WatchWatches',
+    tag: 'WatchWork',
     payload: null,
-    accept: (value) => !value.watches.some((entry) => entry.id === watch.id),
+    accept: (value) =>
+      !value.work.some((entry) => BackgroundWork.guards.Watch(entry) && entry.watch === watch.id),
   })
   await json(directory + '/project-check-proof.json', {
     watch,

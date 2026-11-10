@@ -4,17 +4,15 @@ import { chat, history, json, rpc, settled } from './wire.mjs'
 import { projectChecks } from './projectchecks.mjs'
 
 /** The Project the journey makes for the Person before talking about it. */
-export const PROJECT_NAME = 'Site launch'
+export const PROJECT_NAME = 'Site launch ' + crypto.randomUUID().slice(0, 8)
 
 /**
  * What a Person says about a Project's goal, then how it moved, then that it is done. No tool,
  * field or state is named (the owner, 26 October 2026: ask as a Person asks).
  */
-export const DEFINE_PROMPT =
-  "We're launching the site, that's my Site launch project. It's done when the domain resolves."
-export const PROGRESS_PROMPT =
-  'Update on Site launch: I bought the domain this morning and pointed it at the host.'
-export const DONE_PROMPT = 'Good news on Site launch: the domain resolves now.'
+export const DEFINE_PROMPT = `We're launching the site, that's my ${PROJECT_NAME} project. It's done when the domain resolves.`
+export const PROGRESS_PROMPT = `Update on ${PROJECT_NAME}: I bought the domain this morning and pointed it at the host.`
+export const DONE_PROMPT = `Good news on ${PROJECT_NAME}: the domain resolves now.`
 
 /** Make the Project through the public call the Projects page's form makes. */
 export async function createProject(state, directory) {
