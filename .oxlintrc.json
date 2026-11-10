@@ -219,7 +219,7 @@
                 "message": "Card owns surface, radius, and elevation; callers may control placement and content spacing."
               },
               {
-                "pattern": "^(Avatar|PersonAvatar|Face|StatusLabel|StatusDot)$",
+                "pattern": "^(Avatar|PersonAvatar|Face|StatusLabel)$",
                 "allow": ["layout"],
                 "message": "This primitive owns its visual treatment; callers may control placement only."
               }
