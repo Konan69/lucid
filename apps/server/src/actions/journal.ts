@@ -316,15 +316,21 @@ export const originOf = Effect.fn('Actions.originOf')(function* (id: ActionOpera
   return yield* returned(rows, 'Integration operation')
 })
 
+/** Keep the one-receipt guard inside an owning write, including an Approval invalidation transaction. */
+export const settleIn = Effect.fn('Actions.settleIn')(function* (
+  tx: Pick<Transaction, 'update'>,
+  receipt: ActionReceipt,
+) {
+  yield* tx
+    .update(actions)
+    .set({ receipt: yield* encodeReceipt(receipt) })
+    .where(and(eq(actions.id, receipt.operationId), isNull(actions.receipt)))
+})
+
 /** Writes the one receipt of a claimed operation; a second settlement changes nothing. */
 export const settle = Effect.fn('Actions.settle')(function* (receipt: ActionReceipt) {
   const database = yield* Database
-  yield* database.run(
-    database
-      .update(actions)
-      .set({ receipt: yield* encodeReceipt(receipt) })
-      .where(and(eq(actions.id, receipt.operationId), isNull(actions.receipt))),
-  )
+  yield* database.run(settleIn(database, receipt))
 })
 
 /**
@@ -442,7 +448,7 @@ export const reconcile = Effect.fn('Actions.reconcile')(
     const decidableAt = row.claimedAt + LANDING_WINDOW_MS
     const found = yield* (yield* ActionLookup).look(action)
     // A live ask can resume later, so its age alone never proves absence.
-    const reconciliation = Lookup.match(found, {
+    const reconciliation = Lookup.match<typeof StoredReconciliation.Type>(found, {
       Found: ({ receipt }) => ActionReconciliation.cases.Applied.make({ receipt }),
       Absent: () =>
         checkedAt < decidableAt || stored.held

@@ -215,8 +215,8 @@
     {
       "model": "journal.tla Read (settle)",
       "file": "apps/server/src/actions/journal.ts",
-      "symbol": "settle",
-      "snippets": [".where(and(eq(actions.id, receipt.operationId), isNull(actions.receipt))),"]
+      "symbol": "settleIn",
+      "snippets": [".where(and(eq(actions.id, receipt.operationId), isNull(actions.receipt)))"]
     },
     {
       "model": "journal.tla Read (release)",
@@ -292,11 +292,7 @@
       "model": "journal.tla PauseInvalidates",
       "file": "apps/server/src/approvals/stale.ts",
       "symbol": "invalidatePending",
-      "snippets": [
-        "if (continuation !== null)",
-        "ActionReceipt.cases.Unknown.make({ operationId: continuation.operation, observedAt: now, })",
-        ".where(and(eq(actions.id, continuation.operation), isNull(actions.receipt)))"
-      ]
+      "snippets": ["if (continuation !== null)", "yield* settleIn(", "ActionReceipt.cases.Unknown.make({"]
     }
   ]
 }

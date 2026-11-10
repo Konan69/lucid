@@ -71,11 +71,11 @@ lands through `Execute` before the window closes, or is dropped at closure. The 
 conditional on that assumption, not proof of a Google completion SLA.
 
 Executor source inspected at tag `executor@2.0.0-beta.23` in `~/agency/vivid/refs/executor`:
-`apps/hosted/server/src/implementation/tools.ts:166-171,221` calls the SDK; SDK
-`packages/sdk/src/implementation/tools.ts:1406-1417` calls the app runtime without a deadline;
-`packages/apps/src/implementation/host.ts:475-489` enforces only a supplied deadline.
-Cancellation exists: `packages/sdk/src/implementation/workerd-entry.ts:258-278` binds invocation
-work to the RPC session's lifetime, and `packages/apps/src/implementation/network.ts:69-70`
+`https://github.com/UsefulSoftwareCo/executor/blob/executor@2.0.0-beta.23/apps/hosted/server/src/implementation/tools.ts#L166-L171` and its handler at line 221 calls the SDK; SDK
+`https://github.com/UsefulSoftwareCo/executor/blob/executor@2.0.0-beta.23/packages/sdk/src/implementation/tools.ts#L1406-L1417` calls the app runtime without a deadline;
+`https://github.com/UsefulSoftwareCo/executor/blob/executor@2.0.0-beta.23/packages/apps/src/implementation/host.ts#L475-L489` enforces only a supplied deadline.
+Cancellation exists: `https://github.com/UsefulSoftwareCo/executor/blob/executor@2.0.0-beta.23/packages/sdk/src/implementation/workerd-entry.ts#L258-L278` binds invocation
+work to the RPC session's lifetime, and `https://github.com/UsefulSoftwareCo/executor/blob/executor@2.0.0-beta.23/packages/apps/src/implementation/network.ts#L69-L70`
 supplies cancellable fetch. This does not establish when an already-received provider write
 can no longer land. Continuation after disconnect has not been confirmed by a disposable run.
 
@@ -97,7 +97,7 @@ the window proof. The model also assumes that the reconciliation lookup finds an
 
 `anchors.json` is the record: each entry names a model action, a file, a top-level declaration, and the guard snippets the action relies on. Sync commit: the `sync` field in `anchors.json`.
 
-Files: `apps/server/src/approvals/gate.ts` (`gateLayer`, `reviewable`), `apps/server/src/approvals/policy.ts` (`reviewOutcome`, `unwatchedOutcome`), `apps/server/src/approvals/store.ts` (`move`, `requireUnexpired`, `decide`, `expire`, `raise`, `runJournaled`, `recover`), `apps/server/src/connections/asks.ts` (`approve`, `resumeApproved`, `answer`, `record`), `apps/server/src/connections/executor.ts` (`makeResume`, `responseReader`), `apps/server/src/connections/tools.ts` (`useToolAs`, `sendJournaled`, `resolveApproval`, `connectionRunner`), `apps/server/src/connections/reconcile.ts` (`look`), `apps/server/src/actions/journal.ts` (`unresolved`, `answerFor`, `claim`, `settle`, `release`, `reconcile`, `afterReconciliation`), `apps/server/src/approvals/stale.ts` (`invalidatePending`), `apps/server/src/inputs/store.ts` (`answerIntegration`, `withdrawWaiting`, `cancelWithdrawn`, `expireIntegrationInputs`).
+Files: `apps/server/src/approvals/gate.ts` (`gateLayer`, `reviewable`), `apps/server/src/approvals/policy.ts` (`reviewOutcome`, `unwatchedOutcome`), `apps/server/src/approvals/store.ts` (`move`, `requireUnexpired`, `decide`, `expire`, `raise`, `runJournaled`, `recover`), `apps/server/src/connections/asks.ts` (`approve`, `resumeApproved`, `answer`, `record`), `apps/server/src/connections/executor.ts` (`makeResume`, `responseReader`), `apps/server/src/connections/tools.ts` (`useToolAs`, `sendJournaled`, `resolveApproval`, `connectionRunner`), `apps/server/src/connections/reconcile.ts` (`look`), `apps/server/src/actions/journal.ts` (`unresolved`, `answerFor`, `claim`, `settle`, `settleIn`, `release`, `reconcile`, `afterReconciliation`), `apps/server/src/approvals/stale.ts` (`invalidatePending`), `apps/server/src/inputs/store.ts` (`answerIntegration`, `withdrawWaiting`, `cancelWithdrawn`, `expireIntegrationInputs`).
 
 ## Tooling
 

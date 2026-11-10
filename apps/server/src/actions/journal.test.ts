@@ -63,6 +63,8 @@ const writer = Effect.fn('Actions.test.writer')(function* () {
   return { actor, owner: ownerActor.person.id, threadId, write }
 })
 
+const encodeAction = Schema.encodeEffect(ProposedAction)
+
 /** A provider lookup that answers for the test; the journal's rules around it are production. */
 const lookingUp = (answer: Lookup) => ActionLookup.of({ look: () => Effect.succeed(answer) })
 
@@ -157,9 +159,7 @@ describe.skipIf(!testDatabaseConfigured)('Action journal', () => {
                 .from(actions)
                 .where(eq(actions.id, original.id)),
             )
-            expect(stored?.reconciliation).toMatchObject({
-              decidableAt: claimedAt + 600_000,
-            })
+            expect(stored).toMatchObject({ reconciliation: { decidableAt: claimedAt + 600_000 } })
             const retry = { ...original, id: operationOf.program() }
             expect(
               yield* claim(retry).pipe(Effect.provideService(ActionLookup, lookup), Effect.flip),
@@ -226,7 +226,7 @@ describe.skipIf(!testDatabaseConfigured)('Action journal', () => {
               id,
               threadId,
               personId: owner,
-              action: Schema.encodeSync(ProposedAction)(action),
+              action: yield* encodeAction(action),
               digest: 'held',
               status: 'pending',
               expiresAt: pause.expiresAt,
@@ -247,12 +247,12 @@ describe.skipIf(!testDatabaseConfigured)('Action journal', () => {
               .from(actions)
               .where(eq(actions.id, original.id)),
           )
-          expect(stored?.receipt).toEqual(
-            ActionReceipt.cases.Unknown.make({
+          expect(stored).toEqual({
+            receipt: ActionReceipt.cases.Unknown.make({
               operationId: original.id,
               observedAt: now + 600_000,
             }),
-          )
+          })
           const retry = yield* claim({ ...original, id: operationOf.program() }).pipe(
             Effect.provideService(ActionLookup, lookingUp(Lookup.cases.Absent.make({}))),
           )
