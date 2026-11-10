@@ -6,7 +6,6 @@ import {
   type Impact,
   impactSignal,
   PersonId,
-  RunFailure,
 } from '@vivid/contracts'
 import {
   Config,

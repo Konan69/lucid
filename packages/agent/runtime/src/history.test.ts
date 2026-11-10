@@ -2,6 +2,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from '@effect/vitest'
 import {
+  CodeName,
   ConversationState,
   MemoryEntry,
   MemoryFile,
@@ -269,7 +270,18 @@ it.effect(
         for (const receipt of thread.deliveries) {
           const actual = yield* settled(runtime, ada, threadId, receipt.submissionId)
           if (receipt.requestId === 'failed')
-            expect(actual).toEqual(RuntimeSettlement.cases.Failed.make({ failure: 'TimedOut' }))
+            expect(actual).toEqual(
+              RuntimeSettlement.cases.Failed.make({
+                failure: 'TimedOut',
+                cause: [
+                  {
+                    service: 'cell',
+                    operation: CodeName.make('Response.unanswered'),
+                    tag: CodeName.make('TimedOut'),
+                  },
+                ],
+              }),
+            )
           else if (receipt.requestId === 'stopped')
             expect(actual).toEqual(RuntimeSettlement.cases.Stopped.make({}))
           else

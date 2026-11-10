@@ -42,7 +42,6 @@ import { deliveryRunId } from '../threads/key.ts'
 import { Incidents } from '../observability/incidents.ts'
 import { recordRunFailure } from '../runtime/failure.ts'
 import { Runtime, Settlement } from '../runtime/client.ts'
-import { failedCause } from '../runtime/settlement.ts'
 import { audienceTopics, canSee, findThread, type StoredThread } from './access.ts'
 import {
   Conversation,
@@ -136,7 +135,7 @@ const recordEnding = Effect.fn('Conversation.recordEnding')(function* (
       Incident.cases.RunFailed.make({
         ...affected,
         reason: settlement.reason,
-        cause: failedCause(settlement),
+        cause: settlement.cause,
       }),
     )
   }

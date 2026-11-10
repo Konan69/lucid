@@ -124,6 +124,21 @@ import { threadStoreLayer } from './store.ts'
 import { threads } from './tables.ts'
 import { incidentsTestLayer, RecordedIncidents, unreachableCause } from '../runtime/testing.ts'
 
+/** The chain a cell sends with a Run the model failed (`RuntimeSettlement.Failed.cause`). */
+const modelFailed = [
+  {
+    service: 'cell',
+    operation: CodeName.make('Response.unanswered'),
+    tag: CodeName.make('model_error'),
+  },
+  {
+    service: 'model',
+    operation: CodeName.make('Harness.generate'),
+    tag: CodeName.make('ModelUnavailable'),
+    status: 520,
+  },
+] as const
+
 /**
  * What the real client says when a cell refused the body as unreadable (`runtime/client.ts`
  * `makeAdmit`): the server's hop at the status the cell answered, then the cell's own hop naming
@@ -1035,6 +1050,7 @@ layer(
               Settlement.cases.Failed.make({
                 reason: 'ModelUnavailable',
                 providerStatus: 520,
+                cause: modelFailed,
               }),
             )
             yield* Queue.take(reported)
@@ -1081,7 +1097,11 @@ layer(
             const failing = yield* test.conversation.admit(said(test.threadId, test.ada))
             yield* settled(
               failing.runId,
-              Settlement.cases.Failed.make({ reason: 'ModelUnavailable', providerStatus: 520 }),
+              Settlement.cases.Failed.make({
+                reason: 'ModelUnavailable',
+                providerStatus: 520,
+                cause: modelFailed,
+              }),
             )
             const unknown = yield* test.conversation.admit(said(test.threadId, test.ada))
             yield* settled(unknown.runId, Settlement.cases.Unknown.make({}))

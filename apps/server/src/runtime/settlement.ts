@@ -14,7 +14,11 @@ import { RuntimeRejected, type RuntimeTransportFailed } from './transport.ts'
 /** A runtime verdict is the only authority that ends an admitted Run. */
 export const Settlement = Schema.TaggedUnion({
   Completed: { reply: Schema.String, responseId: RunId },
-  Failed: { reason: RunFailure, providerStatus: Schema.optionalKey(ProviderStatus) },
+  Failed: {
+    reason: RunFailure,
+    providerStatus: Schema.optionalKey(ProviderStatus),
+    cause: IncidentCause,
+  },
   Stopped: {},
   Unknown: {},
 })
@@ -40,48 +44,34 @@ export const lostHere = (operation: string, tag: string) =>
   })
 
 /**
- * Why a Run ended `Failed`, from what its settlement carries: the cell's category, and the model's
- * hop when the provider answered with a status. The cell sends no chain of its own for a failed
- * settlement (`RuntimeSettlement.Failed`), so these are the hops that can be told.
+ * A Run the cell answered with no words and no tools: the server decides it was `NoAnswer`, so the
+ * cause is the server's own hop.
  */
-export const failedCause = (
-  failed: Extract<Settlement, { readonly _tag: 'Failed' }>,
-): IncidentCause => {
-  const cell = incidentHop({
-    service: 'cell',
+const NO_ANSWER: IncidentCause = [
+  incidentHop({
+    service: 'server',
     operation: 'Runtime.settled',
-    tag: failed.reason,
+    tag: 'NoAnswer',
     status: Option.none(),
     issues: [],
-  })
-  return failed.providerStatus === undefined
-    ? [cell]
-    : [
-        cell,
-        incidentHop({
-          service: 'model',
-          operation: 'Runtime.settled',
-          tag: failed.reason,
-          status: Option.some(failed.providerStatus),
-          issues: [],
-        }),
-      ]
-}
+  }),
+]
 
 /** Person-local response numbers need a global claim key so channels send joined answers once. */
 export const settlementOf = (settled: RuntimeSettlement, personId: PersonId): Settlement =>
   RuntimeSettlement.match(settled, {
     Done: ({ answeredBy, reply, toolCalls }): Settlement =>
       reply.trim().length === 0 && toolCalls === 0
-        ? Settlement.cases.Failed.make({ reason: 'NoAnswer' })
+        ? Settlement.cases.Failed.make({ reason: 'NoAnswer', cause: NO_ANSWER })
         : Settlement.cases.Completed.make({
             reply,
             responseId: RunId.make(`response_${personId}_${answeredBy}`),
           }),
-    Failed: ({ failure, status }): Settlement =>
+    // The cell's chain (Pi's reason, then the model's hop) is the `RunFailed` cause, as it sent it.
+    Failed: ({ failure, status, cause }): Settlement =>
       status === undefined
-        ? Settlement.cases.Failed.make({ reason: failure })
-        : Settlement.cases.Failed.make({ reason: failure, providerStatus: status }),
+        ? Settlement.cases.Failed.make({ reason: failure, cause })
+        : Settlement.cases.Failed.make({ reason: failure, providerStatus: status, cause }),
     Stopped: (): Settlement => Settlement.cases.Stopped.make({}),
   })
 

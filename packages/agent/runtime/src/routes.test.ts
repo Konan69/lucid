@@ -571,7 +571,23 @@ describe('the runtime over HTTP', () => {
           )
           yield* failing.release
           expect(yield* settled(runtime, ada, 'thread-1', first.submissionId)).toEqual(
-            RuntimeSettlement.cases.Failed.make({ failure: 'ModelUnavailable', status: 401 }),
+            RuntimeSettlement.cases.Failed.make({
+            failure: 'ModelUnavailable',
+            status: 401,
+            cause: [
+              {
+                service: 'cell',
+                operation: CodeName.make('Response.unanswered'),
+                tag: CodeName.make('model_error'),
+              },
+              {
+                service: 'model',
+                operation: CodeName.make('Harness.generate'),
+                tag: CodeName.make('ModelUnavailable'),
+                status: 401,
+              },
+            ],
+          }),
           )
           // Nothing else is sent to the Thread: the waiting delivery gets a response of its own.
           expect(yield* settled(runtime, ada, 'thread-1', second.submissionId)).toEqual(
@@ -786,7 +802,23 @@ describe('the runtime over HTTP', () => {
           { method: 'GET' },
         )
         expect(yield* decodeSettlement(response.body)).toEqual(
-          RuntimeSettlement.cases.Failed.make({ failure: 'ModelUnavailable', status: 403 }),
+          RuntimeSettlement.cases.Failed.make({
+            failure: 'ModelUnavailable',
+            status: 403,
+            cause: [
+              {
+                service: 'cell',
+                operation: CodeName.make('Response.unanswered'),
+                tag: CodeName.make('model_error'),
+              },
+              {
+                service: 'model',
+                operation: CodeName.make('Harness.generate'),
+                tag: CodeName.make('ModelUnavailable'),
+                status: 403,
+              },
+            ],
+          }),
         )
         expect(JSON.stringify(response.body)).not.toContain('SECRET')
       }),
