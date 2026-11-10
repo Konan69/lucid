@@ -3,6 +3,7 @@ import * as NodeFS from 'node:fs'
 import * as NodeModule from 'node:module'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
+import * as Predicate from 'effect/Predicate'
 import * as Schema from 'effect/Schema'
 import { parseSource, walk } from '../syntax.mjs'
 import { deadCodeRatchets } from './ratchets.mjs'
@@ -33,9 +34,12 @@ const hookContracts = () => {
   })
 }
 
+const ContractsManifest = Schema.Struct({ exports: Schema.Record(Schema.String, Schema.String) })
+const decodeContractsManifest = Schema.decodeUnknownSync(Schema.fromJsonString(ContractsManifest))
+
 /** The contracts package's export map: `.` and each subpath to its source file. */
 const contractExports = (directory) =>
-  JSON.parse(
+  decodeContractsManifest(
     NodeFS.readFileSync(NodePath.join(directory, 'packages/contracts/package.json'), 'utf8'),
   ).exports
 
@@ -64,7 +68,7 @@ export function contractImports(file, source) {
 const reachable = (schemas) => {
   const seen = new Set()
   const visit = (value) => {
-    if (value === null || typeof value !== 'object' || seen.has(value)) return
+    if (!Predicate.isObject(value) || seen.has(value)) return
     seen.add(value)
     Object.values(value).forEach(visit)
   }
@@ -125,7 +129,7 @@ async function sharedValues(directory) {
 export const wireFinding = ({ name, server, cell }) =>
   `${name}: crosses the server <-> cell wire (${server}, ${cell}) and is not in wireSchemas (packages/contracts/src/fingerprint.ts), so a Worker built from another version of it passes the fingerprint. Add it to wireSchemas, or register a schema that contains it.`
 
-export async function checkWire(directory) {
+async function checkWire(directory) {
   return unregisteredWireSchemas(await sharedValues(directory), await wireRegistry(directory))
 }
 
