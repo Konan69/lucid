@@ -72,7 +72,7 @@ const localStack = () =>
         command:
           'pnpm --filter @vivid/cells exec node ../../infra/cli.mjs dev --host 127.0.0.1 --port 5173',
         cwd: '.',
-        env: { VIVID_CELL_VARS: cellVariables(environment, target.serverUrl) },
+        env: { VIVID_CELL_VARS: cellVariables(environment, target.serverUrl, target.stage) },
       })
 
       yield* Command.Dev(target.serverProcessId, {

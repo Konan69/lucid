@@ -348,7 +348,11 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
   const storage = yield* railwayCells(project, target)
 
   /** The Worker's bindings, given once to the server and once to the Worker's identity below. */
-  const cellVars = cellVariables(environment, privateUrl(serviceNames.server, ports.server))
+  const cellVars = cellVariables(
+    environment,
+    privateUrl(serviceNames.server, ports.server),
+    target.stage,
+  )
   const fleet = {
     bucket: storage.CELLD_BUCKET,
     endpoint: storage.S3_ENDPOINT,

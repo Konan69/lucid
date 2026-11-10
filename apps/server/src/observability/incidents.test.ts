@@ -1,5 +1,13 @@
 import { expect, it } from '@effect/vitest'
-import { CodeName, Forbidden, Incident, PersonId, RunId, ThreadId } from '@vivid/contracts'
+import {
+  CodeName,
+  DeliveryRefused,
+  Forbidden,
+  Incident,
+  PersonId,
+  RunId,
+  ThreadId,
+} from '@vivid/contracts'
 import { Effect, Layer, Schema } from 'effect'
 import { observeFailures } from './failure.ts'
 import { Incidents } from './incidents.ts'
@@ -114,4 +122,23 @@ it.live('opens an issue for a typed failure by its impact, and none for a routin
       expect.stringContaining('level=INFO'),
     ])
   }).pipe(Effect.scoped),
+)
+
+it.live(
+  'says a refused send once: its AdmissionFailed, and no second issue from the RPC boundary',
+  () =>
+    Effect.gen(function* () {
+      const { context, events } = yield* ingest()
+      const logs = decisionLogs()
+      const send = Effect.fn('Probe.send')(function* () {
+        const incidents = yield* Incidents
+        yield* incidents.record(refusedSend)
+        return yield* DeliveryRefused.make({ runId: refusedSend.runId, cause: refusedSend.cause })
+      }, observeFailures('rpc'))
+      const logged = yield* Layer.build(logs.layer)
+      yield* Effect.ignore(send()).pipe(Effect.provide(context), Effect.provide(logged))
+
+      const sent = yield* events
+      expect(sent.map((event) => event.message)).toEqual(['AdmissionFailed'])
+    }).pipe(Effect.scoped),
 )

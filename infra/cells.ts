@@ -15,8 +15,18 @@ import type { InfrastructureEnvironment } from './env.ts'
 import { fleetStorage, readPointer, type BucketStorage } from './pointer.ts'
 import type { DeploymentTarget } from './targets.ts'
 
-/** celld deploy reads Worker bindings from config vars, never from its process environment. */
-export const cellVariables = (environment: InfrastructureEnvironment, serverUrl: string) =>
+/**
+ * celld deploy reads Worker bindings from config vars, never from its process environment.
+ *
+ * Every value is concrete. The vars enter celld's Worker version, which `CellWorker` computes here
+ * and the pre-deploy step recomputes inside Railway; a Railway reference (`${{...}}`) would be
+ * rendered on one side only, so the two versions would never match and every release would stop.
+ */
+export const cellVariables = (
+  environment: InfrastructureEnvironment,
+  serverUrl: string,
+  environmentName: string,
+) =>
   Redacted.make(
     JSON.stringify({
       VIVID_RUNTIME_TOKEN: Redacted.value(environment.runtimeToken),
@@ -29,14 +39,13 @@ export const cellVariables = (environment: InfrastructureEnvironment, serverUrl:
         onNone: () => ({}),
         onSome: (value) => ({ VIVID_DECISIONS: value }),
       }),
-      // The cell reports its own failures to the server's Sentry project, under the same
-      // environment name the server reports with (`observabilityAccess` in `railway.ts`); Railway
-      // resolves the reference inside this value when it deploys the server.
+      // The cell reports its own failures to the server's Sentry project, under the deploy
+      // target's stage, which is the Railway environment the server reports as.
       ...Option.match(environment.observability, {
         onNone: () => ({}),
         onSome: ({ dsn }) => ({
           SENTRY_DSN: dsn,
-          VIVID_ENVIRONMENT: '${{RAILWAY_ENVIRONMENT_NAME}}',
+          VIVID_ENVIRONMENT: environmentName,
         }),
       }),
     }),

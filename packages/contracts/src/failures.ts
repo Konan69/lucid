@@ -1,4 +1,4 @@
-import { Schema } from 'effect'
+import { ErrorReporter, Schema } from 'effect'
 import { InvitationId, PersonId, RunId } from './identity.js'
 import { IncidentCause } from './incidents.js'
 
@@ -102,7 +102,14 @@ export class DeliveryRefused extends Schema.TaggedError<DeliveryRefused>()(
   'DeliveryRefused',
   { runId: RunId, cause: IncidentCause },
   { title: 'Delivery refused' },
-) {}
+) {
+  /**
+   * The outcome is already said: the server raises this only after `Conversation.admissionFailed`
+   * recorded `AdmissionFailed` for the same Run, with this cause. A boundary reporter that also
+   * captured it would open a second, differently grouped issue for one failed send.
+   */
+  readonly [ErrorReporter.ignore] = true
+}
 
 /**
  * A part of the installation the request needs is not reachable: the Connection layer, the memory
