@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option, Schema } from 'effect'
+import { Clock, Context, Duration, Effect, Layer, Option, Schema } from 'effect'
 import { Decision, DecisionModel } from 'effect/ai'
 import { ActionTarget, BrowseTarget, type ProposedAction } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
@@ -27,7 +27,7 @@ const INPUT_CHARACTERS = 12_000
  * 490 to 810 ms measured per review through the gateway on 4 Oct 2026 (one first call took
  * 1,716 ms). An exhausted second attempt leaves the action unreviewed.
  */
-const REVIEW_BUDGET = '3 seconds'
+const REVIEW_BUDGET = Duration.seconds(3)
 
 /**
  * What the reviewer reads. Names and descriptions only: no identifier, credential or Connection
@@ -154,6 +154,7 @@ export const reviewerLayer = Layer.effect(
             yield* Effect.logWarning('Action unreviewed', { reason: 'ArgumentsTooLong' })
             return Review.cases.Unreviewed.make({})
           }
+          const startedAt = yield* Clock.currentTimeMillis
           const said = yield* personRequest(runtime, actor).pipe(
             Effect.provideService(Database, database),
             Effect.timeoutOption(REVIEW_BUDGET),
@@ -167,10 +168,18 @@ export const reviewerLayer = Layer.effect(
             yield* Effect.logWarning('Action unreviewed', { reason: 'NoRequest' })
             return Review.cases.Unreviewed.make({})
           }
+          // History remains inside the first attempt's original three seconds. Retrying
+          // uses this same bounded remainder, so no attempt or history read raises that limit.
+          const remaining = Duration.millis(
+            Math.max(
+              0,
+              Duration.toMillis(REVIEW_BUDGET) - ((yield* Clock.currentTimeMillis) - startedAt),
+            ),
+          )
           const { answers } = yield* decideWithin(
             ActionReview,
             reviewInput(said.value.value, action),
-            REVIEW_BUDGET,
+            remaining,
             1,
           ).pipe(Effect.provideService(DecisionModel.DecisionModel, model))
           // Numbers only: the action, the request and provider detail never reach the log.

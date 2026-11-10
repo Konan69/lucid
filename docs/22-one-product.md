@@ -126,8 +126,8 @@ The runtime proposes; the server decides. Nothing consequential runs from model 
      bad thing." Jev's measurements decide reviewed actions; a contained action can run whatever
      its effect label. Konan also asked: "Why would Jev not be able to review an action and why
      would it skip? What if that's the action that destroys my entire life". A timeout or provider
-     failure gets one retry, with the same three-second limit per attempt. Reading the request
-     has its own three-second limit. Missing requests, oversized arguments, disabled decisions,
+     failure gets one retry. Reading the request stays inside the first attempt's three-second
+     limit; each provider attempt uses the same remaining budget. Missing requests, oversized arguments, disabled decisions,
      or unavailable review after retry leave the action unreviewed: a write runs, a destructive
      action asks. Never, Company and ask-first rules still bind. Unwatched work still needs a
      contained review; sends, spending and deletes become Feed drafts.
