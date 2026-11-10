@@ -28,12 +28,12 @@ function trackedInstructionFiles(root) {
 function skillMetadataErrors(root, file) {
   const body = NodeFS.readFileSync(NodePath.join(root, file), 'utf8')
   const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(body)
-  return ['name', 'description']
-    .filter(
-      (field) =>
-        frontmatter === null || !new RegExp(`^${field}:[ \t]*\\S`, 'mu').test(frontmatter[1]),
-    )
-    .map((field) => `${file}: add ${field}: <value> to YAML frontmatter; skill loaders require it`)
+  const errors = []
+  for (const field of ['name', 'description']) {
+    if (frontmatter === null || !new RegExp(`^${field}:[ \t]*\\S`, 'mu').test(frontmatter[1]))
+      errors.push(`${file}: add ${field}: <value> to YAML frontmatter; skill loaders require it`)
+  }
+  return errors
 }
 
 /**
