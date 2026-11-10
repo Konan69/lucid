@@ -20,6 +20,40 @@ export interface FleetStorage {
 }
 
 /**
+ * The fleet storage as `Railway.Bucket` outputs it (`alchemy/src/Railway/Bucket.ts`): every
+ * attribute but the bucket name is absent until Railway has made the bucket and its keys.
+ */
+export interface BucketStorage {
+  readonly bucket: string
+  readonly endpoint: string | undefined
+  readonly region: string | undefined
+  readonly accessKeyId: Redacted.Redacted<string> | undefined
+  readonly secretAccessKey: Redacted.Redacted<string> | undefined
+}
+
+/** The bucket has no endpoint, region or key yet, so nothing in it can be read. */
+export class FleetStorageMissing extends Schema.TaggedError<FleetStorageMissing>()(
+  'FleetStorageMissing',
+  { message: Schema.String },
+  { title: 'Fleet storage missing' },
+) {}
+
+/** The bucket's outputs as the storage celld and the pointer read need, or a typed failure. */
+export const fleetStorage = Effect.fn('Infra.fleetStorage')(function* (outputs: BucketStorage) {
+  const { bucket, endpoint, region, accessKeyId, secretAccessKey } = outputs
+  if (
+    endpoint === undefined ||
+    region === undefined ||
+    accessKeyId === undefined ||
+    secretAccessKey === undefined
+  )
+    return yield* new FleetStorageMissing({
+      message: 'the cells bucket has no endpoint, region or keys yet',
+    })
+  return { bucket, endpoint, region, accessKeyId, secretAccessKey } satisfies FleetStorage
+})
+
+/**
  * The fleet pointer could not be read. `reason` names which part failed (the request, a refusal by
  * status, or a body that is not a celld pointer) and never carries the URL, a key or the body.
  */
@@ -63,10 +97,7 @@ const signedGet = (storage: FleetStorage, key: string) => {
   ].join('\n')
   const scope = `${day}/${storage.region}/s3/aws4_request`
   const signingKey = hmac(
-    hmac(
-      hmac(hmac(`AWS4${Redacted.value(storage.secretAccessKey)}`, day), storage.region),
-      's3',
-    ),
+    hmac(hmac(hmac(`AWS4${Redacted.value(storage.secretAccessKey)}`, day), storage.region), 's3'),
     'aws4_request',
   )
   const signature = NodeCrypto.createHmac('sha256', signingKey)
@@ -98,7 +129,7 @@ export const readPointer = Effect.fn('Infra.readPointer')(function* (storage: Fl
   const body = yield* response.text.pipe(
     Effect.mapError(() => new FleetPointerUnreadable({ reason: 'the body could not be read' })),
   )
-  const pointer = yield* Schema.decodeUnknownEffect(Pointer)(body).pipe(
+  const pointer = yield* Schema.decodeEffect(Pointer)(body).pipe(
     Effect.mapError(() => new FleetPointerUnreadable({ reason: 'not a celld pointer' })),
   )
   return Option.some(pointer.version)

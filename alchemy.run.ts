@@ -5,14 +5,14 @@ import * as Docker from 'alchemy/Docker'
 import * as GitHub from 'alchemy/GitHub'
 import * as Railway from 'alchemy/Railway'
 import * as Effect from 'effect/Effect'
-import * as Config from 'effect/Config'
 import * as Layer from 'effect/Layer'
-import * as Option from 'effect/Option'
 import { computerBinariesRelease } from './infra/github.ts'
-import { cellVariables } from './infra/cells.ts'
+import { CellWorkerProvider, cellVariables } from './infra/cells.ts'
 import { databaseUrlFor } from './infra/database.ts'
 import { loadInfrastructureEnvironment } from './infra/env.ts'
 import { railwayResources } from './infra/railway.ts'
+import { ReleaseProvider } from './infra/release.ts'
+import { SentryAlerts, SentryAlertsProvider, alertPolicy } from './infra/sentry.ts'
 import { hostedState } from './infra/state.ts'
 import { deploymentTargetFromConfig, requireRunnableTarget } from './infra/targets.ts'
 
@@ -141,8 +141,14 @@ const railwayStack = () =>
   Alchemy.Stack(
     deployTarget.stackName,
     {
-      /** Cloudflare's providers carry the HttpClient the others use, so they are built first. */
-      providers: Layer.mergeAll(Railway.providers(), Command.providers(), GitHub.providers()).pipe(
+      /**
+       * Cloudflare's providers carry the HttpClient the others use, so they are built first. The
+       * stack's own resources (`Infra.*`) read Railway's credential and HTTP client from Railway's.
+       */
+      providers: Layer.mergeAll(CellWorkerProvider, ReleaseProvider, SentryAlertsProvider).pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(Railway.providers(), Command.providers(), GitHub.providers()),
+        ),
         Layer.provideMerge(Cloudflare.providers()),
       ),
       /** Off the PC: every machine plans and deploys against the same state (`infra/state.ts`). */
@@ -151,15 +157,11 @@ const railwayStack = () =>
     Effect.gen(function* () {
       const target = yield* requireRunnableTarget(deployTarget)
       const hosted = yield* railwayResources(target, yield* loadInfrastructureEnvironment)
-      // Management authority stays in Alchemy's process, never in Railway or a client bundle.
-      const sentry = yield* Config.option(Config.Redacted('SENTRY_MANAGEMENT_TOKEN'))
-      if (Option.isSome(sentry))
-        yield* Command.Exec('sentry-alerts', {
-          command: 'node scripts/monitoring.mjs --apply',
-          cwd: '.',
-          env: { SENTRY_AUTH_TOKEN: sentry.value },
-          memo: { include: ['scripts/monitoring.mjs'] },
-        })
+      /**
+       * Production's alert rules, applied and read back. Management authority stays in Alchemy's
+       * process (`SENTRY_MANAGEMENT_TOKEN`), never in Railway or a client bundle.
+       */
+      yield* SentryAlerts('SentryAlerts', { policy: alertPolicy() })
       /** The Computer binaries' release: the same resource on every target. */
       yield* computerBinariesRelease()
       return { webUrl: hosted.serverUrl, serverUrl: hosted.serverUrl }
