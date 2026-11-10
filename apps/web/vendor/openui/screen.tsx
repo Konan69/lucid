@@ -4,7 +4,7 @@ import { createContext, useContext, type ComponentType } from 'react'
 import { z } from 'zod/v4'
 
 /** A screen glyph in the middle of the frame: the machine with no live picture to show. */
-export function Resting() {
+function Resting() {
   return (
     <span className="vivid-screen-resting">
       <Monitor aria-hidden size={20} strokeWidth={1.6} />
