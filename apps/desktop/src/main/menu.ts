@@ -6,7 +6,8 @@ import type { DesktopPlatform } from '../shared/bridge.ts'
 /** App zoom changes also reposition the native page viewport; Electron's zoom event covers wheels only. */
 export const pageZoomChanges = new NodeEvents.EventEmitter<{ changed: [BrowserWindow] }>()
 
-/** Follow Electron 44.4.3 role increments, then notify the window that owns native guest bounds. */
+/** Follow Electron 44.4.3 role increments, then notify the window that owns native guest bounds.
+ * @public Called by scripts/pages.ts, which Knip's desktop project does not scan. */
 export function zoomPage(window: BrowserWindow, change: 'reset' | 'in' | 'out'): void {
   const level = window.webContents.getZoomLevel()
   window.webContents.setZoomLevel(change === 'reset' ? 0 : level + (change === 'in' ? 0.5 : -0.5))
