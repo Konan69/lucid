@@ -326,10 +326,11 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
      * Auth tables, then product tables, in the order `scripts/migrate.mjs` owns. Railway runs this
      * in the freshly built image before the new server takes traffic; a failure keeps the previous
      * deployment serving. The matching Worker is published before the new server takes traffic.
+     * Railway runs a Dockerfile service's command without a shell, so `&&` needs an explicit one.
      */
     preDeploy: {
       command:
-        'node scripts/migrate.mjs server && node scripts/sentry-upload.mjs vivid-mobile apps/mobile/updates && node apps/cells/scripts/build.mjs deploy',
+        "/bin/sh -c 'node scripts/migrate.mjs server && node scripts/sentry-upload.mjs vivid-mobile apps/mobile/updates && node apps/cells/scripts/build.mjs deploy'",
     },
     env: {
       DATABASE_URL: databaseUrl,
