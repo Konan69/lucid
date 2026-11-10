@@ -617,6 +617,7 @@ const resolveApproval = Effect.fn('Connections.resolveApproval')(function* (
     readonly effect: ActionEffect
     readonly operation: Option.Option<ActionOperationId>
     readonly summary: string
+    readonly rationale: string
     readonly policy: DisplayCallPolicy
     readonly basis: GateBasis
     readonly outcome: typeof ExecutorCallOutcome.Type
@@ -643,7 +644,7 @@ const resolveApproval = Effect.fn('Connections.resolveApproval')(function* (
     .approve(actor, {
       action: ProposedAction.make({
         summary: call.summary,
-        rationale: '',
+        rationale: call.rationale,
         effect: call.effect,
         target,
         continuation: Option.getOrNull(
@@ -675,6 +676,7 @@ const runConnection = Effect.fn('Connections.run')(
       readonly policy: DisplayCallPolicy
       /** What the call does, in a sentence the Person reads, should the Integration ask first. */
       readonly summary: string
+      readonly rationale: string
       readonly basis: GateBasis
     },
   ) {
@@ -1024,6 +1026,7 @@ const sendJournaled = Effect.fn('Connections.sendJournaled')(function* (
     readonly effect: ActionEffect
     readonly journal: { readonly id: ActionOperationId; readonly threadId: ThreadId }
     readonly summary: string
+    readonly rationale: string
     readonly basis: GateBasis
   },
 ) {
@@ -1042,6 +1045,7 @@ const sendJournaled = Effect.fn('Connections.sendJournaled')(function* (
     operation: Option.some(operation.id),
     policy: DisplayCallPolicy.cases.Press.make({}),
     summary: call.summary,
+    rationale: call.rationale,
     basis: call.basis,
   }).pipe(Effect.tapError(() => release(operation.id)))
   yield* settleCall(result.outcome, operation.id)
@@ -1150,6 +1154,7 @@ const useToolAs = Effect.fn('Connections.useTool')(function* (
             operation: Option.map(prospective, (value) => value.id),
             policy,
             summary: pausedSummary(tool, target.account),
+            rationale: request.rationale,
           }),
         onSome: (journal) =>
           sendJournaled(actor, row, target, {
@@ -1157,6 +1162,7 @@ const useToolAs = Effect.fn('Connections.useTool')(function* (
             basis,
             journal,
             summary: pausedSummary(tool, target.account),
+            rationale: request.rationale,
           }),
       }),
   }).pipe(
@@ -1255,6 +1261,7 @@ export const useDisplayTool = Effect.fn('Connections.useDisplayTool')(function* 
       operation: Option.none(),
       policy: displayCallPolicy(request.kind),
       summary: pausedSummary(tool, account.account),
+      rationale: '',
       basis: 'PersonPress',
     },
   ).pipe(
@@ -1312,6 +1319,7 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
     readonly workspace: Workspace
     readonly target: typeof ActionTarget.cases.Connection.Type
     readonly operation: Option.Option<ActionOperationId>
+    readonly rationale: string
   }) {
     const workspace = yield* workspaceIn(
       input.person.id,
@@ -1352,6 +1360,7 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
       operation: input.operation,
       policy: DisplayCallPolicy.cases.Press.make({}),
       summary: pausedSummary(tool, input.target.account),
+      rationale: input.rationale,
       basis: 'PersonApproved',
     })
     yield* recordTimerOutcome(actor, input.target, outcome)

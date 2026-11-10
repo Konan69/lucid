@@ -448,6 +448,7 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
             )
             if (fallbackApproval === undefined || fallbackApproval.action.continuation === null)
               return expect.fail('Expected the paused Executor request')
+            expect(fallbackApproval.action.rationale).toBe('Exercise the real continuation')
             expect((yield* approvals.inThread(test.personalId)).length).toBe(beforeFallback + 1)
             expect(yield* inspect(fallbackMarker)).toEqual(
               ExecutorCallOutcome.cases.Completed.make({ value: [] }),

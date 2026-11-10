@@ -72,7 +72,13 @@ export const actionRunnerLayer = Layer.effect(
         const target = action.target
         return ActionTarget.guards.Connection(target)
           ? Effect.provideContext(
-              connectionRunner({ person, workspace, target, operation }),
+              connectionRunner({
+                person,
+                workspace,
+                target,
+                operation,
+                rationale: action.rationale,
+              }),
               services,
             )
           : Effect.provideContext(computerRunner({ person, target, origin }), services)
