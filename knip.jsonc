@@ -42,6 +42,8 @@
         "scripts/proof/{node,vitest}.mjs",
         "scripts/hermes/proof.mjs",
         "infra/cli.mjs",
+        "infra/drift.mjs",
+        "infra/predeploy.mjs",
         "infra/copy/main.ts",
         "tools/oxlint/*/index.ts",
         "vitest.config.ts",

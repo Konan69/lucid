@@ -31,6 +31,8 @@
     "infra:verify": "node scripts/infra-verify.mjs",
     "infra:destroy": "VIVID_DEPLOY_TARGET=local ALCHEMY_TELEMETRY_DISABLED=1 alchemy destroy --stage local --yes",
     "infra:deploy": "VIVID_DEPLOY_TARGET=production ALCHEMY_TELEMETRY_DISABLED=1 alchemy deploy --stage production --env-file .env.production",
+    "deploy:production": "VIVID_DEPLOY_TARGET=production ALCHEMY_TELEMETRY_DISABLED=1 alchemy deploy --stage production --env-file .env.production --yes && pnpm infra:drift",
+    "infra:drift": "VIVID_DEPLOY_TARGET=production ALCHEMY_TELEMETRY_DISABLED=1 node infra/drift.mjs --stage production --env-file .env.production",
     "structure": "node scripts/structure.mjs",
     "typecheck:root": "node scripts/types.mjs tsconfig.json",
     "lint:root": "node scripts/lint.mjs",
