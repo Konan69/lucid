@@ -80,6 +80,27 @@ export const ArtifactRenderReview = Schema.Struct({
   toolCallId: DocumentToolCallId,
   summary: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(2000)),
 })
+/** Read-back covers only the named rectangles. Formula values are stored caches, not recalculated results. */
+export const ArtifactWorkbookInspection = Schema.Struct({
+  sheets: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      inspectedRange: Schema.Literal('A1:E5'),
+      usedRange: Schema.String,
+      cells: Schema.Array(
+        Schema.Struct({
+          address: Schema.String,
+          value: Schema.NullOr(Schema.String),
+          formula: Schema.NullOr(Schema.String),
+          truncated: Schema.Boolean,
+        }),
+      ),
+    }),
+  ),
+  omittedSheets: Schema.Array(Schema.String),
+})
+export type ArtifactWorkbookInspection = typeof ArtifactWorkbookInspection.Type
+
 /** A file is editable only through its retained source; Markdown keeps its existing editor contract. */
 export const ArtifactContent = Schema.TaggedUnion({
   Document: { body: ArtifactBody },
@@ -88,6 +109,7 @@ export const ArtifactContent = Schema.TaggedUnion({
     source: ArtifactSource,
     preview: ArtifactPreview,
     review: ArtifactRenderReview,
+    workbook: Schema.optionalKey(ArtifactWorkbookInspection),
   },
 })
 export type ArtifactContent = typeof ArtifactContent.Type
@@ -243,6 +265,7 @@ export const InspectArtifactFileOutcome = Schema.Struct({
   source: ArtifactSource,
   preview: ArtifactPreview,
   picture: Schema.Uint8ArrayFromBase64,
+  workbook: Schema.optionalKey(ArtifactWorkbookInspection),
 })
 export type InspectArtifactFileOutcome = typeof InspectArtifactFileOutcome.Type
 export const PublishArtifactFileRequest = Schema.Struct({

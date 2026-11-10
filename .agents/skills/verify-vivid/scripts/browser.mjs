@@ -1,6 +1,7 @@
 import { addresses } from './addresses.mjs'
 import { pages } from './pages.mjs'
 import { completion } from './completion.mjs'
+import { files } from './files.mjs'
 import { approve, changed, deny } from './approval.mjs'
 import { asksBrowser } from './asks.mjs'
 import { outcome } from './outcome.mjs'
@@ -72,6 +73,7 @@ const recipes = {
   addresses: { check: 'addresses' },
   pages: { check: 'pages' },
   completion: { check: 'completion' },
+  files: { check: 'files' },
   code: { check: 'code' },
   approve: { check: 'approve' },
   asks: { check: 'asks' },
@@ -138,6 +140,11 @@ const specialRecipes = {
     drive: completion,
     scope:
       'One stored and rendered completion notice for joined messages, then one ordinary message, while away.',
+  },
+  files: {
+    drive: files,
+    scope:
+      'XLSX publication and revision through the composer, exact Computer bytes, retained preview viewer and reload. No native spreadsheet editor claim.',
   },
   asks: {
     drive: asksBrowser,

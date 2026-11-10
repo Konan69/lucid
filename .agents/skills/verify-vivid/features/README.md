@@ -21,6 +21,7 @@ Read the touched feature before launching. A verdict belongs to the recorded com
 - [Send a picture](picture.md).
 - [Run a program](code.md).
 - [Documents](document.md).
+- [Workbook file publication](files.md).
 - [Watches](watch.md).
 - [Mail and Calendar behaviour](behaviour.md).
 - [Accounts added by address and failed retry](addresses.md).

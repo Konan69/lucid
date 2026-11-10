@@ -23,3 +23,7 @@ The document is real SQL data written by the runtime tools. Person edits and ver
 The real-model HTTP recipe also creates a one-page Word document on the Computer, exports a PDF, calls inspect_file and checks that its projected tool result contains native image content before publish_file. GetArtifact must retain the PDF output, separate DOCX source, PNG preview and matching render-review digest. Authenticated downloads of every role must match the stored SHA-256 and length. The recipe saves file-artifact.json, file-proof.json and each downloaded file beside the conversation evidence. Markdown tool receipts now carry ArtifactMessage references in client state, while model text retains its title and version.
 
 Current live proof is blocked: no proof-owned Computer. The verifier's Boat adapter is unconfigured. Run this recipe once the orchestrator supplies a Computer-enabled verifier and disposable Computer authority. Do not use the production Computer or create a testing machine without authorization. The PostgreSQL/SSH integration test separately proves publication retries, source mutation isolation and byte-route access/digests. It does not prove LibreOffice rendering or the model's visual review.
+
+## Workbook publication
+
+Run `verify feature files <run>` and `verify browser files <run>` for the XLSX file-publication recipe in [files.md](files.md). It proves cell read-back, exact captured downloads, editable output and an immutable revision separately from Markdown document behavior.

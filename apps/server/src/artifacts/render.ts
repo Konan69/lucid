@@ -12,17 +12,20 @@ import {
   ArtifactRenderUnsupported,
   ArtifactSource,
   ArtifactSourcePath,
+  ArtifactWorkbookInspection,
   type ArtifactFileRole,
   type InspectArtifactFileRequest,
   type PersonId,
 } from '@vivid/contracts'
 import { Effect, Predicate, Schema } from 'effect'
 import { ComputerStore } from '../computers/store.ts'
+import { workbookInspection } from './xlsx.ts'
 
 export const FileCapture = Schema.Struct({
   output: ArtifactFile,
   source: ArtifactSource,
   preview: ArtifactPreview,
+  workbook: Schema.optionalKey(ArtifactWorkbookInspection),
 })
 export type FileCapture = typeof FileCapture.Type
 export interface CapturedArtifact {
@@ -35,6 +38,7 @@ export interface CapturedArtifact {
 const mimeTypes = new Map([
   ['.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
   ['.pdf', 'application/pdf'],
+  ['.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
   ['.png', 'image/png'],
   ['.md', 'text/markdown'],
   ['.txt', 'text/plain'],
@@ -81,18 +85,22 @@ const capture = Effect.fn('Artifacts.capture')(function* (
   return bytes
 })
 
+const decodeWorkbook = Schema.decodeUnknownEffect(Schema.fromJsonString(ArtifactWorkbookInspection))
+const inspectionFailure = () =>
+  new ArtifactRenderFailed({ message: 'Workbook inspection could not be read.' })
+
 const placementFailure = () =>
   new ArtifactRenderFailed({ message: 'The captured copy could not be placed on the Computer.' })
 
 /** The random workspace contains only captured bytes. No renderer ever opens the mutable input path.
  * DOCX is exported by the Computer's LibreOffice and the first PDF page becomes a bounded PNG.
- * A PNG is already its own render. Other formats require their own proven renderer. */
+ * XLSX also returns bounded cell read-back from the captured workbook. A PNG is its own render. */
 const render = Effect.fn('Artifacts.render')(function* (
   personId: PersonId,
   output: Uint8Array,
   extension: string,
 ) {
-  if (extension === '.png') return null
+  if (extension === '.png') return { preview: null }
   const computer = yield* ComputerStore
   const directory = `/tmp/vivid-artifact-${NodeCrypto.randomUUID()}`
   const execute = (command: string) =>
@@ -119,14 +127,21 @@ const render = Effect.fn('Artifacts.render')(function* (
         yield* computer
           .put(personId, { path: `${directory}/input${extension}`, content: output })
           .pipe(Effect.mapError(placementFailure))
-        if (extension === '.docx')
+        if (extension === '.docx' || extension === '.xlsx')
           yield* execute(
-            `libreoffice -env:UserInstallation=file://${directory}/profile --headless --convert-to pdf --outdir ${directory} ${directory}/input.docx`,
+            `libreoffice -env:UserInstallation=file://${directory}/profile --headless --convert-to pdf --outdir ${directory} ${directory}/input${extension}`,
           )
         yield* execute(
           `pdftoppm -f 1 -singlefile -scale-to 1600 -png ${directory}/input.pdf ${directory}/preview`,
         )
-        return yield* capture(personId, `${directory}/preview.png`, 'preview')
+        const preview = yield* capture(personId, `${directory}/preview.png`, 'preview')
+        if (extension !== '.xlsx') return { preview }
+        yield* execute(workbookInspection(directory))
+        const bytes = yield* capture(personId, `${directory}/inspection.json`, 'preview')
+        const workbook = yield* decodeWorkbook(new TextDecoder().decode(bytes)).pipe(
+          Effect.mapError(inspectionFailure),
+        )
+        return { preview, workbook }
       }),
     () =>
       execute(`rm -rf ${directory}`).pipe(
@@ -141,9 +156,9 @@ export const captureArtifact = Effect.fn('Artifacts.captureArtifact')(function* 
   request: InspectArtifactFileRequest,
 ) {
   const extension = NodePath.posix.extname(request.path).toLowerCase()
-  if (!['.docx', '.pdf', '.png'].includes(extension))
+  if (!['.docx', '.pdf', '.png', '.xlsx'].includes(extension))
     return yield* new ArtifactRenderUnsupported({
-      message: 'Inspection supports DOCX, PDF and PNG files.',
+      message: 'Inspection supports DOCX, PDF, PNG and XLSX files.',
     })
   if (extension === '.pdf' && ArtifactSourcePath.guards.Output(request.source))
     return yield* new ArtifactRenderUnsupported({
@@ -167,17 +182,23 @@ export const captureArtifact = Effect.fn('Artifacts.captureArtifact')(function* 
         }
       }),
   })
-  const preview = yield* render(personId, output, extension)
+  const rendered = yield* render(personId, output, extension)
+  const preview = rendered.preview
   const previewMetadata =
     preview === null
       ? ArtifactPreview.cases.Output.make({})
       : ArtifactPreview.cases.Separate.make({ file: capturedFile('preview.png', preview) })
+  const metadata = FileCapture.make({
+    output: capturedFile(request.path, output),
+    source: source.metadata,
+    preview: previewMetadata,
+  })
+  const fileCapture =
+    'workbook' in rendered
+      ? FileCapture.make({ ...metadata, workbook: rendered.workbook })
+      : metadata
   return {
-    capture: FileCapture.make({
-      output: capturedFile(request.path, output),
-      source: source.metadata,
-      preview: previewMetadata,
-    }),
+    capture: fileCapture,
     output,
     source: source.bytes,
     preview,
