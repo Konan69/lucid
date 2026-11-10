@@ -1,5 +1,5 @@
 import { regenerateThreadTitle, VividRpcClient } from '@vivid/client-runtime'
-import { ThreadId, type ProjectId } from '@vivid/contracts'
+import { CodeName, ThreadId, type ProjectId } from '@vivid/contracts'
 import { sending, titleFromMessage } from '@vivid/state'
 import { Data, Effect, Option, Result, Schema } from 'effect'
 import { randomUUID } from 'expo-crypto'
@@ -7,6 +7,7 @@ import { draft } from './drafts'
 import type { Delivery } from './delivery'
 import { firstKey, type Way } from './first'
 import { refusalOf, type LiveData } from './live'
+import { recording } from './telemetry'
 import * as App from './app'
 import { offerNotifications } from './notifying'
 import { shareLocation } from './locating'
@@ -125,6 +126,9 @@ export const startThread = Effect.fn('Threads.start')(function* (
     : Start.Started({ id })
 })
 
+/** The span a first words' Thread is made in (`data/first.ts` `deliver`). */
+const FIRST = CodeName.make('First.deliver')
+
 /**
  * How the first screen's first words reach the server (`deliver`, `data/first.ts`): the Thread is
  * made, then spoken in, each answering with why it did not go through.
@@ -142,6 +146,13 @@ export const startThread = Effect.fn('Threads.start')(function* (
 export const firstWay = (data: LiveData): Way => ({
   make: (id, start) =>
     createThread(data, { id, message: start.message.words, projectId: start.projectId }).pipe(
+      // A Thread that was not made is recorded as the later words' failures are
+      // (`sending.recordFailure`), in the first words' own span.
+      Effect.tap((made) =>
+        Result.isFailure(made)
+          ? sending.recordFailure(recording, FIRST, made.failure)
+          : Effect.void,
+      ),
       Effect.map((made) =>
         Option.map(refusalOf(made), (words) => sending.Unarrival.cases.Refused.make({ words })),
       ),

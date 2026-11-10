@@ -200,8 +200,27 @@ const clientImpact = (failure: { readonly _tag: string }): Option.Option<Impact>
     ? Option.none()
     : Option.some(Predicate.isTagged(failure, 'RpcClientError') ? 'Recovered' : impactOfFailure(failure))
 
-/** The operation a failed send's first hop names: the span `delivering`'s `send` runs in. */
+/**
+ * Records a failed call the Person saw (`ClientFailed`) where it is decided, when it originated on
+ * this client (`clientImpact`), so a Thread's first words and its later words are said the same
+ * way. `operation` is the span the failure is decided in, the cause's one hop.
+ */
+export const recordFailure = (
+  recording: Recording,
+  operation: CodeName,
+  failure: { readonly _tag: string },
+): Effect.Effect<void> =>
+  Option.contains(clientImpact(failure), 'Incident')
+    ? recording.record(
+        Incident.cases.ClientFailed.make({
+          cause: [{ service: recording.source, operation, tag: CodeName.make(failure._tag) }],
+        }),
+      )
+    : Effect.void
+
+/** The operations a failed send's or create's first hop names: the spans `delivering` runs them in. */
 const SEND = CodeName.make('Sending.send')
+const CREATE = CodeName.make('Sending.create')
 
 /** How the server is asked; see `Delivering`. */
 export interface DeliveringService {
@@ -227,8 +246,10 @@ export class Delivering extends Context.Service<Delivering, DeliveringService>()
 export const delivering = (run: Live['run'], recording: Recording): DeliveringService => ({
   create: Effect.fn('Sending.create')(function* (request: CreateThreadRequest) {
     const answered = yield* run(VividRpcClient.use((client) => client.CreateThread(request)))
-    if (Result.isFailure(answered))
+    if (Result.isFailure(answered)) {
+      yield* recordFailure(recording, CREATE, answered.failure)
       return yield* new Undelivered({ why: Unarrival.cases.Unconfirmed.make({}) })
+    }
     return yield* Effect.void
   }),
   send: Effect.fn('Sending.send')(function* (delivery: Delivery) {
@@ -245,12 +266,7 @@ export const delivering = (run: Live['run'], recording: Recording): DeliveringSe
         : once
     if (Result.isSuccess(answered)) return answered.success.run
     const refused = answered.failure
-    if (Option.contains(clientImpact(refused), 'Incident'))
-      yield* recording.record(
-        Incident.cases.ClientFailed.make({
-          cause: [{ service: recording.source, operation: SEND, tag: CodeName.make(refused._tag) }],
-        }),
-      )
+    yield* recordFailure(recording, SEND, refused)
     return yield* new Undelivered({ why: unarrivalOf(refused) })
   }),
 })
