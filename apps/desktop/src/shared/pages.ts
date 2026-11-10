@@ -13,7 +13,7 @@ function pageOption<S extends Schema.Constraint>(value: S) {
 }
 
 /** Clone-safe optional data on the renderer bridge, with the usual None/Some vocabulary. */
-export type PageOption<A> = ReturnType<typeof pageOption<Schema.declare<A>>>['Type']
+type PageOption<A> = ReturnType<typeof pageOption<Schema.declare<A>>>['Type']
 
 /** No selection and a selected opaque handle are exhaustive bridge states. */
 export const ShowingTab = pageOption(Tab)
@@ -28,7 +28,7 @@ export const PageLoadFailure = pageOption(Schema.String)
 export const PageFavicon = pageOption(Schema.String)
 
 /** Address bar input is interpreted by main, never treated as an executable URL. */
-export const PageInput = Schema.Struct({
+const PageInput = Schema.Struct({
   address: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(8192)),
 })
 export type PageInput = typeof PageInput.Type

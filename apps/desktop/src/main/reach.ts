@@ -39,7 +39,7 @@ for (const [network, prefix] of [
 const MAPPED = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/iu
 
 /** Whether an address literal is on the public internet. Anything that is not an address is not. */
-export function isPublicAddress(address: string): boolean {
+function isPublicAddress(address: string): boolean {
   const mapped = MAPPED.exec(address)
   const literal = mapped === null || mapped[1] === undefined ? address : mapped[1]
   const family = NodeNet.isIP(literal)
@@ -64,7 +64,7 @@ export function isPublicAddress(address: string): boolean {
  * this check and reaches the private address. Closing that needs the connection itself pinned to
  * the checked address, which this does not do.
  */
-export const mayOpen = Effect.fn('DesktopReach.mayOpen')(function* (
+const mayOpen = Effect.fn('DesktopReach.mayOpen')(function* (
   address: string,
   resolve: (host: string) => Effect.Effect<ReadonlyArray<string>, Unresolved>,
 ) {

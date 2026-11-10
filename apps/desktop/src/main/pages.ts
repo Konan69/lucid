@@ -12,7 +12,7 @@ import {
 } from '../shared/pages.ts'
 
 /** Opener identity is main-owned metadata, never renderer or website authority. */
-export const OwnedPage = Schema.Struct({ ...Page.fields, opener: ShowingTab })
+const OwnedPage = Schema.Struct({ ...Page.fields, opener: ShowingTab })
 export type OwnedPage = typeof OwnedPage.Type
 
 /** A close descriptor restores the current address and slot, not a Chromium back operation. */

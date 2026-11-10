@@ -18,7 +18,7 @@ const missingFile = Schema.decodeUnknownOption(Schema.Struct({ code: Schema.Lite
  * This app's identity could not be read or kept. Without one that survives a restart the app
  * would enrol as a new computer every time it opened, so it does not enrol at all.
  */
-export class InstallationUnavailable extends Schema.TaggedError<InstallationUnavailable>()(
+class InstallationUnavailable extends Schema.TaggedError<InstallationUnavailable>()(
   'InstallationUnavailable',
   {},
   { title: 'This app’s identity could not be read or saved' },

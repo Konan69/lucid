@@ -37,7 +37,7 @@ import {
  */
 
 /** Chromium could not be started, or stopped answering; `said` is the end of what it printed. */
-export class ChromiumFailed extends Schema.TaggedError<ChromiumFailed>()(
+class ChromiumFailed extends Schema.TaggedError<ChromiumFailed>()(
   'ChromiumFailed',
   { step: Schema.String, said: Schema.String },
   { title: 'Chromium could not be used' },

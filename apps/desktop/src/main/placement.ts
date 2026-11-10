@@ -6,10 +6,10 @@ import * as Option from 'effect/Option'
 import * as Order from 'effect/Order'
 import * as Schema from 'effect/Schema'
 
-export const MIN_WINDOW_WIDTH = 720
-export const MIN_WINDOW_HEIGHT = 480
-export const DEFAULT_WINDOW_WIDTH = 1280
-export const DEFAULT_WINDOW_HEIGHT = 800
+const MIN_WINDOW_WIDTH = 720
+const MIN_WINDOW_HEIGHT = 480
+const DEFAULT_WINDOW_WIDTH = 1280
+const DEFAULT_WINDOW_HEIGHT = 800
 
 const PositiveInteger = Schema.Int.check(
   Schema.isGreaterThan(0, { message: 'Expected a positive integer' }),
@@ -55,21 +55,21 @@ export const defaultWindowPlacement = WindowPlacement.cases.Centered.make({
 })
 
 /** The placement file could not be read at its owning application path. */
-export class PlacementReadFailed extends Schema.TaggedError<PlacementReadFailed>()(
+class PlacementReadFailed extends Schema.TaggedError<PlacementReadFailed>()(
   'PlacementReadFailed',
   { path: Schema.String },
   { title: 'Window placement read failed' },
 ) {}
 
 /** The placement file exists but cannot safely describe a window. */
-export class PlacementInvalid extends Schema.TaggedError<PlacementInvalid>()(
+class PlacementInvalid extends Schema.TaggedError<PlacementInvalid>()(
   'PlacementInvalid',
   { path: Schema.String },
   { title: 'Window placement is invalid' },
 ) {}
 
 /** The current placement could not be persisted for the next launch. */
-export class PlacementWriteFailed extends Schema.TaggedError<PlacementWriteFailed>()(
+class PlacementWriteFailed extends Schema.TaggedError<PlacementWriteFailed>()(
   'PlacementWriteFailed',
   { path: Schema.String },
   { title: 'Window placement write failed' },

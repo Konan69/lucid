@@ -142,7 +142,7 @@ export const dialTarget = (address: string, port: number) =>
  * socket and ends its join at once (the Computer's proxy will not start, say) would then be
  * dialled, and its start command run on the Computer, every two seconds for ever.
  */
-export const STEADY = Duration.seconds(30)
+const STEADY = Duration.seconds(30)
 
 /**
  * How many pings' worth of time may go by with nothing arriving before the socket is gone (the
@@ -206,7 +206,7 @@ export interface ExitDependencies {
  * answers differently a moment later (DNS rebinding) cannot move the connection into the
  * Person's network after the check (the reference's `resolveChecked`).
  */
-export const checkedAddress = Effect.fn('DesktopEgress.checkedAddress')(function* (
+const checkedAddress = Effect.fn('DesktopEgress.checkedAddress')(function* (
   host: string,
   dependencies: Pick<ExitDependencies, 'resolve' | 'allowPrivateTargets'>,
 ) {
@@ -738,10 +738,7 @@ const carry = Effect.fn('DesktopEgress.carry')(function* (
  * jitter). It starts over once a socket has held (`STEADY`), where the reference's starts over
  * once one has opened.
  */
-export const redial = Schedule.min([
-  Schedule.exponential('2 seconds'),
-  Schedule.spaced('30 seconds'),
-])
+const redial = Schedule.min([Schedule.exponential('2 seconds'), Schedule.spaced('30 seconds')])
 
 /**
  * Keeps this computer available as the way out for as long as someone is signed in.

@@ -291,8 +291,7 @@ export interface VividDesktopBridge {
   }
 }
 
-export { ServerSettings, ServerChoice } from './settings.ts'
-export { DeviceLink, type VividDeviceBridge } from './device.ts'
+export { DeviceLink } from './device.ts'
 export {
   BrowserState,
   Page,
@@ -301,20 +300,7 @@ export {
   PageLoadFailure,
   PageFavicon,
   Tab,
-  PageInput,
-  PageRectangle,
   PagePlacement,
-  PageDownloadRefused,
-  PageMissing,
-  PageAddressRefused,
-  PageUnavailable,
-  PageLimitReached,
-  PagePositionInvalid,
-  PageReopenEmpty,
-  PageStorageClearFailed,
-  PageCacheClearFailed,
-  type VividPagesBridge,
-  type PageOption,
 } from './pages.ts'
 
 /** Selected app documents get page authority; chooser-only server settings remain separate. */

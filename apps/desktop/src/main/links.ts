@@ -12,7 +12,7 @@ export const VividDeepLink = Schema.Struct({
 export interface VividDeepLink extends Schema.Schema.Type<typeof VividDeepLink> {}
 
 /** The supplied activation is malformed or belongs to another protocol. */
-export class InvalidDeepLink extends Schema.TaggedError<InvalidDeepLink>()(
+class InvalidDeepLink extends Schema.TaggedError<InvalidDeepLink>()(
   'InvalidDeepLink',
   { url: Schema.String },
   { title: 'Invalid Vivid deep link' },
