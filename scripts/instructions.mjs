@@ -12,13 +12,13 @@ import * as NodeURL from 'node:url'
 const importLine = '@AGENTS.md\n'
 
 /**
- * List the tracked instruction files. Git is the source because untracked reference checkouts
+ * List tracked instruction files and repository skills. Git is the source because untracked reference checkouts
  * (`refs/`) and dependencies carry their own `AGENTS.md` and `CLAUDE.md`, which are not ours.
  */
 function trackedInstructionFiles(root) {
   const listed = NodeChildProcess.execFileSync(
     'git',
-    ['ls-files', '-z', '--', '*AGENTS.md', '*CLAUDE.md', 'AGENTS.md', 'CLAUDE.md'],
+    ['ls-files', '-z', '--', '*AGENTS.md', '*CLAUDE.md', '.agents/skills/**/SKILL.md'],
     { cwd: root, encoding: 'utf8' },
   )
   return [...new Set(listed.split('\0').filter((path) => path !== ''))]
@@ -27,12 +27,24 @@ function trackedInstructionFiles(root) {
 /**
  * Check that every directory with an `AGENTS.md` has a `CLAUDE.md` beside it holding only the
  * import line, and that no `CLAUDE.md` stands without the file it imports. Each error names the
- * file to change and what to write.
+ * file to change and what to write. Skills need the metadata their loaders require, so a summary
+ * cannot silently replace the description and make a skill disappear from Codex.
  */
 function validateInstructions(root, files = trackedInstructionFiles(root)) {
   const errors = []
   const present = new Set(files)
   for (const file of files.toSorted((left, right) => left.localeCompare(right))) {
+    if (NodePath.posix.basename(file) === 'SKILL.md') {
+      const body = NodeFS.readFileSync(NodePath.join(root, file), 'utf8')
+      const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(body)
+      for (const field of ['name', 'description']) {
+        if (frontmatter === null || !new RegExp(`^${field}:[ \t]*\\S`, 'mu').test(frontmatter[1]))
+          errors.push(
+            `${file}: add ${field}: <value> to YAML frontmatter; skill loaders require it`,
+          )
+      }
+      continue
+    }
     const directory = NodePath.posix.dirname(file)
     const sibling = (name) => (directory === '.' ? name : `${directory}/${name}`)
     if (NodePath.posix.basename(file) === 'AGENTS.md') {

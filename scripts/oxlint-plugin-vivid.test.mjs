@@ -997,3 +997,39 @@ void test('wire: the admission body that drifted outside the fingerprint fails, 
   // The delivery and the id are inside the registered body, so its hash already covers them.
   assert.deepEqual(unregisteredWireSchemas(shared, { RuntimeAdmissionBody }), [])
 })
+
+/** The policy CLI must reject infra's historical summary field and either missing loader field. */
+void NodeTest.test('skills require name and description in frontmatter', (context) => {
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-instructions-'))
+  context.after(() => NodeFS.rmSync(root, { recursive: true, force: true }))
+  const file = '.agents/skills/infra/SKILL.md'
+  const historical = NodeChildProcess.execFileSync('git', ['show', `bab8c618d:${file}`], {
+    encoding: 'utf8',
+  })
+  const fixed = historical.replace('\nsummary:', '\ndescription:')
+  NodeFS.mkdirSync(NodePath.join(root, '.agents/skills/infra'), { recursive: true })
+  NodeFS.writeFileSync(NodePath.join(root, file), historical)
+  NodeChildProcess.execFileSync('git', ['init', '-q', root])
+  NodeChildProcess.execFileSync('git', ['add', '--', file], { cwd: root })
+  for (const [body, field] of [
+    [historical, 'description'],
+    [fixed.replace('name: infra\n', ''), 'name'],
+  ]) {
+    NodeFS.writeFileSync(NodePath.join(root, file), body)
+    const result = NodeChildProcess.spawnSync(
+      process.execPath,
+      ['scripts/instructions.mjs', root],
+      {
+        encoding: 'utf8',
+      },
+    )
+    NodeAssert.equal(result.status, 1)
+    NodeAssert.ok(result.stderr.includes(`${file}: add ${field}: <value>`), result.stderr)
+  }
+  NodeFS.writeFileSync(NodePath.join(root, file), fixed)
+  const result = NodeChildProcess.spawnSync(process.execPath, ['scripts/instructions.mjs', root], {
+    encoding: 'utf8',
+  })
+  NodeAssert.equal(result.status, 0, result.stderr)
+  NodeAssert.equal(result.stdout, 'instruction files passed\n')
+})
