@@ -149,11 +149,11 @@ The runtime proposes; the server decides. Nothing consequential runs from model 
 The mechanism is Grok Bot's Auto-review (0.30 `source/host/extensions/auto-review/`,
 `source/packages/agent/smart-mode-classifier-context.ts`, and the approval card in
 `frontend/src-0.30/views/send-message-auto-review-approval-card.tsx`): an independent classifier call
-returning allow or block with a proposed allow rule, the same context limits, the same ten-second
-single attempt, and the same three answers. Two things differ. Grok Bot's classifier
+returning allow or block with a proposed allow rule, the same context limits and the same three
+questions. Vivid uses the review budget and retry policy above. Two things differ. Grok Bot's classifier
 returns allow or block; Vivid's returns measurements and the server decides, so the thresholds and
 the precedence are code, not prompt. Grok Bot rejects the action when the classifier fails; Vivid
-asks, because a refused action the Person wanted is worse than a question. And Grok Bot's
+uses the effect label only when unreviewed: a write runs and a destructive action asks. And Grok Bot's
 classifier runs on its vendor's backend, whose prompt and model are not in the shipped app; Vivid's
 decision wording is ours and is judged by the live evaluation `approvals/review.live.test.ts`. The
 proposed rule and **Always allow** from the reviewer are not built: the typed decision answers

@@ -594,6 +594,33 @@ const connectionOutcome = Effect.fn('Connections.outcome')(function* (
   })
 })
 
+/** Approved runners retain their Thread in the journal; display presses retain the Person.
+ * Failure after provider execution must stay uncertain, never release the dispatch for retry. */
+const auditApproval = Effect.fn('Connections.auditApproval')(
+  function* (
+    actor: Actor,
+    target: typeof ActionTarget.cases.Connection.Type,
+    call: {
+      readonly effect: ActionEffect
+      readonly operation: Option.Option<ActionOperationId>
+    },
+  ) {
+    const addressed =
+      Option.isNone(actor.threadId) && Option.isSome(call.operation)
+        ? { ...actor, threadId: Option.some((yield* originOf(call.operation.value)).threadId) }
+        : actor
+    yield* (yield* Audit).record(
+      addressed,
+      AuditEvent.cases.ActionAllowed.make({
+        service: target.account,
+        tool: target.tool,
+        effect: call.effect,
+      }),
+    )
+  },
+  (effect) => effect.pipe(Effect.result),
+)
+
 /** A Gate authorizes dispatch. Pauses keep the same operation; only provider evidence settles its receipt. */
 const runConnection = Effect.fn('Connections.run')(
   function* (
@@ -631,21 +658,7 @@ const runConnection = Effect.fn('Connections.run')(
       if (Option.isSome(prior)) return yield* notRead(answeredOutcome(prior.value))
     }
     if (outcome.approvalAnswered) {
-      // Approved runners have no live Thread on their Actor; the journal retains its attribution.
-      const addressed =
-        Option.isNone(actor.threadId) && Option.isSome(operation)
-          ? { ...actor, threadId: Option.some((yield* originOf(operation.value)).threadId) }
-          : actor
-      const audited = yield* (yield* Audit)
-        .record(
-          addressed,
-          AuditEvent.cases.ActionAllowed.make({
-            service: target.account,
-            tool: target.tool,
-            effect,
-          }),
-        )
-        .pipe(Effect.result)
+      const audited = yield* auditApproval(actor, target, { effect, operation })
       if (Result.isFailure(audited)) {
         const observedAt = yield* Clock.currentTimeMillis
         return yield* notRead(

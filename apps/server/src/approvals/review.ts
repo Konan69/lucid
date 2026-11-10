@@ -25,7 +25,7 @@ const INPUT_CHARACTERS = 12_000
  * provider that still answers would hold every write on a Person's own Integration for up to ten
  * seconds where switching decisions off would run it at once. Three seconds is several times the
  * 490 to 810 ms measured per review through the gateway on 4 Oct 2026 (one first call took
- * 1,716 ms); past it the action is unreviewed.
+ * 1,716 ms). An exhausted second attempt leaves the action unreviewed.
  */
 const REVIEW_BUDGET = '3 seconds'
 

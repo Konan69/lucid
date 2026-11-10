@@ -3,6 +3,7 @@ import * as Layer from 'effect/Layer'
 import { describe, expect, layer } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
 import * as Ref from 'effect/Ref'
+import * as Option from 'effect/Option'
 import { eq } from 'drizzle-orm'
 import {
   ActionTarget,
@@ -11,6 +12,7 @@ import {
   BrowseTarget,
   ConnectionId,
   FeedItem,
+  draftOf,
   ProposedAction,
   RuleScope,
   WatchId,
@@ -160,6 +162,8 @@ layer(testDatabaseLayer)((it) => {
             expect(approvals).toHaveLength(expected === 'ApprovalRequired' ? 1 : 0)
             if (GateDecision.guards.ApprovalRequired(decision)) {
               expect(approvals.map((approval) => approval.action)).toEqual([proposed])
+              if (place === 'Background')
+                expect(Option.isSome(draftOf(decision.approval.action))).toBe(true)
               const feed = yield* readFeed(database, test.personal.person.id)
               expect(feed.items).toHaveLength(1)
               expect(feed.items.filter(FeedItem.guards.Waiting).map((item) => item.asking)).toEqual(

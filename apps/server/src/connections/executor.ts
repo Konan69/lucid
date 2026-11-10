@@ -2848,9 +2848,10 @@ const continueApproved = Effect.fn('Executor.continueApproved')(function* (
       null,
     ).pipe(Effect.result)
     if (Result.isFailure(resumed)) {
-      const result = Schema.is(ExecutorRejected)(resumed.failure)
-        ? ExecutorCallOutcome.cases.Rejected.make({ message: resumed.failure.message })
-        : ExecutorCallOutcome.cases.OutcomeUnknown.make({})
+      const result =
+        resumed.failure instanceof ExecutorRejected
+          ? ExecutorCallOutcome.cases.Rejected.make({ message: resumed.failure.message })
+          : ExecutorCallOutcome.cases.OutcomeUnknown.make({})
       return { ...result, approvalAnswered: true as const }
     }
     outcome = resumed.success
