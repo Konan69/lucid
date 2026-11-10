@@ -179,15 +179,12 @@ export const workingFor = (person: Option.Option<PersonName>): ReadonlyArray<str
 const HOUR = 3_600_000
 
 /**
- * The clock for one response, locked to the hour. Ported from VCOS
- * (`apps/web/src/agent/assistant-temporal-context.ts`, `readAssistantTemporalContext`): read the
- * instant once, truncate it to the hour, and project that one instant into the Person's zone.
- * Hour granularity keeps the text identical for every model turn of a response and for every
- * response within the hour; a minute would change the instruction on almost every reply.
+ * The actual instant at the start of one response. The saved context keeps it identical across
+ * model turns without losing the minutes needed to resolve relative deadlines.
  */
 const readClock = Effect.fn('Context.readClock')(function* () {
   const now = yield* Clock.currentTimeMillis
-  return Option.some(now - (now % HOUR))
+  return Option.some(now)
 })
 
 /** Where a response's context is read from: the server, and the cell memory authority. */
@@ -240,12 +237,8 @@ export function contextInstruction(context: VividContext) {
 }
 
 /**
- * The current date and hour, last in the context, as VCOS places its clock last in the system
- * prompt (`system-prompt.ts`). Before this the model knew the date and never the time, so "in two
- * hours" or "is it too late to call" had nothing to resolve against. The same instant is given in
- * UTC so a daylight-saving offset or a date that differs between zones is unambiguous. VCOS also
- * gives the model a tool for exact minutes; Vivid has none, so the line says the minutes are not
- * known instead of letting the model state ":00" as the time.
+ * Local and UTC time describe the same frozen instant at minute precision, so relative dates
+ * have a clock and daylight-saving offsets or dates that differ between zones are unambiguous.
  */
 function clock(context: VividContext) {
   if (Option.isNone(context.asOf)) return ''
@@ -261,7 +254,7 @@ function clock(context: VividContext) {
     timeZone: zone,
   }).format(context.asOf.value)
   const utc = new Date(context.asOf.value).toISOString().slice(0, 16)
-  return `\n\nCurrent local date and time (${zone}, locked to the hour): ${local}. UTC instant: ${utc}Z. This is the start of the current hour; the minutes are not known. Use it as the clock for today, tomorrow, deadlines and anything relative to now.`
+  return `\n\nCurrent local date and time (${zone}): ${local}. UTC instant: ${utc}Z. This clock is frozen at the start of this response. Use it for today, tomorrow, deadlines and anything relative to now.`
 }
 
 /** A reading older than this is said to be old: the Person may well have moved since. */
