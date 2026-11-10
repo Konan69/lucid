@@ -1,3 +1,5 @@
+import { inputRequests } from '../inputs/tables.ts'
+import { operationOf } from '../actions/journal.ts'
 import { RuleStore } from '../rules/store.ts'
 import { actionRunnerLayer } from '../approvals/runner.ts'
 import { DeviceRegistry } from '../computers/device.ts'
@@ -9,6 +11,10 @@ import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import {
   ApprovalState,
+  ApprovalBinding,
+  ActionTarget,
+  ProposedAction,
+  InputRequestState,
   ActionReceipt,
   ToolCallId,
   ApprovalDecision,
@@ -17,7 +23,17 @@ import {
   AuditEvent,
   RuleScope,
 } from '@vivid/contracts'
-import { ConfigProvider, Context, Effect, Layer, Predicate, Ref, Schema } from 'effect'
+import {
+  Clock,
+  ConfigProvider,
+  Context,
+  Effect,
+  Layer,
+  Predicate,
+  Ref,
+  Result,
+  Schema,
+} from 'effect'
 import { HttpClient } from 'effect/http'
 import { eq } from 'drizzle-orm'
 import { Database } from '../database/client.ts'
@@ -537,6 +553,167 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
             })
             expect(drawn.outcome._tag).toBe('Rejected')
             expect((yield* Ref.get(sent)).slice(queryDrawBefore)).toEqual(['call'])
+            for (const tool of ['input', 'question']) {
+              for (const action of ['cancel', 'decline'] as const) {
+                const result = yield* start(tool, crypto.randomUUID())
+                if (!ToolOutcome.guards.InputRequired(result.outcome))
+                  return expect.fail('Expected typed request')
+                const id = result.outcome.requestId
+                const saved = (yield* inputs.inbox(test.personal)).find((item) => item.id === id)
+                if (
+                  saved === undefined ||
+                  saved.integration === null ||
+                  saved.integration.continuation === null
+                )
+                  return expect.fail('Expected the saved input operation')
+                const operation = saved.integration.continuation.operation
+                const answered = yield* inputs.answerIntegration(test.personal, {
+                  id,
+                  response: { action },
+                })
+                expect(answered.outcome._tag).toBe(action === 'cancel' ? 'Cancelled' : 'Declined')
+                expect(InputRequestState.guards.Answered(answered.request.state)).toBe(true)
+                const [receipt] = yield* database.run(
+                  database.select().from(actions).where(eq(actions.id, operation)),
+                )
+                if (receipt === undefined) return expect.fail('Expected settled input receipt')
+                expect(ActionReceipt.guards.Unknown(yield* decodeReceipt(receipt.receipt))).toBe(
+                  true,
+                )
+              }
+            }
+
+            const expiring = []
+            for (const tool of ['input', 'question']) {
+              const parent = yield* approvals.raise(
+                test.vivid,
+                ProposedAction.make({
+                  summary: `Expire ${tool}`,
+                  rationale: 'Prove input expiry settles approved execution',
+                  effect: tool === 'input' ? 'write' : 'read',
+                  target: ActionTarget.cases.Connection.make({
+                    connectionId: row.id,
+                    account: account.account,
+                    tool,
+                    input: { marker: crypto.randomUUID() },
+                  }),
+                }),
+                ApprovalBinding.make({
+                  connectionGeneration: row.authorizationGeneration,
+                  preconditions: [],
+                }),
+              )
+              yield* approvals.decide(test.personal, {
+                id: parent.id,
+                digest: parent.digest,
+                decision: ApprovalDecision.cases.AllowOnce.make({}),
+              })
+              const operation = operationOf.approval(parent.id)
+              const request = (yield* inputs.inbox(test.personal)).find(
+                (item) =>
+                  item.integration !== null &&
+                  item.integration.continuation !== null &&
+                  item.integration.continuation.operation === operation,
+              )
+              if (request === undefined)
+                return expect.fail('Expected input under the parent Approval')
+              expiring.push({ parent, request, operation })
+            }
+            const future = (yield* Clock.currentTimeMillis) + 16 * 60 * 1000
+            const actualClock = yield* Clock.clockWith(Effect.succeed)
+            const expiryClock: Clock.Clock = {
+              currentTimeMillisUnsafe: () => future,
+              currentTimeMillis: Effect.succeed(future),
+              currentTimeNanosUnsafe: () => BigInt(future) * 1_000_000n,
+              currentTimeNanos: Effect.succeed(BigInt(future) * 1_000_000n),
+              monotonicTimeNanosUnsafe: () => actualClock.monotonicTimeNanosUnsafe(),
+              monotonicTimeNanos: actualClock.monotonicTimeNanos,
+              sleep: (duration) => actualClock.sleep(duration),
+            }
+            const beforeExpiry = (yield* Ref.get(sent)).length
+            yield* inputs.expire.pipe(Effect.provideService(Clock.Clock, expiryClock))
+            expect((yield* Ref.get(sent)).length).toBe(beforeExpiry)
+            for (const { parent, request, operation } of expiring) {
+              const expired = (yield* inputs.inThread(test.personalId)).find(
+                (item) => item.id === request.id,
+              )
+              if (expired === undefined) return expect.fail('Expected retained expired request')
+              expect(InputRequestState.guards.Expired(expired.state)).toBe(true)
+              const ended = (yield* approvals.inThread(test.personalId)).find(
+                (item) => item.id === parent.id,
+              )
+              if (ended === undefined) return expect.fail('Expected settled parent Approval')
+              expect(ApprovalState.guards.OutcomeUnknown(ended.state)).toBe(true)
+              const [receipt] = yield* database.run(
+                database.select().from(actions).where(eq(actions.id, operation)),
+              )
+              if (receipt === undefined) return expect.fail('Expected expired operation receipt')
+              expect(ActionReceipt.guards.Unknown(yield* decodeReceipt(receipt.receipt))).toBe(true)
+            }
+
+            const doomed = yield* store.make(test.personal, { ...app, name: 'Removed input proof' })
+            const doomedRow = (yield* store.records(test.personal)).find(
+              (item) => item.id === doomed.connection.id,
+            )
+            if (doomedRow === undefined) return expect.fail('Expected disposable Connection')
+            const doomedResult = yield* useTool(test.vivid, {
+              connectionId: doomedRow.id,
+              toolCallId: ToolCallId.make(crypto.randomUUID()),
+              tool: 'input',
+              input: { marker: crypto.randomUUID() },
+              summary: 'Answer a removed Integration',
+              rationale: 'Prove failure after answer claim',
+            })
+            if (!ToolOutcome.guards.InputRequired(doomedResult.outcome))
+              return expect.fail('Expected doomed input')
+            const doomedId = doomedResult.outcome.requestId
+            const doomedInput = (yield* inputs.inbox(test.personal)).find(
+              (item) => item.id === doomedId,
+            )
+            if (
+              doomedInput === undefined ||
+              doomedInput.integration === null ||
+              doomedInput.integration.continuation === null
+            )
+              return expect.fail('Expected saved doomed input')
+            const doomedOperation = doomedInput.integration.continuation.operation
+            yield* database.run(
+              database
+                .update(inputRequests)
+                .set({ status: 'answering' })
+                .where(eq(inputRequests.id, doomedId)),
+            )
+            const otherAnswer = yield* inputs
+              .answerIntegration(test.other, { id: doomedId, response: { action: 'decline' } })
+              .pipe(Effect.result)
+            expect(Result.isFailure(otherAnswer)).toBe(true)
+            const [held] = yield* database.run(
+              database.select().from(inputRequests).where(eq(inputRequests.id, doomedId)),
+            )
+            if (held === undefined) return expect.fail('Expected request held for its Person')
+            expect(held.status).toBe('answering')
+            yield* database.run(
+              database
+                .update(inputRequests)
+                .set({ status: 'waiting' })
+                .where(eq(inputRequests.id, doomedId)),
+            )
+            yield* store.remove(test.personal, doomedRow.id)
+            const uncertain = yield* inputs.answerIntegration(test.personal, {
+              id: doomedId,
+              response: { action: 'accept', content: values },
+            })
+            expect(uncertain.outcome._tag).toBe('Uncertain')
+            expect(InputRequestState.guards.Answered(uncertain.request.state)).toBe(true)
+            const [doomedReceipt] = yield* database.run(
+              database.select().from(actions).where(eq(actions.id, doomedOperation)),
+            )
+            if (doomedReceipt === undefined)
+              return expect.fail('Expected uncertain removed Connection receipt')
+            expect(ActionReceipt.guards.Unknown(yield* decodeReceipt(doomedReceipt.receipt))).toBe(
+              true,
+            )
+
             const lost = yield* start('input', crypto.randomUUID())
             if (!ToolOutcome.guards.InputRequired(lost.outcome))
               return expect.fail('Expected saved input')
