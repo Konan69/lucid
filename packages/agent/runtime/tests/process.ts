@@ -315,9 +315,16 @@ export const start = Effect.fn('RuntimeFixture.start')(function* (given: World) 
 
   const send = Effect.fn('RuntimeFixture.send')(function* (
     path: string,
-    input: { readonly method: 'GET' | 'POST'; readonly body?: unknown; readonly token?: string },
+    input: {
+      readonly method: 'GET' | 'POST'
+      readonly body?: unknown
+      readonly token?: string
+      /** Headers the server sent beside these, such as its contract fingerprint. */
+      readonly headers?: Readonly<Record<string, string>>
+    },
   ) {
     const headers = {
+      ...input.headers,
       authorization: `Bearer ${input.token === undefined ? TOKEN : input.token}`,
       'content-type': 'application/json',
     }
