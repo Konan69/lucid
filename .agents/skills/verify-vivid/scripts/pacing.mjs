@@ -1,6 +1,6 @@
 import * as NodeAssert from 'node:assert/strict'
 import { Schema } from 'effect'
-import { PatchSettingsRequest } from '@vivid/contracts'
+import { PatchSettingsRequest, StopWatchRequest } from '@vivid/contracts'
 import { decodeText } from './receipts.mjs'
 import { chat, history, json, rpc, settled } from './wire.mjs'
 import { connectPulse, emit, posted, threadFor } from './watch.mjs'
@@ -195,6 +195,6 @@ export async function pacing(state, id, directory) {
         'Real model spoken correction and Watch posts; production pacer with controlled clock and real disposable SQL/queue. Notification obligations, not device push delivery.',
     })
   } finally {
-    await rpc(state, 'StopWatch', { id: watch.id }, directory, 'stop-pacing-watch')
+    await rpc(state, 'StopWatch', StopWatchRequest.cases.Removed.make({ name: watch.name }), directory, 'stop-pacing-watch')
   }
 }
