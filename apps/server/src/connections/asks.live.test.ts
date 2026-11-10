@@ -516,6 +516,37 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
                   .some((line) => line.includes(message) && line.includes(fallbackOperation)),
               ).toBe(true)
             expect((yield* approvals.inThread(test.personalId)).length).toBe(beforeFallback + 1)
+            for (const decision of [
+              ApprovalDecision.cases.Deny.make({}),
+              ApprovalDecision.cases.Cancel.make({}),
+            ]) {
+              const marker = crypto.randomUUID()
+              const held = yield* start('approve', marker)
+              if (!ToolOutcome.guards.ApprovalRequired(held.outcome))
+                return expect.fail('Expected held Approval')
+              const id = held.outcome.approvalId
+              const approval = (yield* approvals.inbox(test.personal)).find(
+                (item) => item.id === id,
+              )
+              if (approval === undefined || approval.action.continuation === null)
+                return expect.fail('Expected saved approval request')
+              expect(approval.action.continuation.pause._tag).toBe('Approval')
+              const beforeAnswer = (yield* Ref.get(sent)).length
+              const answered = yield* approvals.decide(test.personal, {
+                id,
+                digest: approval.digest,
+                decision,
+              })
+              expect((yield* Ref.get(sent)).slice(beforeAnswer)).toEqual(['resume'])
+              if (answered.integrationOutcome === null)
+                return expect.fail('Expected the Integration refusal')
+              expect(answered.integrationOutcome._tag).toBe(
+                ApprovalDecision.guards.Deny(decision) ? 'Declined' : 'Cancelled',
+              )
+              expect(yield* inspect(marker)).toEqual(
+                ExecutorCallOutcome.cases.Completed.make({ value: [] }),
+              )
+            }
             yield* Ref.set(
               observed.review,
               Review.cases.Reviewed.make({ asked: 0.95, beyond: 0.1, contained: 0.1 }),
@@ -529,6 +560,44 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
             const reviewedBefore = yield* Ref.get(reviews)
             expect((yield* start('approve', crypto.randomUUID())).outcome._tag).toBe('Completed')
             expect(yield* Ref.get(reviews)).toBe(reviewedBefore + 1)
+            yield* Ref.set(
+              observed.review,
+              Review.cases.Reviewed.make({ asked: 0.1, beyond: 0.9, contained: 0.1 }),
+            )
+            const askingMarker = crypto.randomUUID()
+            const askingBefore = yield* Ref.get(reviews)
+            const asking = yield* start('approve', askingMarker)
+            expect(yield* Ref.get(reviews)).toBe(askingBefore + 1)
+            if (!ToolOutcome.guards.ApprovalRequired(asking.outcome))
+              return expect.fail('Expected the re-review to ask')
+            const askingId = asking.outcome.approvalId
+            const askingApproval = (yield* approvals.inbox(test.personal)).find(
+              (item) => item.id === askingId,
+            )
+            if (askingApproval === undefined || askingApproval.action.continuation === null)
+              return expect.fail('Expected the re-reviewed saved request')
+            expect(askingApproval.action.continuation.pause._tag).toBe('Approval')
+            expect(askingApproval.action.rationale).toBe('Exercise the real continuation')
+            expect(yield* inspect(askingMarker)).toEqual(
+              ExecutorCallOutcome.cases.Completed.make({ value: [] }),
+            )
+            const beforeAskingAnswer = (yield* Ref.get(sent)).length
+            const allowedAsking = yield* approvals.decide(test.personal, {
+              id: askingId,
+              digest: askingApproval.digest,
+              decision: ApprovalDecision.cases.AllowOnce.make({}),
+            })
+            expect((yield* Ref.get(sent)).slice(beforeAskingAnswer)).toEqual(['resume'])
+            expect(ApprovalState.guards.Succeeded(allowedAsking.state)).toBe(true)
+            expect(yield* inspect(askingMarker)).toEqual(
+              ExecutorCallOutcome.cases.Completed.make({
+                value: [{ marker: askingMarker, phase: 'approved' }],
+              }),
+            )
+            yield* Ref.set(
+              observed.review,
+              Review.cases.Reviewed.make({ asked: 0.95, beyond: 0.1, contained: 0.1 }),
+            )
             yield* rules.remove(test.personal, allowRule.id)
             const neverRule = yield* rules.create(test.personal, {
               action: 'Never run the proof tool',
@@ -687,6 +756,22 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
                 return expect.fail('Expected input under the parent Approval')
               expiring.push({ parent, request, operation })
             }
+            yield* Ref.set(observed.review, Review.cases.Unreviewed.make({ reason: 'Provider' }))
+            const expiredMarker = crypto.randomUUID()
+            const heldExpiry = yield* start('approve', expiredMarker)
+            if (!ToolOutcome.guards.ApprovalRequired(heldExpiry.outcome))
+              return expect.fail('Expected expiring held Approval')
+            const heldExpiryId = heldExpiry.outcome.approvalId
+            const heldExpiryApproval = (yield* approvals.inbox(test.personal)).find(
+              (item) => item.id === heldExpiryId,
+            )
+            if (heldExpiryApproval === undefined || heldExpiryApproval.action.continuation === null)
+              return expect.fail('Expected expiring saved request')
+            const heldExpiryOperation = heldExpiryApproval.action.continuation.operation
+            yield* Ref.set(
+              observed.review,
+              Review.cases.Reviewed.make({ asked: 0.95, beyond: 0.1, contained: 0.1 }),
+            )
             const future = (yield* Clock.currentTimeMillis) + 16 * 60 * 1000
             const actualClock = yield* Clock.clockWith(Effect.succeed)
             const expiryClock: Clock.Clock = {
@@ -699,6 +784,21 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
               sleep: (duration) => actualClock.sleep(duration),
             }
             const beforeExpiry = (yield* Ref.get(sent)).length
+            yield* approvals.expire.pipe(Effect.provideService(Clock.Clock, expiryClock))
+            expect((yield* Ref.get(sent)).length).toBe(beforeExpiry)
+            const sweptApprovals = yield* approvals.inThread(test.personalId)
+            const sweptHeld = sweptApprovals.find((item) => item.id === heldExpiryId)
+            if (sweptHeld === undefined || sweptHeld.integrationOutcome === null)
+              return expect.fail('Expected expired held Approval')
+            expect(ApprovalState.guards.Expired(sweptHeld.state)).toBe(true)
+            expect(sweptHeld.integrationOutcome._tag).toBe('Expired')
+            const [heldExpiryReceipt] = yield* database.run(
+              database.select().from(actions).where(eq(actions.id, heldExpiryOperation)),
+            )
+            if (heldExpiryReceipt === undefined) return expect.fail('Expected held expiry receipt')
+            expect(
+              ActionReceipt.guards.Unknown(yield* decodeReceipt(heldExpiryReceipt.receipt)),
+            ).toBe(true)
             yield* inputs.expire.pipe(Effect.provideService(Clock.Clock, expiryClock))
             expect((yield* Ref.get(sent)).length).toBe(beforeExpiry)
             for (const { parent, request, operation } of expiring) {
@@ -718,6 +818,10 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
               if (receipt === undefined) return expect.fail('Expected expired operation receipt')
               expect(ActionReceipt.guards.Unknown(yield* decodeReceipt(receipt.receipt))).toBe(true)
             }
+
+            expect(yield* inspect(expiredMarker)).toEqual(
+              ExecutorCallOutcome.cases.Completed.make({ value: [] }),
+            )
 
             const doomed = yield* store.make(test.personal, { ...app, name: 'Removed input proof' })
             const doomedRow = (yield* store.records(test.personal)).find(
@@ -782,6 +886,25 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
               true,
             )
 
+            yield* Ref.set(observed.review, Review.cases.Unreviewed.make({ reason: 'Provider' }))
+            const restartMarker = crypto.randomUUID()
+            const heldRestart = yield* start('approve', restartMarker)
+            if (!ToolOutcome.guards.ApprovalRequired(heldRestart.outcome))
+              return expect.fail('Expected Approval before restart')
+            const heldRestartId = heldRestart.outcome.approvalId
+            const heldRestartApproval = (yield* approvals.inbox(test.personal)).find(
+              (item) => item.id === heldRestartId,
+            )
+            if (
+              heldRestartApproval === undefined ||
+              heldRestartApproval.action.continuation === null
+            )
+              return expect.fail('Expected saved Approval before restart')
+            const heldRestartOperation = heldRestartApproval.action.continuation.operation
+            yield* Ref.set(
+              observed.review,
+              Review.cases.Reviewed.make({ asked: 0.95, beyond: 0.1, contained: 0.1 }),
+            )
             const lost = yield* start('input', crypto.randomUUID())
             if (!ToolOutcome.guards.InputRequired(lost.outcome))
               return expect.fail('Expected saved input')
@@ -797,6 +920,27 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
               return expect.fail('Expected journaled input')
             const operation = savedInput.integration.continuation.operation
             yield* restart()
+            const beforeRestartAnswer = (yield* Ref.get(sent)).length
+            const expiredHeld = yield* approvals.decide(test.personal, {
+              id: heldRestartId,
+              digest: heldRestartApproval.digest,
+              decision: ApprovalDecision.cases.AllowOnce.make({}),
+            })
+            expect((yield* Ref.get(sent)).slice(beforeRestartAnswer)).toEqual(['resume'])
+            if (expiredHeld.integrationOutcome === null)
+              return expect.fail('Expected lost Approval outcome')
+            expect(expiredHeld.integrationOutcome._tag).toBe('Expired')
+            expect(ApprovalState.guards.OutcomeUnknown(expiredHeld.state)).toBe(true)
+            expect(yield* inspect(restartMarker)).toEqual(
+              ExecutorCallOutcome.cases.Completed.make({ value: [] }),
+            )
+            const [restartReceipt] = yield* database.run(
+              database.select().from(actions).where(eq(actions.id, heldRestartOperation)),
+            )
+            if (restartReceipt === undefined) return expect.fail('Expected lost Approval receipt')
+            expect(ActionReceipt.guards.Unknown(yield* decodeReceipt(restartReceipt.receipt))).toBe(
+              true,
+            )
             const resumeBefore = (yield* Ref.get(sent)).length
             const expired = yield* inputs.answerIntegration(test.personal, {
               id: lostId,
