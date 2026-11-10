@@ -276,7 +276,7 @@ async function launch() {
     VIVID_PUSH_VAPID_PUBLIC: curve.getPublicKey().toString('base64url'),
     VIVID_PUSH_VAPID_PRIVATE: curve.getPrivateKey().toString('base64url'),
     VIVID_PUSH_SUBJECT: 'mailto:verify@example.test',
-    VIVID_DECISIONS: 'off',
+    VIVID_DECISIONS: state.modelKind === 'rehearsal' ? 'off' : 'on',
     VIVID_DISCORD_PEOPLE: state.run + '@example.test',
     GOOGLE_CLIENT_ID: 'rehearsal',
     GOOGLE_CLIENT_SECRET: 'unused-google-rehearsal-authority',
@@ -306,6 +306,7 @@ async function launch() {
       VIVID_RUNTIME_TOKEN: token,
       VIVID_SERVER_URL: state.server,
       VIVID_MODEL: state.model,
+      VIVID_DECISIONS: env.VIVID_DECISIONS,
     },
   )
   const runtimeHealth = await fetch(`http://127.0.0.1:${state.ports.runtime}/health`)

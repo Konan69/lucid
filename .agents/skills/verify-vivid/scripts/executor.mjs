@@ -199,7 +199,7 @@ export async function executor(state, { run, own, save, cleanEnv }) {
 }
 
 /** No authority enters logs. Direct calls are confined to this run's own Executor origin. */
-export async function executorRequest(state, path, { schema, body }) {
+export async function executorRequest(state, path, { schema, body, memberKey }) {
   const config = decodeText(
     Configuration,
     await NodeFSP.readFile(state.scratch + '/executor.json', 'utf8'),
@@ -208,7 +208,10 @@ export async function executorRequest(state, path, { schema, body }) {
     `${config.origin}/api/organizations/${encodeURIComponent(config.organization)}${path}`,
     {
       method: body === undefined ? 'GET' : 'POST',
-      headers: { authorization: 'Bearer ' + config.key, 'content-type': 'application/json' },
+      headers: {
+        authorization: 'Bearer ' + (memberKey ?? config.key),
+        'content-type': 'application/json',
+      },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(120_000),
     },

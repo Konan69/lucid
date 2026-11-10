@@ -3,6 +3,7 @@ import * as NodeAssert from 'node:assert/strict'
 import * as NodeFSP from 'node:fs/promises'
 import { Redacted, Schema } from 'effect'
 import {
+  BackgroundWork,
   ConnectionState,
   ConnectionStep,
   NotificationOpens,
@@ -20,6 +21,7 @@ import { command } from './process.mjs'
 import { providerSnapshot } from './snapshot.mjs'
 import { ExecutorApp, ExecutorTools, ExecutorResult, executorRequest } from './executor.mjs'
 import { authSecret } from './settings.mjs'
+import { memberKey } from './member.mjs'
 
 const rowSchemas = {
   vivid_connections: Schema.Struct({ executor_app: Schema.NonEmptyString }),
@@ -168,14 +170,17 @@ const longWords = (marker, end) => {
 
 /** An external provider invokes Executor directly, outside every Vivid tool and approval adapter. */
 async function emit(state, { app, words, name }, directory) {
+  const key = await memberKey(state, state.person)
   const tools = await executorRequest(state, '/apps/' + encodeURIComponent(app) + '/tools', {
     schema: ExecutorTools,
+    memberKey: key,
   })
   const tool = tools.items.find((candidate) => candidate.name === 'emit')
   NodeAssert.ok(tool, 'Executor app has no emitting operation')
   const receipt = crypto.randomUUID()
   const result = await executorRequest(state, '/apps/' + encodeURIComponent(app) + '/tools/call', {
     schema: ExecutorResult,
+    memberKey: key,
     body: {
       version: tools.version,
       kind: 'mutation',
@@ -512,9 +517,10 @@ async function completion(state, { id, integration }, directory) {
   )
   const receipt = await emit(state, { app: integration.app, marker, name: 'pulse' }, path)
   await observe(state, {
-    tag: 'WatchWatches',
+    tag: 'WatchWork',
     payload: null,
-    accept: (list) => !list.watches.some((watch) => watch.id === watching.id),
+    accept: (list) =>
+      !list.work.some((work) => BackgroundWork.guards.Watch(work) && work.watch === watching.id),
   })
   const thread = threadFor(watching.id, receipt)
   const detail = await settled(state, thread, 1, 'Completed', path)
