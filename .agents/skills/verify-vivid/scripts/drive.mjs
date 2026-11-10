@@ -35,6 +35,7 @@ import { githubProof, githubBlocked } from './github.mjs'
 import { library } from './library.mjs'
 import { monitoring } from './monitoring.mjs'
 import { capture, computerFile } from './computers.mjs'
+import { files } from './files.mjs'
 import { pushProof } from './push.mjs'
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { pictureAddress } = await import(web.resolve('@vivid/state'))
@@ -58,6 +59,7 @@ export const features = [
   'picture',
   'code',
   'document',
+  'files',
   'watch',
   'integrations',
   'checkin',
@@ -598,6 +600,7 @@ const recipes = {
   outcome,
   picture,
   document,
+  files,
   devices,
   feed,
   memory,

@@ -1,3 +1,4 @@
+import { files } from './files.mjs'
 import { approve, changed, deny } from './approval.mjs'
 import { asksBrowser } from './asks.mjs'
 import { outcome } from './outcome.mjs'
@@ -64,6 +65,7 @@ const missing = {
   'texting-discord': 'No browser recipe for Text Vivid Discord connect yet',
 }
 const recipes = {
+  files: { check: 'files' },
   code: { check: 'code' },
   approve: { check: 'approve' },
   asks: { check: 'asks' },
@@ -116,6 +118,11 @@ const recipes = {
   },
 }
 const specialRecipes = {
+  files: {
+    drive: files,
+    scope:
+      'XLSX publication and revision through the composer, exact Computer bytes, retained preview viewer and reload. No native spreadsheet editor claim.',
+  },
   asks: {
     drive: asksBrowser,
     scope:
