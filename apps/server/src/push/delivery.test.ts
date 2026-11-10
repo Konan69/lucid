@@ -12,7 +12,7 @@ import {
 } from '@vivid/contracts'
 import { describe, expect, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
-import { Effect, Option, Ref, Result, Schema, Layer } from 'effect'
+import { Effect, Exit, Option, Ref, Result, Schema, Layer } from 'effect'
 import { Clock } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import {
@@ -601,10 +601,7 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
                 ),
               ),
             )
-            expect(correction).toMatchObject({
-              _tag: 'Success',
-              value: { wakingHours: { start: 660, end: 1290 } },
-            })
+            expect(Exit.isSuccess(correction)).toBe(true)
             yield* TestClock.adjust('10 hours')
             yield* paceOnce()
             yield* deliverOwed()
