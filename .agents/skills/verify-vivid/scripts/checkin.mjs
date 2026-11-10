@@ -1,6 +1,13 @@
 import { Option, Schema } from 'effect'
 import * as NodeAssert from 'node:assert/strict'
-import { CheckinArming, WatchPurpose, RunOrigin, TimerReceipt, OwedState } from '@vivid/contracts'
+import {
+  BackgroundWork,
+  CheckinArming,
+  WatchPurpose,
+  RunOrigin,
+  TimerReceipt,
+  OwedState,
+} from '@vivid/contracts'
 import { observe } from './observation.mjs'
 import { chat, history, rpc, settled, json } from './wire.mjs'
 
@@ -71,13 +78,14 @@ export async function checkin(state, id, directory) {
 
   const ready = Promise.withResolvers()
   const confirmation = observe(state, {
-    tag: 'WatchWatches',
+    tag: 'WatchWork',
     payload: null,
     accept: (list) => {
       ready.resolve()
-      return list.watches.some(
+      return list.work.some(
         (watch) =>
-          watch.id === watching.id &&
+          BackgroundWork.guards.Watch(watch) &&
+          watch.watch === watching.id &&
           WatchPurpose.guards.Checkin(watch.purpose) &&
           CheckinArming.guards.Confirmed(watch.purpose.arming) &&
           watch.purpose.arming.operationKey !== first.operationKey,
@@ -91,7 +99,9 @@ export async function checkin(state, id, directory) {
     `For this proof, change ${marker} to check in one second instead, using the timer Integration's shortest positive delay. Keep its source and Feed instruction. Use the same Integration. It should fire on its own; do not call its emitting operation yourself.`,
     directory,
   )
-  const confirmed = (await confirmation).watches.find((watch) => watch.id === watching.id)
+  const confirmed = (await confirmation).work.find(
+    (watch) => BackgroundWork.guards.Watch(watch) && watch.watch === watching.id,
+  )
   NodeAssert.ok(confirmed && WatchPurpose.guards.Checkin(confirmed.purpose))
   const armed = confirmed.purpose.arming
   NodeAssert.ok(CheckinArming.guards.Confirmed(armed))
