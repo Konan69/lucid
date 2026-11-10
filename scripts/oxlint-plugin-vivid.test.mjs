@@ -9,6 +9,7 @@ import * as NodeURL from 'node:url'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 import { scanDefinition, scanDockerfile } from './gate/commands.mjs'
+import { scanPredeploy, scanResources } from './gate/readback.mjs'
 import { contractImports, unregisteredWireSchemas, wireFinding } from './gate/wire.mjs'
 
 const assert = NodeAssert
@@ -914,4 +915,38 @@ void test('wire: the admission body that drifted outside the fingerprint fails, 
   )
   // The delivery and the id are inside the registered body, so its hash already covers them.
   assert.deepEqual(unregisteredWireSchemas(shared, { RuntimeAdmissionBody }), [])
+})
+
+void test('readback: the old pre-deploy chain and unobservable resources fail', () => {
+  const old =
+    "const railwayStack = () => Command.Exec('publish', { command: 'node scripts/migrate.mjs server && node apps/cells/scripts/build.mjs deploy' })"
+  assert.equal(scanPredeploy('infra/predeploy.mjs', old).length, 1)
+  assert.equal(scanResources('alchemy.run.ts', old).length, 1)
+  assert.equal(scanResources('alchemy.run.ts', 'const railwayStack = () => Action(work)').length, 1)
+  assert.deepEqual(scanResources('alchemy.run.ts', old.replace('railwayStack', 'localStack')), [])
+  assert.equal(
+    scanResources('infra/publish.ts', 'Provider.succeed(Publish, { reconcile: publish })').length,
+    1,
+  )
+  assert.deepEqual(
+    scanResources(
+      'infra/publish.ts',
+      'Provider.succeed(Publish, { reconcile: publish, read: pointer })',
+    ),
+    [],
+  )
+  assert.equal(
+    scanPredeploy(
+      'infra/predeploy.mjs',
+      "export const predeploySteps = [{ name: 'publish', step: publish }]",
+    ).length,
+    1,
+  )
+  assert.deepEqual(
+    scanPredeploy(
+      'infra/predeploy.mjs',
+      "export const predeploySteps = [{ name: 'publish', step: publish, readBack: 'fleet pointer' }]",
+    ),
+    [],
+  )
 })
