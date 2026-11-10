@@ -28,10 +28,10 @@ import { Array as Arr, Data, Option } from 'effect'
  */
 
 /** A string's declared shape, from the protocol's `format`. */
-export type Format = 'email' | 'uri' | 'date' | 'date-time'
+type Format = 'email' | 'uri' | 'date' | 'date-time'
 
 /** One offered choice: the value sent, and the words the Person reads. */
-export interface Choice {
+interface Choice {
   readonly value: string
   readonly label: string
 }
@@ -100,7 +100,7 @@ export const isIntegrationApproval = (approval: Approval): boolean =>
   approval.action.continuation !== null
 
 /** The name of the Integration a request was raised by, as the Person labelled its account. */
-export const integrationName = (request: InputRequest): Option.Option<string> =>
+const integrationName = (request: InputRequest): Option.Option<string> =>
   request.integration !== null && ActionTarget.guards.Connection(request.integration.target)
     ? Option.some(request.integration.target.account)
     : Option.none()
