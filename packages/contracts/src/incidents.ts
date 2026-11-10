@@ -1,4 +1,9 @@
+import * as Match from 'effect/Match'
+import * as Option from 'effect/Option'
+import * as Predicate from 'effect/Predicate'
 import * as Schema from 'effect/Schema'
+import * as SchemaAST from 'effect/SchemaAST'
+import type * as SchemaIssue from 'effect/SchemaIssue'
 import * as Struct from 'effect/Struct'
 import { ConnectionId, NotificationId, PersonId, RunId, ThreadId } from './identity.js'
 import { PushTargetId } from './push.js'
@@ -121,6 +126,82 @@ export const IncidentHop = Schema.Struct({
 })
 export interface IncidentHop extends Schema.Schema.Type<typeof IncidentHop> {}
 
+/** One step of an `Issue`'s path. */
+type IssueStep = Issue['path'][number]
+
+const isCodeName = Schema.is(CodeName)
+
+/**
+ * The step `key` makes under `parent`, when it is one the schema declares: a property of a struct
+ * whose name is a code name, or an index into an array. Anything else (a record's key, a key the
+ * sender added, an AST this walk does not know) is the sender's data, and the path stops there.
+ */
+const declaredStep = (parent: Option.Option<SchemaAST.AST>, key: PropertyKey) =>
+  Option.flatMap(parent, (ast): Option.Option<IssueStep> => {
+    if (SchemaAST.isArrays(ast))
+      return Predicate.isNumber(key) && Number.isInteger(key) && key >= 0
+        ? Option.some(key)
+        : Option.none()
+    if (!SchemaAST.isObjects(ast) || !isCodeName(key)) return Option.none()
+    return ast.propertySignatures.some((property) => property.name === key)
+      ? Option.some(key)
+      : Option.none()
+  })
+
+/**
+ * Walks Effect 4.0.2's issue tree (`effect/src/SchemaIssue.ts`) beside the AST each `Composite`
+ * carries. A `Pointer` adds its step only while every step so far was declared (`declaredStep`);
+ * once the path is closed it stays at the last declared step, so the leaf is still reported, at
+ * the deepest place the schema names. `AnyOf` stands for its union without descending: each
+ * member's issues would say why the value was not that member, which is noise beside "no member".
+ */
+const walkIssue = (
+  issue: SchemaIssue.Issue,
+  path: ReadonlyArray<IssueStep>,
+  open: boolean,
+  parent: Option.Option<SchemaAST.AST>,
+): ReadonlyArray<Issue> => {
+  const leaf = ({ _tag }: SchemaIssue.Leaf | SchemaIssue.AnyOf): ReadonlyArray<Issue> => [
+    { path, kind: _tag },
+  ]
+  return Match.value(issue).pipe(
+    Match.tagsExhaustive({
+      Pointer: (pointer) => {
+        const [key, ...more] = pointer.path
+        const step =
+          open && key !== undefined && more.length === 0 && path.length < LONGEST_ISSUE_PATH
+            ? declaredStep(parent, key)
+            : Option.none<IssueStep>()
+        return Option.match(step, {
+          onNone: () => walkIssue(pointer.issue, path, false, Option.none()),
+          onSome: (kept) => walkIssue(pointer.issue, [...path, kept], true, Option.none()),
+        })
+      },
+      Composite: (composite) =>
+        composite.issues.flatMap((inner) =>
+          walkIssue(inner, path, open, Option.some(composite.ast)),
+        ),
+      Filter: (filter) => walkIssue(filter.issue, path, open, parent),
+      Encoding: (encoding) => walkIssue(encoding.issue, path, open, parent),
+      AnyOf: leaf,
+      InvalidType: leaf,
+      InvalidValue: leaf,
+      MissingKey: leaf,
+      UnexpectedKey: leaf,
+      Forbidden: leaf,
+      OneOf: leaf,
+    }),
+  )
+}
+
+/**
+ * The `issues` of a hop whose failure is a value that did not decode: which declared fields
+ * failed and how, never a value or a key the sender wrote. At most `MOST_ISSUES`, in the order
+ * Effect reported them.
+ */
+export const issuesOf = (issue: SchemaIssue.Issue): ReadonlyArray<Issue> =>
+  walkIssue(issue, [], true, Option.none()).slice(0, MOST_ISSUES)
+
 /** The most hops one cause carries. A send that failed in the cell on a model's answer is four. */
 export const DEEPEST_CAUSE = 6
 
@@ -163,6 +244,42 @@ export const IncidentCause = Schema.Array(IncidentHop).check(
   Schema.isMaxLength(DEEPEST_CAUSE),
 )
 export type IncidentCause = typeof IncidentCause.Type
+
+/**
+ * One hop, from the names code owns: `operation` is an `Effect.fn` name or a route's, `tag` a
+ * failure's `_tag` or its reason's. `status` and `issues` are kept only when there are some, as
+ * `IncidentHop` declares them.
+ */
+export const incidentHop = (input: {
+  readonly service: IncidentSource
+  readonly operation: string
+  readonly tag: string
+  readonly status: Option.Option<number>
+  readonly issues: ReadonlyArray<Issue>
+}): IncidentHop => {
+  const named = {
+    service: input.service,
+    operation: CodeName.make(input.operation),
+    tag: CodeName.make(input.tag),
+  }
+  const answered = Option.match(input.status, {
+    onNone: () => named,
+    onSome: (status) => ({ ...named, status }),
+  })
+  return input.issues.length === 0 ? answered : { ...answered, issues: input.issues }
+}
+
+/**
+ * `cause` with `hop` put in front of it: the keep-cause rule's one step. Past `DEEPEST_CAUSE` it
+ * keeps the first hops and the root, as `IncidentCause` says, so a chain that crosses one more
+ * process never loses what broke.
+ */
+export const causeAfter = (hop: IncidentHop, cause: IncidentCause): IncidentCause => {
+  const chain = [hop, ...cause]
+  return chain.length <= DEEPEST_CAUSE
+    ? chain
+    : [...chain.slice(0, DEEPEST_CAUSE - 1), ...chain.slice(-1)]
+}
 
 /**
  * Which kind of delivery did not reach Vivid: a Person's own words (`Words`), or a server

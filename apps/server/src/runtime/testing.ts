@@ -1,8 +1,15 @@
 import * as NodeCrypto from 'node:crypto'
 import { expect } from '@effect/vitest'
-import { PersonId, ThreadId } from '@vivid/contracts'
+import {
+  incidentHop,
+  PersonId,
+  ThreadId,
+  type Incident,
+  type IncidentCause,
+} from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
-import { Effect, Layer } from 'effect'
+import { Context, Effect, Layer, Option, Ref } from 'effect'
+import { Incidents } from '../observability/incidents.ts'
 import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseLayer } from '../database/testdb.ts'
@@ -47,3 +54,38 @@ export const productFixture = Effect.fn('Models.test.product')(function* () {
   )
   return { personId, threadId }
 })
+
+/** Every Incident the server under test recorded, oldest first. */
+export class RecordedIncidents extends Context.Service<
+  RecordedIncidents,
+  Ref.Ref<ReadonlyArray<Incident>>
+>()('test/RecordedIncidents') {}
+
+/**
+ * The `Incidents` a test provides in place of the recorder (`observability/incidents.ts`): it
+ * keeps what was recorded in `RecordedIncidents`, so a test asserts on the Incident itself rather
+ * than on the error tracker.
+ */
+export const incidentsTestLayer = Layer.unwrap(
+  Effect.gen(function* () {
+    const recorded = yield* Ref.make<ReadonlyArray<Incident>>([])
+    return Layer.mergeAll(
+      Layer.succeed(RecordedIncidents, recorded),
+      Layer.succeed(
+        Incidents,
+        Incidents.of({ record: (incident) => Ref.update(recorded, (all) => [...all, incident]) }),
+      ),
+    )
+  }),
+)
+
+/** The cause of a runtime a test treats as unreachable: the admission's transport failed. */
+export const unreachableCause: IncidentCause = [
+  incidentHop({
+    service: 'server',
+    operation: 'Runtime.admit',
+    tag: 'TransportError',
+    status: Option.none(),
+    issues: [],
+  }),
+]

@@ -19,6 +19,7 @@ import { DeliverySpeaker } from '../threads/conversation.ts'
 import { threads } from '../threads/tables.ts'
 import { InputStore, inputStoreLayer } from './store.ts'
 import { inputRequests } from './tables.ts'
+import { unreachableCause } from '../runtime/testing.ts'
 
 const isDatabaseFailure = Schema.is(DatabaseFailure)
 
@@ -32,7 +33,7 @@ layer(testDatabaseLayer)((cases) => {
   describe.skipIf(!testDatabaseConfigured)('Durable Input answer signals', () => {
     for (const failure of [
       new Conflict({ message: 'Busy' }),
-      new RuntimeUnavailable({ message: 'Unavailable' }),
+      new RuntimeUnavailable({ message: 'Unavailable', cause: unreachableCause }),
       new DatabaseFailure({ message: 'Private diagnostic must not enter logs' }),
     ]) {
       layer(testDatabaseLayer)('Clock case 1', (clockCases) => {

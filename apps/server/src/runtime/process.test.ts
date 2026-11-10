@@ -10,6 +10,7 @@ import { eq, sql } from 'drizzle-orm'
 import * as NodeCrypto from 'node:crypto'
 import { expect, layer } from '@effect/vitest'
 import {
+  Context,
   Effect,
   Exit,
   Fiber,
@@ -26,12 +27,23 @@ import {
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientError from 'effect/http/HttpClientError'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
+import * as HttpRouter from 'effect/http/HttpRouter'
+import * as HttpServerRequest from 'effect/http/HttpServerRequest'
+import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import {
+  CodeName,
+  CONTRACT_HEADER,
+  ContractFingerprint,
   ConversationFrame,
+  DeliveryRefused,
+  Incident,
+  incidentHop,
+  type IncidentCause,
   NotFound,
   Person,
   PersonId,
   RunId,
+  RunState,
   SessionId,
   Workspace,
 } from '@vivid/contracts'
@@ -58,7 +70,11 @@ import { threadStoreLayer } from '../threads/store.ts'
 import { threadHandlers } from '../threads/handlers.ts'
 import { ChildRuns } from '../runs/store.ts'
 import { Runtime, runtimeLayer } from './client.ts'
-import { productFixture, productLayer } from './testing.ts'
+import { incidentsTestLayer, productFixture, productLayer, RecordedIncidents } from './testing.ts'
+import { CellContract, cellContractLayer, CellContractReading } from './contract.ts'
+import { healthRoute } from '../http/router.ts'
+import { deliveryRunId, messageKey } from '../threads/key.ts'
+import { contractFingerprint } from '@vivid/contracts/fingerprint'
 
 const decodeBody = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))
 
@@ -69,8 +85,26 @@ type Receipt =
   | 'LostOnce'
   | 'AbortLostOnce'
   | 'AbortNotTaken'
+  | 'Unreadable'
+  | 'OtherContract'
+  | 'OtherCells'
+  | 'StaleCells'
 
-/** Adapt only the socket. HTTP requests still cross the production router into real Pi on disposable native SQLite. */
+/** The refusal a cell answers when its Person's conversations failed while in use (`app.ts`). */
+const lostAnswer = JSON.stringify({
+  error: 'Unavailable',
+  cause: [{ service: 'cell', operation: 'Runtime.admission', tag: 'PiRejected', status: 503 }],
+  contract: contractFingerprint,
+})
+
+/**
+ * Adapt only the socket. HTTP requests still cross the production router into real Pi on disposable native SQLite.
+ *
+ * `Unreadable` stands for a cell of another build, as production's was from 8 November 2026: it
+ * never sees the admission's `delivery`. `OtherContract` is that and a sender of other wire
+ * schemas. `OtherCells` and `StaleCells` answer `GET /contract` as cells of another build would:
+ * another fingerprint, or the 400 a Worker from before the route answers.
+ */
 const transport = (
   process: Effect.Success<ReturnType<typeof start>>,
   receipt: Receipt,
@@ -108,25 +142,36 @@ const transport = (
       if (request.method !== 'GET' && request.method !== 'POST')
         expect.fail('Unexpected runtime method')
       const path = `${url.pathname}${url.search}`
-      const body = Predicate.isTagged(request.body, 'Uint8Array')
-        ? yield* decodeBody(new TextDecoder().decode(request.body.body))
-        : undefined
-      if (receipt === 'AbortLostOnce' && !lost && url.pathname.endsWith('/abort')) {
-        lost = true
+      if (url.pathname === '/contract' && receipt === 'StaleCells')
         return HttpClientResponse.fromWeb(
           request,
-          new Response('{"error":"Unavailable"}', { status: 503 }),
+          new Response('{"error":"InvalidRequest"}', { status: 400 }),
         )
+      if (url.pathname === '/contract' && receipt === 'OtherCells')
+        return HttpClientResponse.fromWeb(request, new Response('{"contract":"0badc0de"}'))
+      const decoded = Predicate.isTagged(request.body, 'Uint8Array')
+        ? yield* decodeBody(new TextDecoder().decode(request.body.body))
+        : undefined
+      const unreadable = receipt === 'Unreadable' || receipt === 'OtherContract'
+      const body =
+        unreadable && Predicate.isObject(decoded) && !Array.isArray(decoded)
+          ? Object.fromEntries(Object.entries(decoded).filter(([key]) => key !== 'delivery'))
+          : decoded
+      const sent = request.headers[CONTRACT_HEADER]
+      const headers: Record<string, string> =
+        sent === undefined
+          ? {}
+          : { [CONTRACT_HEADER]: receipt === 'OtherContract' ? '0badc0de' : sent }
+      if (receipt === 'AbortLostOnce' && !lost && url.pathname.endsWith('/abort')) {
+        lost = true
+        return HttpClientResponse.fromWeb(request, new Response(lostAnswer, { status: 503 }))
       }
       if (receipt === 'AbortNotTaken' && url.pathname.endsWith('/abort'))
         return HttpClientResponse.fromWeb(request, new Response('{"aborted":false}'))
-      const response = yield* process.send(path, { method: request.method, body })
+      const response = yield* process.send(path, { method: request.method, body, headers })
       if (receipt === 'LostOnce' && !lost && request.method === 'POST' && response.status === 202) {
         lost = true
-        return HttpClientResponse.fromWeb(
-          request,
-          new Response('{"error":"Unavailable"}', { status: 503 }),
-        )
+        return HttpClientResponse.fromWeb(request, new Response(lostAnswer, { status: 503 }))
       }
       return HttpClientResponse.fromWeb(
         request,
@@ -199,7 +244,7 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (
   const admission = { entered: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() }
   const config = yield* ServerConfig
   const runtimeContext = yield* Layer.build(
-    runtimeLayer.pipe(
+    Layer.mergeAll(runtimeLayer, cellContractLayer).pipe(
       Layer.provide([
         Layer.succeed(ServerConfig, {
           ...config,
@@ -215,6 +260,7 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (
     ),
   )
   const runtime = yield* Runtime.pipe(Effect.provideContext(runtimeContext))
+  const contract = yield* CellContract.pipe(Effect.provideContext(runtimeContext))
   const foundation = Layer.mergeAll(
     Layer.succeed(Database, database),
     Layer.succeed(RunStore, observed),
@@ -232,9 +278,12 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (
   )
   let serverScope = yield* Scope.make()
   yield* Effect.addFinalizer(() => Scope.close(serverScope, Exit.void))
+  // One capture for every Conversation this fixture builds, restarts included.
+  const incidentContext = yield* Layer.build(incidentsTestLayer)
   const serverLayer = conversationLayer.pipe(
     Layer.provide([
       foundation,
+      Layer.succeedContext(incidentContext),
       Layer.succeed(ChannelReplies, {
         ended: ({ settlement }) => Queue.offer(reported, settlement._tag).pipe(Effect.asVoid),
       }),
@@ -260,6 +309,21 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (
     stopped,
     reported,
     titles,
+    incidents: Ref.get(Context.get(incidentContext, RecordedIncidents)),
+    /** The server's real `/health` route, reading these cells' contract. */
+    health: Effect.gen(function* () {
+      const handle = yield* HttpRouter.toHttpEffect(healthRoute)
+      const response = yield* handle.pipe(
+        Effect.provideService(CellContract, contract),
+        Effect.provideService(
+          HttpServerRequest.HttpServerRequest,
+          HttpServerRequest.fromWeb(new Request('http://server.test/health')),
+        ),
+      )
+      const web = HttpServerResponse.toWeb(response)
+      const body = yield* Effect.promise(() => web.text()).pipe(Effect.flatMap(decodeBody))
+      return { status: web.status, body }
+    }),
     store: {
       ...store,
       get: (id: RunId) =>
@@ -318,6 +382,35 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (
   }
 })
 
+/**
+ * The cause of an admission the cell refused with `tag` at `status`: the server's two hops (the
+ * Conversation answering for the runtime client, the client reading the refusal), then the cell's,
+ * naming the field the body lacked.
+ */
+const admissionChain = (tag: string, status: number): IncidentCause => [
+  incidentHop({
+    service: 'server',
+    operation: 'Conversation.admitRuntime',
+    tag: 'AdmissionRefused',
+    status: Option.none(),
+    issues: [],
+  }),
+  incidentHop({
+    service: 'server',
+    operation: 'Runtime.admit',
+    tag: 'RuntimeRejected',
+    status: Option.some(status),
+    issues: [],
+  }),
+  incidentHop({
+    service: 'cell',
+    operation: 'Runtime.admission',
+    tag,
+    status: Option.some(status),
+    issues: [{ path: [CodeName.make('delivery')], kind: 'MissingKey' }],
+  }),
+]
+
 /** Inspect the actual product column, since Run's public shape intentionally hides its receipt. */
 const receiptOf = Effect.fn('PiServer.test.receipt')(function* (id: RunId) {
   const database = yield* Database
@@ -340,6 +433,70 @@ layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)), { excludeTestServi
         yield* answer.release
         expect(yield* Queue.take(test.reported)).toBe('Completed')
         expect((yield* test.store.get(run.id)).state._tag).toBe('Completed')
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect(
+      'a body the cell cannot read is refused, and the refusal keeps why to the Person',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* fixture('Unreadable')
+          const failure = yield* Effect.flip(test.send('unreadable'))
+          const runId = deliveryRunId(test.threadId, messageKey(test.personId, 'unreadable'))
+          // The server's hops, then the cell's own: the route, its failure and the field it lacked.
+          const cause = admissionChain('SchemaError', 400)
+          expect(failure).toEqual(DeliveryRefused.make({ runId, cause }))
+          expect(yield* test.incidents).toEqual([
+            Incident.cases.AdmissionFailed.make({
+              personId: test.personId,
+              threadId: test.threadId,
+              runId,
+              delivery: 'Words',
+              cause,
+            }),
+          ])
+          const { state } = yield* test.store.get(runId)
+          expect(RunState.guards.Failed(state) && state.reason).toBe('Delivery')
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect('a body from a sender of other wire schemas is refused as a contract mismatch', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture('OtherContract')
+        const failure = yield* Effect.flip(test.send('other-contract'))
+        const runId = deliveryRunId(test.threadId, messageKey(test.personId, 'other-contract'))
+        expect(failure).toEqual(
+          DeliveryRefused.make({ runId, cause: admissionChain('ContractMismatch', 409) }),
+        )
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('the server is ready only while the cells read its wire contract', () =>
+      Effect.gen(function* () {
+        const same = yield* fixture('Kept')
+        expect(yield* same.health).toEqual({ status: 200, body: { ok: true, service: 'vivid' } })
+        const other = yield* fixture('OtherCells')
+        expect(yield* other.health).toEqual({
+          status: 503,
+          body: {
+            ok: false,
+            service: 'vivid',
+            contract: CellContractReading.cases.Mismatched.make({
+              server: contractFingerprint,
+              cells: ContractFingerprint.make('0badc0de'),
+            }),
+          },
+        })
+        // Production's Worker of 30 October has no `/contract` and answers it as a bad request.
+        const stale = yield* fixture('StaleCells')
+        expect(yield* stale.health).toEqual({
+          status: 503,
+          body: {
+            ok: false,
+            service: 'vivid',
+            contract: CellContractReading.cases.Unanswered.make({ status: 400 }),
+          },
+        })
       }).pipe(Effect.scoped),
     )
 

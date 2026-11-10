@@ -171,6 +171,8 @@ const FINAL = {
   Forbidden: true,
   NotFound: true,
   InvalidRequest: true,
+  // The runtime answered and refused this delivery; the same delivery is refused again.
+  DeliveryRefused: true,
   Conflict: true,
   DatabaseFailure: true,
   DatabaseConstraintViolation: true,

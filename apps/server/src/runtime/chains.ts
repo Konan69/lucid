@@ -3,6 +3,7 @@ import { NodeHttpClient } from '@effect/platform-node'
 import { expect } from '@effect/vitest'
 import { VividRpcClient } from '@vivid/client-runtime'
 import {
+  incidentHop,
   OpenFirstThreadResult,
   PersonId,
   RunId,
@@ -57,13 +58,22 @@ const chainPerson = Effect.fn('ThreadProof.person')(function* () {
     ),
     { email, name: 'Thread proof', password: `Proof!${NodeCrypto.randomUUID()}` },
   )
-  const response = yield* http
-    .execute(request)
-    .pipe(
-      Effect.mapError(() =>
-        RuntimeUnavailable.make({ message: 'Proof signup could not be reached' }),
-      ),
-    )
+  const response = yield* http.execute(request).pipe(
+    Effect.mapError((error) =>
+      RuntimeUnavailable.make({
+        message: 'Proof signup could not be reached',
+        cause: [
+          incidentHop({
+            service: 'server',
+            operation: 'ThreadProof.person',
+            tag: error.reason._tag,
+            status: Option.none(),
+            issues: [],
+          }),
+        ],
+      }),
+    ),
+  )
   expect(response.status).toBe(200)
   const { user } = yield* HttpClientResponse.schemaBodyJson(Account)(response)
   const saved = yield* database.run(

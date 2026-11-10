@@ -15,6 +15,7 @@ import { ApprovalStore, approvalStoreLayer } from './store.ts'
 import { approvals } from './tables.ts'
 import { approvalSweeperLayer } from './sweeper.ts'
 import { desktopAction, fixture, Observation, trustTestServices } from './testing.ts'
+import { unreachableCause } from '../runtime/testing.ts'
 
 const isDatabaseFailure = Schema.is(DatabaseFailure)
 
@@ -25,7 +26,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
   describe.skipIf(!testDatabaseConfigured)('Durable Approval signals', () => {
     for (const failure of [
       new Conflict({ message: 'Busy' }),
-      new RuntimeUnavailable({ message: 'Unavailable' }),
+      new RuntimeUnavailable({ message: 'Unavailable', cause: unreachableCause }),
       new DatabaseFailure({ message: 'Private diagnostic must not enter logs' }),
     ]) {
       it.effect(`replay retains debt and logs only unexpected ${failure._tag} once`, () => {
@@ -187,7 +188,9 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           const approval = yield* store.raise(test.vivid, desktopAction, unbound)
           yield* Ref.set(
             observed.deliveryFailure,
-            Option.some(new RuntimeUnavailable({ message: 'Unavailable' })),
+            Option.some(
+              new RuntimeUnavailable({ message: 'Unavailable', cause: unreachableCause }),
+            ),
           )
           yield* store.decide(test.personal, {
             id: approval.id,

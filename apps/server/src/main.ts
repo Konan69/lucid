@@ -91,6 +91,7 @@ import { executorEventsLayer } from './watches/events.ts'
 import { watchesLayer, watchRenewalLayer } from './watches/lifecycle.ts'
 import { feedPacingLayer } from './feed/pace.ts'
 import { watchStoreLayer } from './watches/store.ts'
+import { cellContractLayer } from './runtime/contract.ts'
 
 /** The process entry point only selects implementations and owns their scoped lifetime. */
 const serverProgram = Effect.gen(function* () {
@@ -120,6 +121,7 @@ const serverProgram = Effect.gen(function* () {
     tallyLayer,
     channelProviderLayer,
     runtimeLayer,
+    cellContractLayer,
     cellMemoryLayer,
     companyStoreLayer,
     settingsStoreLayer,
