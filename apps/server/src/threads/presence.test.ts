@@ -52,11 +52,10 @@ describe.skipIf(!testDatabaseConfigured)('presence connection signals', () => {
         yield* Queue.take(publishedAt)
         const closedAt = yield* Clock.currentTimeMillis
         link.close()
-        // Let the former scan run too. Its receipt is five seconds late, so reversal reaches
-        // the assertion instead of merely hitting Vitest's global stall alarm.
-        yield* TestClock.adjust('5 seconds')
-        yield* Queue.take(notices)
+        // Keep time fixed until closure has published. SQL may still be in flight when
+        // TestClock sees suspended fibers, so advancing first races the publication clock.
         expect(yield* Queue.take(publishedAt)).toBe(closedAt)
+        yield* Queue.take(notices)
         expect(yield* presence.here(owner.threadId)).toEqual([])
         // A late frame cannot resurrect the closed connection.
         link.heard(yield* Clock.currentTimeMillis)
