@@ -100,12 +100,12 @@ it.live('opens an issue for a typed failure by its impact, and none for a routin
     )
 
     const sent = yield* events
-    expect(sent.map((event) => [
+    expect(
+      sent.map((event) => [
         event.level,
         event.tags === undefined ? undefined : event.tags['vivid.operation'],
-      ])).toEqual([
-      ['error', 'Probe.lost'],
-    ])
+      ]),
+    ).toEqual([['error', 'Probe.lost']])
     const lines = logs.recorded().filter((line) => line.includes(Message.failure))
     expect(lines.filter((line) => line.includes('ProbeLost'))).toEqual([
       expect.stringContaining('level=ERROR'),

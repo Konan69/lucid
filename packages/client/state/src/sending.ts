@@ -198,7 +198,9 @@ const unarrivalOf = Match.type<SendFailure>().pipe(
 const clientImpact = (failure: { readonly _tag: string }): Option.Option<Impact> =>
   isRemoteIncident(failure)
     ? Option.none()
-    : Option.some(Predicate.isTagged(failure, 'RpcClientError') ? 'Recovered' : impactOfFailure(failure))
+    : Option.some(
+        Predicate.isTagged(failure, 'RpcClientError') ? 'Recovered' : impactOfFailure(failure),
+      )
 
 /**
  * Records a failed call the Person saw (`ClientFailed`) where it is decided, when it originated on

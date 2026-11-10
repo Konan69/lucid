@@ -1257,7 +1257,8 @@ const accessOf = (state: Effect.Success<ReturnType<typeof lifecycle>>) =>
   Effect.fn('ComputerStore.access')(function* (person: PersonId) {
     const row = yield* state.rows.load(person)
     const { computer, outage } = yield* state.observe(person)
-    if (Option.isSome(outage)) return ComputerAccess.cases.Unavailable.make({ reason: notAnswering })
+    if (Option.isSome(outage))
+      return ComputerAccess.cases.Unavailable.make({ reason: notAnswering })
     const result = accessTo(computer, computerMachineKey(person))
     if (ComputerAccess.guards.Unavailable(result)) return result
     if (Option.isNone(row))

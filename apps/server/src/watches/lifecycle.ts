@@ -195,10 +195,7 @@ function makeRevision(input: {
         arguments: previous.watch.arguments,
         url: previous.callbackUrl,
       })
-      .pipe(
-        Effect.tapError(unsubscribeFailed),
-        Effect.ignore,
-      )
+      .pipe(Effect.tapError(unsubscribeFailed), Effect.ignore)
     yield* publish(revised.value)
     return (yield* store.present(actor, revised.value)).watch
   })

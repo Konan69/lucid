@@ -184,9 +184,14 @@ void test('the CLI consumes an existing lint log and exits nonzero for a loose c
 void test('the lint stage enforces decreases and exact measured ceilings', (t) => {
   const repo = repository(t, table(18))
   const rule = ratchets.find((entry) => entry.rule === 'react-no-state-after-wait')
-  const output = '  ⚠ vivid(react-no-state-after-wait): move the lifecycle.\n'.repeat(
+  // Every other ratcheted rule is held at its ceiling, so only this one is loose.
+  const held = ratchets
+    .filter((entry) => entry !== rule && entry.ceiling > 0)
+    .map((entry) => `  ⚠ ${entry.plugin}(${entry.rule}): held.\n`.repeat(entry.ceiling))
+    .join('')
+  const output = `${held}${'  ⚠ vivid(react-no-state-after-wait): move the lifecycle.\n'.repeat(
     rule.ceiling - 1,
-  )
+  )}`
   const lint = { name: 'lint', failed: [], output }
   applyRatchets([lint], { root: repo.root, ceilingsBase: 'HEAD', env: environment() })
   assert.equal(lint.failed.length, 1)
