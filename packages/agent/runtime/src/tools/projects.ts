@@ -148,7 +148,28 @@ export function projectTools(runTool: RunTool) {
         return runTool(
           Effect.gen(function* () {
             const { client } = yield* Scope
-            const project = yield* client.CreateProject(yield* requestFor(data.name, data.location))
+            const request = yield* requestFor(data.name, data.location)
+            const response = yield* client.ListProjects()
+            // Match within the requested placement so names in other groups remain valid.
+            const existing = named(
+              response.projects
+                .filter((item) => item.parentProjectId === request.parentProjectId)
+                .map((item) => ({ name: item.name, item })),
+              request.name,
+            )
+            if (
+              Result.match(existing, {
+                onSuccess: () => true,
+                onFailure: (error) => error._tag === 'NameAmbiguous',
+              })
+            )
+              return yield* Effect.fail(
+                new InvalidRequest({
+                  message:
+                    'A Project with that name already exists in this placement. Use read_project and update_project to continue its work.',
+                }),
+              )
+            const project = yield* client.CreateProject(request)
             const parent = Match.value(data.location).pipe(
               Match.discriminatorsExhaustive('kind')({
                 TopLevel: () => null,
