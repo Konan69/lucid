@@ -5,6 +5,7 @@ import * as Undici from '@effect/platform-node/Undici'
 import { describe, expect, it } from '@effect/vitest'
 import {
   ConnectionId,
+  CodeName,
   InvalidRequest,
   ServiceId,
   IntegrationPause,
@@ -521,7 +522,19 @@ describe('Executor hosted transport', () => {
           yield* Deferred.await(entered)
           yield* TestClock.adjust('90 seconds')
           expect(yield* Fiber.join(running)).toEqual(
-            ExecutorCallOutcome.cases.OutcomeUnknown.make({}),
+            ExecutorCallOutcome.cases.OutcomeUnknown.make(
+              kind === 'call'
+                ? {
+                    failure: [
+                      {
+                        service: 'executor',
+                        operation: CodeName.make('Executor.call'),
+                        tag: CodeName.make('ExecutorTransportFailure'),
+                      },
+                    ],
+                  }
+                : {},
+            ),
           )
           expect(
             (yield* Ref.get(remote.requests)).filter((request) => request.path === 'POST /mcp'),

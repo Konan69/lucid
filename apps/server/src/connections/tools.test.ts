@@ -15,6 +15,8 @@ import {
   ToolOutcome,
   ToolCallId,
 } from '@vivid/contracts'
+import { unreachableCause } from '../runtime/testing.ts'
+import { decisionLogs } from '../observability/testlogger.ts'
 import { Message } from '../observability/messages.ts'
 import { ActionOutcome } from '../approvals/gate.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
@@ -102,6 +104,60 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         }).pipe(Effect.provideService(Logger.CurrentLoggers, new Set([...context, logs.capture])))
       }).pipe(Effect.scoped)
     })
+
+    it.effect(
+      'records an infrastructure outcome as IntegrationFailed without reporting a service refusal',
+      () => {
+        const logs = decisionLogs()
+        return Effect.gen(function* () {
+          const { ownerActor } = yield* fixture()
+          const store = yield* ConnectionStore
+          const probe = yield* ConnectionProbe
+          const previous = yield* Ref.get(probe.outcome)
+          const checked = yield* Ref.get(probe.checked)
+          yield* Effect.addFinalizer(() =>
+            Ref.set(probe.outcome, previous).pipe(Effect.andThen(Ref.set(probe.checked, checked))),
+          )
+          const step = yield* store.begin(ownerActor, {
+            from: 'Web',
+            service: serviceId,
+            name: 'Work',
+            shared: false,
+          })
+          yield* Ref.set(
+            probe.outcome,
+            ExecutorCallOutcome.cases.OutcomeUnknown.make({ failure: unreachableCause }),
+          )
+          const request = {
+            toolCallId: ToolCallId.make(crypto.randomUUID()),
+            connectionId: step.connection.id,
+            tool: 'read',
+            input: {},
+            summary: 'Read',
+            rationale: '',
+          }
+          const result = yield* useTool(ownerActor, request)
+          expect(result.outcome._tag).toBe('OutcomeUnknown')
+          yield* Ref.set(
+            probe.outcome,
+            ExecutorCallOutcome.cases.Rejected.make({ message: 'Private refusal' }),
+          )
+          yield* useTool(ownerActor, {
+            ...request,
+            toolCallId: ToolCallId.make(crypto.randomUUID()),
+          })
+          const incidents = logs.recorded().filter((line) => line.includes(Message.incident))
+          expect(incidents).toHaveLength(1)
+          expect(incidents[0]).toContain('vivid.incident.kind=IntegrationFailed')
+          expect(incidents[0]).toContain(`vivid.incident.personId=${ownerActor.person.id}`)
+          expect(incidents[0]).toContain(`vivid.incident.connectionId=${step.connection.id}`)
+          expect(incidents[0]).toContain('vivid.incident.cause.0.tag=TransportError')
+        }).pipe(
+          Effect.provideService(Logger.CurrentLoggers, new Set([logs.capture])),
+          Effect.scoped,
+        )
+      },
+    )
 
     /** A missing foreign resource is Vivid's durable Integration failure, not a service rejection. */
     it.effect('records IntegrationFailed when execution loses its resource', () => {
