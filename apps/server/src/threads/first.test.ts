@@ -37,6 +37,7 @@ import { RunStore, runStoreLayer } from './runs.ts'
 import { ThreadStore, threadStoreLayer } from './store.ts'
 import { firstThreads, threads } from './tables.ts'
 import { incidentsTestLayer } from '../runtime/testing.ts'
+import { contractFingerprint } from '@vivid/contracts/fingerprint'
 
 const stores = Layer.merge(threadStoreLayer, runStoreLayer).pipe(
   Layer.provideMerge(testDatabaseLayer),
@@ -120,11 +121,20 @@ const harness = Effect.fn('FirstThread.test.harness')(function* () {
         ),
       )
       yield* Ref.update(deliveries, (all) => [...all, delivery])
-      // A missing receipt exercises the production RuntimeUnavailable path after reservation.
+      // A cell's refusal exercises the production DeliveryRefused path after reservation.
       if (yield* Ref.getAndSet(refuseAdmission, false))
         return HttpClientResponse.fromWeb(
           request,
-          new Response('{"error":"InvalidRequest"}', { status: 400 }),
+          new Response(
+            JSON.stringify({
+              error: 'InvalidRequest',
+              cause: [
+                { service: 'cell', operation: 'Runtime.admission', tag: 'SchemaError', status: 400 },
+              ],
+              contract: contractFingerprint,
+            }),
+            { status: 400 },
+          ),
         )
       return HttpClientResponse.fromWeb(
         request,
@@ -225,7 +235,7 @@ layer(stores)((it) => {
         yield* Ref.set(test.refuseAdmission, true)
         const outcome = yield* test.open(test.actor.workspace).pipe(Effect.result)
         expect(Result.isFailure(outcome) ? outcome.failure._tag : 'opened').toBe(
-          'RuntimeUnavailable',
+          'DeliveryRefused',
         )
         const [thread] = yield* recorded(test.actor.person.id)
         if (thread === undefined) expect.fail('A recorded Run must protect its Thread')
