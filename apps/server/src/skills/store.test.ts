@@ -144,46 +144,44 @@ describe.skipIf(!testDatabaseConfigured)('Skills', () => {
         }),
     )
 
-    it.effect(
-      'lists shipped procedures beside same-name saved ones in scope',
-      () =>
-        Effect.gen(function* () {
-          const { personal, other, admin, member } = yield* fixture()
-          const store = yield* SkillStore
-          const builtin = builtins[0]
-          if (builtin === undefined) expect.fail('Shipped procedures are required')
-          expect(yield* store.list(personal)).toEqual(builtins)
-          // `catalogue` puts saved rows first and always appends every built-in: a saved procedure
-          // sharing a shipped name coexists with it and never replaces it.
-          const saved = yield* store.save(personal, { ...request, name: builtin.name })
-          expect(saved.id).not.toBe(builtin.id)
-          expect(SkillOrigin.guards.Saved(saved.origin)).toBe(true)
-          expect(yield* store.list(personal)).toEqual([saved, ...builtins])
-          expect(yield* store.list(other)).toEqual(builtins)
-          const company = yield* store.save(admin, {
-            ...request,
-            name: builtin.name,
-            forCompany: true,
-          })
-          // The Member sees the Company row but not the admin's personal one; outsiders see neither.
-          expect(yield* store.list(member)).toEqual([company, ...builtins])
-          expect(yield* store.list(personal)).toEqual([saved, ...builtins])
-          expect(yield* store.list(other)).toEqual(builtins)
-          expect(yield* store.read(personal, builtin.id)).toEqual(builtin)
-          // A summary carries the saved routing rule verbatim; there is no override wording.
-          const summaries = yield* skillHandlers
-            .ListSkillSummaries()
-            .pipe(Effect.provideService(AuthContext, auth(personal)))
-          expect(summaries.skills).toEqual(
-            [saved, ...builtins].map((skill) => ({
-              id: skill.id,
-              name: skill.name,
-              useWhen: skill.useWhen,
-              createdAt: skill.createdAt,
-            })),
-          )
-          expect(saved.useWhen).toBe(request.useWhen)
-        }),
+    it.effect('lists shipped procedures beside same-name saved ones in scope', () =>
+      Effect.gen(function* () {
+        const { personal, other, admin, member } = yield* fixture()
+        const store = yield* SkillStore
+        const builtin = builtins[0]
+        if (builtin === undefined) expect.fail('Shipped procedures are required')
+        expect(yield* store.list(personal)).toEqual(builtins)
+        // `catalogue` puts saved rows first and always appends every built-in: a saved procedure
+        // sharing a shipped name coexists with it and never replaces it.
+        const saved = yield* store.save(personal, { ...request, name: builtin.name })
+        expect(saved.id).not.toBe(builtin.id)
+        expect(SkillOrigin.guards.Saved(saved.origin)).toBe(true)
+        expect(yield* store.list(personal)).toEqual([saved, ...builtins])
+        expect(yield* store.list(other)).toEqual(builtins)
+        const company = yield* store.save(admin, {
+          ...request,
+          name: builtin.name,
+          forCompany: true,
+        })
+        // The Member sees the Company row but not the admin's personal one; outsiders see neither.
+        expect(yield* store.list(member)).toEqual([company, ...builtins])
+        expect(yield* store.list(personal)).toEqual([saved, ...builtins])
+        expect(yield* store.list(other)).toEqual(builtins)
+        expect(yield* store.read(personal, builtin.id)).toEqual(builtin)
+        // A summary carries the saved routing rule verbatim; there is no override wording.
+        const summaries = yield* skillHandlers
+          .ListSkillSummaries()
+          .pipe(Effect.provideService(AuthContext, auth(personal)))
+        expect(summaries.skills).toEqual(
+          [saved, ...builtins].map((skill) => ({
+            id: skill.id,
+            name: skill.name,
+            useWhen: skill.useWhen,
+            createdAt: skill.createdAt,
+          })),
+        )
+        expect(saved.useWhen).toBe(request.useWhen)
+      }),
     )
 
     it.effect('keeps a personal skill private and follows its owner into a Company', () =>

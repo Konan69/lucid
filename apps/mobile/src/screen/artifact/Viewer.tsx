@@ -1,5 +1,13 @@
 import { ArtifactContent, type ArtifactDetail } from '@vivid/contracts'
-import { artifacts, LiveState, makeWhen, opening, removing, revising, thisReader } from '@vivid/state'
+import {
+  artifacts,
+  LiveState,
+  makeWhen,
+  opening,
+  removing,
+  revising,
+  thisReader,
+} from '@vivid/state'
 import { Option, Predicate } from 'effect'
 import { Check, PencilLine, Share } from 'lucide-react-native'
 import { useState } from 'react'

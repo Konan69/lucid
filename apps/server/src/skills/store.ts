@@ -5,13 +5,7 @@ import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Schema from 'effect/Schema'
-import {
-  SkillId,
-  SkillScope,
-  type Skill,
-  type SaveSkillRequest,
-  Forbidden,
-} from '@vivid/contracts'
+import { SkillId, SkillScope, type Skill, type SaveSkillRequest, Forbidden } from '@vivid/contracts'
 import { requireAdmin, type Actor } from '../auth/access.ts'
 import { Database, returned, type DatabaseInfrastructureError } from '../database/client.ts'
 import {
