@@ -37,7 +37,7 @@ async function notices(state, thread, directory, name) {
  * No browser is opened during this recipe, so the real Presence service has no holds. */
 async function pass(state, at, directory, name) {
   NodeAssert.equal(state.container, 'vivid-verify-' + state.run)
-  await command(['pnpm', '--filter', '@vivid/server', 'exec', 'tsx', 'tests/pacing.ts'], {
+  await command(['pnpm', '--filter', '@vivid/server', 'exec', 'tsx', 'tests/pacing/main.ts'], {
     env: {
       ...process.env,
       VIVID_TEST_DATABASE_URL: `postgres://verify:verify@127.0.0.1:${state.ports.database}/verify`,
