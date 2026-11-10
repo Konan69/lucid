@@ -339,7 +339,10 @@ const answer = Effect.fn('IntegrationAsks.answer')(function* (
           ? 'PersonApproved'
           : 'Read',
     })
-    if (Result.isFailure(resolved)) return IntegrationAnswerOutcome.cases.Waiting.make({})
+    if (Result.isFailure(resolved))
+      return ToolOutcome.guards.Blocked(resolved.failure.outcome)
+        ? IntegrationAnswerOutcome.cases.Declined.make({})
+        : IntegrationAnswerOutcome.cases.Waiting.make({})
     result = resolved.success
   }
   const outcome = yield* ExecutorCallOutcome.match<
