@@ -5,15 +5,7 @@ import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Schema from 'effect/Schema'
-import {
-  SkillId,
-  SkillScope,
-  SkillReadOnly,
-  type Skill,
-  type SaveSkillRequest,
-  type PatchSkillRequest,
-  Forbidden,
-} from '@vivid/contracts'
+import { SkillId, SkillScope, type Skill, type SaveSkillRequest, Forbidden } from '@vivid/contracts'
 import { requireAdmin, type Actor } from '../auth/access.ts'
 import { Database, returned, type DatabaseInfrastructureError } from '../database/client.ts'
 import {
@@ -33,12 +25,6 @@ class SkillMissing extends Schema.TaggedError<SkillMissing>()(
   { id: SkillId },
   { title: 'Skill not found' },
 ) {}
-/** Being able to use a procedure does not grant permission to change it. */
-class SkillNotEditable extends Schema.TaggedError<SkillNotEditable>()(
-  'SkillNotEditable',
-  { id: SkillId },
-  { title: 'Skill edit denied' },
-) {}
 /** Name collisions are scoped: personal and Company procedures may share a name. */
 class SkillNameTaken extends Schema.TaggedError<SkillNameTaken>()(
   'SkillNameTaken',
@@ -53,34 +39,17 @@ export type SkillStoreError =
   | DatabaseInfrastructureError
   | Forbidden
   | SkillMissing
-  | SkillNotEditable
   | SkillNameTaken
-  | SkillReadOnly
 type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
 
 export interface SkillStoreService {
   readonly list: (actor: Actor) => Effect.Effect<ReadonlyArray<Skill>, DatabaseInfrastructureError>
   readonly read: (actor: Actor, id: SkillId) => Effect.Effect<Skill, SkillStoreError>
   readonly save: (actor: Actor, request: SaveSkillRequest) => Effect.Effect<Skill, SkillStoreError>
-  readonly patch: (
-    actor: Actor,
-    id: SkillId,
-    patch: PatchSkillRequest,
-  ) => Effect.Effect<Skill, SkillStoreError>
-  readonly remove: (actor: Actor, id: SkillId) => Effect.Effect<void, SkillStoreError>
 }
 export class SkillStore extends Context.Service<SkillStore, SkillStoreService>()(
   'vivid/SkillStore',
 ) {}
-
-/** Authorize against the readable row first, so foreign identifiers always remain NotFound. */
-const editable = Effect.fn('SkillStore.editable')(function* (actor: Actor, row: SkillRow) {
-  if (row.personId === actor.person.id) return
-  if (row.companyId === null) return yield* new SkillNotEditable({ id: row.id })
-  yield* requireAdmin(actor.workspace).pipe(
-    Effect.mapError(() => new SkillNotEditable({ id: row.id })),
-  )
-})
 
 /** The fixed table has no unique scope index; all name writers serialize on the scope in SQL. */
 const lockScope = Effect.fn('SkillStore.lockScope')(function* (
@@ -159,51 +128,6 @@ const makeSave = (database: Database['Service']) =>
     return yield* projectSkill(database, row)
   })
 
-/** Renames share the save lock; column updates preserve fields omitted from the patch. */
-const makePatch = (database: Database['Service']) =>
-  Effect.fn('SkillStore.patch')(function* (actor: Actor, id: SkillId, patch: PatchSkillRequest) {
-    if (builtins.some((skill) => skill.id === id)) return yield* new SkillReadOnly({ id })
-    const original = yield* loadRow(database, actor, id)
-    yield* editable(actor, original)
-    const now = yield* Clock.currentTimeMillis
-    const row = yield* database.transaction((tx) =>
-      Effect.gen(function* () {
-        yield* lockScope(tx, original)
-        if (patch.name !== undefined) yield* uniqueName(tx, original, patch.name, id)
-        const rows = yield* tx
-          .update(skills)
-          .set({
-            about: patch.about,
-            name: patch.name,
-            useWhen: patch.useWhen,
-            instructions: patch.instructions,
-            updatedAt: now,
-          })
-          .where(sql`(${visibleSkills(actor)}) AND ${eq(skills.id, id)}`)
-          .returning()
-        const updated = rows[0]
-        if (updated === undefined) return yield* new SkillMissing({ id })
-        return yield* decodeSkillRow(updated)
-      }),
-    )
-    return yield* projectSkill(database, row)
-  })
-
-/** Delete confirms visibility and authority before touching the row, even for Company admins. */
-const makeRemove = (database: Database['Service']) =>
-  Effect.fn('SkillStore.remove')(function* (actor: Actor, id: SkillId) {
-    if (builtins.some((skill) => skill.id === id)) return yield* new SkillReadOnly({ id })
-    const row = yield* loadRow(database, actor, id)
-    yield* editable(actor, row)
-    const removed = yield* database.run(
-      database
-        .delete(skills)
-        .where(sql`(${visibleSkills(actor)}) AND ${eq(skills.id, id)}`)
-        .returning({ id: skills.id }),
-    )
-    if (removed.length === 0) return yield* new SkillMissing({ id })
-  })
-
 /** Decode and project each persisted row at the owning database boundary. */
 const makeProjection = (database: Database['Service']) =>
   Effect.fn('SkillStore.decode')(function* (row: typeof skills.$inferSelect) {
@@ -234,8 +158,6 @@ export const skillStoreLayer = Layer.effect(
         return yield* projectSkill(database, yield* loadRow(database, actor, id))
       }),
       save: makeSave(database),
-      patch: makePatch(database),
-      remove: makeRemove(database),
     })
   }),
 )

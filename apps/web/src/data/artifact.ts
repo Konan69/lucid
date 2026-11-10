@@ -1,14 +1,15 @@
 import { useAtomValue } from '@effect/atom-react'
 import { VividRpcClient } from '@vivid/client-runtime'
 import type { ArtifactId } from '@vivid/contracts'
-import { artifacts, revising } from '@vivid/state'
+import { artifacts, removing, revising } from '@vivid/state'
 import { Effect, Layer, Predicate, Result } from 'effect'
 import { running } from './app'
 import { engine } from './runtime'
 
 /**
  * Artifacts on the web: one Artifact and its history, the Person's shelf of them, the editor that
- * revises a document, and the ways a file leaves the page (opened in a tab, saved to disk).
+ * revises a document, deleting one, and the ways a file leaves the page (opened in a tab, saved to
+ * disk).
  *
  * Each is a live query on the app's socket (`WatchArtifact`, `WatchArtifactShelf`), so a version
  * Vivid adds while a card or the viewer is on screen shows there at once.
@@ -69,6 +70,36 @@ export const saveDocument = (body: string) =>
   engine.registry.set(
     reviser.send,
     reviser.save({ attempt: revising.AttemptId.make(crypto.randomUUID()), body }),
+  )
+
+/**
+ * Deleting an Artifact, one for the page (`@vivid/state` `removing`). The viewer's live query says
+ * it is gone once the server has removed it; a refusal stays beside its actions.
+ */
+const remover = removing.make(
+  Layer.succeed(removing.Remover, {
+    remove: Effect.fn('Artifact.remove')(function* (removal: removing.Removal) {
+      const result = yield* running(
+        VividRpcClient.use((client) => client.RemoveArtifact({ id: removal.id })),
+      )
+      return yield* Result.isSuccess(result)
+        ? Effect.void
+        : Effect.fail(new removing.Unremoved({ removal }))
+    }),
+  }),
+)
+
+// A refusal outlives the viewer being closed and opened again.
+engine.registry.mount(remover.reading)
+
+/** Where deleting stands, for every viewer. */
+export const useRemoving = () => useAtomValue(remover.reading)
+
+/** The Person confirmed Delete. A press while one is on its way is not taken. */
+export const removeArtifact = (id: ArtifactId) =>
+  engine.registry.set(
+    remover.send,
+    remover.remove({ attempt: removing.AttemptId.make(crypto.randomUUID()), id }),
   )
 
 /**

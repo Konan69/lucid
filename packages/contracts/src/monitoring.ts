@@ -16,7 +16,6 @@ import {
   ServiceUnavailable,
   Unauthenticated,
 } from './failures.js'
-import { SkillReadOnly } from './skills.js'
 
 /** User decisions and stale-edit refusals are normal outcomes, unlike typed infrastructure failures. */
 export const isRoutineRefusal = Schema.is(
@@ -32,7 +31,6 @@ export const isRoutineRefusal = Schema.is(
       ApprovalExpired.fields._tag,
       ApprovalDecided.fields._tag,
       ArtifactChanged.fields._tag,
-      SkillReadOnly.fields._tag,
       NoDeviceConnected.fields._tag,
       DisplayApprovalUnsupported.fields._tag,
     ]),
