@@ -1,8 +1,9 @@
 import * as NodeAssert from 'node:assert/strict'
 import * as NodeFSP from 'node:fs/promises'
 import { command } from './process.mjs'
+import { WatchState } from '@vivid/contracts'
 import { observe } from './observation.mjs'
-import { connectPulse } from './watch.mjs'
+import { connectPulse, emit, posted, watchWords } from './watch.mjs'
 import { providerSnapshot } from './snapshot.mjs'
 import { chat, history, json, rpc, settled } from './wire.mjs'
 
@@ -38,12 +39,90 @@ const delivery = (state, thread) =>
   observe(state, { tag: 'WatchThread', payload: { id: thread }, accept: isDelivered })
 
 /**
+ * Background work reaches the Person on the Feed, not in a Thread they open. The real model makes
+ * a Watch that posts each pulse to the Feed; the provider emits one directly; the background Run
+ * posts its card and completes. Nothing has drawn the card yet (HTTP draws nothing; the browser
+ * stays on a Thread screen), so the Run must be Completed, not Delivered. Then the Person's Feed
+ * draws it: over HTTP the `MarkFeedCard` seen report both clients send once the whole card is in
+ * view, in the browser the Feed screen itself. The Run becomes Delivered with a `Feed` receipt
+ * naming the signed-in Person and the card, and a repeated report changes nothing.
+ */
+async function feedDelivery(state, { integration, me }, directory, browser) {
+  const path = directory + '/feed'
+  await NodeFSP.mkdir(path, { recursive: true })
+  const thread = crypto.randomUUID()
+  await rpc(
+    state,
+    'CreateThread',
+    { id: thread, title: 'Verify Feed delivery', projectId: null },
+    path,
+  )
+  const marker = 'Outcome ' + crypto.randomUUID().slice(0, 8)
+  if (browser) {
+    await browser.run(['open', state.web + '/t/' + thread])
+    await browser.run(['wait', '[aria-label="Message Vivid"]'])
+    await browser.run(['find', 'label', 'Message Vivid', 'fill', watchWords(marker)])
+    await browser.run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
+  } else await chat(state, thread, watchWords(marker), path)
+  await settled(state, thread, 1, 'Completed', path)
+  const { watches } = await rpc(state, 'ListWatches', undefined, path)
+  const watching = watches.find((candidate) => candidate.name === marker)
+  NodeAssert.ok(watching && WatchState.guards.Active(watching.state), 'Model made no active Watch')
+  const receipt = await emit(
+    state,
+    { app: integration.app, words: 'outcome feed delivery', name: 'provider-receipt' },
+    path,
+  )
+  const item = await posted(state, marker, path)
+  NodeAssert.equal(item._tag, 'Waiting', 'The posted card waits on the Person')
+  NodeAssert.equal(item.seen, false)
+  const away = await settled(state, item.thread, 1, 'Completed', path)
+  const [run] = away.runs
+  NodeAssert.equal(item.post.provenance.postedBy, run.id, 'The background Run posted the card')
+  NodeAssert.equal(run.outcome._tag, 'Completed', 'Undrawn, the result is only Completed')
+  await json(path + '/away.json', away)
+  const report = { card: item.card, state: 'seen' }
+  let delivered
+  if (browser) {
+    // The Feed screen reports the card once all of it is in view; nothing is pressed.
+    await browser.run(['open', state.web + '/feed'])
+    const card = `document.querySelector('article[aria-label=${JSON.stringify(JSON.stringify(marker)).slice(1, -1)}]')`
+    await browser.run(['wait', '--fn', `${card} !== null`])
+    delivered = await delivery(state, item.thread)
+    await browser.capture('feed-delivered')
+    await browser.run(['reload'])
+    await browser.run(['wait', '--fn', `${card} !== null`])
+    await browser.capture('feed-reloaded')
+  } else {
+    await rpc(state, 'MarkFeedCard', report, path, 'mark-seen')
+    delivered = await delivery(state, item.thread)
+    await rpc(state, 'MarkFeedCard', report, path, 'mark-seen-again')
+  }
+  const final = await rpc(state, 'GetThread', { id: item.thread }, path)
+  const ended = final.runs[0].outcome
+  NodeAssert.equal(ended._tag, 'Delivered')
+  NodeAssert.deepEqual(ended, delivered.runs[0].outcome, 'A repeated report changes nothing')
+  NodeAssert.equal(ended.responseId, run.outcome.responseId)
+  NodeAssert.equal(ended.receipt._tag, 'Feed')
+  NodeAssert.equal(ended.receipt.person.id, me.person.id)
+  NodeAssert.equal(ended.receipt.card, item.card)
+  await json(path + '/proof.json', {
+    receipt,
+    watch: watching.id,
+    item,
+    away: run,
+    run: final.runs[0],
+  })
+}
+
+/**
  * One outward write by the real model through the disposable Verify Pulse Integration, allowed by
  * the Person's own rule so it runs without a decision. Proves the write is journaled under the
  * runtime's call identity with a Completed receipt, that the provider saw it exactly once, that a
  * read-only reconciliation reports it Applied without sending again, and that the Run's outcome
  * moves from Completed to Delivered only on the acting Person's own acknowledgement: over HTTP by
- * AcknowledgeRunDelivery, in the browser by the Thread screen drawing the reply.
+ * AcknowledgeRunDelivery, in the browser by the Thread screen drawing the reply. Then the same for
+ * a background result on the Feed (`feedDelivery`).
  */
 export async function outcome(state, id, directory, browser) {
   NodeAssert.equal(state.modelKind, 'real')
@@ -125,6 +204,7 @@ export async function outcome(state, id, directory, browser) {
     NodeAssert.equal(after.events.length, 1, 'Reconciling and acknowledging send nothing')
     await history(state, id, directory)
     await json(directory + '/proof.json', { run: final.runs[0], operation: reconciled, external })
+    await feedDelivery(state, { integration, me }, directory, browser)
   } finally {
     if (rule) await rpc(state, 'DeleteRule', { id: rule.id }, directory)
     await rpc(state, 'RemoveConnection', { id: integration.connection.id }, directory)
