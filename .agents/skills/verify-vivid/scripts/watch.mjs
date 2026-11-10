@@ -162,7 +162,10 @@ export function watchWords(marker) {
 
 /** A pulse's words longer than the 4,000 characters a tool result keeps, ending with `end`. */
 const longWords = (marker, end) => {
-  const lines = Array.from({ length: 150 }, (_, index) => `Line ${index + 1} of the ${marker} pulse.`)
+  const lines = Array.from(
+    { length: 150 },
+    (_, index) => `Line ${index + 1} of the ${marker} pulse.`,
+  )
   const words = `${lines.join(' ')} ${end}`
   NodeAssert.ok(words.indexOf(end) > 4000, 'The end code must sit past 4,000 characters')
   return words
@@ -256,7 +259,10 @@ export async function occurrence(state, { id, integration, marker, away }, direc
   // The card is the drawing: a drawn post, whose display holds the receipt, with no words or bar.
   NodeAssert.equal(item.post._tag, 'Drawn', 'Feed card was said in words, not drawn')
   NodeAssert.ok(item.post.display.includes(receipt), 'Feed display did not draw the receipt')
-  NodeAssert.ok(item.post.display.includes(end), 'The end of the long event did not reach the model')
+  NodeAssert.ok(
+    item.post.display.includes(end),
+    'The end of the long event did not reach the model',
+  )
   const detail = await settled(state, item.thread, 1, 'Completed', directory)
   const run = detail.runs[0]
   // The Run records which Watch and which event started it.
@@ -319,7 +325,12 @@ export async function occurrence(state, { id, integration, marker, away }, direc
 
 /** The callback a Watch's events are signed for, from its run-owned row. */
 async function callbackOf(state, watch, directory, name) {
-  const rows = await watchRows(state, { table: 'vivid_watches', field: 'id', id: watch }, directory, name)
+  const rows = await watchRows(
+    state,
+    { table: 'vivid_watches', field: 'id', id: watch },
+    directory,
+    name,
+  )
   NodeAssert.equal(rows.length, 1)
   return rows[0].callback_url
 }
@@ -377,7 +388,11 @@ async function redelivered(state, proof, directory) {
   await json(directory + '/redelivery.json', { status, runs: runs.length, card })
   NodeAssert.equal(status, 200, 'A redelivered event was refused')
   NodeAssert.equal(runs.length, 1, 'A redelivered event started another Run')
-  NodeAssert.deepEqual(card.post.provenance, proof.item.post.provenance, 'Redelivery moved the cause')
+  NodeAssert.deepEqual(
+    card.post.provenance,
+    proof.item.post.provenance,
+    'Redelivery moved the cause',
+  )
 }
 
 /** An unrelated provider-side account preserves the app under Vivid's actual reclamation policy.
@@ -413,7 +428,12 @@ async function retainEmitter(state, proof, directory) {
  * deletes the Watch. Repeat the second event id so the baseline observes one unwanted Run. */
 async function removedDelivery(proof, { callback, receipt }, directory) {
   const status = await signedDelivery(proof, { callback, receipt, words: 'After removal' })
-  await json(directory + '/removed-delivery.json', { watch: proof.watch, receipt, callback, status })
+  await json(directory + '/removed-delivery.json', {
+    watch: proof.watch,
+    receipt,
+    callback,
+    status,
+  })
   return status
 }
 
@@ -475,7 +495,11 @@ export async function disconnected(state, proof, directory, remove) {
   const card = feed.items.find((candidate) => candidate.card === proof.feed)
   await json(directory + '/after-remove-card.json', card)
   NodeAssert.ok(card, 'The card left the Feed with its Watch')
-  NodeAssert.deepEqual(card.post.provenance, proof.item.post.provenance, 'Removal changed the cause')
+  NodeAssert.deepEqual(
+    card.post.provenance,
+    proof.item.post.provenance,
+    'Removal changed the cause',
+  )
 }
 
 /** HTTP journey uses the real prompt and tools, then the same public Remove as the browser. */

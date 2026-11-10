@@ -13,7 +13,10 @@ import {
   FeedPost,
   FeedProvenance,
   PostRequest,
+  RunDeliveryReceipt,
   RunId,
+  RunOutcome,
+  RuntimeSubmissionId,
   WatchId,
   ThreadId,
   Workspace,
@@ -891,6 +894,77 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
           }),
         ])
       }).pipe(Effect.scoped),
+    )
+
+    /**
+     * Background work reaches the Person on the Feed, so their Feed drawing its card is the Run's
+     * delivery receipt; the post alone proves only that it was published. Database-backed: the
+     * outcome is read through `RunStore.list`, as `GetThread` serves it.
+     */
+    it.effect(
+      'a posted result stays Completed while the Person is away and is Delivered once their Feed draws it',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          const feed = yield* FeedStore
+          const store = yield* RunStore
+          const thread = yield* background(test.ada, now - hour)
+          const id = RunId.make(crypto.randomUUID())
+          const responseId = RunId.make(`response_${id}`)
+          const card = cardIdOf(thread)
+          const outcome = Effect.map(store.list(thread), (listed) =>
+            listed.map((run) => run.outcome),
+          )
+          yield* TestClock.setTime(now - hour)
+          yield* store.start({ id, threadId: thread, personId: test.ada, origin: watchOrigin })
+          yield* store.admitted({ runId: id, submissionId: RuntimeSubmissionId.make(1) })
+          yield* feed.post({ person: test.ada, thread, postedBy: id, request: firstPost })
+
+          // Drawn while the Run still works: there is no result yet to deliver.
+          yield* feed.mark(test.ada, MarkFeedCardRequest.make({ card, state: 'seen' }))
+          expect(yield* outcome).toEqual([
+            RunOutcome.cases.Accepted.make({ acceptedAt: now - hour, submissionId: '1' }),
+          ])
+
+          yield* store.end(id, RunEnding.cases.Completed.make({ responseId }))
+          const completed = RunOutcome.cases.Completed.make({ completedAt: now - hour, responseId })
+          // Hours pass with the Person away: nothing drew it, so it is only Completed.
+          yield* TestClock.setTime(now)
+          expect(yield* outcome).toEqual([completed])
+
+          const notifications = yield* (yield* PgClient).listen(CHANNEL)
+          yield* feed.mark(test.ada, MarkFeedCardRequest.make({ card, state: 'seen' }))
+          expect(
+            yield* Effect.exit(
+              payload(notifications, [
+                `p/feed:${test.ada}`,
+                `t/activity:${thread}`,
+                `p/activity:${test.ada}`,
+              ]),
+            ),
+          ).toEqual(Exit.succeed(undefined))
+          const delivered = RunOutcome.cases.Delivered.make({
+            completedAt: now - hour,
+            responseId,
+            receipt: RunDeliveryReceipt.cases.Feed.make({
+              person: { id: test.ada, name: 'Ada', image: null },
+              acknowledgedAt: now,
+              card,
+            }),
+          })
+          expect(yield* outcome).toEqual([delivered])
+
+          // Drawn again later, and put away: the first draw stays the receipt, and only the
+          // Feed moves.
+          yield* TestClock.setTime(now + hour)
+          for (const state of ['seen', 'done'] as const) {
+            yield* feed.mark(test.ada, MarkFeedCardRequest.make({ card, state }))
+            expect(yield* Effect.exit(payload(notifications, [`p/feed:${test.ada}`]))).toEqual(
+              Exit.succeed(undefined),
+            )
+          }
+          expect(yield* outcome).toEqual([delivered])
+        }).pipe(Effect.scoped),
     )
 
     it.effect('marking another Person’s card is NotFound and leaves it as it was', () =>

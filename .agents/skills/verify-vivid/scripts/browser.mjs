@@ -155,7 +155,7 @@ const specialRecipes = {
   outcome: {
     drive: outcome,
     scope:
-      'Real Verify Pulse write allowed by rule, journaled Completed receipt, read-only reconciliation, and Delivered after the open Thread screen drew the reply',
+      'Real Verify Pulse write allowed by rule, journaled Completed receipt, read-only reconciliation, Delivered after the open Thread screen drew the reply, and a Watch result Completed while away then Delivered once the Feed screen drew its card',
   },
   changed: {
     drive: changed,

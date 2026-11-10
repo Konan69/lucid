@@ -31,6 +31,7 @@ import {
 import { unresolvedOf, type Unresolved } from '../actions/journal.ts'
 import { loadSummaries, ownedHere, summaryOf, type Actor } from '../auth/access.ts'
 import { announceFeed } from '../feed/changes.ts'
+import { cardIdOf } from '../feed/read.ts'
 import { askedBy, invalidatePending } from '../approvals/stale.ts'
 import { personTable } from '../auth/tables.ts'
 import {
@@ -362,14 +363,17 @@ const answered = (
   if (row.responseId === null) return accepted
   const completed = { completedAt, responseId: row.responseId }
   if (row.deliveredAt === null) return RunOutcome.cases.Completed.make(completed)
-  return RunOutcome.cases.Delivered.make({
-    ...completed,
-    receipt: RunDeliveryReceipt.cases.Thread.make({
-      person,
-      acknowledgedAt: row.deliveredAt,
-      responseId: row.responseId,
-    }),
-  })
+  const acknowledged = { person, acknowledgedAt: row.deliveredAt }
+  // A Thread has one card (`cardIdOf`), so the Feed receipt names the card this Run posted.
+  const receipts: Record<RunDeliveryReceipt['_tag'], () => RunDeliveryReceipt> = {
+    Thread: () =>
+      RunDeliveryReceipt.cases.Thread.make({ ...acknowledged, responseId: completed.responseId }),
+    Feed: () =>
+      RunDeliveryReceipt.cases.Feed.make({ ...acknowledged, card: cardIdOf(row.threadId) }),
+  }
+  // Null is an acknowledgement from before the column, all of which came from the Thread screen.
+  const receipt = receipts[row.deliveredOn ?? 'Thread']()
+  return RunOutcome.cases.Delivered.make({ ...completed, receipt })
 }
 
 const toRun = Effect.fn('RunStore.toRun')(function* (
@@ -627,12 +631,43 @@ const makeAcknowledge = (database: DatabaseService): RunStoreService['acknowledg
     const written = yield* database.run(
       database
         .update(runs)
-        .set({ deliveredAt: now })
+        .set({ deliveredAt: now, deliveredOn: 'Thread' })
         .where(and(eq(runs.id, runId), isNull(runs.deliveredAt)))
         .returning({ thread: runs.threadId }),
     )
     return Option.map(Arr.head(written), (first) => first.thread)
   })
+
+/** A transaction the caller holds, so a Run's receipt commits with what proved it. */
+type Transaction = Parameters<Parameters<DatabaseService['transaction']>[0]>[0]
+
+/**
+ * The Person's Feed drew the card a Run posted (`FeedStore.mark`): that Run is Delivered with a
+ * `Feed` receipt, written in the caller's transaction with the mark. Only a completed Run with a
+ * response, acting for this Person in the card's Thread, takes it. The write is conditional, so
+ * the first draw is the receipt and a repeat changes nothing. Answers whether this was the first.
+ */
+export const deliveredOnFeed = Effect.fn('RunStore.deliveredOnFeed')(function* (
+  tx: Transaction,
+  input: { readonly runId: RunId; readonly threadId: ThreadId; readonly personId: PersonId },
+) {
+  const now = yield* Clock.currentTimeMillis
+  const rows = yield* tx
+    .update(runs)
+    .set({ deliveredAt: now, deliveredOn: 'Feed' })
+    .where(
+      and(
+        eq(runs.id, input.runId),
+        eq(runs.threadId, input.threadId),
+        eq(runs.personId, input.personId),
+        eq(runs.state, 'completed'),
+        isNotNull(runs.responseId),
+        isNull(runs.deliveredAt),
+      ),
+    )
+    .returning({ id: runs.id })
+  return rows.length > 0
+})
 
 export const runStoreLayer = Layer.effect(
   RunStore,

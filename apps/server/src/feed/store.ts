@@ -23,6 +23,7 @@ import { Database, decodeStored, encodeStored, returned } from '../database/clie
 import { announce, Topic } from '../live/changes.ts'
 import { readableThread } from '../threads/access.ts'
 import { StoredRunOrigin, StoredRunOriginColumn } from '../threads/conversation.ts'
+import { deliveredOnFeed } from '../threads/runs.ts'
 import { runs } from '../threads/tables.ts'
 import { cardIdOf, readFeed } from './read.ts'
 import { feedCards } from './tables.ts'
@@ -131,6 +132,10 @@ const makeStore = (database: Database['Service']) => {
   /**
    * Only a persisted card can be seen or put away. A derived Feed id without a card row, as in a
    * Conversation, returns NotFound for either mark rather than inventing acknowledgement of an ask.
+   *
+   * Either mark comes only from the Person's own Feed drawing the card (web and phone report seen
+   * once all of it was in view in front, Done is pressed on it), so it is also the delivery
+   * receipt of the Run that posted the card's current content (`delivered`).
    */
   const mark = Effect.fn('FeedStore.mark')(function* (
     person: PersonId,
@@ -150,9 +155,12 @@ const makeStore = (database: Database['Service']) => {
               readableThread(feedCards.threadId, person),
             ),
           )
-          .returning({ id: feedCards.id })
-        if (rows.length === 0) return yield* new NotFound({ message: 'That card is gone.' })
-        yield* announce(tx, feedTopic(person))
+          .returning({ thread: feedCards.threadId, provenance: feedCards.provenance })
+        const [card] = rows
+        if (card === undefined) return yield* new NotFound({ message: 'That card is gone.' })
+        const provenance = yield* decodeProvenance(card.provenance)
+        const moved = yield* delivered(tx, { person, thread: card.thread, provenance })
+        yield* announce(tx, [...feedTopic(person), ...moved])
       }),
     )
   })
@@ -198,6 +206,30 @@ const causeOf = Effect.fn('FeedStore.causeOf')(function* (tx: Transaction, threa
     Dream: ({ pass }): FeedCause => FeedCause.cases.Dream.make({ run, pass }),
     ChildResult: threadRun,
   })
+})
+
+/**
+ * The Person's Feed drew a card: the Run that posted its current content is Delivered when it can
+ * be (`deliveredOnFeed`). A legacy card that never recorded its Run delivers none. Answers the
+ * topics a first receipt moved: the Run's Thread and the Person, as a Thread receipt does.
+ */
+const delivered = Effect.fn('FeedStore.delivered')(function* (
+  tx: Transaction,
+  input: {
+    readonly person: PersonId
+    readonly thread: ThreadId
+    readonly provenance: FeedProvenance
+  },
+) {
+  const { provenance } = input
+  if (!FeedProvenance.guards.Recorded(provenance)) return []
+  const first = yield* deliveredOnFeed(tx, {
+    runId: provenance.postedBy,
+    threadId: input.thread,
+    personId: input.person,
+  })
+  if (!first) return []
+  return [Topic.thread(input.thread), Topic.person(input.person)].map(Topic.part('activity'))
 })
 
 /**
