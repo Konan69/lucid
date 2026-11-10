@@ -85,6 +85,7 @@ export async function pacing(state, id, directory) {
   const saved = await rpc(state, 'GetSettings', undefined, directory, 'spoken-hours')
   NodeAssert.deepEqual(saved.wakingHours, { start: 660, end: 1290 })
   const page = await history(state, id, directory)
+  await json(directory + '/spoken-history.json', page)
   NodeAssert.ok(
     page.messages
       .flatMap((message) => message.parts)
@@ -121,6 +122,7 @@ export async function pacing(state, id, directory) {
     const ordinary = await posted(state, marker + ' ' + receipt, directory)
     await settled(state, ordinary.thread, 1, 'Completed', directory)
     const ordinaryHistory = await history(state, ordinary.thread, directory)
+    await json(directory + '/ordinary-history.json', ordinaryHistory)
     NodeAssert.ok(
       ordinaryHistory.messages
         .flatMap((message) => message.parts)
@@ -154,6 +156,7 @@ export async function pacing(state, id, directory) {
     const urgent = await posted(state, marker + ' ' + urgentReceipt, directory)
     await settled(state, urgent.thread, 1, 'Completed', directory)
     const urgentHistory = await history(state, urgent.thread, directory)
+    await json(directory + '/urgent-history.json', urgentHistory)
     NodeAssert.ok(
       urgentHistory.messages
         .flatMap((message) => message.parts)
