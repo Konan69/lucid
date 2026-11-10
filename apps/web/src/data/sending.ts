@@ -16,6 +16,7 @@ import { heldConversations } from './conversation'
 import { live } from './live'
 import { engine } from './runtime'
 import { shareLocation } from './locating'
+import { recording } from './telemetry'
 
 /**
  * A Thread's conversation and what is sent into it, as this page holds them.
@@ -38,7 +39,7 @@ const followed = conversations(engine)
 export const conversationOf = (id: ThreadId): LiveQuery<Following> => followed.get(id)
 
 /** How this page hands a delivery to the server: `SendToThread` on its socket. */
-const transport = sending.delivering(engine.run)
+const transport = sending.delivering(engine.run, recording)
 const machines = sending.makeSending(
   Layer.succeed(sending.Delivering, {
     ...transport,

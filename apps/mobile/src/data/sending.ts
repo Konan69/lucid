@@ -3,6 +3,7 @@ import { sending, type Live } from '@vivid/state'
 import { Effect, Layer, Option } from 'effect'
 import type { Atom } from 'effect/reactivity'
 import { start } from './app'
+import { recording } from './telemetry'
 
 /**
  * Sending in a Thread, as the phone does it: the shared machine (`@vivid/state` `sending.ts`),
@@ -42,7 +43,7 @@ const arrival = (
 /** A session's sending: every Thread's machine, which outlives the screen that sent. */
 export function makeSending(engine: Live) {
   const machines = sending.makeSending(
-    Layer.succeed(sending.Delivering, sending.delivering(engine.run)),
+    Layer.succeed(sending.Delivering, sending.delivering(engine.run, recording)),
   )
   const stateIn = (thread: ThreadId) => sending.stateOf(machines(thread))
 

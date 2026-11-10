@@ -1,6 +1,14 @@
 import { init as startInDesktop, makeRendererTransport } from '@sentry/electron/renderer'
-import { captureReactException, init, makeFetchTransport, type BrowserOptions } from '@sentry/react'
-import { Option } from 'effect'
+import {
+  captureException,
+  captureReactException,
+  init,
+  makeFetchTransport,
+  type BrowserOptions,
+} from '@sentry/react'
+import { impactSignal } from '@vivid/contracts'
+import { sending } from '@vivid/state'
+import { Effect, Option } from 'effect'
 import type { ErrorInfo } from 'react'
 import { guarded, scrub, scrubBreadcrumb } from './scrub'
 
@@ -112,4 +120,42 @@ export const startTelemetry = (): void => {
  */
 export const captureFault = (thrown: Error, info: ErrorInfo): void => {
   captureReactException(thrown, info)
+}
+
+/** Sentry's word for each log level an impact is said at (`impactSignal`). */
+const SEVERITY = { Error: 'error', Warn: 'warning', Info: 'info' } as const
+
+/**
+ * Records a failure the Person saw on this page (`Incident` `ClientFailed`, `sending.Recording`).
+ *
+ * An Incident is an outcome, not something thrown, so the report's type is the case's tag and it
+ * carries no message: `scrub` keeps the type and drops every message. It is said at the level
+ * `impactSignal` gives an Incident, grouped and tagged by `sending.reportOf`, and joined to the
+ * trace of the span it is recorded in: the send's own, whose ids the RPC carried to the server.
+ * Before `startTelemetry` has run, and in a development page, the capture does nothing.
+ */
+const recordIncident: sending.Recording['record'] = Effect.fnUntraced(function* (incident) {
+  const span = yield* Effect.option(Effect.currentSpan)
+  const failed = new Error(incident._tag)
+  failed.name = incident._tag
+  const report = sending.reportOf(incident)
+  captureException(failed, {
+    level: SEVERITY[impactSignal.Incident.level],
+    fingerprint: report.fingerprint,
+    tags: report.tags,
+    contexts: {
+      trace: Option.getOrUndefined(
+        Option.map(span, (at) => ({ trace_id: at.traceId, span_id: at.spanId })),
+      ),
+    },
+  })
+})
+
+/**
+ * This page's way of recording what its Person saw fail. The same pages run in the desktop app,
+ * whose preload puts its bridge on the window (`startTelemetry`), and say so as `desktop`.
+ */
+export const recording: sending.Recording = {
+  source: 'vivid' in globalThis ? 'desktop' : 'web',
+  record: recordIncident,
 }
