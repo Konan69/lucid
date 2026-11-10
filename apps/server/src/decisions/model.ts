@@ -1,3 +1,4 @@
+import { Message } from '../observability/messages.ts'
 import {
   Cause,
   Clock,
@@ -11,6 +12,7 @@ import {
   Redacted,
   Ref,
   Schema,
+  Schedule,
   type Scope,
 } from 'effect'
 import { AiError, Decision, DecisionModel } from 'effect/ai'
@@ -202,21 +204,26 @@ const availability = new WeakMap<DecisionModel.DecisionModel, ModelAvailability>
  * Reading never expires suspicion, acquires that lease, changes the gate, logs,
  * or attempts a decision. This is a snapshot, not a reservation: another caller
  * can open backoff or acquire the probe before preparation finishes. */
-export const decisionWouldAttempt = Effect.gen(function* () {
+export const decisionUnavailability = Effect.fn('Decisions.unavailability')(function* () {
   const model = yield* DecisionModel.DecisionModel
-  if (absent.has(model)) return false
+  const reason = absent.get(model)
+  if (reason !== undefined) return Option.some(reason)
   const state = availability.get(model)
-  if (state === undefined) return true
+  if (state === undefined) return Option.none<DecisionUnavailable['reason']>()
   const current = yield* Ref.get(state.state)
   const now = yield* Clock.currentTimeMillis
-  return Availability.match(current, {
-    Ready: () => true,
-    Suspect: () => true,
-    Cooling: ({ retryAt }) => now >= retryAt,
-    CredentialCooling: ({ retryAt }) => now >= retryAt,
-    Probing: () => false,
+  return Availability.match<Option.Option<DecisionUnavailable['reason']>>(current, {
+    Ready: () => Option.none(),
+    Suspect: () => Option.none(),
+    Cooling: ({ retryAt }) => (now >= retryAt ? Option.none() : Option.some('Backoff')),
+    CredentialCooling: ({ retryAt }) =>
+      now >= retryAt ? Option.none() : Option.some('Authentication'),
+    Probing: () => Option.some('Backoff'),
   })
-}).pipe(Effect.withSpan('Decisions.wouldAttempt'))
+})
+
+/** Existing callers need only readiness; the reviewer also records the closed reason above. */
+export const decisionWouldAttempt = decisionUnavailability().pipe(Effect.map(Option.isNone))
 
 /** Atomic admission never queues callers behind a probe. */
 const admit = Effect.fn('Decisions.admit')(function* (state: Ref.Ref<typeof Availability.Type>) {
@@ -624,6 +631,7 @@ export const decideWithin = <
   definition: Decision.Definition<Input, Decisions>,
   input: Input['Type'],
   budget: Duration.Input,
+  retries: 0 | 1 = 0,
 ): Effect.Effect<
   DecisionModel.DecideResponse<Decisions>,
   DecisionUnavailable,
@@ -661,7 +669,32 @@ export const decideWithin = <
         )
       }
       return yield* restore(
-        completeAttempt(attemptDecision(definition, input, budget), state, admission),
+        completeAttempt(
+          attemptDecision(definition, input, budget).pipe(
+            Effect.retry({
+              schedule: Schedule.recurs(retries).pipe(
+                Schedule.setInputType<AttemptUnavailable | AttemptTimedOut>(),
+                Schedule.tap(({ input }) => {
+                  const attributes = {
+                    'vivid.review.reason': unavailableReason(input),
+                    'vivid.review.retry': 'Taken',
+                  }
+                  return Effect.annotateCurrentSpan(attributes).pipe(
+                    Effect.andThen(
+                      Effect.logWarning(Message.reviewRetry).pipe(Effect.annotateLogs(attributes)),
+                    ),
+                  )
+                }),
+              ),
+              while: (error) => {
+                const reason = unavailableReason(error)
+                return reason === 'TimedOut' || reason === 'Provider'
+              },
+            }),
+          ),
+          state,
+          admission,
+        ),
       )
     }),
   ).pipe(Effect.withSpan('Decisions.decide'))

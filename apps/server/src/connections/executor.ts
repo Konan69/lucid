@@ -275,18 +275,21 @@ interface ListedTool {
   readonly tool: typeof ExecutorTool.Type
   readonly account: typeof ToolAccount.Type
 }
+/** Evidence for the product audit; absent when no provider approval was answered. */
+const approvalEvidence = { approvalAnswered: Schema.optionalKey(Schema.Literal(true)) }
 export const ExecutorCallOutcome = Schema.TaggedUnion({
-  Paused: { pause: IntegrationPause },
-  UncertainPause: {},
-  Expired: {},
-  Accepted: { value: Schema.Json },
-  Completed: { value: Schema.Json },
+  Paused: { ...approvalEvidence, pause: IntegrationPause },
+  UncertainPause: { ...approvalEvidence },
+  Expired: { ...approvalEvidence },
+  Accepted: { ...approvalEvidence, value: Schema.Json },
+  Completed: { ...approvalEvidence, value: Schema.Json },
   Rejected: {
+    ...approvalEvidence,
     message: Schema.String,
     problems: Schema.Array(Schema.String).pipe(Schema.withConstructorDefault(Effect.succeed([]))),
   },
-  NotReady: {},
-  OutcomeUnknown: {},
+  NotReady: { ...approvalEvidence },
+  OutcomeUnknown: { ...approvalEvidence },
 })
 const errorContext = { service: Schema.Literal('connections'), tool: Schema.NullOr(Schema.String) }
 /** MCP and OpenAPI URL registration need Executor's own public-only egress, since it resolves
@@ -2851,6 +2854,7 @@ function makeResume(mcp: ReturnType<typeof mcpCalls>) {
   return Effect.fn('Executor.resume')(
     function* ({ pause, response, effect }: Parameters<ExecutorConnectionOperations['resume']>[0]) {
       yield* Effect.annotateCurrentSpan('vivid.executor.request', pause.requestId)
+      yield* Effect.annotateCurrentSpan('vivid.executor.request_id', pause.requestId)
       if (pause.expiresAt <= (yield* Clock.currentTimeMillis))
         return ExecutorCallOutcome.cases.Expired.make({})
       const encoded = yield* encodeIntegrationResponse(response).pipe(

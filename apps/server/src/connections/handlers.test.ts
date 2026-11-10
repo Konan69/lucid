@@ -416,6 +416,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
           // The approved action store must retain the failing discovery adapter.
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
           return yield* connectionRunner({
+            rationale: 'Approved fixture action',
             operation: Option.none(),
             person: ownerActor.person,
             workspace: ownerActor.workspace,
@@ -565,6 +566,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         yield* store.remove(ownerActor, step.connection.id)
         const calls = yield* Ref.get(probe.calls)
         const outcome = yield* connectionRunner({
+          rationale: 'Approved fixture action',
           operation: Option.none(),
           person: ownerActor.person,
           workspace: ownerActor.workspace,
@@ -631,6 +633,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
             .pipe(Effect.provideService(AuthContext, auth))
           expect(repeated).toMatchObject({ message: 'The saved app no longer exists.' })
           const approved = yield* connectionRunner({
+            rationale: 'Approved fixture action',
             operation: Option.none(),
             person: ownerActor.person,
             workspace: ownerActor.workspace,

@@ -1,5 +1,18 @@
 import { Schema } from 'effect'
+import { IntegrationRequestId } from './asks.js'
 import { AuditEntryId, PersonSummary, ThreadId } from './identity.js'
+
+/** The authority that allowed a call, also retained when Vivid answers its Integration. */
+export const GateBasis = Schema.Literals([
+  'Reviewed',
+  'AllowRule',
+  'PersonApproved',
+  'PersonPress',
+  'Read',
+  'Unreviewed',
+  'Contained',
+])
+export type GateBasis = typeof GateBasis.Type
 
 /**
  * What happened, as a closed set. The record answers four questions a year later: who asked, what
@@ -10,7 +23,15 @@ export const AuditEvent = Schema.TaggedUnion({
   // An action is recorded by where it happened and what kind of thing it was: the account, the
   // tool, the effect. Vivid's own sentence about it is deliberately absent: it paraphrases the
   // Thread it came from, and an admin reading this record does not read Members' Threads.
-  ActionAllowed: { service: Schema.String, tool: Schema.String, effect: Schema.String },
+  ActionAllowed: {
+    service: Schema.String,
+    tool: Schema.String,
+    effect: Schema.String,
+    /** Present only on Vivid's answer to the Integration's own saved approval request. */
+    integrationApproval: Schema.optionalKey(
+      Schema.Struct({ requestId: IntegrationRequestId, basis: GateBasis }),
+    ),
+  },
   ActionApproved: { service: Schema.String, tool: Schema.String },
   ActionDenied: { service: Schema.String, tool: Schema.String },
   ActionFailed: { service: Schema.String, tool: Schema.String },

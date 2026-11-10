@@ -1,5 +1,15 @@
 import { Schema } from 'effect'
+import { DecisionUnavailable } from '../decisions/model.ts'
 import type { ActionEffect } from '@vivid/contracts'
+
+/** Closed fallback reasons combine the provider's typed failures with review preparation failures. */
+export const UnreviewedReason = Schema.Literals([
+  ...DecisionUnavailable.fields.reason.literals,
+  'Unavailable',
+  'ArgumentsTooLong',
+  'HistoryDeadline',
+  'NoRequest',
+])
 
 /**
  * The reviewer's answer about one proposed action. `Unreviewed` is the honest remainder: there
@@ -20,7 +30,9 @@ export const Review = Schema.TaggedUnion({
      */
     contained: Schema.Finite,
   },
-  Unreviewed: {},
+  Unreviewed: {
+    reason: UnreviewedReason,
+  },
 })
 export type Review = typeof Review.Type
 
@@ -55,25 +67,15 @@ export const ReviewOutcome = Schema.Literals(['Run', 'Ask'] as const)
 export type ReviewOutcome = typeof ReviewOutcome.Type
 
 /** A background request is never a Person's authorization; only a contained write can run. */
-export const unwatchedOutcome = (effect: ActionEffect, review: Review): ReviewOutcome =>
+export const unwatchedOutcome = (review: Review): ReviewOutcome =>
   Review.match(review, {
-    Reviewed: ({ contained }) =>
-      effect !== 'destructive' && contained >= CONTAINED_THRESHOLD ? 'Run' : 'Ask',
+    Reviewed: ({ contained }) => (contained >= CONTAINED_THRESHOLD ? 'Run' : 'Ask'),
     Unreviewed: () => 'Ask',
   })
 
 /**
- * The server's policy over a review. The model supplies three measurements; it never authorizes.
- *
- * Default is to run (Konan, 4 Oct 2026: "when i tell it to do something i expect it to do it";
- * "the agent should ask if it needs to"):
- * - An action the Person asked for runs, including a send, a payment or a delete: the request is
- *   the authorization, and asking again is the babysitting this replaces. It must stay inside
- *   the request: one that also reaches a recipient or account the Person did not name asks.
- * - An action Vivid chose on its own runs when it is contained, and asks when it reaches other
- *   people, spends money or cannot be undone. A `destructive` effect is the source's own fact
- *   (HTTP method, declared hint) and outranks a `contained` classification.
- * - Unreviewed: a `write` runs and a `destructive` action asks. DECIDED BY KONAN, 4 Oct 2026:
+ * The 4 October 2026 fallback decision and its accepted risk remain in force.
+ * Unreviewed: a `write` runs and a `destructive` action asks. DECIDED BY KONAN, 4 Oct 2026:
  *   "an unreviewd always asked is bad"; decisions can be switched off (`VIVID_DECISIONS`,
  *   `decisions/model.ts`) and Vivid must then still do what it is told without an Approval for
  *   every write. The risk was stated to him and accepted: the `write` label does not prove an
@@ -82,18 +84,29 @@ export const unwatchedOutcome = (effect: ActionEffect, review: Review): ReviewOu
  *   Person's own Integration runs. Do not change this back to "always ask" without his say-so.
  *   The Person's own signed-in browser follows the same table as their own Integrations.
  *   DECIDED BY KONAN, 4 Oct 2026: "I don't need approval for writing my browser". A write there
- *   is reviewed when decisions are on and runs when no review was made; a destructive action,
+ *   is reviewed when decisions are on and runs when no review was made; an unreviewed destructive action,
  *   a Never or Ask rule, and a personal target in a shared Thread still ask or refuse.
  *   Rules and a personal Integration used in a shared Thread are decided in `gate.ts` before
  *   any review. With decisions switched off no rule can be judged, so a Person who has a Never
  *   rule conservatively refuses every action that is not a read; an Ask rule asks. A Person
  *   with no rule, or only Allow rules, is not asked.
  */
+
+/**
+ * Konan, 10 November 2026: "just because a tool is destructive does not mean it's a bad thing."
+ * Jev's measurements decide reviewed actions, regardless of their effect label. An action the
+ * Person asked for runs inside that request; an action Vivid chose runs when Jev rates it contained.
+ *
+ * "Why would Jev not be able to review an action and why would it skip? What if that's the action
+ * that destroys my entire life" keeps the existing fallback: an unreviewed write runs, but a
+ * destructive action asks. The reviewer retries a timeout or provider failure once, with the
+ * same per-attempt limit. Missing requests, oversized arguments and disabled decisions remain
+ * unreviewed. Never, Company and ask-first rules are enforced by the Gate before this policy.
+ */
 export const reviewOutcome = (effect: ActionEffect, review: Review): ReviewOutcome =>
   Review.match(review, {
     Reviewed: ({ asked, beyond, contained }) =>
-      (asked >= ASKED_THRESHOLD && beyond < BEYOND_THRESHOLD) ||
-      (effect !== 'destructive' && contained >= CONTAINED_THRESHOLD)
+      (asked >= ASKED_THRESHOLD && beyond < BEYOND_THRESHOLD) || contained >= CONTAINED_THRESHOLD
         ? 'Run'
         : 'Ask',
     Unreviewed: () => (effect === 'destructive' ? 'Ask' : 'Run'),

@@ -3,6 +3,7 @@ import * as Layer from 'effect/Layer'
 import { describe, expect, layer } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
 import * as Ref from 'effect/Ref'
+import * as Option from 'effect/Option'
 import { eq } from 'drizzle-orm'
 import {
   ActionTarget,
@@ -11,6 +12,7 @@ import {
   BrowseTarget,
   ConnectionId,
   FeedItem,
+  draftOf,
   ProposedAction,
   RuleScope,
   WatchId,
@@ -50,10 +52,28 @@ layer(testDatabaseLayer)((it) => {
     })
     const message = StoredRunOrigin.cases.Message.make({})
     const decision = StoredRunOrigin.cases.Decision.make({})
-    const unreviewed = Review.cases.Unreviewed.make({})
+    const unreviewed = Review.cases.Unreviewed.make({ reason: 'Unavailable' })
     const contained = Review.cases.Reviewed.make({ asked: 0.95, beyond: 0.1, contained: 0.95 })
     for (const [name, place, origin, review, effect, allowRule, expected] of [
       ['background send', 'Background', watch, reviewed, 'write', false, 'ApprovalRequired'],
+      [
+        'unasked contained destructive action',
+        'Conversation',
+        message,
+        Review.cases.Reviewed.make({ asked: 0.1, beyond: 0.1, contained: 0.95 }),
+        'destructive',
+        false,
+        'Allowed',
+      ],
+      [
+        'unreviewed destructive action',
+        'Conversation',
+        message,
+        unreviewed,
+        'destructive',
+        false,
+        'ApprovalRequired',
+      ],
       ['watched send', 'Conversation', message, reviewed, 'write', false, 'Allowed'],
       [
         'unreviewed background send',
@@ -75,13 +95,13 @@ layer(testDatabaseLayer)((it) => {
         'ApprovalRequired',
       ],
       [
-        'background delete with Allow',
+        'contained background destructive action with Allow',
         'Background',
         watch,
         contained,
         'destructive',
         true,
-        'ApprovalRequired',
+        'Allowed',
       ],
       [
         'expiry continuation',
@@ -142,6 +162,8 @@ layer(testDatabaseLayer)((it) => {
             expect(approvals).toHaveLength(expected === 'ApprovalRequired' ? 1 : 0)
             if (GateDecision.guards.ApprovalRequired(decision)) {
               expect(approvals.map((approval) => approval.action)).toEqual([proposed])
+              if (place === 'Background')
+                expect(Option.isSome(draftOf(decision.approval.action))).toBe(true)
               const feed = yield* readFeed(database, test.personal.person.id)
               expect(feed.items).toHaveLength(1)
               expect(feed.items.filter(FeedItem.guards.Waiting).map((item) => item.asking)).toEqual(
@@ -207,9 +229,12 @@ layer(testDatabaseLayer)((it) => {
           return yield* Effect.gen(function* () {
             const test = yield* fixture()
             const gate = yield* Gate
-            yield* Ref.set((yield* Observation).review, Review.cases.Unreviewed.make({}))
+            yield* Ref.set(
+              (yield* Observation).review,
+              Review.cases.Unreviewed.make({ reason: 'Unavailable' }),
+            )
             expect(yield* gate.check(test.vivid, browserWrite, 'Ordinary', unbound)).toEqual(
-              GateDecision.cases.Allowed.make({}),
+              GateDecision.cases.Allowed.make({ basis: 'Unreviewed' }),
             )
             expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toHaveLength(0)
             expect(
@@ -424,7 +449,7 @@ layer(testDatabaseLayer)((it) => {
             yield* Ref.set((yield* Observation).judgment, JudgmentMode.cases.Failed.make({}))
             // An unjudged Allow can only loosen: the default stays in force and nothing asks.
             expect(yield* gate.check(test.vivid, desktopAction, 'Ordinary', unbound)).toEqual(
-              GateDecision.cases.Allowed.make({}),
+              GateDecision.cases.Allowed.make({ basis: 'Contained' }),
             )
             yield* rules.create(test.personal, {
               action: 'Ask before inspecting files',
@@ -472,10 +497,10 @@ layer(testDatabaseLayer)((it) => {
             }),
           })
           expect(yield* gate.check(test.vivid, desktopAction, 'Ordinary', unbound)).toEqual(
-            GateDecision.cases.Allowed.make({}),
+            GateDecision.cases.Allowed.make({ basis: 'Contained' }),
           )
           expect(yield* gate.check(test.vivid, browser, 'Ordinary', unbound)).toEqual(
-            GateDecision.cases.Allowed.make({}),
+            GateDecision.cases.Allowed.make({ basis: 'Contained' }),
           )
           expect((yield* loadAudit(test.personal)).entries).toEqual([])
           expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toEqual([])
@@ -503,7 +528,7 @@ layer(testDatabaseLayer)((it) => {
             })
             expect(
               yield* gate.check(test.vivid, test.connectionAction, 'Ordinary', unbound),
-            ).toEqual(GateDecision.cases.Allowed.make({}))
+            ).toEqual(GateDecision.cases.Allowed.make({ basis: 'AllowRule' }))
             const entries = (yield* loadAudit(test.personal)).entries
             expect(
               entries
@@ -534,7 +559,7 @@ layer(testDatabaseLayer)((it) => {
             )
             const send = ProposedAction.make({ ...test.connectionAction, effect: 'destructive' })
             expect(yield* (yield* Gate).check(test.vivid, send, 'Ordinary', unbound)).toEqual(
-              GateDecision.cases.Allowed.make({}),
+              GateDecision.cases.Allowed.make({ basis: 'Reviewed' }),
             )
             expect(yield* Ref.get(observed.reviewCalls)).toEqual([send])
             expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toEqual([])
@@ -555,9 +580,12 @@ layer(testDatabaseLayer)((it) => {
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
           const gate = yield* Gate
-          yield* Ref.set((yield* Observation).review, Review.cases.Unreviewed.make({}))
+          yield* Ref.set(
+            (yield* Observation).review,
+            Review.cases.Unreviewed.make({ reason: 'Unavailable' }),
+          )
           expect(yield* gate.check(test.vivid, test.connectionAction, 'Ordinary', unbound)).toEqual(
-            GateDecision.cases.Allowed.make({}),
+            GateDecision.cases.Allowed.make({ basis: 'Unreviewed' }),
           )
           const destructive = ProposedAction.make({
             ...test.connectionAction,
@@ -614,7 +642,7 @@ layer(testDatabaseLayer)((it) => {
           const observed = yield* Observation
           expect(
             yield* (yield* Gate).check(test.vivid, desktopAction, 'Ordinary', unbound),
-          ).toEqual(GateDecision.cases.Allowed.make({}))
+          ).toEqual(GateDecision.cases.Allowed.make({ basis: 'Contained' }))
           expect(yield* Ref.get(observed.reviewCalls)).toEqual([])
         }).pipe(Effect.scoped, Effect.provide(context))
       }),
@@ -633,7 +661,7 @@ layer(testDatabaseLayer)((it) => {
             scope: RuleScope.cases.Personal.make({}),
           })
           expect(yield* gate.check(test.vivid, read, 'Ordinary', unbound)).toEqual(
-            GateDecision.cases.Allowed.make({}),
+            GateDecision.cases.Allowed.make({ basis: 'Read' }),
           )
           yield* Ref.set((yield* Observation).judgment, JudgmentMode.cases.None.make({}))
           expect(

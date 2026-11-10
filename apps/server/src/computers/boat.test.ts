@@ -933,7 +933,7 @@ const accountsLayer = computerStoreLayer.pipe(
         Gate,
         Gate.of({
           check: Effect.fn('BoatTest.gate')(() =>
-            Effect.succeed(GateDecision.cases.Allowed.make({})),
+            Effect.succeed(GateDecision.cases.Allowed.make({ basis: 'Read' })),
           ),
         }),
       ),

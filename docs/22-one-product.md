@@ -122,9 +122,19 @@ The runtime proposes; the server decides. Nothing consequential runs from model 
      people, spends money or cannot be undone.
    - An **ask first** rule always asks. An **allow automatically** rule lets an undoable action run
      without a review; a destructive one is still reviewed. Neither bypasses a Never rule.
-   - The reviewer has ten seconds and one attempt. If it fails, times out, has no request to judge
-     against, or the arguments are too long to show whole, the action asks; it is never run
-     unreviewed and never silently dropped.
+   - **Decided, 10 November 2026.** Konan: "just because a tool is destructive does not mean it's a
+     bad thing." Jev's measurements decide reviewed actions; a contained action can run whatever
+     its effect label. Konan also asked: "Why would Jev not be able to review an action and why
+     would it skip? What if that's the action that destroys my entire life". A timeout or provider
+     failure gets one retry. Reading the request stays inside the first attempt's three-second
+     limit; each provider attempt uses the same remaining budget. Missing requests, oversized arguments, disabled decisions,
+     or unavailable review after retry leave the action unreviewed: a write runs, a destructive
+     action asks. Never, Company and ask-first rules still bind. Background changes run only when Jev rates them contained; otherwise Vivid asks.
+   - Executor's per-tool approval is machinery underneath. A Jev-reviewed action or the Person's
+     approval can answer its saved request at once. A read or an Allow-rule action goes back
+     through the Gate for a review when Executor reveals that it needs approval. An unreviewed
+     fallback asks the Person once, holding that same request. A typed-input form still asks
+     for information; a provider denial remains a refusal.
 6. **Ask** creates an **Approval**: the exact action, a digest of it, the Connection it will use, an
    expiry, and the Person who must decide. The turn ends. The Thread shows a card.
 7. The Person chooses **Allow once**, **Always allow** or **Deny**. Always allow adds the reviewer's
@@ -133,17 +143,17 @@ The runtime proposes; the server decides. Nothing consequential runs from model 
    action, not a new proposal, so the preview and the action cannot drift.
 8. The outcome returns to the Thread as a signal and Vivid continues. A write whose result is
    uncertain is recorded as **outcome unknown** and is never retried silently.
-9. Every allowed, blocked, approved and denied action writes an **AuditEntry**. The reviewer's
-   measurements are logged as numbers only; putting them in the AuditEntry is not built yet.
+9. Every allowed, blocked, approved and denied action writes an **AuditEntry**. Review status, fallback reasons and retry decisions are traced as tags; the reviewer's
+   measurements are not part of the AuditEntry.
 
 The mechanism is Grok Bot's Auto-review (0.30 `source/host/extensions/auto-review/`,
 `source/packages/agent/smart-mode-classifier-context.ts`, and the approval card in
 `frontend/src-0.30/views/send-message-auto-review-approval-card.tsx`): an independent classifier call
-returning allow or block with a proposed allow rule, the same context limits, the same ten-second
-single attempt, and the same three answers. Two things differ. Grok Bot's classifier
+returning allow or block with a proposed allow rule, the same context limits and the same three
+questions. Vivid uses the review budget and retry policy above. Two things differ. Grok Bot's classifier
 returns allow or block; Vivid's returns measurements and the server decides, so the thresholds and
 the precedence are code, not prompt. Grok Bot rejects the action when the classifier fails; Vivid
-asks, because a refused action the Person wanted is worse than a question. And Grok Bot's
+uses the effect label only when unreviewed: a write runs and a destructive action asks. And Grok Bot's
 classifier runs on its vendor's backend, whose prompt and model are not in the shipped app; Vivid's
 decision wording is ours and is judged by the live evaluation `approvals/review.live.test.ts`. The
 proposed rule and **Always allow** from the reviewer are not built: the typed decision answers

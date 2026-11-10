@@ -94,6 +94,7 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
               // The store captures this phase-specific database failure before approved execution.
               const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
               return yield* connectionRunner({
+                rationale: 'Approved fixture action',
                 operation: Option.none(),
                 person: ownerActor.person,
                 workspace: ownerActor.workspace,
@@ -145,6 +146,7 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
             }),
           } satisfies Executor['Service']
           const input = {
+            rationale: 'Approved fixture action',
             operation: Option.none(),
             person: ownerActor.person,
             workspace: ownerActor.workspace,
@@ -187,6 +189,7 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
           database.delete(membershipTable).where(eq(membershipTable.userId, ownerActor.person.id)),
         )
         const outcome = yield* connectionRunner({
+          rationale: 'Approved fixture action',
           operation: Option.none(),
           person: ownerActor.person,
           workspace: ownerActor.workspace,

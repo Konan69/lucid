@@ -1,9 +1,11 @@
+import { Message } from '../observability/messages.ts'
 import type { IntegrationAnswers } from '../connections/answers.ts'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import {
   Approval,
+  GateBasis,
   ApprovalPrecondition,
   InvalidRequest,
   RunId,
@@ -33,8 +35,10 @@ import { Database, type DatabaseInfrastructureError } from '../database/client.t
  *   when that Person allows it.
  * - `Blocked`: a rule says never. `rule` is the rule's own wording, for Vivid to repeat.
  */
+export { GateBasis } from '@vivid/contracts'
+
 export const GateDecision = Schema.TaggedUnion({
-  Allowed: {},
+  Allowed: { basis: GateBasis },
   ApprovalRequired: { approval: Approval },
   Blocked: { rule: Schema.String },
 })
@@ -99,7 +103,7 @@ export interface GateService {
    * only when the Person did not ask for it and it reaches other people or cannot be undone. With
    * no review (decisions switched off or unavailable) a `write` runs and a `destructive` action
    * asks. An unjudged Never rule conservatively refuses; an unjudged Ask rule asks.
-   * Unwatched work asks before a non-read unless reviewed as contained. An unwatched destructive action always asks.
+   * Unwatched work asks before a non-read unless reviewed as contained.
    *
    * `bound` is what the action was prepared against: the sign-in of the Integration it uses and
    * the Thread documents whose text it carries. An Approval raised here is bound to it and goes
@@ -167,7 +171,7 @@ import { RuleStore } from '../rules/store.ts'
 import { BindingJudgment, RuleJudge, judgeBinding } from '../rules/judge.ts'
 import { ApprovalStore } from './store.ts'
 import { auditAction } from './action.ts'
-import { reviewOutcome, unwatchedOutcome } from './policy.ts'
+import { Review, reviewOutcome, unwatchedOutcome } from './policy.ts'
 import { Reviewer } from './review.ts'
 import { isDreamThread } from '../dreams/thread.ts'
 
@@ -188,6 +192,7 @@ const allow = Effect.fn('Gate.allow')(function* (
   audit: Audit['Service'],
   actor: Actor,
   action: ProposedAction,
+  basis: GateBasis,
 ) {
   if (
     (ActionTarget.guards.Connection(action.target) && action.effect !== 'read') ||
@@ -198,7 +203,7 @@ const allow = Effect.fn('Gate.allow')(function* (
       AuditEvent.cases.ActionAllowed.make({ ...auditAction(action), effect: action.effect }),
     )
   }
-  return GateDecision.cases.Allowed.make({})
+  return GateDecision.cases.Allowed.make({ basis })
 })
 
 /** Raises the Approval the acting Person must answer; the turn ends until they do. */
@@ -222,6 +227,34 @@ const reviewable = (action: ProposedAction) =>
   action.effect === 'destructive' ||
   ActionTarget.guards.Connection(action.target) ||
   (ActionTarget.guards.Browser(action.target) && BrowseTarget.guards.Person(action.target.target))
+
+/** Only an actual judgment is reusable when a provider reveals new consequence evidence. */
+const basisOf = (review: Review): GateBasis =>
+  Review.match(review, {
+    Reviewed: () => 'Reviewed',
+    Unreviewed: () => 'Unreviewed',
+  })
+
+/** Record the judgment source and policy result without exporting action text or model scores. */
+const recordReview = Effect.fn('Gate.reviewDecision')(function* (
+  review: import('./policy.ts').Review,
+  outcome: import('./policy.ts').ReviewOutcome,
+) {
+  const attributes = Review.match(review, {
+    Reviewed: () => ({
+      'vivid.review.state': 'Reviewed',
+      'vivid.review.reason': 'None',
+      'vivid.review.outcome': outcome,
+    }),
+    Unreviewed: ({ reason }) => ({
+      'vivid.review.state': 'Unreviewed',
+      'vivid.review.reason': reason,
+      'vivid.review.outcome': outcome,
+    }),
+  })
+  yield* Effect.annotateCurrentSpan(attributes)
+  yield* Effect.logInfo(Message.reviewDecision).pipe(Effect.annotateLogs(attributes))
+})
 
 /** Server policy owns precedence; the judge only supplies applicability and cannot authorize an action. */
 export const gateLayer = Layer.effect(
@@ -247,9 +280,11 @@ export const gateLayer = Layer.effect(
       )
       if (thread.place !== 'Background') return Option.none()
       const review = yield* reviewer.review(actor, action)
-      if (unwatchedOutcome(action.effect, review) === 'Ask')
+      const outcome = unwatchedOutcome(review)
+      yield* recordReview(review, outcome)
+      if (outcome === 'Ask')
         return Option.some<GateDecision>(yield* ask(approvals, actor, action, bound))
-      return Option.some<GateDecision>(yield* allow(audit, actor, action))
+      return Option.some<GateDecision>(yield* allow(audit, actor, action, basisOf(review)))
     })
     /**
      * What is decided before rules: an ordinary read passes, and anything else in a Dreamer
@@ -263,7 +298,7 @@ export const gateLayer = Layer.effect(
       origin: ActionOrigin,
     ) {
       if (action.effect === 'read' && exposure === 'Ordinary')
-        return Option.some<GateDecision>(yield* allow(audit, actor, action))
+        return Option.some<GateDecision>(yield* allow(audit, actor, action, 'Read'))
       yield* requireNotDeclined({
         threadId: origin.threadId,
         runId: ActionOrigin.guards.RuntimeThread(origin) ? null : origin.runId,
@@ -277,72 +312,93 @@ export const gateLayer = Layer.effect(
     })
     return Gate.of({
       /** Ordinary reads pass; rules come first; the rest runs unless the review says a Person is needed. */
-      check: Effect.fn('Gate.check')(function* (actor, action, exposure, bound) {
-        // All callers previously resolved origin before Gate.check. Keep that authority check
-        // here when removing the duplicated proposal field, including actions allowed immediately.
-        const origin = yield* actionOrigin(actor).pipe(Effect.provideService(Database, database))
-        const early = yield* before(actor, action, exposure, origin)
-        if (Option.isSome(early)) return early.value
-        const binding = yield* rules.list(actor)
-        const judged = yield* judgeBinding(judge, action, binding)
-        const applicable = judged.rules
-        const never = applicable.find((rule) => rule.decision === 'Never')
-        if (never !== undefined) {
-          yield* audit.record(
-            actor,
-            AuditEvent.cases.ActionBlocked.make({
-              ...auditAction(action),
-              rule: never.action,
+      check: Effect.fn('Gate.check')(
+        function* (actor, action, exposure, bound) {
+          yield* Effect.annotateCurrentSpan('vivid.action.effect', action.effect)
+          // All callers previously resolved origin before Gate.check. Keep that authority check
+          // here when removing the duplicated proposal field, including actions allowed immediately.
+          const origin = yield* actionOrigin(actor).pipe(Effect.provideService(Database, database))
+          const early = yield* before(actor, action, exposure, origin)
+          if (Option.isSome(early)) return early.value
+          const binding = yield* rules.list(actor)
+          const judged = yield* judgeBinding(judge, action, binding)
+          const applicable = judged.rules
+          const never = applicable.find((rule) => rule.decision === 'Never')
+          if (never !== undefined) {
+            yield* audit.record(
+              actor,
+              AuditEvent.cases.ActionBlocked.make({
+                ...auditAction(action),
+                rule: never.action,
+              }),
+            )
+            // The Gate decides Never; outward Blocked outcomes only carry this same decision.
+            yield* recordRefusal(
+              Refusal.cases.ActionBlocked.make({
+                effect: action.effect,
+                target: action.target._tag,
+              }),
+            )
+            return GateDecision.cases.Blocked.make({ rule: never.action })
+          }
+          const external = yield* runner.inspect({
+            person: actor.person,
+            workspace: actor.workspace,
+            action,
+            origin,
+            phase: 'Preparing',
+          })
+          const prepared = ApprovalBinding.make({
+            connectionGeneration: bound.connectionGeneration,
+            preconditions: [...bound.preconditions, ...external],
+          })
+          // An applicable or unjudged Ask rule, and something personal
+          // entering a shared Thread always ask: none of these is a judgment about the request.
+          //
+          // A write on the Person's own signed-in browser is deliberately NOT in this group. It
+          // was, for a few hours on 4 October 2026, after a review found such writes could run
+          // unasked; the owner then decided, the same day: "I don't need approval for writing my
+          // browser". It follows the same table as a write through the Person's own Integration
+          // (`reviewOutcome` in `policy.ts`, where the decision and its risk are recorded): Vivid
+          // acts as the Person on every site they are signed in to. What still stops it is here
+          // and below: a Never rule, an Ask rule, a shared Thread, a destructive effect, and the
+          // Stop on the page itself.
+          if (
+            applicable.some((rule) => rule.decision === 'Ask') ||
+            BindingJudgment.guards.Uncertain(judged) ||
+            exposure === 'PersonalInShared'
+          )
+            return yield* ask(approvals, actor, action, prepared)
+          // A standing Allow and a high "asked" score never authorize outward background work.
+          const background = yield* checkUnwatched(actor, action, origin, prepared)
+          if (Option.isSome(background)) return background.value
+          // An Allow rule is the Person's standing request for an undoable action. It does not
+          // settle a destructive one: applicability is a 0.5 match (`rules/judge.ts`), too loose
+          // to let "Allow updating projects" authorize deleting one, so that goes to the review.
+          if (
+            action.effect !== 'destructive' &&
+            applicable.some((rule) => rule.decision === 'Allow')
+          )
+            return yield* allow(audit, actor, action, 'AllowRule')
+          if (!reviewable(action)) return yield* allow(audit, actor, action, 'Contained')
+          const review = yield* reviewer.review(actor, action)
+          const outcome = reviewOutcome(action.effect, review)
+          yield* recordReview(review, outcome)
+          if (outcome === 'Ask') return yield* ask(approvals, actor, action, prepared)
+          return yield* allow(audit, actor, action, basisOf(review))
+        },
+        (effect) =>
+          effect.pipe(
+            Effect.tap((decision) => {
+              const attributes = { 'vivid.gate.decision': decision._tag }
+              return Effect.annotateCurrentSpan(attributes).pipe(
+                Effect.andThen(
+                  Effect.logInfo(Message.gateDecision).pipe(Effect.annotateLogs(attributes)),
+                ),
+              )
             }),
-          )
-          // The Gate decides Never; outward Blocked outcomes only carry this same decision.
-          yield* recordRefusal(
-            Refusal.cases.ActionBlocked.make({ effect: action.effect, target: action.target._tag }),
-          )
-          return GateDecision.cases.Blocked.make({ rule: never.action })
-        }
-        const external = yield* runner.inspect({
-          person: actor.person,
-          workspace: actor.workspace,
-          action,
-          origin,
-          phase: 'Preparing',
-        })
-        const prepared = ApprovalBinding.make({
-          connectionGeneration: bound.connectionGeneration,
-          preconditions: [...bound.preconditions, ...external],
-        })
-        // An applicable or unjudged Ask rule, and something personal
-        // entering a shared Thread always ask: none of these is a judgment about the request.
-        //
-        // A write on the Person's own signed-in browser is deliberately NOT in this group. It
-        // was, for a few hours on 4 October 2026, after a review found such writes could run
-        // unasked; the owner then decided, the same day: "I don't need approval for writing my
-        // browser". It follows the same table as a write through the Person's own Integration
-        // (`reviewOutcome` in `policy.ts`, where the decision and its risk are recorded): Vivid
-        // acts as the Person on every site they are signed in to. What still stops it is here
-        // and below: a Never rule, an Ask rule, a shared Thread, a destructive effect, and the
-        // Stop on the page itself.
-        if (
-          applicable.some((rule) => rule.decision === 'Ask') ||
-          BindingJudgment.guards.Uncertain(judged) ||
-          exposure === 'PersonalInShared'
-        )
-          return yield* ask(approvals, actor, action, prepared)
-        // A standing Allow and a high "asked" score never authorize outward background work.
-        const background = yield* checkUnwatched(actor, action, origin, prepared)
-        if (Option.isSome(background)) return background.value
-        // An Allow rule is the Person's standing request for an undoable action. It does not
-        // settle a destructive one: applicability is a 0.5 match (`rules/judge.ts`), too loose
-        // to let "Allow updating projects" authorize deleting one, so that goes to the review.
-        if (action.effect !== 'destructive' && applicable.some((rule) => rule.decision === 'Allow'))
-          return yield* allow(audit, actor, action)
-        if (!reviewable(action)) return yield* allow(audit, actor, action)
-        const review = yield* reviewer.review(actor, action)
-        if (reviewOutcome(action.effect, review) === 'Ask')
-          return yield* ask(approvals, actor, action, prepared)
-        return yield* allow(audit, actor, action)
-      }),
+          ),
+      ),
     })
   }),
 )

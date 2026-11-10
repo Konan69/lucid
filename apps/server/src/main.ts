@@ -172,8 +172,8 @@ const serverProgram = Effect.gen(function* () {
     Layer.provideMerge(actionRunnerLayer),
     Layer.provideMerge(accounts),
   )
-  const answering = integrationAnswersLayer.pipe(Layer.provideMerge(trust))
-  const decisions = gateLayer.pipe(Layer.provideMerge(reviewerLayer), Layer.provideMerge(answering))
+  const decisions = gateLayer.pipe(Layer.provideMerge(reviewerLayer), Layer.provideMerge(trust))
+  const answering = integrationAnswersLayer.pipe(Layer.provideMerge(decisions))
   // A program runs on the Person's Computer, so its supervisor sits above the Computer store.
   const work = Layer.mergeAll(
     watchStoreLayer,
@@ -181,7 +181,7 @@ const serverProgram = Effect.gen(function* () {
     codeCallsLayer,
     codeSourceLayer,
     codeProcessLayer.pipe(Layer.provide(codeComputerLayer)),
-  ).pipe(Layer.provideMerge(decisions))
+  ).pipe(Layer.provideMerge(answering))
   const channelHandling = Layer.mergeAll(channelReceiverLayer, watchesLayer).pipe(
     Layer.provideMerge(work),
   )

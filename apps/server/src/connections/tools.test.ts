@@ -186,6 +186,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
               return yield* Effect.gen(function* () {
                 if (caller === 'approved')
                   return yield* connectionRunner({
+                    rationale: 'Approved fixture action',
                     operation: Option.none(),
                     person: ownerActor.person,
                     workspace: ownerActor.workspace,
@@ -263,6 +264,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             yield* store.failed(ownerActor, row, 'Private failure')
           if (reason === 'NeedsAuthorization') yield* store.notReady(ownerActor, row)
           const outcome = yield* connectionRunner({
+            rationale: 'Approved fixture action',
             operation: Option.none(),
             person: reason === 'IntegrationUnavailable' ? memberActor.person : ownerActor.person,
             workspace: ownerActor.workspace,
@@ -316,6 +318,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           const probe = yield* ConnectionProbe
           const calls = yield* Ref.get(probe.calls)
           const outcome = yield* connectionRunner({
+            rationale: 'Approved fixture action',
             operation: Option.none(),
             person: ownerActor.person,
             workspace: ownerActor.workspace,
@@ -367,6 +370,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           })
           const calls = yield* Ref.get((yield* ConnectionProbe).calls)
           const outcome = yield* connectionRunner({
+            rationale: 'Approved fixture action',
             operation: Option.none(),
             person: ownerActor.person,
             workspace: ownerActor.workspace,
@@ -427,6 +431,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           )
           const calls = yield* Ref.get(probe.calls)
           const outcome = yield* connectionRunner({
+            rationale: 'Approved fixture action',
             operation: Option.none(),
             person: ownerActor.person,
             workspace: ownerActor.workspace,
@@ -1553,6 +1558,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
               effect: 'read',
             })
             const executed = yield* connectionRunner({
+              rationale: 'Approved fixture action',
               operation: Option.none(),
               person: ownerActor.person,
               workspace: ownerActor.workspace,

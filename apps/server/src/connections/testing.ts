@@ -308,7 +308,7 @@ const probeLayer = Layer.effectContext(
       check: Effect.fn('Gate.Test.check')(function* (actor, action, exposure, binding) {
         yield* Ref.update(probe.checked, (checked) => [...checked, { action, exposure }])
         const decision = yield* Ref.get(probe.decision)
-        if (decision === 'Allowed') return GateDecision.cases.Allowed.make({})
+        if (decision === 'Allowed') return GateDecision.cases.Allowed.make({ basis: 'Read' })
         if (decision === 'Blocked')
           return GateDecision.cases.Blocked.make({ rule: 'Never change records.' })
         const threadId = Option.getOrElse(actor.threadId, () => ThreadId.make('approval-test'))
