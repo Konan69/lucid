@@ -30,6 +30,7 @@ import {
   cardPress,
   connecting,
   desktopStep,
+  form,
 } from '@vivid/state'
 import { Check, X } from 'lucide-react'
 import { BorderBeam } from 'border-beam'
@@ -215,9 +216,14 @@ export function Exactly({ target }: { target: ActionTarget }) {
 
 const SETTLED = 'inline-flex items-center gap-1.5 text-label'
 
-/** How an Approval that is no longer waiting ended, in a sentence. */
-function ApprovalOutcome({ state }: { state: ApprovalState }) {
-  return ApprovalState.match(state, {
+/**
+ * How an Approval that is no longer waiting ended, in a sentence. An Integration's that ran out
+ * says nothing was sent: it paused before its call ran (`form.EXPIRED_APPROVAL`).
+ */
+function ApprovalOutcome({ approval }: { approval: Approval }) {
+  if (form.approvalExpired(approval))
+    return <span className={cn(SETTLED, 'text-ink-3')}>{form.EXPIRED_APPROVAL}</span>
+  return ApprovalState.match(approval.state, {
     Pending: () => null,
     Executing: ({ decidedBy }) => (
       <span className={cn(SETTLED, 'text-working')}>
@@ -266,7 +272,16 @@ function ApprovalOutcome({ state }: { state: ApprovalState }) {
  * effect, Vivid's reason, every field of the action in a box inside the card and three buttons.
  * The owner rejected it as a developer's tool: too many boxes in boxes and too many words.
  */
-export function AskedFirst({ approval, me }: { approval: Approval; me: PersonId }) {
+export function AskedFirst({
+  approval,
+  requests,
+  me,
+}: {
+  approval: Approval
+  /** The Thread's questions: an Integration may ask one mid-call after this was allowed. */
+  requests: ReadonlyArray<InputRequest>
+  me: PersonId
+}) {
   const pending = ApprovalState.guards.Pending(approval.state)
   return (
     <div className="mt-3">
@@ -281,9 +296,14 @@ export function AskedFirst({ approval, me }: { approval: Approval; me: PersonId 
       )}
       {!pending && (
         <p className="mt-1">
-          <ApprovalOutcome state={approval.state} />
+          <ApprovalOutcome approval={approval} />
         </p>
       )}
+      {form.followingExpired(approval, requests).map((line) => (
+        <p key={line} className="mt-1 text-label text-ink-3">
+          {line}
+        </p>
+      ))}
     </div>
   )
 }

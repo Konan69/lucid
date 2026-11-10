@@ -9,7 +9,7 @@ import {
 import { IntegrationAnswers } from '../connections/answers.ts'
 import { integrationAnswerText } from '../connections/asks.ts'
 import * as NodeCrypto from 'node:crypto'
-import { and, asc, eq, or, sql } from 'drizzle-orm'
+import { and, asc, eq, isNotNull, isNull, or, sql } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
@@ -241,6 +241,11 @@ export interface InputStoreService {
     NotFound | InvalidRequest | Conflict | DatabaseInfrastructureError,
     IntegrationAnswers
   >
+  /** Cancels the paused call of every Integration question a message just withdrew here. */
+  readonly cancelWithdrawn: (
+    actor: Actor,
+    threadId: ThreadId,
+  ) => Effect.Effect<void, NotFound | DatabaseInfrastructureError, IntegrationAnswers>
   readonly answer: (
     actor: Actor,
     request: AnswerInputRequest,
@@ -406,6 +411,64 @@ export const withdrawWaiting = Effect.fn('Inputs.withdrawWaiting')(function* (
     yield* (yield* Changes).publish([Topic.person(personId), Topic.thread(threadId)])
   return withdrawn
 }, Effect.uninterruptible)
+
+/**
+ * A Person's ordinary message withdrew their waiting questions in this Thread (`withdrawWaiting`).
+ * An Integration's withdrawn question still holds its paused call, so that call is answered
+ * `cancel` here through the same continuation an answer uses (`IntegrationAnswers.answer`, which
+ * settles the call's journal), and the ending is kept on the row. The row stays withdrawn: the
+ * Person's message is its reply, so Vivid hears no separate answer.
+ *
+ * Only withdrawn rows with no outcome yet are taken, and each is claimed by one conditional write
+ * first, so running this again, or for a replayed send, cancels nothing twice. A claimed row whose
+ * resume fails ends `Uncertain`, as an interrupted answer does.
+ */
+const cancelWithdrawn = Effect.fn('Inputs.cancelWithdrawn')(function* (
+  actor: Actor,
+  threadId: ThreadId,
+) {
+  const database = yield* Database
+  const uncertain = IntegrationAnswerOutcome.cases.Uncertain.make({})
+  const encodeOutcome = encodeStored(IntegrationAnswerOutcome, 'Integration answer')
+  const claimed = yield* database.run(
+    database
+      .update(inputRequests)
+      .set({ integrationOutcome: yield* encodeOutcome(uncertain) })
+      .where(
+        and(
+          eq(inputRequests.threadId, threadId),
+          eq(inputRequests.personId, actor.person.id),
+          eq(inputRequests.status, 'withdrawn'),
+          isNotNull(inputRequests.integration),
+          isNull(inputRequests.integrationOutcome),
+        ),
+      )
+      .returning(),
+  )
+  const addressed: Actor = { ...actor, by: 'vivid', threadId: Option.some(threadId) }
+  for (const value of claimed) {
+    const row = yield* decodeRow(value)
+    if (row.integration === null) continue
+    const action = row.integration
+    const outcome = yield* (yield* IntegrationAnswers)
+      .answer(addressed, action, { action: 'cancel' })
+      .pipe(
+        Effect.catch(() =>
+          Effect.gen(function* () {
+            yield* (yield* IntegrationAnswers).settle(action, uncertain)
+            return uncertain
+          }),
+        ),
+      )
+    yield* database.run(
+      database
+        .update(inputRequests)
+        .set({ integrationOutcome: yield* encodeOutcome(outcome) })
+        .where(eq(inputRequests.id, row.id)),
+    )
+  }
+  if (claimed.length > 0) yield* changed(actor, Topic.thread(threadId))
+})
 
 /** Stores own the conditional transition; handlers share it with Vivid's tool entry point. */
 /** A tool's form remains attached to the existing Input request, with its ordinary delivery. */
@@ -630,6 +693,7 @@ export const inputStoreLayer = Layer.effect(
       ask: (actor, request) => run(ask(actor, request, null)),
       askIntegration: (actor, action) => run(askIntegration(actor, action)),
       answerIntegration: (actor, request) => run(answerIntegration(actor, request)),
+      cancelWithdrawn: (actor, threadId) => run(cancelWithdrawn(actor, threadId)),
       answer: (actor, request) => run(answer(actor, request)),
       // A finished handoff owes its signal the way an answer does; both are retried together.
       replay: run(

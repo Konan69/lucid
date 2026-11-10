@@ -1,0 +1,482 @@
+import {
+  ActionTarget,
+  ApprovalState,
+  IntegrationAnswerOutcome,
+  IntegrationPause,
+  InputRequestState,
+  type Approval,
+  type InputAnswer,
+  type InputRequest,
+  IntegrationForm as IntegrationFormSchema,
+  type IntegrationResponse,
+} from '@vivid/contracts'
+import { Array as Arr, Data, Option } from 'effect'
+import { repliedWords } from './asking.js'
+
+/**
+ * An Integration's question to the Person, as the fields every client draws and checks.
+ *
+ * An Integration asks mid-call with a form: a message and a JSON schema of flat properties
+ * (MCP elicitation, `requestedSchema`, which `packages/contracts/src/asks.ts` stores as the
+ * protocol sent it). The schema is read here once into `Entry` values, one per property in the
+ * schema's own order, and each entry carries the value the Person has given so far, typed for its
+ * kind: a picked choice, picked choices, yes or no, or the words in a field. A client draws an
+ * entry, edits it through `pick`, `turn` and `type`, says `problemOf` beside it, and sends
+ * `contentOf` once every entry is acceptable.
+ *
+ * The kinds follow the protocol's primitive definitions (`effect/ai/McpSchema`,
+ * `PrimitiveSchemaDefinition`): a string with `enum` or `oneOf` (and the legacy `enumNames`) is
+ * one choice; an array whose items are such a set is several; a boolean is yes or no; a string,
+ * number or integer is typed. The limits the protocol carries (length, format, range, how many
+ * picks) are what `problemOf` checks, so a value the schema would refuse never leaves the client.
+ */
+
+/** A string's declared shape, from the protocol's `format`. */
+type Format = 'email' | 'uri' | 'date' | 'date-time'
+
+/** One offered choice: the value sent, and the words the Person reads. */
+interface Choice {
+  readonly value: string
+  readonly label: string
+}
+
+/** What every entry has: the key it is sent under, its title, its help line, and whether it must be given. */
+interface Base {
+  readonly key: string
+  /** The property's `title`, else its key. */
+  readonly title: string
+  /** The property's `description`, drawn quietly under the title. */
+  readonly help: Option.Option<string>
+  readonly required: boolean
+}
+
+/**
+ * One property of the form and what the Person has given for it.
+ *
+ * - `One`: a closed set, one of which is picked.
+ * - `Several`: a closed set, any number of which are picked within `least` and `most`. Nothing
+ *   picked is a value of its own (`[]`), apart from giving none: a required set always has a
+ *   value, starting empty when the schema gives no default; an optional one gives none until a
+ *   choice is picked, and none again once every pick is taken back.
+ * - `Toggle`: yes or no.
+ * - `Text`: words exactly as given, within the length and format the schema says. A default is
+ *   a value even when it is empty. Words the Person clears give none.
+ * - `Number`: a number typed as words, so a half-typed "1." stays as the Person wrote it.
+ */
+export type Entry = Data.TaggedEnum<{
+  One: Base & { readonly choices: ReadonlyArray<Choice>; readonly picked: Option.Option<string> }
+  Several: Base & {
+    readonly choices: ReadonlyArray<Choice>
+    readonly least: number
+    readonly most: Option.Option<number>
+    readonly picked: Option.Option<ReadonlyArray<string>>
+  }
+  Toggle: Base & { readonly on: Option.Option<boolean> }
+  Text: Base & {
+    readonly format: Option.Option<Format>
+    readonly least: Option.Option<number>
+    readonly most: Option.Option<number>
+    readonly words: Option.Option<string>
+  }
+  Number: Base & {
+    readonly integer: boolean
+    readonly least: Option.Option<number>
+    readonly most: Option.Option<number>
+    readonly words: string
+  }
+}>
+export const Entry = Data.taggedEnum<Entry>()
+
+/** The form as stored with its request: the protocol's own message and schema. */
+export type IntegrationForm = typeof IntegrationFormSchema.Type
+type Property = IntegrationForm['requestedSchema']['properties'][string]
+
+/** The Integration form a request carries, when it is an Integration's mid-call question. */
+export const formOf = (request: InputRequest): Option.Option<IntegrationForm> => {
+  if (request.integration === null || request.integration.continuation === null)
+    return Option.none()
+  const { pause } = request.integration.continuation
+  return IntegrationPause.guards.Input(pause) ? Option.some(pause.form) : Option.none()
+}
+
+/**
+ * Whether an Approval answers an Integration that paused its call. The server takes only Allow
+ * and Don't allow for it (`requireDecisionAuthority`, `apps/server/src/approvals/store.ts`):
+ * the Integration asks every time, and the saved call is answered as it was asked, never edited.
+ */
+export const isIntegrationApproval = (approval: Approval): boolean =>
+  approval.action.continuation !== null
+
+/** The name of the Integration a request was raised by, as the Person labelled its account. */
+const integrationName = (request: InputRequest): Option.Option<string> =>
+  request.integration !== null && ActionTarget.guards.Connection(request.integration.target)
+    ? Option.some(request.integration.target.account)
+    : Option.none()
+
+/** The protocol leaves a property's optional keys out; each is read here as present or absent. */
+const some = Option.fromUndefinedOr
+
+/** The choices of a single pick, with the legacy `enumNames` as their words where given. */
+const singleChoices = (property: Property & { readonly type: 'string' }): ReadonlyArray<Choice> => {
+  if ('oneOf' in property)
+    return property.oneOf.map((one) => ({ value: one.const, label: one.title }))
+  if (!('enum' in property)) return []
+  const names: ReadonlyArray<string> =
+    'enumNames' in property ? Option.getOrElse(some(property.enumNames), () => []) : []
+  return property.enum.map((value, place) => ({
+    value,
+    label: Option.getOrElse(Arr.get(names, place), () => value),
+  }))
+}
+
+/** One property read into its entry, with the schema's default as the starting value. */
+const entryOf = (key: string, property: Property, required: boolean): Entry => {
+  const base: Base = {
+    key,
+    title: Option.getOrElse(some(property.title), () => key),
+    help: Option.filter(some(property.description), (help) => help.trim().length > 0),
+    required,
+  }
+  switch (property.type) {
+    case 'boolean':
+      return Entry.Toggle({ ...base, on: some(property.default) })
+    case 'number':
+    case 'integer':
+      return Entry.Number({
+        ...base,
+        integer: property.type === 'integer',
+        least: some(property.minimum),
+        most: some(property.maximum),
+        words: property.default === undefined ? '' : String(property.default),
+      })
+    case 'array': {
+      const choices =
+        'anyOf' in property.items
+          ? property.items.anyOf.map((one) => ({ value: one.const, label: one.title }))
+          : property.items.enum.map((value) => ({ value, label: value }))
+      const offered = (values: ReadonlyArray<string>) =>
+        values.filter((value) => choices.some((choice) => choice.value === value))
+      return Entry.Several({
+        ...base,
+        choices,
+        least: Option.getOrElse(some(property.minItems), () => 0),
+        most: some(property.maxItems),
+        picked: Option.orElse(Option.map(some(property.default), offered), () =>
+          required ? Option.some([]) : Option.none(),
+        ),
+      })
+    }
+    case 'string': {
+      if ('oneOf' in property || 'enum' in property) {
+        const choices = singleChoices(property)
+        return Entry.One({
+          ...base,
+          choices,
+          picked: Option.filter(some(property.default), (value) =>
+            choices.some((choice) => choice.value === value),
+          ),
+        })
+      }
+      return Entry.Text({
+        ...base,
+        format: some(property.format),
+        least: some(property.minLength),
+        most: some(property.maxLength),
+        words: some(property.default),
+      })
+    }
+  }
+}
+
+/** The form's entries, in the schema's order, each starting from its default. */
+export const entriesOf = (form: IntegrationForm): ReadonlyArray<Entry> => {
+  const required = new Set(Option.getOrElse(some(form.requestedSchema.required), () => []))
+  return Object.entries(form.requestedSchema.properties).map(([key, property]) =>
+    entryOf(key, property, required.has(key)),
+  )
+}
+
+/** The same entries with the one under `key` changed by `change`. */
+const edit = (
+  entries: ReadonlyArray<Entry>,
+  key: string,
+  change: (entry: Entry) => Entry,
+): ReadonlyArray<Entry> => entries.map((entry) => (entry.key === key ? change(entry) : entry))
+
+/**
+ * A choice was pressed. On a single pick it is the pick; on several it is added, or taken out
+ * when it was already there. Any other kind is left as it was.
+ */
+export const pick = (entries: ReadonlyArray<Entry>, key: string, value: string) =>
+  edit(entries, key, (entry) => {
+    if (Entry.$is('One')(entry)) return Entry.One({ ...entry, picked: Option.some(value) })
+    if (!Entry.$is('Several')(entry)) return entry
+    const held: ReadonlyArray<string> = Option.getOrElse(entry.picked, () => [])
+    const picked = held.includes(value) ? held.filter((one) => one !== value) : [...held, value]
+    // An optional set left with nothing picked gives no value; a required one gives `[]`.
+    return Entry.Several({
+      ...entry,
+      picked: picked.length === 0 && !entry.required ? Option.none() : Option.some(picked),
+    })
+  })
+
+/** Whether a choice is picked in a single or several pick. */
+export const isPicked = (entry: Entry, value: string): boolean => {
+  if (Entry.$is('One')(entry)) return Option.contains(entry.picked, value)
+  return Entry.$is('Several')(entry) && Option.exists(entry.picked, (held) => held.includes(value))
+}
+
+/** The words a text or number field shows: what is given, or nothing. */
+export const shownWords = (entry: Entry): string => {
+  if (Entry.$is('Text')(entry)) return Option.getOrElse(entry.words, () => '')
+  return Entry.$is('Number')(entry) ? entry.words : ''
+}
+
+/** Yes or No was pressed on a yes-or-no entry. */
+export const turn = (entries: ReadonlyArray<Entry>, key: string, on: boolean) =>
+  edit(entries, key, (entry) =>
+    Entry.$is('Toggle')(entry) ? Entry.Toggle({ ...entry, on: Option.some(on) }) : entry,
+  )
+
+/**
+ * Words were typed into a text or number entry, exactly as typed. A text field the Person
+ * clears gives no value: clearing is taking the answer back, as unpicking is.
+ */
+export const type = (entries: ReadonlyArray<Entry>, key: string, words: string) =>
+  edit(entries, key, (entry) => {
+    if (Entry.$is('Text')(entry))
+      return Entry.Text({ ...entry, words: words === '' ? Option.none() : Option.some(words) })
+    return Entry.$is('Number')(entry) ? Entry.Number({ ...entry, words }) : entry
+  })
+
+/** The two rows a yes-or-no entry is drawn as, in that order. */
+export const YES_NO: ReadonlyArray<{ readonly on: boolean; readonly label: string }> = [
+  { on: true, label: 'Yes' },
+  { on: false, label: 'No' },
+]
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u
+const DATE = /^\d{4}-\d{2}-\d{2}$/u
+const DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?$/u
+
+/** Whether words are a full web address, as the protocol's `uri` format means. */
+const isAddress = (words: string): boolean => {
+  if (!URL.canParse(words)) return false
+  return /^[a-z][a-z0-9+.-]*:/iu.test(words)
+}
+
+/** What is wrong with typed words for their declared format, when anything is. */
+const formatProblem = (format: Format, words: string): Option.Option<string> => {
+  switch (format) {
+    case 'email':
+      return EMAIL.test(words) ? Option.none() : Option.some('Enter an email address.')
+    case 'uri':
+      return isAddress(words) ? Option.none() : Option.some('Enter a full address, like https://…')
+    case 'date':
+      return DATE.test(words) && !Number.isNaN(Date.parse(words))
+        ? Option.none()
+        : Option.some('Enter a date like 2026-11-10.')
+    case 'date-time':
+      return DATE_TIME.test(words) && !Number.isNaN(Date.parse(words))
+        ? Option.none()
+        : Option.some('Enter a date and time like 2026-11-10T14:30.')
+  }
+}
+
+/** What is wrong with typed words, against the entry's length and format. */
+const textProblem = (entry: Extract<Entry, { _tag: 'Text' }>): Option.Option<string> => {
+  if (Option.isNone(entry.words))
+    return entry.required ? Option.some('Fill this in.') : Option.none()
+  const words = entry.words.value
+  if (Option.exists(entry.least, (least) => words.length < least))
+    return Option.map(entry.least, (least) => `Use at least ${least} characters.`)
+  if (Option.exists(entry.most, (most) => words.length > most))
+    return Option.map(entry.most, (most) => `Use at most ${most} characters.`)
+  return Option.flatMap(entry.format, (format) => formatProblem(format, words))
+}
+
+/** What is wrong with a typed number, against the entry's kind and range. */
+const numberProblem = (entry: Extract<Entry, { _tag: 'Number' }>): Option.Option<string> => {
+  const words = entry.words.trim()
+  if (words.length === 0) return entry.required ? Option.some('Fill this in.') : Option.none()
+  const value = Number(words)
+  if (!Number.isFinite(value)) return Option.some('Enter a number.')
+  if (entry.integer && !Number.isInteger(value)) return Option.some('Enter a whole number.')
+  if (Option.exists(entry.least, (least) => value < least))
+    return Option.map(entry.least, (least) => `Enter ${least} or more.`)
+  if (Option.exists(entry.most, (most) => value > most))
+    return Option.map(entry.most, (most) => `Enter ${most} or less.`)
+  return Option.none()
+}
+
+/** What is wrong with how many choices are picked. Limits apply only to a given value. */
+const severalProblem = (entry: Extract<Entry, { _tag: 'Several' }>): Option.Option<string> => {
+  if (Option.isNone(entry.picked))
+    return entry.required ? Option.some('Pick at least one.') : Option.none()
+  const count = entry.picked.value.length
+  if (count < entry.least)
+    return Option.some(entry.least <= 1 ? 'Pick at least one.' : `Pick at least ${entry.least}.`)
+  return Option.exists(entry.most, (most) => count > most)
+    ? Option.map(entry.most, (most) => `Pick at most ${most}.`)
+    : Option.none()
+}
+
+/**
+ * What is wrong with an entry's value, in one sentence for beside it, when anything is. A
+ * required entry with nothing given is wrong too: it keeps Send off until it is given.
+ */
+export const problemOf = (entry: Entry): Option.Option<string> =>
+  Entry.$match(entry, {
+    One: ({ required, picked }) =>
+      required && Option.isNone(picked) ? Option.some('Pick one.') : Option.none(),
+    Several: severalProblem,
+    Toggle: ({ required, on }) =>
+      required && Option.isNone(on) ? Option.some('Pick Yes or No.') : Option.none(),
+    Text: textProblem,
+    Number: numberProblem,
+  })
+
+type Content = Extract<IntegrationResponse, { readonly action: 'accept' }>['content']
+type Given = Content[string]
+
+/** An entry's value as it is sent, when it has one. Nothing given is left out of the answer. */
+const givenOf = (entry: Entry): Option.Option<Given> =>
+  Entry.$match(entry, {
+    One: ({ picked }) => picked,
+    Several: ({ picked }) => picked,
+    Toggle: ({ on }) => on,
+    Text: ({ words }) => words,
+    Number: ({ words }) =>
+      words.trim().length === 0 ? Option.none() : Option.some<Given>(Number(words.trim())),
+  })
+
+/**
+ * What Send answers with: every entry that has a value, under its key. Nothing while any entry
+ * has a problem, so a form the schema would refuse cannot be sent.
+ */
+export const contentOf = (entries: ReadonlyArray<Entry>): Option.Option<Content> => {
+  if (entries.some((entry) => Option.isSome(problemOf(entry)))) return Option.none()
+  return Option.some(
+    Object.fromEntries(
+      entries.flatMap((entry) =>
+        Option.toArray(Option.map(givenOf(entry), (given) => [entry.key, given] as const)),
+      ),
+    ),
+  )
+}
+
+/**
+ * Whether an entry is drawn with its title over it. A form of one choice needs none: the
+ * banner's head is the Integration's message, which asks it. Every other entry is named.
+ */
+export const titled = (entries: ReadonlyArray<Entry>): boolean =>
+  !(
+    entries.length === 1 &&
+    entries.every((entry) => !Entry.$is('Text')(entry) && !Entry.$is('Number')(entry))
+  )
+
+/**
+ * How an expired Integration ask ends in the Thread, under what was asked. An Approval paused
+ * before the call ran, so nothing was sent; a question came mid-call, so the Integration may
+ * already have done part of the work (`integrationExpiredMessage`, `@vivid/contracts`).
+ */
+export const EXPIRED_APPROVAL = 'Expired before you answered. Nothing was sent.'
+
+/**
+ * Whether an Integration's own Approval ran out: nobody answered by its deadline, or Allow
+ * reached the Integration after it had let the paused call go (the answer comes back `Expired`).
+ */
+export const approvalExpired = (approval: Approval): boolean =>
+  isIntegrationApproval(approval) &&
+  (ApprovalState.guards.Expired(approval.state) ||
+    Option.exists(Option.fromNullOr(approval.integrationOutcome), (outcome) =>
+      IntegrationAnswerOutcome.guards.Expired(outcome),
+    ))
+
+/**
+ * How an Integration's question ended, as the Thread says it.
+ *
+ * - `Expired`: nobody answered in time, or an answer reached the Integration after its deadline
+ *   (it comes back answered, with an `Expired` outcome: `apps/server/src/inputs/store.ts`).
+ * - `Sent` and `Skipped`: the bubble of the Person who answered. The server keeps Vivid's account
+ *   of the ending as the request's answer, not what the Person typed, so the bubble says only
+ *   which button they pressed.
+ */
+type Ending = 'Expired' | 'Sent' | 'Skipped'
+
+/** The ending of an Integration's question, once it has one. */
+const endingOf = (request: InputRequest): Option.Option<Ending> =>
+  InputRequestState.match(request.state, {
+    Waiting: () => Option.none(),
+    Withdrawn: () => Option.none(),
+    Expired: () => Option.some<Ending>('Expired'),
+    Answered: () =>
+      Option.some(
+        Option.match(Option.fromNullOr(request.integrationOutcome), {
+          onNone: (): Ending => 'Sent',
+          onSome: (outcome) =>
+            IntegrationAnswerOutcome.match(outcome, {
+              Expired: (): Ending => 'Expired',
+              Declined: (): Ending => 'Skipped',
+              Cancelled: (): Ending => 'Skipped',
+              Completed: (): Ending => 'Sent',
+              Accepted: (): Ending => 'Sent',
+              Rejected: (): Ending => 'Sent',
+              Waiting: (): Ending => 'Sent',
+              Uncertain: (): Ending => 'Sent',
+            }),
+        }),
+      ),
+  })
+
+/**
+ * The quiet line under an Integration's question once it ran out, naming the Integration: it
+ * came mid-call, so the Integration may already have done part of the work.
+ */
+export const expiredLine = (request: InputRequest): Option.Option<string> =>
+  request.integration === null
+    ? Option.none()
+    : Option.map(
+        Option.filter(endingOf(request), (ending) => ending === 'Expired'),
+        () =>
+          `Expired before you answered. ${Option.getOrElse(integrationName(request), () => 'The Integration')} may already have acted.`,
+      )
+
+/**
+ * The expired lines of the questions an Integration asked mid-call after this Approval was
+ * allowed, whether the Approval was the Integration's own or Vivid's. The server raises such a
+ * question itself, so no message of Vivid's names it; it shares the call's journal operation with
+ * the Approval, whose "Asked first" record is where the conversation says how it ended.
+ */
+export const followingExpired = (
+  approval: Approval,
+  requests: ReadonlyArray<InputRequest>,
+): ReadonlyArray<string> => {
+  // An ordinary Approval runs its call under its own operation (`operationOf.approval`,
+  // `apps/server/src/actions/journal.ts`); an Integration's keeps the paused call's.
+  const operation =
+    approval.action.continuation === null
+      ? `approval-${approval.id}`
+      : approval.action.continuation.operation
+  return requests
+    .filter(
+      (request) =>
+        request.integration !== null &&
+        request.integration.continuation !== null &&
+        request.integration.continuation.operation === operation,
+    )
+    .flatMap((request) => Option.toArray(expiredLine(request)))
+}
+
+/**
+ * The words of the answering Person's bubble for an answered request: the answers for Vivid's own
+ * question (`asking.repliedWords`), which button answered an Integration's, and none once an
+ * Integration's answer arrived too late (its expired line says so instead).
+ */
+export const repliedOf = (
+  request: InputRequest,
+  answers: Arr.NonEmptyReadonlyArray<InputAnswer>,
+): Option.Option<string> =>
+  request.integration === null
+    ? Option.some(repliedWords(answers))
+    : Option.filter(endingOf(request), (ending) => ending !== 'Expired')

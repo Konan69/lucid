@@ -164,11 +164,17 @@ export function useAsking(up: Option.Option<InputRequest>) {
     backward,
     /** Where the Person is in the request whose banner is up: what the composer's footer reads. */
     progress:
-      raised === undefined
+      // An Integration's form has its own Send and Skip (`Form.tsx`), so the composer's footer
+      // has nothing to move on from.
+      raised === undefined || raised.integration !== null
         ? Option.none()
         : Option.some(model.progressOf(raised.questions, draftingIn(raised))),
-    /** A request is waiting on this Person, whether or not its banner is up yet. */
-    waiting: Option.isSome(up),
+    /**
+     * A question of Vivid's is waiting on this Person, whether or not its banner is up yet, so
+     * what is sent is its reply. An Integration's is answered by its own form, so the composer
+     * stays "Message Vivid" for it.
+     */
+    waiting: Option.exists(up, (request) => request.integration === null),
     /** The answers to the request whose banner is up are on their way. */
     answering: raised !== undefined && Option.isSome(about(pending, raised.id)),
     /** The answers to one request are on their way. */

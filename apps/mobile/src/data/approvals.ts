@@ -4,6 +4,7 @@ import { allowing, responding, type makeLive } from '@vivid/state'
 import { Effect, Layer, Option, Result } from 'effect'
 import { makeChecking } from './checking'
 import { makeDeviceDecisions } from './devices'
+import { makeIntegrationAnswers } from './filling'
 import { confirm, warn } from './haptics'
 import { useLiveData, useLiveValue, type LiveData } from './live'
 
@@ -32,13 +33,14 @@ export const makeApprovalDecisions = (engine: ReturnType<typeof makeLive>) => {
 
 /**
  * The session's machines for what the Person settles away from Vivid's own work: a computer's
- * access, an Approval away from its Thread, and whether an action Vivid never heard back about
- * went through (`checking.ts`).
+ * access, an Approval away from its Thread, whether an action Vivid never heard back about went
+ * through (`checking.ts`), and an answer to an Integration's question (`filling.ts`).
  */
 export const makeDecisions = (engine: ReturnType<typeof makeLive>) => ({
   devices: makeDeviceDecisions(engine),
   approvals: makeApprovalDecisions(engine),
   checking: makeChecking(engine),
+  filling: makeIntegrationAnswers(engine),
 })
 
 /** The Feed and Notifications read the same attempt, and its refusal, wherever it was pressed. */

@@ -5,7 +5,7 @@ import {
   type InputRequest,
   type PersonId,
 } from '@vivid/contracts'
-import { asking } from '@vivid/state'
+import { asking, form } from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { useState } from 'react'
 import { View } from 'react-native'
@@ -43,17 +43,32 @@ import { Words } from './Words'
  * waiting on this Person, answered or withdrawn says nothing more here.
  */
 export function Asked({ request, me }: { request: InputRequest; me: PersonId }) {
-  const theirs = InputRequestState.guards.Waiting(request.state) && request.askedOf.id !== me
   return (
     <View>
       <Words text={request.questions.map((asked) => asked.question).join('\n\n')} />
-      {theirs && (
-        <Label size="label" tone="ink-2">
-          Waiting on {request.askedOf.name}.
-        </Label>
-      )}
+      <Ending request={request} me={me} />
     </View>
   )
+}
+
+/**
+ * The one quiet line under the questions, when there is one: who a request waits on when it is
+ * somebody else, and that an Integration's question ran out before anyone answered it.
+ */
+function Ending({ request, me }: { request: InputRequest; me: PersonId }) {
+  const words = InputRequestState.guards.Waiting(request.state)
+    ? Option.some(`Waiting on ${request.askedOf.name}.`).pipe(
+        Option.filter(() => request.askedOf.id !== me),
+      )
+    : form.expiredLine(request)
+  return Option.match(words, {
+    onNone: () => null,
+    onSome: (line) => (
+      <Label size="label" tone="ink-2">
+        {line}
+      </Label>
+    ),
+  })
 }
 
 /** Reads a request's identifier from a signal's attribute, which arrives as plain text. */
@@ -99,18 +114,24 @@ export function Replied({ request, me }: { request: InputRequest; me: PersonId }
     Waiting: () => null,
     Withdrawn: () => null,
     Expired: () => null,
-    Answered: ({ answers, answeredBy }) => (
-      <Animated.View entering={watched ? SAID : undefined}>
-        <Said
-          text={asking.repliedWords(answers)}
-          pictures={NO_PICTURES}
-          voice={
-            answeredBy.id === me
-              ? Voice.Mine()
-              : Voice.Theirs({ name: Option.some(answeredBy.name) })
-          }
-        />
-      </Animated.View>
-    ),
+    // An Integration's bubble says which button answered it, and nothing once the answer came
+    // too late (`form.repliedOf`).
+    Answered: ({ answers, answeredBy }) =>
+      Option.match(form.repliedOf(request, answers), {
+        onNone: () => null,
+        onSome: (text) => (
+          <Animated.View entering={watched ? SAID : undefined}>
+            <Said
+              text={text}
+              pictures={NO_PICTURES}
+              voice={
+                answeredBy.id === me
+                  ? Voice.Mine()
+                  : Voice.Theirs({ name: Option.some(answeredBy.name) })
+              }
+            />
+          </Animated.View>
+        ),
+      }),
   })
 }

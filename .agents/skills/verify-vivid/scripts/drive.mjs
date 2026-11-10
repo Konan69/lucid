@@ -1,4 +1,5 @@
 import { approve, changed, deny } from './approval.mjs'
+import { asksFeature } from './asks.mjs'
 import { outcome } from './outcome.mjs'
 import { question as realQuestion } from './question.mjs'
 import * as NodeFSP from 'node:fs/promises'
@@ -49,6 +50,7 @@ export const features = [
   'handoff',
   'approve',
   'deny',
+  'asks',
   'changed',
   'outcome',
   'stop',
@@ -589,6 +591,7 @@ const recipes = {
   question,
   approve,
   deny,
+  asks: asksFeature,
   changed,
   outcome,
   picture,
@@ -616,7 +619,8 @@ const recipes = {
   helperstop,
 }
 const blocked = {
-  handoff: 'No proof-owned Computer: a handoff is prepared and filled on a disposable Person Computer.',
+  handoff:
+    'No proof-owned Computer: a handoff is prepared and filled on a disposable Person Computer.',
   ...discordBlocked(),
   ...githubBlocked(),
   ...textingDiscordBlocked(),
@@ -639,6 +643,7 @@ export async function drive(state, feature) {
           code: 'A program requires a real model; rehearsal cannot write it.',
           approve: 'Approval requires a real model.',
           deny: 'Denial requires a real model.',
+          asks: 'An Integration ask requires a real model to call the Integration.',
           changed: 'A stale ask requires a real model.',
           outcome: 'Action receipts require a real model to make the write.',
           stop: 'Stop requires a real model; rehearsal cannot prove interruption.',

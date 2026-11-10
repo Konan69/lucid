@@ -249,6 +249,8 @@ export const ExecutorStatus = Schema.TaggedUnion({
 })
 export const ExecutorTool = Schema.Struct({
   name: Schema.NonEmptyString,
+  /** The tool's declared human title, when its app gives one (MCP `title`, `annotations.title`). */
+  title: Schema.Option(Schema.String).pipe(Schema.withConstructorDefault(Effect.succeedNone)),
   description: Schema.String,
   input: Schema.Json,
   // An omitted provider schema is genuine absence; schema constructors normalize it to None.
@@ -711,12 +713,14 @@ const WireConnection = Schema.Struct({
 })
 const WireTool = Schema.Struct({
   name: Schema.NonEmptyString,
+  title: Schema.optionalKey(Schema.String),
   description: Schema.String,
   inputSchema: Schema.Json,
   outputSchema: Schema.optionalKey(Schema.Json),
   readOnly: Schema.optionalKey(Schema.Boolean),
   annotations: Schema.optionalKey(
     Schema.Struct({
+      title: Schema.optionalKey(Schema.String),
       readOnlyHint: Schema.optionalKey(Schema.Boolean),
       destructiveHint: Schema.optionalKey(Schema.Boolean),
     }),
@@ -1357,6 +1361,14 @@ function listedTool(references: ExecutorReferences, tool: typeof WireTool.Type):
   return {
     tool: ExecutorTool.make({
       name: tool.name,
+      title: Option.filter(
+        Option.orElse(Option.fromUndefinedOr(tool.title), () =>
+          Option.flatMap(Option.fromUndefinedOr(tool.annotations), (hints) =>
+            Option.fromUndefinedOr(hints.title),
+          ),
+        ),
+        (title) => title.trim().length > 0,
+      ),
       description: tool.description,
       input: schemas.input,
       output: schemas.output,
