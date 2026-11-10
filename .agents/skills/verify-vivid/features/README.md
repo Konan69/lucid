@@ -14,6 +14,7 @@ Read the touched feature before launching. A verdict belongs to the recorded com
 - [Hand over a step](handoff.md).
 - [Allow an action](approve.md).
 - [Deny an action](deny.md).
+- [An Integration asks](asks.md).
 - [An ask that changed](changed.md).
 - [Action receipts and Run outcomes](outcome.md).
 - [Stop work](stop.md).

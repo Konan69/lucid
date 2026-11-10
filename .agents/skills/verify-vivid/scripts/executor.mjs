@@ -78,7 +78,9 @@ async function authority(state) {
     // Each Person's own Integrations are made as their own member, invited by this owner.
     VIVID_EXECUTOR_OWNER_EMAIL: owner.email,
     VIVID_EXECUTOR_OWNER_PASSWORD: owner.password,
-    VIVID_EXECUTOR_SEAL_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'),
+    VIVID_EXECUTOR_SEAL_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString(
+      'base64',
+    ),
   }
 }
 

@@ -1,4 +1,5 @@
 import { approve, changed, deny } from './approval.mjs'
+import { asksBrowser } from './asks.mjs'
 import { outcome } from './outcome.mjs'
 import { question } from './question.mjs'
 import * as fs from 'node:fs/promises'
@@ -63,6 +64,7 @@ const missing = {
 const recipes = {
   code: { check: 'code' },
   approve: { check: 'approve' },
+  asks: { check: 'asks' },
   deny: { check: 'deny' },
   outcome: { check: 'outcome' },
   changed: { check: 'changed' },
@@ -112,6 +114,11 @@ const recipes = {
   },
 }
 const specialRecipes = {
+  asks: {
+    drive: asksBrowser,
+    scope:
+      "Verify Pulse's own Approval and mid-call question: Allow and Don't allow only, the Feed card without a draft, the form's rows, fields, defaults and Send, a message that withdraws and cancels, both expired lines and reload; see features/asks.md.",
+  },
   learning: {
     drive: learningBrowser,
     scope:

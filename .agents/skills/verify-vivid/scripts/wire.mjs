@@ -124,6 +124,55 @@ export async function rpc(state, tag, payload, directory, name = tag) {
 
 /** WatchThread is the product publication signal; SSE termination alone never proves settlement.
  * This finite read closes its own stream on the first matching durable ThreadDetail. No polling. */
+/**
+ * Follow WatchThread until `accept` holds for the Thread's detail, within `deadline` milliseconds.
+ * For a state the server reaches on its own, such as an ask that runs out at its deadline.
+ */
+export async function until(state, thread, accept, deadline, directory, name = 'until') {
+  const account = JSON.parse(await NodeFSP.readFile(state.scratch + '/account.json', 'utf8'))
+  const abort = new AbortController()
+  const timeout = setTimeout(() => abort.abort(new Error(name + ' deadline')), deadline)
+  try {
+    const response = await fetch(state.web + '/api/rpc', {
+      method: 'POST',
+      headers: { cookie: account.cookie, origin: state.web, 'content-type': 'application/ndjson' },
+      body:
+        JSON.stringify({
+          _tag: 'Request',
+          id: '1',
+          tag: 'WatchThread',
+          payload: { id: thread },
+          headers: [],
+        }) + '\n',
+      signal: abort.signal,
+    })
+    let buffer = ''
+    for await (const bytes of response.body) {
+      buffer += Buffer.from(bytes).toString('utf8')
+      let newline
+      while ((newline = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, newline)
+        buffer = buffer.slice(newline + 1)
+        if (!line) continue
+        const packet = JSON.parse(line)
+        if (packet._tag === 'Exit' && packet.exit._tag === 'Failure') throw new Error(line)
+        if (packet._tag !== 'Chunk') continue
+        for (const value of packet.values) {
+          const detail = decode(RpcSerialization.ndjson.codecFor(ThreadDetail), value)
+          if (accept(detail)) {
+            if (directory) await json(directory + '/' + name + '.json', detail)
+            return detail
+          }
+        }
+      }
+    }
+    throw new Error('WatchThread ended before ' + name)
+  } finally {
+    clearTimeout(timeout)
+    abort.abort()
+  }
+}
+
 export async function settled(state, thread, count, terminal = 'Completed', directory) {
   const account = JSON.parse(await NodeFSP.readFile(state.scratch + '/account.json', 'utf8'))
   const abort = new AbortController()
