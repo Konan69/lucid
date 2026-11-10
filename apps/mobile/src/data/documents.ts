@@ -16,7 +16,7 @@ import { bearer, request } from './transport'
  */
 
 /** The file could not be fetched or handed to another app, in a sentence the screen can show. */
-export class DocumentUnavailable extends Schema.TaggedError<DocumentUnavailable>()(
+class DocumentUnavailable extends Schema.TaggedError<DocumentUnavailable>()(
   'DocumentUnavailable',
   { message: Schema.String },
   { title: 'Document unavailable' },
@@ -128,7 +128,7 @@ export const isChoosing = (): boolean => choosing
  * Asks the Person for one file. Closing the picker without choosing is not a failure: it is
  * nothing chosen.
  */
-export const chooseDocument = Effect.fn('Documents.choose')(function* () {
+const chooseDocument = Effect.fn('Documents.choose')(function* () {
   choosing = true
   const picked = yield* Effect.tryPromise({
     try: () => DocumentPicker.getDocumentAsync({ type: [...READABLE], copyToCacheDirectory: true }),

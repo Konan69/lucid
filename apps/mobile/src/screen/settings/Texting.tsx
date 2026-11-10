@@ -114,7 +114,7 @@ export function Texting() {
 }
 
 /** One group for each messaging app, in the order the server lists them. */
-export function TextingChannels({
+function TextingChannels({
   links,
   acts,
 }: {
@@ -137,7 +137,7 @@ type Asking = 'nothing' | 'connecting' | 'disconnecting'
  * One messaging app and everything a Person does with it here. What it draws is decided by where
  * the channel stands; a refusal from the last thing asked is said once underneath, in the group.
  */
-export function ChannelControl({ link, acts }: { link: ChannelLink; acts: TextingActs }) {
+function ChannelControl({ link, acts }: { link: ChannelLink; acts: TextingActs }) {
   const { channel, standing } = link
   const [asking, setAsking] = useState<Asking>('nothing')
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())

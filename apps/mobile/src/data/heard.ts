@@ -23,10 +23,10 @@ import { Option, Record, Schema } from 'effect'
  */
 
 /** How many of a Thread's newest messages are kept: what its screen opens on, and some above. */
-export const TAIL = 40
+const TAIL = 40
 
 /** How many Threads are kept: the ones opened most recently. */
-export const THREADS = 8
+const THREADS = 8
 
 /**
  * One Thread's kept words, the submissions among them that had ended (`settled`, the ids of

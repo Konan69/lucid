@@ -30,7 +30,7 @@ export const usePresses = <Value>(select: (state: Presses) => Value): Value =>
   select(useAtomValue(presses))
 
 /** The press on one card, when this session holds one. */
-export const pressOn =
+const pressOn =
   (card: FeedCardId) =>
   (state: Presses): Option.Option<feed.Press> =>
     Option.fromUndefinedOr(state.presses.get(card))

@@ -14,7 +14,7 @@ import {
 import { useTheme } from '../theme'
 
 /** The drawer leaves a strip of the page showing, so it reads as over the page, not instead of it. */
-export const drawerWidth = (screen: number): number => Math.min(Math.round(screen * 0.86), 360)
+const drawerWidth = (screen: number): number => Math.min(Math.round(screen * 0.86), 360)
 
 /** How far a finger travels sideways before the drag is the drawer's and not a tap or a scroll. */
 const SIDEWAYS = 14

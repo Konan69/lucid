@@ -41,7 +41,7 @@ const Page = Schema.Union([
   }),
   Schema.Struct({ name: Schema.Literal('Project'), params: Schema.Struct({ id: ProjectId }) }),
 ])
-export type Page = typeof Page.Type
+type Page = typeof Page.Type
 
 /** Reads one route of the stack as a page, when it is one that can be drawn again. */
 export const pageOf = Schema.decodeUnknownOption(Page)
@@ -58,7 +58,7 @@ const Place = Schema.Struct({
 export type Place = typeof Place.Type
 
 /** Nothing open: the greeting. Where a workspace starts, and where it is when nothing was kept. */
-export const NOWHERE: Place = { thread: Option.none(), pages: [], at: 0 }
+const NOWHERE: Place = { thread: Option.none(), pages: [], at: 0 }
 
 /**
  * How long a place is worth coming back to, in milliseconds. A Person who comes back sooner
@@ -71,7 +71,7 @@ export const NOWHERE: Place = { thread: Option.none(), pages: [], at: 0 }
  * not coming back to the phone after a break. The shell applies the same length to an app that
  * was never ended, only put away (`useAfreshOnReturn`, `App.tsx`).
  */
-export const KEPT_FOR = 15 * 60 * 1000
+const KEPT_FOR = 15 * 60 * 1000
 
 /** Whether a place last visited at `at` is too old to come back to at `now`. */
 export const forgotten = (at: number, now: number): boolean => now - at > KEPT_FOR

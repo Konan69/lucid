@@ -79,4 +79,4 @@ export function makeSending(engine: Live) {
   }
 }
 
-export type Sending = ReturnType<typeof makeSending>
+type Sending = ReturnType<typeof makeSending>

@@ -43,7 +43,7 @@ export interface UpdateClient {
  * a launch-only check misses what was deployed meanwhile; anything shorter turns every glance at
  * another app into a network call.
  */
-export const LOOK_AGAIN_AFTER_MS = 15 * 60 * 1000
+const LOOK_AGAIN_AFTER_MS = 15 * 60 * 1000
 
 /**
  * The three moments that matter, for whoever hears the phone's app state. `idle` has nothing

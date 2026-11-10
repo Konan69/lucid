@@ -6,7 +6,7 @@ import { useTheme } from '../theme'
 import { Press } from '../ui/motion/Pressable'
 
 /** The system's menu in the app's palette, opened by a tap on what it wraps. */
-export function ControlPillMenu(props: ComponentProps<typeof MenuView>) {
+function ControlPillMenu(props: ComponentProps<typeof MenuView>) {
   const { dark } = useTheme()
   return <MenuView {...props} themeVariant={dark ? 'dark' : 'light'} />
 }

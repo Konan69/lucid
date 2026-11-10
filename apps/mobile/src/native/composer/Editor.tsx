@@ -83,4 +83,4 @@ export function ComposerEditor({
   )
 }
 
-export type { ComposerEditorHandle, ComposerEditorProps, ComposerEditorSelection } from './types'
+export type { ComposerEditorProps } from './types'

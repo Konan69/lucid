@@ -6,7 +6,7 @@ import type { Anchor } from '../../data/reading'
  * scrolled away. Under it they are still reading the foot of the conversation: the list keeps
  * following new words, and the button that brings them back stays folded away.
  */
-export const AWAY = 120
+const AWAY = 120
 
 /** Where a conversation's scroller is: how far down it is scrolled, and the two heights. */
 export interface Scrolled {
@@ -47,10 +47,7 @@ export const newestOf = (messages: ReadonlyArray<{ readonly id: string }>): Opti
  * message and not from how many there were, because older history loading in above is not
  * arriving. A message that is no longer there has nothing after it to count.
  */
-export const arrivedSince = (
-  messages: ReadonlyArray<{ readonly id: string }>,
-  newest: string,
-): number => {
+const arrivedSince = (messages: ReadonlyArray<{ readonly id: string }>, newest: string): number => {
   const at = messages.findIndex((message) => message.id === newest)
   return at === -1 ? 0 : messages.length - 1 - at
 }

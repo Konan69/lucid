@@ -71,11 +71,10 @@ export const invitationAddress = (server: ServerAddress, id: InvitationId): stri
   `${server}/invite/${encodeURIComponent(id)}`
 
 /** Settings → Connections in the web app, where a service is authorized in a browser. */
-export const connectionsAddress = (server: ServerAddress): string =>
-  `${server}/?settings=connections`
+const connectionsAddress = (server: ServerAddress): string => `${server}/?settings=connections`
 
 /** Settings → Rules in the web app, where what Vivid must ask about first is written. */
-export const rulesAddress = (server: ServerAddress): string => `${server}/?settings=rules`
+const rulesAddress = (server: ServerAddress): string => `${server}/?settings=rules`
 
 /** Settings → Record in the web app: what Vivid did, and for whom. */
-export const recordAddress = (server: ServerAddress): string => `${server}/?settings=record`
+const recordAddress = (server: ServerAddress): string => `${server}/?settings=record`

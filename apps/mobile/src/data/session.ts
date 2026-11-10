@@ -117,7 +117,7 @@ export type Forgetting = Data.TaggedEnum<{
 export const Forgetting = Data.taggedEnum<Forgetting>()
 
 /** No acknowledgement arrived for the request ending a session. Its server authority is unknown. */
-export class SignOutUnanswered extends Schema.TaggedError<SignOutUnanswered>()(
+class SignOutUnanswered extends Schema.TaggedError<SignOutUnanswered>()(
   'SignOutUnanswered',
   {},
   { title: 'Sign-out unanswered' },

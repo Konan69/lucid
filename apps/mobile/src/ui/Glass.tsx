@@ -35,7 +35,7 @@ const RADIUS = 32
  * composer read as a solid slab with nothing under it (the owner, 26 October 2026: "liquid glass
  * opacity over the composer").
  */
-export function GlassFill({ opaque }: { opaque?: string }) {
+function GlassFill({ opaque }: { opaque?: string }) {
   const { colors: c, dark } = useTheme()
   const blurs = Platform.OS === 'ios'
   return (

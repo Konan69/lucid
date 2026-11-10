@@ -63,7 +63,7 @@ export const COMPOSER_CORNER = CORNER
 /** What the dock keeps clear at each side of the shape. */
 export const COMPOSER_SIDE = 12
 /** The composer's height with one line in it and the keyboard up: the shape and the dock's room. */
-export const COMPOSER_RESTING = TARGET + EDGE_ROOM * 2 + AROUND * 2
+const COMPOSER_RESTING = TARGET + EDGE_ROOM * 2 + AROUND * 2
 
 /**
  * A question from Vivid that is up over the composer (`screen/chat/Choices.tsx`), as far as the

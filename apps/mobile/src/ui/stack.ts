@@ -82,7 +82,7 @@ export const GLASS_HEADER = {
 } satisfies NativeStackNavigationOptions
 
 /** An opaque bar, for a screen whose content scrolls inside itself and gives glass nothing to sample. */
-export const SOLID_HEADER = {
+const SOLID_HEADER = {
   headerShown: true,
   headerBackButtonDisplayMode: 'minimal',
   headerBackTitle: '',

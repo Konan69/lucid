@@ -514,7 +514,7 @@ export function Segmented<Value extends string>({
  * A choice between more named things than fit on one line. They wrap, so a long label or a
  * larger text size makes another row instead of a clipped one.
  */
-export function Chips<Value extends string>({
+function Chips<Value extends string>({
   label,
   value,
   options,
