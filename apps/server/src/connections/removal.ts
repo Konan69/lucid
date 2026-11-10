@@ -1,3 +1,5 @@
+import { observeFailures } from '../observability/failure.ts'
+import { Message } from '../observability/messages.ts'
 import { and, eq, ne, sql } from 'drizzle-orm'
 import { Clock, Effect, Option, Result } from 'effect'
 import { ApprovalInvalidation, Conflict } from '@vivid/contracts'
@@ -60,7 +62,7 @@ const heldResources = Effect.fn('Connections.heldResources')(function* (
   const held = yield* Effect.forEach(
     rows,
     Effect.fnUntraced(function* (row) {
-      const decoded = yield* decodeStoredRow(row).pipe(Effect.result)
+      const decoded = yield* decodeStoredRow(row).pipe(observeFailures('rpc'), Effect.result)
       if (Result.isFailure(decoded)) {
         yield* Effect.logError('Integration reclamation blocked by invalid row', {
           connectionId: row.id,
@@ -206,9 +208,13 @@ const removeResources = Effect.fn('Connections.removeResources')(function* (row:
 /** Serialize removals of the same Connection before deleting foreign resources. A stale
  * removal must reload rather than delete resources whose references changed meanwhile. */
 export const removeConnection = Effect.fn('Connections.remove')(function* (row: ConnectionRecord) {
+  yield* Effect.annotateCurrentSpan({
+    'vivid.connection.id': row.id,
+    'vivid.executor.principal': row.executorPrincipal,
+  })
   const database = yield* Database
   const context = yield* Effect.context<Effect.Services<ReturnType<typeof removeResources>>>()
-  return yield* database.transaction((tx) =>
+  const removed = yield* database.transaction((tx) =>
     Effect.gen(function* () {
       yield* tx.execute(
         sql`select pg_advisory_xact_lock(hashtextextended(${`vivid-adopt:${row.id}`}, 0))`,
@@ -226,4 +232,11 @@ export const removeConnection = Effect.fn('Connections.remove')(function* (row: 
       return yield* removeResources(row).pipe(Effect.setContext(context))
     }),
   )
+  yield* Effect.logInfo(Message.connectionRemoved).pipe(
+    Effect.annotateLogs({
+      'vivid.connection.id': row.id,
+      'vivid.executor.principal': row.executorPrincipal,
+    }),
+  )
+  return removed
 })

@@ -1,5 +1,8 @@
+import { Logger, Tracer } from 'effect'
+import { decisionLogs } from '../observability/testlogger.ts'
+import { Message } from '../observability/messages.ts'
 import { inputRequests } from '../inputs/tables.ts'
-import { operationOf } from '../actions/journal.ts'
+import { operationOf, reconcile } from '../actions/journal.ts'
 import { RuleStore } from '../rules/store.ts'
 import { actionRunnerLayer } from '../approvals/runner.ts'
 import { DeviceRegistry } from '../computers/device.ts'
@@ -152,7 +155,7 @@ const restart = Effect.fn('IntegrationAsksProof.restart')(function* () {
       ['inspect', '--format', '{{index .Config.Labels "vivid.proof"}}', container],
       { encoding: 'utf8' },
     ).trim(),
-  ).toMatch(/^(integration-asks|retire-adoption|one-decider)$/u)
+  ).toMatch(/^(integration-asks|retire-adoption|one-decider|tracing)$/u)
   const since = new Date().toISOString()
   NodeChildProcess.execFileSync('docker', ['restart', '--timeout', '0', container])
   yield* Effect.callback<void>((resume) => {
@@ -194,8 +197,17 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
   })((it) => {
     it.effect(
       'accepts only the provider layer, preserves Vivid decisions and typed forms, and never reissues lost calls',
-      () =>
-        Effect.gen(function* () {
+      () => {
+        const logs = decisionLogs()
+        const spans: Tracer.NativeSpan[] = []
+        const tracer = Tracer.make({
+          span(options) {
+            const span = new Tracer.NativeSpan(options)
+            spans.push(span)
+            return span
+          },
+        })
+        return Effect.gen(function* () {
           const test = yield* fixture()
           const sent = yield* Ref.make<ReadonlyArray<string>>([])
           const loseApproval = yield* Ref.make(false)
@@ -458,6 +470,58 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
                 value: [{ marker: fallbackMarker, phase: 'approved' }],
               }),
             )
+            const fallbackOperation = fallbackApproval.action.continuation.operation
+            expect(
+              (yield* reconcile(test.personal.person.id, fallbackOperation)).reconciliation._tag,
+            ).toBe('Applied')
+            for (const name of [
+              'IntegrationAsks.pause',
+              'IntegrationAsks.answer',
+              'Actions.reconcile',
+            ]) {
+              expect(
+                spans.some(
+                  (span) =>
+                    span.name === name &&
+                    span.attributes.get('vivid.operation.id') === fallbackOperation,
+                ),
+              ).toBe(true)
+            }
+            expect(
+              spans.some(
+                (span) =>
+                  span.name === 'IntegrationAsks.pause' &&
+                  span.attributes.get('vivid.operation.id') === fallbackOperation &&
+                  span.attributes.get('vivid.connection.id') === row.id &&
+                  span.attributes.get('vivid.integration.pause') === 'Approval',
+              ),
+            ).toBe(true)
+            expect(
+              spans.some(
+                (span) =>
+                  span.name === 'Actions.reconcile' &&
+                  span.attributes.get('vivid.operation.id') === fallbackOperation &&
+                  span.attributes.get('vivid.reconciliation.outcome') === 'Applied',
+              ),
+            ).toBe(true)
+            expect(
+              spans.some(
+                (span) =>
+                  span.name === 'IntegrationAsks.answer' &&
+                  span.attributes.get('vivid.connection.id') === row.id &&
+                  span.attributes.get('vivid.integration.outcome') === 'Completed',
+              ),
+            ).toBe(true)
+            for (const message of [
+              Message.integrationPause,
+              Message.integrationAnswer,
+              Message.reconciliation,
+            ])
+              expect(
+                logs
+                  .recorded()
+                  .some((line) => line.includes(message) && line.includes(fallbackOperation)),
+              ).toBe(true)
             expect((yield* approvals.inThread(test.personalId)).length).toBe(beforeFallback + 1)
             yield* Ref.set(
               observed.review,
@@ -473,6 +537,17 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
             expect((yield* start('approve', crypto.randomUUID())).outcome._tag).toBe('Completed')
             expect(yield* Ref.get(reviews)).toBe(reviewedBefore + 1)
             yield* rules.remove(test.personal, allowRule.id)
+            const neverRule = yield* rules.create(test.personal, {
+              action: 'Never run the proof tool',
+              decision: 'Never',
+              scope: RuleScope.cases.Personal.make({}),
+            })
+            const beforeNever = (yield* inputs.inbox(test.personal)).length
+            const neverCall = yield* start('question', crypto.randomUUID())
+            expect(neverCall.outcome._tag).toBe('Blocked')
+            expect((yield* inputs.inbox(test.personal)).length).toBe(beforeNever)
+            yield* rules.remove(test.personal, neverRule.id)
+
             const deniedMarker = crypto.randomUUID()
             expect((yield* start('denied', deniedMarker)).outcome._tag).toBe('Rejected')
             expect(yield* inspect(deniedMarker)).toEqual(
@@ -742,7 +817,14 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
             if (saved === undefined) return expect.fail('Expected uncertain receipt')
             expect(ActionReceipt.guards.Unknown(yield* decodeReceipt(saved.receipt))).toBe(true)
           }).pipe(Effect.provide(complete))
-        }),
+        }).pipe(
+          Effect.updateService(
+            Logger.CurrentLoggers,
+            (loggers) => new Set([...loggers, logs.capture]),
+          ),
+          Effect.provideService(Tracer.Tracer, tracer),
+        )
+      },
       { timeout: 240_000 },
     )
   })

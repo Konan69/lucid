@@ -2,6 +2,7 @@ import type { ConnectionRecord } from './records.ts'
 import type { NotFound } from '@vivid/contracts'
 import { Gate, GateDecision, type GateBasis } from '../approvals/gate.ts'
 import { exposureOf } from './tools.ts'
+import { observeFailures } from '../observability/failure.ts'
 import { Message } from '../observability/messages.ts'
 import {
   ActionReceipt,
@@ -41,6 +42,12 @@ const pause = Effect.fn('IntegrationAsks.pause')(function* (actor: Actor, action
     ...actor,
     threadId: Option.some((yield* originOf(action.continuation.operation)).threadId),
   }
+  yield* Effect.annotateCurrentSpan({
+    'vivid.connection.id': action.target.connectionId,
+    'vivid.operation.id': action.continuation.operation,
+    'vivid.executor.request': action.continuation.pause.requestId,
+    'vivid.integration.pause': action.continuation.pause._tag,
+  })
   const request = action.continuation.pause
   if (IntegrationPause.guards.Approval(request)) {
     const row = yield* (yield* ConnectionStore).get(addressed, action.target.connectionId)
@@ -52,11 +59,29 @@ const pause = Effect.fn('IntegrationAsks.pause')(function* (actor: Actor, action
         preconditions: [],
       }),
     )
+    yield* Effect.annotateCurrentSpan('vivid.approval.id', approval.id)
+    yield* Effect.logInfo(Message.integrationPause).pipe(
+      Effect.annotateLogs({
+        'vivid.connection.id': action.target.connectionId,
+        'vivid.operation.id': action.continuation.operation,
+        'vivid.approval.id': approval.id,
+        'vivid.integration.pause': request._tag,
+      }),
+    )
     return yield* notRead(
       ToolOutcome.cases.ApprovalRequired.make({ approvalId: approval.id, summary: action.summary }),
     )
   }
   const input = yield* (yield* InputStore).askIntegration(addressed, action)
+  yield* Effect.annotateCurrentSpan('vivid.input.id', input.id)
+  yield* Effect.logInfo(Message.integrationPause).pipe(
+    Effect.annotateLogs({
+      'vivid.connection.id': action.target.connectionId,
+      'vivid.operation.id': action.continuation.operation,
+      'vivid.input.id': input.id,
+      'vivid.integration.pause': request._tag,
+    }),
+  )
   return yield* notRead(
     ToolOutcome.cases.InputRequired.make({
       requestId: input.id,
@@ -218,7 +243,7 @@ const approve = Effect.fn('IntegrationAsks.approve')(function* (
           ),
           Effect.result,
         )
-        if (Result.isFailure(declined))
+        if (Result.isFailure(declined) && !(declined.failure instanceof ExecutorRejected))
           return Result.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({}))
         yield* record(action, IntegrationAnswerOutcome.cases.Declined.make({}))
         return Result.fail(yield* notRead(ToolOutcome.cases.Blocked.make({ rule })))
@@ -235,6 +260,11 @@ const record = Effect.fn('IntegrationAsks.record')(function* (
 ) {
   if (action.continuation === null) return
   const operationId = action.continuation.operation
+  yield* Effect.annotateCurrentSpan({
+    'vivid.operation.id': operationId,
+    'vivid.executor.request': action.continuation.pause.requestId,
+    'vivid.integration.outcome': outcome._tag,
+  })
   const now = yield* Clock.currentTimeMillis
   const origin = yield* originOf(operationId)
   yield* IntegrationAnswerOutcome.match(outcome, {
@@ -255,6 +285,13 @@ const record = Effect.fn('IntegrationAsks.record')(function* (
     Declined: () => settle(ActionReceipt.cases.Unknown.make({ operationId, observedAt: now })),
     Cancelled: () => settle(ActionReceipt.cases.Unknown.make({ operationId, observedAt: now })),
   })
+  if (IntegrationAnswerOutcome.guards.Expired(outcome))
+    yield* Effect.logInfo(Message.integrationExpired).pipe(
+      Effect.annotateLogs({
+        'vivid.operation.id': operationId,
+        'vivid.integration.outcome': outcome._tag,
+      }),
+    )
   if (origin.approvalId !== null)
     yield* (yield* ApprovalStore).completeIntegration(origin.approvalId, outcome)
 })
@@ -272,11 +309,16 @@ const answer = Effect.fn('IntegrationAsks.answer')(function* (
   yield* Effect.annotateCurrentSpan({
     'vivid.action.operation_id': saved.operation,
     'vivid.executor.request_id': saved.pause.requestId,
+    'vivid.connection.id': row.id,
+    'vivid.operation.id': saved.operation,
+    'vivid.executor.request': saved.pause.requestId,
+    'vivid.executor.principal': row.executorPrincipal,
   })
   const resumed = yield* operationsOf(row).pipe(
     Effect.flatMap((operation) =>
       operation.resume({ pause: saved.pause, response, effect: action.effect }),
     ),
+    observeFailures('http'),
     Effect.result,
   )
   let result = Result.isSuccess(resumed)
@@ -312,7 +354,7 @@ const answer = Effect.fn('IntegrationAsks.answer')(function* (
       ),
     Accepted: ({ value }) =>
       Effect.succeed(IntegrationAnswerOutcome.cases.Accepted.make({ value })),
-    Paused: Effect.fnUntraced(function* ({ pause: next }) {
+    Paused: Effect.fn('IntegrationAsks.nextPause')(function* ({ pause: next }) {
       yield* pause(
         actor,
         ProposedAction.make({
@@ -345,6 +387,14 @@ const answer = Effect.fn('IntegrationAsks.answer')(function* (
       ),
   })
   yield* record(action, outcome)
+  yield* Effect.annotateCurrentSpan('vivid.integration.outcome', outcome._tag)
+  yield* Effect.logInfo(Message.integrationAnswer).pipe(
+    Effect.annotateLogs({
+      'vivid.connection.id': row.id,
+      'vivid.operation.id': saved.operation,
+      'vivid.integration.outcome': outcome._tag,
+    }),
+  )
   return outcome
 })
 

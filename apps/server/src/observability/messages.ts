@@ -21,6 +21,19 @@ export const Message = {
   executorContinuationFailed: 'Executor continuation failed',
   approvalAuditFailed: 'Integration approval audit failed',
 
+  /** Saved Integration calls and their durable questions, with identifiers and outcome tags only. */
+  integrationPause: 'Integration pause raised',
+  integrationAnswer: 'Integration pause answered',
+  integrationWithdrawn: 'Integration pause cancelled by withdrawal',
+  integrationExpired: 'Integration pause expired',
+  reconciliation: 'Action reconciled',
+  reconciliationRetry: 'Action retry checked',
+  memberProvisioned: 'Executor member provisioned',
+  memberReused: 'Executor member reused',
+  memberRefused: 'Executor member refused',
+  executorNotReady: 'Executor selection not ready',
+  connectionRemoved: 'Integration removed',
+  artifactRemoved: 'Artifact removed',
   /** `failure.ts`: a typed failure was answered at a boundary. */
   failure: 'Failure reached a boundary',
   /** `failure.ts`: a defect was answered at a boundary. */

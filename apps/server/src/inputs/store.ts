@@ -1,3 +1,5 @@
+import { observeFailures } from '../observability/failure.ts'
+import { Message } from '../observability/messages.ts'
 import * as Exit from 'effect/Exit'
 import {
   IntegrationAnswerOutcome,
@@ -450,9 +452,11 @@ const cancelWithdrawn = Effect.fn('Inputs.cancelWithdrawn')(function* (
     const row = yield* decodeRow(value)
     if (row.integration === null) continue
     const action = row.integration
+    yield* Effect.annotateCurrentSpan('vivid.input.id', row.id)
     const outcome = yield* (yield* IntegrationAnswers)
       .answer(addressed, action, { action: 'cancel' })
       .pipe(
+        observeFailures('http'),
         Effect.catch(() =>
           Effect.gen(function* () {
             yield* (yield* IntegrationAnswers).settle(action, uncertain)
@@ -465,6 +469,12 @@ const cancelWithdrawn = Effect.fn('Inputs.cancelWithdrawn')(function* (
         .update(inputRequests)
         .set({ integrationOutcome: yield* encodeOutcome(outcome) })
         .where(eq(inputRequests.id, row.id)),
+    )
+    yield* Effect.logInfo(Message.integrationWithdrawn).pipe(
+      Effect.annotateLogs({
+        'vivid.input.id': row.id,
+        'vivid.integration.outcome': outcome._tag,
+      }),
     )
   }
   if (claimed.length > 0) yield* changed(actor, Topic.thread(threadId))
@@ -499,6 +509,7 @@ const answerIntegration = Effect.fn('Inputs.answerIntegration')(function* (
   actor: Actor,
   request: AnswerIntegrationInputRequest,
 ) {
+  yield* Effect.annotateCurrentSpan('vivid.input.id', request.id)
   const database = yield* Database
   const rows = yield* database.run(
     database
@@ -540,8 +551,9 @@ const answerIntegration = Effect.fn('Inputs.answerIntegration')(function* (
       const input = yield* finishIntegrationInput(held, outcome, actor.person.id)
       return { request: input, outcome }
     }).pipe(
+      observeFailures('http'),
       Effect.catch(
-        Effect.fnUntraced(function* () {
+        Effect.fn('Inputs.recoverAnswer')(function* () {
           const outcome = IntegrationAnswerOutcome.cases.Uncertain.make({})
           yield* (yield* IntegrationAnswers).settle(action, outcome)
           return { request: yield* finishIntegrationInput(held, outcome, actor.person.id), outcome }
@@ -551,6 +563,7 @@ const answerIntegration = Effect.fn('Inputs.answerIntegration')(function* (
 
     yield* changed(actor, Topic.thread(row.threadId))
     yield* replaySignals(signalWriter, Option.some([request.id])).pipe(
+      observeFailures('runtime'),
       Effect.catch(() =>
         Effect.logError('Integration answer delivery failed', { requestId: request.id }),
       ),
@@ -590,6 +603,10 @@ const finishIntegrationInput = Effect.fn('Inputs.finishIntegration')(function* (
   outcome: IntegrationAnswerOutcome,
   answeredBy: PersonId | null,
 ) {
+  yield* Effect.annotateCurrentSpan({
+    'vivid.input.id': row.id,
+    'vivid.integration.outcome': outcome._tag,
+  })
   const database = yield* Database
   const now = yield* Clock.currentTimeMillis
   const body = integrationAnswerText(outcome)

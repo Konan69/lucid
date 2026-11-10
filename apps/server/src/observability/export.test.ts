@@ -2046,3 +2046,53 @@ it.effect('exports at most 64 database codes in one process, and none after that
     }),
   ),
 )
+
+it.effect(
+  'exports Integration identifiers and closed decisions, and rejects secret-shaped values',
+  () =>
+    withReceiver(
+      Effect.gen(function* () {
+        const id = '12345678-1234-4234-8234-123456789abc'
+        const attributes = {
+          'vivid.connection.id': id,
+          'vivid.approval.id': id,
+          'vivid.input.id': id,
+          'vivid.artifact.id': id,
+          'vivid.operation.id': `program-${id}`,
+          'vivid.executor.principal': 'adopted-account',
+          'vivid.executor.notready': 'ReconnectRequired',
+          'vivid.executor.method': 'resume',
+          'vivid.executor.status': 'approval-required',
+          'vivid.executor.outcome': 'Paused',
+          'vivid.integration.pause': 'Approval',
+          'vivid.integration.outcome': 'Completed',
+          'vivid.reconciliation.outcome': 'NotApplied',
+          'vivid.reconciliation.retry': 'Unblocked',
+        }
+        const probe = Effect.fn('Probe.integration')(function* () {
+          yield* Effect.annotateCurrentSpan(attributes)
+          yield* Effect.logInfo(Message.integrationAnswer).pipe(Effect.annotateLogs(attributes))
+        })
+        const secret = Effect.fn('Probe.integrationSecret')(function* () {
+          const poisoned = Object.fromEntries(
+            Object.keys(attributes).map((key) => [key, CREDENTIAL]),
+          )
+          yield* Effect.annotateCurrentSpan({ ...poisoned, 'vivid.executor.request': CREDENTIAL })
+          yield* Effect.logInfo(Message.integrationAnswer).pipe(Effect.annotateLogs(poisoned))
+        })
+        const { spans, lines, text } = yield* exported(Effect.andThen(probe(), secret()))
+        expect(
+          spanNamed(spans, 'Probe.integration').map((span) => valuesOf(span.attributes)),
+        ).toEqual([attributes])
+        expect(
+          spanNamed(spans, 'Probe.integrationSecret').map((span) => valuesOf(span.attributes)),
+        ).toEqual([{}])
+        expect(
+          lines
+            .filter((line) => line.body.stringValue === Message.integrationAnswer)
+            .map((line) => valuesOf(line.attributes)),
+        ).toEqual([attributes, {}])
+        expect(text).not.toContain(CREDENTIAL)
+      }),
+    ),
+)
