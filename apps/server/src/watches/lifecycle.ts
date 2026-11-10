@@ -32,6 +32,7 @@ import { watchProgress, WatchMissing } from './progress.ts'
 
 import { watchCheckins } from './checkins.ts'
 import { owedStoreLayer } from '../owed/store.ts'
+import { projectStoreLayer } from '../projects/store.ts'
 
 /**
  * Starting, stopping and keeping Watches alive at Executor.
@@ -369,7 +370,9 @@ export class Watches extends Context.Service<Watches, Effect.Success<ReturnType<
   'vivid/Watches',
 ) {}
 
-export const watchesLayer = Layer.effect(Watches, make()).pipe(Layer.provide(owedStoreLayer))
+export const watchesLayer = Layer.effect(Watches, make()).pipe(
+  Layer.provide([owedStoreLayer, projectStoreLayer]),
+)
 
 /**
  * The renewal worker: one pass every ten minutes, scoped to the server, with no detached timer.

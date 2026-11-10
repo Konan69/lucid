@@ -1,3 +1,4 @@
+import { ProjectStore, WorkChange } from '../projects/store.ts'
 import { OwedStore } from '../owed/store.ts'
 import { describe, expect, layer } from '@effect/vitest'
 import {
@@ -5,6 +6,8 @@ import {
   WatchCondition,
   WatchIntent,
   CheckinFocus,
+  CheckinRead,
+  ProjectEvidence,
   CheckinTiming,
   WatchPurpose,
   CheckinArming,
@@ -296,6 +299,105 @@ describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
             )).status,
           ).toBe(410)
         }).pipe(Effect.scoped),
+    )
+
+    it.effect('reads fresh Project work at firing and closes its check-in after completion', () =>
+      Effect.gen(function* () {
+        const post = yield* receiver()
+        const actor = yield* person()
+        const projects = yield* ProjectStore
+        const created = yield* projects.create(actor, {
+          name: 'Site launch',
+          parentProjectId: null,
+        })
+        const project = yield* projects.update(
+          actor,
+          created.id,
+          created.revision,
+          WorkChange.cases.Define.make({
+            objective: 'The domain resolves',
+            nextStep: 'Buy the domain',
+          }),
+        )
+        const executor = yield* Executor
+        yield* Queue.offer(executor.answers, {
+          id: 'project-check',
+          refreshBefore: new Date(604800000),
+        })
+        const watching = yield* Watches
+        const watch = yield* watching.create(actor, {
+          ...request,
+          purpose: WatchIntent.cases.Checkin.make({
+            focus: CheckinFocus.cases.Project.make({ projectId: project.id }),
+            timing: CheckinTiming.cases.Chosen.make({
+              nextAt: 1000,
+              why: 'Move the site launch forward',
+            }),
+          }),
+        })
+        const subscribed = yield* Queue.take(executor.subscribed)
+        if (!WatchPurpose.guards.Checkin(watch.purpose)) return expect.fail('Expected a check-in')
+        const found = yield* (yield* WatchStore).find(watch.id)
+        if (Option.isNone(found)) return expect.fail('Expected the persisted check-in')
+        const operationKey = watch.purpose.arming.operationKey
+        yield* watching.confirmTimer(
+          actor,
+          found.value.connectionId,
+          { operationKey },
+          { operationKey, nextAt: 1000 },
+        )
+        const progressed = yield* projects.update(
+          actor,
+          project.id,
+          project.revision,
+          WorkChange.cases.Progress.make({
+            text: 'Bought the domain',
+            nextStep: 'Point it at the host',
+          }),
+        )
+        const reading = yield* watching.readCheckin(found.value, watch.purpose)
+        if (!CheckinRead.guards.Open(reading)) return expect.fail('Expected open Project work')
+        expect(reading.context).toContain('"objective":"The domain resolves"')
+        expect(reading.context).toContain('"nextStep":"Point it at the host"')
+        expect(reading.context).toContain('"text":"Bought the domain"')
+        yield* projects.update(
+          actor,
+          project.id,
+          progressed.revision,
+          WorkChange.cases.Complete.make({
+            proof: {
+              summary: 'The domain resolves.',
+              sources: [ProjectEvidence.cases.Person.make({ personId: actor.person.id })],
+            },
+          }),
+        )
+        expect(
+          (yield* post(
+            subscribed.url,
+            timerEvent('source-closed', operationKey),
+            subscribed.secret,
+            Option.none(),
+          )).status,
+        ).toBe(200)
+        const completed = yield* (yield* WatchStore).find(watch.id)
+        if (Option.isNone(completed)) return expect.fail('Expected completed history')
+        if (!WatchState.guards.Completed(completed.value.watch.state))
+          return expect.fail('Expected terminal completion')
+        expect(completed.value.watch.state.evidence).toBe('The domain resolves.')
+        const [run] = yield* (yield* RunStore).list(threadOf(watch.id, 'source-closed'))
+        if (run === undefined || !RunOrigin.guards.Checkin(run.origin))
+          return expect.fail('Expected the admitted check-in Run')
+        expect(completed.value.watch.state.runId).toBe(run.id)
+        expect(run.origin.watchId).toBe(watch.id)
+        expect(
+          (yield* post(
+            subscribed.url,
+            timerEvent('after-closure', operationKey),
+            subscribed.secret,
+            Option.none(),
+          )).status,
+        ).toBe(410)
+      }).pipe(Effect.scoped),
     )
 
     it.effect(

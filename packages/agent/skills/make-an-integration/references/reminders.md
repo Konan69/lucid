@@ -122,8 +122,8 @@ export default defineApp(requirements, {
 ```
 
 1. Make the Integration once, then find its events.
-2. `watch` `reminder.due` with `filters: {}` and Checkin purpose. Use Thread focus for "check on this", Owed for a named open obligation, or OpenWork for the owned backlog. Record the Person's timing with Requested, or your chosen instant and reason with Chosen. Give a single requested reminder an explicit Until condition that ends after the requested check. A requested recurrence stays Continuous.
-3. Read the operationKey returned in Awaiting. Arm with `use_tool`, copying that exact key into `operationKey`. For "in N minutes", remindIn reads the app's clock. For a clock time, remindAt takes an ISO date-time with the Person's offset. A Chosen check must arm for its exact nextAt.
+2. `watch` `reminder.due` with `filters: {}` and Checkin purpose. Use Thread focus for "check on this", Owed for a named open obligation, or OpenWork for the owned backlog. Use Requested for explicit Person timing, including "in N minutes". Use Chosen only for an exact instant you select yourself, with its reason. Give a single requested reminder an explicit Until condition that ends after the requested check. A requested recurrence stays Continuous.
+3. Read the operationKey returned in Awaiting. Arm with `use_tool`, copying that exact key into `operationKey`. For a requested relative delay, use remindIn, which reads the app's clock. For a clock time, remindAt takes an ISO date-time with the Person's offset. Arm a Chosen check with remindAt for its exact nextAt. remindIn would choose a different instant.
 4. Read the actual `{ operationKey, nextAt }` receipt. The server confirms that Watch from this tool result. A lost or invalid answer leaves it Awaiting. Retry the same key or read `schedule` with it. Say it is scheduled only after confirmation, using the receipt's time.
 5. On a still-open chosen check, `update_checkin` selects its next time and returns a new Awaiting key. Arm that key. An old key never names the updated check. Resolve the owed record when it arrives; the server reads that closure when the timer fires.
 

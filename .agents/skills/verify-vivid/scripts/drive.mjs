@@ -28,6 +28,7 @@ import { feed } from './feed.mjs'
 import { owed } from './owed.mjs'
 import { todos } from './todos.mjs'
 import { projects } from './projects.mjs'
+import { projectChecks } from './projectchecks.mjs'
 import { offer } from './offer.mjs'
 import { discordProof, discordBlocked } from './discord.mjs'
 import { githubProof, githubBlocked } from './github.mjs'
@@ -65,6 +66,7 @@ export const features = [
   'owed',
   'todos',
   'projects',
+  'projectchecks',
   'devices',
   'reading',
   'settings',
@@ -604,6 +606,7 @@ const recipes = {
   owed,
   todos,
   projects,
+  projectchecks: projectChecks,
   watch,
   integrations,
   checkin,
@@ -653,6 +656,7 @@ export async function drive(state, feature) {
           todos: 'The list requires a real model; rehearsal cannot prove it.',
           library: 'Library requires a real model; rehearsal cannot prove retrieval and citation.',
           projects: 'Project state requires a real model; rehearsal cannot prove it.',
+          projectchecks: 'Project check-ins require a real model; rehearsal cannot prove them.',
           helpers: 'Helpers require a real model; rehearsal cannot start one.',
           helperstop: 'Helpers require a real model; rehearsal cannot start one.',
         }

@@ -25,3 +25,7 @@ HTTP under `projects/`: `created.json`, `define-calls.json`, `defined.json`, `pr
 ## Gotchas
 
 The model may ask what the Project is before recording it, or record the goal and the progress in one call; the journey then fails on the missing call or state, which is a behaviour finding, not a flake. Company Projects, a Member who cannot open the proof Thread, the Done line and its link on the page, and the phone and desktop pages are not driven by these recipes; the phone needs its own emulator run.
+
+## Project check-ins
+
+Run `verify feature projectchecks <run>` to drive [projectchecks.mjs](../scripts/projectchecks.mjs) independently of the conversational Project-state journey. The Person gives Launch review a goal and next step, leaves timing to Vivid, and the recipe requires a Project-focused Chosen timer with a confirmed receipt. It brings the timer forward through conversation, waits on WatchFeed, and requires the resulting Checkin Run to write Project progress. It then arms another visit, completes the Project through the public Confirm command, and waits on WatchWork for the check to leave the live list after the timer fires. Evidence is `projectchecks/project-check-proof.json` and the chosen/firing histories. The database-backed receiver test separately requires Completed history with the Project proof and refuses later events.
