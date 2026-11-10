@@ -8,10 +8,10 @@ import {
 } from '@vivid/contracts'
 import { Option } from 'effect'
 
-export type RuntimeConversation = Omit<Thread, 'id'> & { id: string }
+type RuntimeConversation = Omit<Thread, 'id'> & { id: string }
 
 /** Converts Message markdown into the compact preview used by Thread lists. */
-export function plainPreview(markdown: string) {
+function plainPreview(markdown: string) {
   return markdown
     .replace(/```[\s\S]*?```/g, ' code ')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')

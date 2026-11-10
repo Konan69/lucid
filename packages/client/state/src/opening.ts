@@ -142,7 +142,7 @@ export const make = (services: Layer.Layer<Opener>) => {
 }
 
 /** Whether this file is on its way to another app: its control is held, and the machine refuses. */
-export const isOpening = (reading: Reading, key: string) =>
+const isOpening = (reading: Reading, key: string) =>
   Reading.match(reading, {
     Starting: () => true,
     Idle: () => false,

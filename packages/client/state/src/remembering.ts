@@ -49,21 +49,17 @@ import type { LiveEngine, ProductFailure } from './live.js'
  */
 
 /** The server could not be asked, or did not answer with the memory. Asking again may work. */
-export class Unanswered extends Schema.TaggedError<Unanswered>()(
+class Unanswered extends Schema.TaggedError<Unanswered>()(
   'MemoryUnanswered',
   {},
   { title: 'MemoryUnanswered' },
 ) {}
 
 /** The entry changed after the Person was shown it: Vivid, or another device, wrote it since. */
-export class Moved extends Schema.TaggedError<Moved>()(
-  'MemoryMoved',
-  {},
-  { title: 'MemoryMoved' },
-) {}
+class Moved extends Schema.TaggedError<Moved>()('MemoryMoved', {}, { title: 'MemoryMoved' }) {}
 
 /** The entry is no longer remembered: Vivid, or another device, removed it since. */
-export class Gone extends Schema.TaggedError<Gone>()(
+class Gone extends Schema.TaggedError<Gone>()(
   'MemoryGone',
   { address: MemoryAddress },
   { title: 'MemoryGone' },
@@ -73,7 +69,7 @@ export class Gone extends Schema.TaggedError<Gone>()(
 type Cursor = typeof MemoryCursor.Type
 
 /** One correction as the Person made it, against the revision they were shown. */
-export interface Correction {
+interface Correction {
   readonly entry: MemoryEntry
   readonly expected: MemoryRevision
 }
@@ -220,7 +216,7 @@ const RememberingStates = Machine.state({
     },
   },
 })
-export type RememberingState = Parameters<typeof RememberingStates.matches>[0]
+type RememberingState = Parameters<typeof RememberingStates.matches>[0]
 
 const RememberingEvents = Machine.events({
   Retry: {},
@@ -697,7 +693,7 @@ export const make = (engine: LiveEngine) => {
   )
   return { begin, current: () => Option.getOrElse(latest, begin), forgets }
 }
-export type Visit = ReturnType<ReturnType<typeof make>['current']>
+type Visit = ReturnType<ReturnType<typeof make>['current']>
 
 /** The open entry's address, for the row that stands for it. Closed and vanished have none. */
 export const openAddress = (entry: Entry): Option.Option<MemoryAddress> =>

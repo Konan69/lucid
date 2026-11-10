@@ -5,7 +5,7 @@ import { Array as Arr, Option, Order } from 'effect'
 export type DeviceList = typeof DeviceListResponse.Type
 
 /** Whether Vivid may use this computer now. */
-export const allowed = (device: Device): boolean => DeviceAccess.guards.Allowed(device.access)
+const allowed = (device: Device): boolean => DeviceAccess.guards.Allowed(device.access)
 
 /**
  * The one computer Vivid asks about: the newest Pending one. A desktop app that is installed again

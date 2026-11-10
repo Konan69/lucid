@@ -91,9 +91,7 @@ export const byService = (
  * alone, or nothing when neither is known. The service's own name is not part of it: the row
  * already sits under that name.
  */
-export const accountWords = (
-  connection: Pick<Connection, 'name' | 'identity'>,
-): Option.Option<string> => {
+const accountWords = (connection: Pick<Connection, 'name' | 'identity'>): Option.Option<string> => {
   const said = [connection.name, connection.identity].filter((word) => word !== null)
   return said.length === 0 ? Option.none() : Option.some(said.join(' · '))
 }
@@ -178,7 +176,7 @@ export const awaitedOf = (output: Parameters<typeof decodeBegun>[0]): Awaited =>
   })
 
 /** Whether one Connection is what a card is waiting for, whatever state it is in. */
-export const answers = (
+const answers = (
   awaited: Awaited,
   request: Pick<ConnectionRequestMessage, 'service'>,
   connection: Connection,
@@ -205,7 +203,7 @@ export const answered = (
  * The Integration a card's press picks up instead of beginning a second one: the one Vivid began,
  * or one that was begun for this card and left unfinished. Nothing when the press begins afresh.
  */
-export const begunFor = (
+const begunFor = (
   connections: ReadonlyArray<Connection>,
   request: Pick<ConnectionRequestMessage, 'service'>,
   awaited: Awaited,

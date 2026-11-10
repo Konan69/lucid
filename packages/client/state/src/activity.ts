@@ -847,7 +847,7 @@ export function describeToolCall(
  * `current` is the id of the step Vivid is on, when it is on one; a surface finds it, because only
  * the surface knows whether the reply is still being written.
  */
-export function summarizeSteps(
+function summarizeSteps(
   steps: ReadonlyArray<{ readonly id: string; readonly label: string }>,
   current: Option.Option<string>,
 ): string {

@@ -35,7 +35,7 @@ export type Form = typeof Form.Type
  * it, or it was marked done elsewhere); the page now shows what is there, and saving again sends
  * against that. `Failed`: the server could not be reached or refused for another reason.
  */
-export const Reason = Schema.Literals(['Changed', 'Failed'])
+const Reason = Schema.Literals(['Changed', 'Failed'])
 export type Reason = typeof Reason.Type
 
 export class Refused extends Schema.TaggedError<Refused>()(

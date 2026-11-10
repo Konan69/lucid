@@ -14,7 +14,7 @@ import { Effect, Match, Option, Predicate, Result, Schedule, Schema } from 'effe
  * How a reply splits into words and displays lives with the contracts, because the server reads a
  * stored reply's programs with the same reading the surfaces draw it with.
  */
-export { stretches, type Stretch } from '@vivid/contracts/display'
+export { stretches } from '@vivid/contracts/display'
 
 /** One field of a form as OpenUI's renderer keeps it: the value typed, picked or ticked. */
 const Field = Schema.Struct({
@@ -168,7 +168,7 @@ const failed = (text: string): DisplayToolResult => ({
  * The server's answer to a display's call, as the renderer reads it. Only a completed call has
  * data; every other outcome reaches OpenUI's error API and a Mutation's `result.error`.
  */
-export const displayToolResult = (outcome: ToolOutcome): DisplayToolResult =>
+const displayToolResult = (outcome: ToolOutcome): DisplayToolResult =>
   ToolOutcome.match<DisplayToolResult>(outcome, {
     // The provider took the call but has not confirmed the result, so the display gets its answer
     // without calling it done.
@@ -212,14 +212,14 @@ const decodeProgram = Schema.decodeUnknownEffect(RunCodeRequest)
  * the Query could send the Mutation's program with no press, and the server, which reads a
  * program's kind from where the display writes it, would run it as the Mutation.
  */
-export class DisplayProgramAmbiguous extends Schema.TaggedError<DisplayProgramAmbiguous>()(
+class DisplayProgramAmbiguous extends Schema.TaggedError<DisplayProgramAmbiguous>()(
   'DisplayProgramAmbiguous',
   {},
   { title: 'Display program intent is ambiguous' },
 ) {}
 
 /** The same refusal for an Integration's tool, which a Query must never run with a press's authority. */
-export class DisplayToolAmbiguous extends Schema.TaggedError<DisplayToolAmbiguous>()(
+class DisplayToolAmbiguous extends Schema.TaggedError<DisplayToolAmbiguous>()(
   'DisplayToolAmbiguous',
   {},
   { title: 'Display tool intent is ambiguous' },
@@ -256,7 +256,7 @@ const waiting = (): DisplayToolResult => failed('Vivid is still finishing this r
  * Query's error without settled data and asks again the next time it reads the display's Queries
  * (`evaluateQueries` asks for any Query whose cache entry has no data, lang-core 1.0.0).
  */
-export const displayCodeResult = (outcome: DisplayCodeOutcome): DisplayToolResult =>
+const displayCodeResult = (outcome: DisplayCodeOutcome): DisplayToolResult =>
   isWaiting(outcome)
     ? waiting()
     : CodeOutcome.match(outcome, {

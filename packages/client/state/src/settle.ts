@@ -34,7 +34,7 @@ const after = (fence: string, line: string): string => {
  * outside a code fence, and does not carry on a list. Everything before that place is drawn the
  * same however the reply goes on. It is 0 when the reply is still on its first block.
  */
-export const settledAt = (text: string): number => {
+const settledAt = (text: string): number => {
   // The marker of the fence the scan is inside, or empty outside one.
   let fence = ''
   let blank = false

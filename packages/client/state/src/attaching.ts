@@ -129,7 +129,7 @@ const placed = (list: ReadonlyArray<Item>, ready: Item): ReadonlyArray<Item> => 
   return list.map((item) => (item.file.key === next.file.key ? next : item))
 }
 
-export const TrayMachine = Machine.make({
+const TrayMachine = Machine.make({
   id: 'AttachTray',
   root: TrayStates,
   events: TrayEvents,

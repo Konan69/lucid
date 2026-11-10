@@ -165,7 +165,7 @@ export const everyNoticeRead =
  * What each kind of notice is called when nothing better names it. A new kind fails to compile
  * here until it has a name.
  */
-export const NOTICE_NAME = {
+const NOTICE_NAME = {
   finished: 'Vivid finished',
   'needs-you': 'Vivid needs you',
   shared: 'A Thread was shared with you',

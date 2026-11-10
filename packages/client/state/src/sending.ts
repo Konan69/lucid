@@ -41,7 +41,7 @@ export interface Delivery extends Schema.Schema.Type<typeof Delivery> {}
  * A delivery the server took and the Run it began, kept until the conversation shows its
  * message. `startedAt` is the Run's, for telling a Run not listed yet from one too old to be.
  */
-export const Taken = Schema.Struct({
+const Taken = Schema.Struct({
   delivery: Delivery,
   run: RunId,
   startedAt: Schema.Finite,
@@ -58,7 +58,7 @@ export const Unsent = Schema.Struct({
 export interface Unsent extends Schema.Schema.Type<typeof Unsent> {}
 
 /** The send was refused or its receipt was lost. Placement remains uncertain. */
-export class Undelivered extends Schema.TaggedError<Undelivered>()(
+class Undelivered extends Schema.TaggedError<Undelivered>()(
   'Undelivered',
   { why: Schema.Option(Schema.String) },
   { title: 'Undelivered' },
@@ -179,7 +179,7 @@ export const Seen = Schema.Struct({
 })
 export interface Seen extends Schema.Schema.Type<typeof Seen> {}
 
-export const SendingEvents = Machine.events({
+const SendingEvents = Machine.events({
   /** Start a new Thread with its first delivery already ahead of every follow-up. */
   Begin: { creation: CreateThreadRequest, delivery: Delivery },
   /**
@@ -248,7 +248,7 @@ const heldIn = (state: Held): Held => ({
   own: state.own,
 })
 
-export const Sending = Machine.make({
+const Sending = Machine.make({
   id: 'Sending',
   root: SendingStates,
   events: SendingEvents,
@@ -477,10 +477,7 @@ const standing = (state: Option.Option<SendingState>): Standing =>
   })
 
 /** A held payload is the only evidence that words without an admission are still being sent. */
-export const deliveryOf = (
-  state: Option.Option<SendingState>,
-  key: string,
-): Option.Option<Delivery> => {
+const deliveryOf = (state: Option.Option<SendingState>, key: string): Option.Option<Delivery> => {
   const held = standing(state)
   return Option.fromUndefinedOr(
     [
@@ -492,10 +489,7 @@ export const deliveryOf = (
 }
 
 /** Canonical ownership remains after payload release; an admission alone has no message id. */
-export const recognisedOf = (
-  state: Option.Option<SendingState>,
-  key: string,
-): Option.Option<string> =>
+const recognisedOf = (state: Option.Option<SendingState>, key: string): Option.Option<string> =>
   Option.flatMap(
     Option.fromUndefinedOr(standing(state).own.find((proof) => proof.key === key)),
     (proof) =>
@@ -887,7 +881,7 @@ export const isCreating = (state: Option.Option<SendingState>): boolean =>
   )
 
 /** A send's outcome is read from its owner, including a creation barrier that was interrupted. */
-export const Admission = Schema.TaggedUnion({
+const Admission = Schema.TaggedUnion({
   Accepted: { submission: Schema.Option(Schema.String) },
   Unanswered: {},
   Uncreated: { why: Schema.Option(Schema.String) },
@@ -895,10 +889,7 @@ export const Admission = Schema.TaggedUnion({
 export type Admission = typeof Admission.Type
 
 /** First-word adapters observe the same admission as composers, rather than issuing another send. */
-export const admissionOf = (
-  state: Option.Option<SendingState>,
-  key: string,
-): Option.Option<Admission> => {
+const admissionOf = (state: Option.Option<SendingState>, key: string): Option.Option<Admission> => {
   const barrier = Option.flatMap(state, (at) => SendingStates.get(at, 'Uncreated'))
   if (
     Option.isSome(barrier) &&

@@ -102,7 +102,7 @@ export type Settling = typeof SettlingSchema.Type
 export const Settling = Data.taggedEnum<Settling>()
 
 /** One press, including the post it answered, survives every state of its delivery. */
-export const Pressed = Schema.Struct({ revision: Schema.String, how: SettlingSchema })
+const Pressed = Schema.Struct({ revision: Schema.String, how: SettlingSchema })
 export interface Pressed extends Schema.Schema.Type<typeof Pressed> {}
 
 /**
@@ -132,7 +132,7 @@ export const failed = (item: Waiting, press: Option.Option<Press>): boolean =>
  * The delivery key for a press: the failed press's own key when the same words are pressed again
  * after a send whose answer was lost, so they are not said twice; otherwise a new one.
  */
-export const pressKey = (
+const pressKey = (
   item: Waiting,
   standing: Option.Option<Press>,
   words: string,
@@ -244,7 +244,7 @@ export class Sending extends Context.Service<Sending, SendingService>()(
 ) {}
 
 /** Each card owns its delivery, independent of every other card and screen mount. */
-export const PressStates = Machine.state({
+const PressStates = Machine.state({
   states: {
     Idle: {},
     Sending: { fields: Delivery.fields },
@@ -288,7 +288,7 @@ const deliveryOf = (
  * Effect Machine 0.46 can queue an outcome before re-entry and handle it afterwards. Both
  * receipts carry their delivery so a replaced press cannot complete the current Sending state.
  */
-export const PressMachine = Machine.make({
+const PressMachine = Machine.make({
   id: 'FeedPress',
   root: PressStates,
   events: PressEvents,

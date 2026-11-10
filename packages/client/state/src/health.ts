@@ -30,7 +30,7 @@ export interface HealthReading {
 }
 
 /** What went wrong in one component, as a Person reads it. */
-export const failureWords = (failure: ComputerProbeFailure): string =>
+const failureWords = (failure: ComputerProbeFailure): string =>
   ComputerProbeFailure.match(failure, {
     ProviderUnreachable: () => 'The service that runs it is not answering',
     ProviderAuthentication: () => 'The service that runs it refused Vivid’s key',

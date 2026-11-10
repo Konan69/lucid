@@ -74,7 +74,7 @@ export class Closer extends Context.Service<Closer, ClosingService>()(
  * Where a press on a to-do stands. `Sending` takes no second press; `Sent` keeps the row folded
  * until the list drops the to-do; `Unsent` puts it back, saying so, to be pressed again.
  */
-export const CloseStates = Machine.state({
+const CloseStates = Machine.state({
   states: {
     Idle: {},
     Sending: { fields: Delivery.fields },
@@ -108,7 +108,7 @@ const deliveryOf = (event: Delivery): Delivery => ({
  * delivery they answer and are declined when it is not the current one (the 0.46 queued-outcome
  * rule, `owed.ts` `CloseMachine`).
  */
-export const CloseMachine = Machine.make({
+const CloseMachine = Machine.make({
   id: 'TodoClose',
   root: CloseStates,
   events: CloseEvents,
@@ -168,7 +168,7 @@ export type CloseAtoms = ReturnType<typeof makeClose>
  * The reader's zone is the Person's, as for a deadline they wait on: `add_todo` resolves "Friday"
  * with the zone in their settings, so the row reads it on that calendar (`todoWordsIn`).
  */
-export function makeTodoWords(reader: Reader) {
+function makeTodoWords(reader: Reader) {
   const weekday = new Intl.DateTimeFormat(reader.locale, {
     timeZone: reader.timeZone,
     weekday: 'long',
