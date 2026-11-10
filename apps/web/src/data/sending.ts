@@ -11,8 +11,9 @@ import {
   type Following,
   type LiveQuery,
 } from '@vivid/state'
-import { Effect, Layer, Option } from 'effect'
+import { Effect, Layer, Option, Record } from 'effect'
 import { heldConversations } from './conversation'
+import { kept } from './kept'
 import { live } from './live'
 import { engine } from './runtime'
 import { shareLocation } from './locating'
@@ -38,6 +39,19 @@ const followed = conversations(engine)
 /** A Thread's conversation: what its screen reads, and what is held open ahead of it. */
 export const conversationOf = (id: ThreadId): LiveQuery<Following> => followed.get(id)
 
+/** Where this browser keeps every Thread's unsent words between visits (`sending.Kept`). */
+const UNSENT = 'vivid-unsent'
+
+/**
+ * Keeps one Thread's unsent words. The rest are read back first, so a Thread another tab keeps
+ * is not written over; a store that refuses leaves the words in this page's memory only.
+ */
+function keepUnsent(thread: ThreadId, unsent: ReadonlyArray<sending.Unsent>): void {
+  const others = Record.remove(sending.readKept(kept.read(UNSENT)), thread)
+  const text = sending.writeKept(unsent.length > 0 ? Record.set(others, thread, unsent) : others)
+  if (Option.isSome(text)) kept.write(UNSENT, text.value)
+}
+
 /** How this page hands a delivery to the server: `SendToThread` on its socket. */
 const transport = sending.delivering(engine.run, recording)
 const machines = sending.makeSending(
@@ -47,7 +61,12 @@ const machines = sending.makeSending(
     create: (request) =>
       transport.create(request).pipe(Effect.tap(() => Effect.sync(() => engine.reopen()))),
   }),
+  { registry: engine.registry, keep: keepUnsent },
 )
+
+// Words that did not arrive before the page was last closed are the Thread's again, to be sent
+// under their own keys.
+machines.restore(sending.readKept(kept.read(UNSENT)))
 
 /**
  * This page's conversations: the one used last and three before it. Each is a subscription on
