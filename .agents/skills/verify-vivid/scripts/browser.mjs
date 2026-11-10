@@ -62,6 +62,7 @@ const missing = {
   retry: 'Needs a server whose sign-in can be made to fail; see features/addresses.md.',
   handoff: 'No proof-owned Computer',
   checkin: 'No browser recipe for a check-in yet; feature checkin proves its timer and Feed post',
+  projectchecks: 'No browser recipe for Project check-ins yet; feature projectchecks proves timer firing, progress and closure',
   monitoring: 'Monitoring has no browser surface; feature monitoring proves the Sentry receipt',
   discord: 'No browser recipe for the Discord Key form and Allow card yet',
   github: 'No browser recipe for the GitHub Key form yet',
