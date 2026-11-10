@@ -356,6 +356,7 @@ const displayFailure = Match.type<DisplayToolFailure>().pipe(
     ConversationTooLarge: () => 'This conversation is too large to open. Start a new Thread.',
     InvalidRequest: () => 'This display sent a request Vivid could not accept.',
     RuntimeUnavailable: () => 'Vivid is unavailable. Try again shortly.',
+    DeliveryRefused: () => 'Vivid could not take this message.',
     ServiceUnavailable: ({ service }) =>
       ({
         computer: 'Your Computer is unavailable. Open it and try again.',
