@@ -7,6 +7,7 @@ import {
   ServiceId,
   ActionReconciliation,
   ActionReconciliationRequired,
+  RunId,
   ToolCallId,
   ToolOutcome,
   type ConnectionId,
@@ -27,7 +28,9 @@ import {
   operationOf,
   reconcile,
   settle,
+  unresolvedOf,
 } from './journal.ts'
+import { approvals } from '../approvals/tables.ts'
 import { prepareReconciliation } from '../connections/reconcile.ts'
 import { connections } from '../connections/tables.ts'
 import { actions } from './tables.ts'
@@ -58,6 +61,48 @@ const lookingUp = (answer: Lookup) => ActionLookup.of({ look: () => Effect.succe
 
 describe.skipIf(!testDatabaseConfigured)('Action journal', () => {
   layer(connectionTestLayer)((it) => {
+    it.effect('a call held by a waiting Integration ask is not unheard until the ask settles', () =>
+      Effect.gen(function* () {
+        const database = yield* Database
+        const { owner, threadId, write } = yield* writer()
+        const runId = RunId.make(crypto.randomUUID())
+        const id = operationOf.program()
+        const target = ActionTarget.cases.Connection.make({
+          connectionId: write({ record: 3 }).connectionId,
+          account: 'Records',
+          tool: 'write',
+          input: { record: 3 },
+        })
+        expect(
+          Claim.guards.Fresh(
+            yield* claim({ personId: owner, id, threadId, runId, approvalId: null, target }),
+          ),
+        ).toBe(true)
+        // Claimed and never answered: the Run says it did not hear back.
+        expect((yield* unresolvedOf([runId])).get(runId)?.operationId).toBe(id)
+        const approvalId = crypto.randomUUID()
+        yield* database.run(
+          database.insert(approvals).values({
+            id: approvalId,
+            threadId,
+            personId: owner,
+            action: { continuation: { operation: id } },
+            digest: 'held',
+            status: 'pending',
+            expiresAt: Date.now() + 60_000,
+            createdAt: Date.now(),
+          }),
+        )
+        // The Integration paused the call and its Approval waits on the Person: not unheard.
+        expect((yield* unresolvedOf([runId])).has(runId)).toBe(false)
+        yield* database.run(
+          database.update(approvals).set({ status: 'expired' }).where(eq(approvals.id, approvalId)),
+        )
+        // Once the ask is settled, what the journal holds for the call applies again.
+        expect((yield* unresolvedOf([runId])).get(runId)?.operationId).toBe(id)
+      }).pipe(Effect.scoped),
+    )
+
     it.effect('answers a retried call with its first receipt and sends it once', () =>
       Effect.gen(function* () {
         const { actor, write } = yield* writer()
