@@ -1,0 +1,117 @@
+{
+  "$schema": "./node_modules/knip/schema.json",
+  // Agent skills are reference material, not shipped application entry points.
+  "ignore": [".agents/**", "scripts/__fixtures__/**"],
+  "includeEntryExports": true,
+  // Framework loaders consume these exports without a static import.
+  "ignoreIssues": {
+    "scripts/structure.mjs": ["exports"],
+    "**/vitest.config.ts": ["exports"],
+    "**/vite.config.ts": ["exports"],
+    "**/*drizzle.config.ts": ["exports"],
+    "apps/mobile/{app.config.ts,metro.config.cjs}": ["exports"],
+    "apps/server/src/runtime/vitest.ts": ["exports"],
+    "packages/agent/runtime/memory/schema.ts": ["exports"],
+    "alchemy.run.ts": ["exports"],
+    "scripts/proof/{node,vitest}.mjs": ["exports"],
+    "scripts/oxlint-plugin-vivid.mjs": ["exports"],
+    "tools/oxlint/*/index.ts": ["exports"],
+    "apps/desktop/scripts/packed.mjs": ["exports"],
+    "apps/cells/src/main.ts": ["exports"],
+  },
+  "workspaces": {
+    ".": {
+      "entry": [
+        "alchemy.run.ts",
+        "scripts/*.mjs",
+        "scripts/**/*.test.mjs",
+        "scripts/proof/{node,vitest}.mjs",
+        "scripts/hermes/proof.mjs",
+        "infra/cli.mjs",
+        "infra/copy/main.ts",
+        "tools/oxlint/*/index.ts",
+        "vitest.config.ts",
+      ],
+      "project": [
+        "*.{ts,mjs}",
+        "scripts/**/*.{ts,mjs}",
+        "infra/**/*.{ts,mjs}",
+        "tools/**/*.{ts,mjs}",
+        "!scripts/oneoff/**",
+      ],
+      "ignoreBinaries": ["celld"],
+      // Tooling resolves these through the owning mobile/server package with createRequire.
+      "ignoreDependencies": ["@vivid/compiler", "@sentry/cli", "expo", "pg"],
+      "drizzle": false,
+    },
+    "apps/server": {
+      "entry": [
+        "src/main.ts",
+        "src/threads/adoption/main.ts",
+        "src/library/extraction/main.ts",
+        "src/library/fixtures/**/main.ts",
+        "tests/startup/main.ts",
+        "src/runtime/vitest.ts",
+        "**/*.test.ts",
+        "*drizzle.config.ts",
+      ],
+      "project": ["**/*.ts"],
+      // Configs require deployment variables when executed; static imports are sufficient here.
+      "drizzle": false,
+    },
+    "apps/cells": {
+      "entry": ["src/main.ts", "scripts/build.mjs", "**/*.test.ts"],
+      "project": ["src/**/*.ts", "scripts/**/*.mjs"],
+    },
+    "apps/web": {
+      "entry": [
+        "src/main.tsx",
+        "src/worker/main.ts",
+        "src/routes/**/*.tsx",
+        "src/parts/library.ts",
+        "**/*.test.{ts,tsx}",
+      ],
+    },
+    "apps/mobile": {
+      "entry": [
+        "index.ts",
+        "app.config.ts",
+        "modules/*/index.ts",
+        "scripts/*.mjs",
+        "**/*.test.{ts,tsx}",
+      ],
+      "project": ["**/*.{ts,tsx,mjs,cjs}"],
+      // Expo config reads app.json relative to the launcher; inspect its imports without executing it.
+      "expo": false,
+    },
+    "apps/desktop": {
+      "entry": [
+        "src/main/main.ts",
+        "src/preload/{main,notice}.ts",
+        "scripts/*.mjs",
+        "**/*.test.ts",
+      ],
+      "project": ["src/**/*.{ts,tsx}", "scripts/*.mjs"],
+      "ignoreDependencies": ["electron-builder-squirrel-windows"],
+    },
+    "packages/agent/runtime": {
+      "entry": ["**/*.test.ts", "drizzle.config.ts", "memory/schema.ts"],
+      "drizzle": false,
+    },
+    "packages/agent/skills": { "entry": ["**/*.test.ts"] },
+    "scripts/oneoff": {
+      "entry": ["main.ts", "*.mjs", "*.test.ts", "vitest.config.ts"],
+      "project": ["*.{ts,mjs}"],
+      // This config is invoked from repository root; its test/setup entries are modeled there.
+      "vitest": false,
+      // bundle.mjs resolves the builder through the cells package.
+      "ignoreDependencies": ["esbuild"],
+    },
+    "packages/contracts": {},
+    "packages/compiler": {},
+    "packages/client/rpc": { "entry": ["**/*.test.ts"] },
+    "packages/client/state": { "entry": ["**/*.test.ts"] },
+    "packages/design/marks": {},
+    "packages/design/tokens": {},
+  },
+}
