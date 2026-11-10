@@ -7,6 +7,7 @@ import {
   Forbidden,
   InvalidRequest,
   NotFound,
+  type ProjectNotActive,
   ServiceUnavailable,
   WatchListResponse,
   WatchResponse,
@@ -69,6 +70,7 @@ const resolved = <A, R>(
   effect: Effect.Effect<
     A,
     | NotFound
+    | ProjectNotActive
     | ExecutorEventsFailure
     | WatchAccountUnknown
     | WatchAccountNotReady

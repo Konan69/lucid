@@ -12,4 +12,4 @@ Evidence stays in `checkin/`. `clock-time-receipt.json` records the tomorrow-at-
 
 Database-backed receiver coverage separately proves Awaiting before a matching receipt, invalid receipts retaining Awaiting, stale operation keys being ignored, and a resolved owed source completing its check-in at firing.
 
-Project candidates await the Project state unit. Bootstrap for open records that predate check-ins is not needed while owed is undeployed. There is no bootstrap admission or CheckinPlanning origin.
+Active Projects are candidates in list_open_work. Project-focused checks read the current objective, next step and progress on firing, and complete with the persisted Project proof after completion. The goal-to-chosen-check-to-progress-to-completion journey runs as part of `verify feature projects`; see [projects](projects.md) and its `project-check-proof.json` evidence. Bootstrap for open records that predate check-ins is not needed while owed is undeployed. There is no bootstrap admission or CheckinPlanning origin.

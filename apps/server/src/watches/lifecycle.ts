@@ -35,6 +35,7 @@ import { watchProgress, WatchMissing } from './progress.ts'
 
 import { watchCheckins } from './checkins.ts'
 import { owedStoreLayer } from '../owed/store.ts'
+import { projectStoreLayer } from '../projects/store.ts'
 
 /**
  * Starting, stopping and keeping Watches alive at Executor.
@@ -392,7 +393,7 @@ export class Watches extends Context.Service<Watches, Effect.Success<ReturnType<
 ) {}
 
 export const watchesLayer = Layer.effect(Watches, make()).pipe(
-  Layer.provide([owedStoreLayer, incidentsLayer]),
+  Layer.provide([owedStoreLayer, projectStoreLayer, incidentsLayer]),
 )
 
 /**

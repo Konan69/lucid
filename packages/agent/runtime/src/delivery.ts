@@ -302,7 +302,7 @@ const checkinText = (timing: CheckinTiming, operationKey: string, reading: Check
     `Timer operationKey: ${operationKey}.`,
     CheckinTiming.match(timing, {
       Chosen: ({ why }) =>
-        `You chose this time because: ${why}. Read the real source now (mail, the service, the Thread). If what was owed has arrived, post the result to the Feed, then resolve it. If it is due or overdue and still missing, chase it: post one card saying what is late and from whom, with the nudge you would send as a draft. If it is still open, choose the next check with update_checkin and arm its returned operationKey; it is set only after the timer's receipt confirms it.`,
+        `You chose this time because: ${why}. Read the real source now (mail, the service, the Thread). For a Project, take its next step and record progress with update_project; its current goal, next step and progress are in the source reading. If what was owed has arrived, post the result to the Feed, then resolve it. If it is due or overdue and still missing, chase it: post one card saying what is late and from whom, with the nudge you would send as a draft. If it is still open, choose the next check with update_checkin and arm its returned operationKey; it is set only after the timer's receipt confirms it.`,
       Requested: ({ request, timezone }) =>
         `Follow the Person's exact timing request: ${request}, in ${timezone}. A requested recurrence keeps its existing timer; after the check, read its scheduling receipt with this operationKey to refresh the next scheduled time. A single requested check ends when its explicit Until condition is met; do not add a recurrence. Read the real source before finishing.`,
     }),
