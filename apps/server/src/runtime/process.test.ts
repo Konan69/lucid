@@ -88,6 +88,13 @@ type Receipt =
   | 'OtherCells'
   | 'StaleCells'
 
+/** The refusal a cell answers when its Person's conversations failed while in use (`app.ts`). */
+const lostAnswer = JSON.stringify({
+  error: 'Unavailable',
+  cause: [{ service: 'cell', operation: 'Runtime.admission', tag: 'PiRejected', status: 503 }],
+  contract: contractFingerprint,
+})
+
 /**
  * Adapt only the socket. HTTP requests still cross the production router into real Pi on disposable native SQLite.
  *
@@ -157,7 +164,7 @@ const transport = (
         lost = true
         return HttpClientResponse.fromWeb(
           request,
-          new Response('{"error":"Unavailable"}', { status: 503 }),
+          new Response(lostAnswer, { status: 503 }),
         )
       }
       if (receipt === 'AbortNotTaken' && url.pathname.endsWith('/abort'))
@@ -167,7 +174,7 @@ const transport = (
         lost = true
         return HttpClientResponse.fromWeb(
           request,
-          new Response('{"error":"Unavailable"}', { status: 503 }),
+          new Response(lostAnswer, { status: 503 }),
         )
       }
       return HttpClientResponse.fromWeb(
