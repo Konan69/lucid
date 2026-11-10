@@ -268,7 +268,19 @@ const move = Effect.fn('Connections.moveAdoption')(function* (
         appOwnership,
       })
   yield* executor.as(member.caller).refresh
-  yield* executor.as(member.caller).tools(adopted)
+  // beta.23 HostedTools.listTools authorizes the app and selectedActiveVersion resolves accounts
+  // (implementation/tools.ts and access.ts) before OAuth renewal. Executor.discoverCached also
+  // checks this member's exact app link first. A lapsed grant therefore still proves adoption.
+  yield* executor
+    .as(member.caller)
+    .tools(adopted)
+    .pipe(
+      Effect.catchTag('ExecutorNotReady', (failure) =>
+        ExecutorReferences.guards.Adopting(references) && failure.cause === 'ReconnectRequired'
+          ? Effect.void
+          : Effect.fail(failure),
+      ),
+    )
   const principal = ExecutorReferences.guards.Adopting(references)
     ? ('adopted-account' as const)
     : ('adopted-public' as const)

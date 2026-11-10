@@ -632,7 +632,13 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
                     ...executor.as(caller),
                     tools: (references) =>
                       JSON.stringify(references) === lapsedReferences
-                        ? Effect.fail(ExecutorNotReady.make({ service: 'connections', tool: null }))
+                        ? Effect.fail(
+                            ExecutorNotReady.make({
+                              service: 'connections',
+                              tool: null,
+                              cause: 'Unavailable',
+                            }),
+                          )
                         : executor.as(installationCaller).tools(references),
                   }),
                 }),

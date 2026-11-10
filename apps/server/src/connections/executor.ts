@@ -321,10 +321,10 @@ export class ExecutorAccessDenied extends Schema.TaggedError<ExecutorAccessDenie
   errorContext,
   { title: 'Connection access denied' },
 ) {}
-/** Missing selections and expired OAuth grants require renewed authorization. */
+/** Reconnect-required grants are distinct from unavailable selections and deployments. */
 export class ExecutorNotReady extends Schema.TaggedError<ExecutorNotReady>()(
   'ExecutorNotReady',
-  errorContext,
+  { ...errorContext, cause: Schema.Literals(['Unavailable', 'ReconnectRequired']) },
   { title: 'Connection not ready' },
 ) {}
 /** Safe instructions describe failures known to precede tool execution. */
@@ -794,7 +794,7 @@ const encodeSignIn = Schema.encodeEffect(SignInSubmission)
 const jsonBody = HttpClientRequest.schemaBodyJson(Schema.Json)
 
 const FailureMode = Schema.TaggedUnion({
-  NotReady: {},
+  NotReady: { cause: ExecutorNotReady.fields.cause },
   AccessDenied: {},
   Missing: { resource: Schema.Literals(['App', 'Version', 'Account']) },
   Conflict: {},
@@ -813,7 +813,7 @@ const FailureMode = Schema.TaggedUnion({
   OAuthClientUnavailable: {},
   OAuthClientAmbiguous: {},
 })
-const notReady = FailureMode.cases.NotReady.make({})
+const notReady = FailureMode.cases.NotReady.make({ cause: 'Unavailable' })
 const conflict = FailureMode.cases.Conflict.make({})
 const uncertain = FailureMode.cases.Uncertain.make({})
 const denied = FailureMode.cases.AccessDenied.make({})
@@ -833,7 +833,7 @@ const failureModes = {
     message: 'This Integration could not renew access. Retry or review its sign-in setup.',
   }),
   AccountSelectionInvalid: notReady,
-  OAuthReconnectRequired: notReady,
+  OAuthReconnectRequired: FailureMode.cases.NotReady.make({ cause: 'ReconnectRequired' }),
   ProviderNotFound: notReady,
   AccountConnectionNotFound: notReady,
   AccountConnectionClosed: notReady,
@@ -955,7 +955,7 @@ const decodeOAuthSetupFailure = Schema.decodeUnknownEffect(WireOAuthSetupFailure
 function translateFailure(tag: typeof knownFailureTag.Type, tool: string | null) {
   const context = { service: 'connections' as const, tool }
   return FailureMode.match(failureModes[tag], {
-    NotReady: (): ExecutorFailure => ExecutorNotReady.make(context),
+    NotReady: ({ cause }): ExecutorFailure => ExecutorNotReady.make({ ...context, cause }),
     ApprovalUnsupported: (): ExecutorFailure => ExecutorApprovalUnsupported.make({ tool }),
     SetupRequired: (): ExecutorFailure => ExecutorSetupRequired.make(context),
     Missing: ({ resource }): ExecutorFailure =>
@@ -1155,7 +1155,10 @@ function completedCall(value: Schema.Json) {
 /** Requirement routes carry the declared scope. A public app has no account route. */
 function bindingPath(references: Pick<ExecutorActiveReferences, 'app' | 'binding'>) {
   return ExecutorBinding.match<Effect.Effect<string, ExecutorNotReady>>(references.binding, {
-    Public: () => Effect.fail(ExecutorNotReady.make({ service: 'connections', tool: null })),
+    Public: () =>
+      Effect.fail(
+        ExecutorNotReady.make({ service: 'connections', tool: null, cause: 'Unavailable' }),
+      ),
     Account: ({ scope, requirement }) =>
       Effect.succeed(`/apps/${query(references.app)}/accounts/${scope}/${query(requirement)}`),
   })
@@ -1298,14 +1301,20 @@ function validateSelections(
   })
   return matches
     ? Effect.void
-    : Effect.fail(ExecutorNotReady.make({ service: 'connections', tool: null }))
+    : Effect.fail(
+        ExecutorNotReady.make({ service: 'connections', tool: null, cause: 'Unavailable' }),
+      )
 }
 
 /** Pin all pages to the first version and refuse changed account selections or cursor cycles. */
 function makeDiscovery(http: ExecutorHttp) {
   return Effect.fn('Executor.discover')(function* (references: ExecutorReferences) {
     if (ExecutorReferences.guards.ReconnectRequired(references))
-      return yield* ExecutorNotReady.make({ service: 'connections', tool: null })
+      return yield* ExecutorNotReady.make({
+        service: 'connections',
+        tool: null,
+        cause: 'Unavailable',
+      })
     const items: ListedTool[] = []
     let version = Option.none<typeof ExecutorVersionId.Type>()
     let cursor = Option.none<string>()
@@ -3057,7 +3066,11 @@ const makeToolCache = Effect.fn('Executor.toolCache')(function* (http: ExecutorH
             link.requirement === binding.requirement && link.account.id === references.account,
         )
       )
-        return yield* ExecutorNotReady.make({ service: 'connections', tool: null })
+        return yield* ExecutorNotReady.make({
+          service: 'connections',
+          tool: null,
+          cause: 'Unavailable',
+        })
     }
     return yield* Cache.get(snapshots, references)
   })
