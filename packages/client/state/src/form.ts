@@ -444,22 +444,26 @@ export const expiredLine = (request: InputRequest): Option.Option<string> =>
 
 /**
  * The expired lines of the questions an Integration asked mid-call after this Approval was
- * allowed. The server raises such a question itself, so no message of Vivid's names it; it shares
- * the paused call's journal operation with the Approval, whose "Asked first" record is where the
- * conversation says how it ended.
+ * allowed, whether the Approval was the Integration's own or Vivid's. The server raises such a
+ * question itself, so no message of Vivid's names it; it shares the call's journal operation with
+ * the Approval, whose "Asked first" record is where the conversation says how it ended.
  */
 export const followingExpired = (
   approval: Approval,
   requests: ReadonlyArray<InputRequest>,
 ): ReadonlyArray<string> => {
-  const continuation = approval.action.continuation
-  if (continuation === null) return []
+  // An ordinary Approval runs its call under its own operation (`operationOf.approval`,
+  // `apps/server/src/actions/journal.ts`); an Integration's keeps the paused call's.
+  const operation =
+    approval.action.continuation === null
+      ? `approval-${approval.id}`
+      : approval.action.continuation.operation
   return requests
     .filter(
       (request) =>
         request.integration !== null &&
         request.integration.continuation !== null &&
-        request.integration.continuation.operation === continuation.operation,
+        request.integration.continuation.operation === operation,
     )
     .flatMap((request) => Option.toArray(expiredLine(request)))
 }
