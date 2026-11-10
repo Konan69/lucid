@@ -16,13 +16,14 @@ import {
   type SubmissionRecord,
   type Tx,
 } from '@earendil-works/pi-durable'
-import { RuntimeSettlement, RuntimeSubmissionId } from '@vivid/contracts'
+import { CodeName, RuntimeSettlement, RuntimeSubmissionId } from '@vivid/contracts'
 import { Effect, Option, Schema } from 'effect'
 import { runInputs } from './deliveries.ts'
 import { corrected } from './correction.ts'
 import { continued } from './continuity.ts'
 import { isDeliveryEntry } from './delivery.ts'
-import { classify } from './failure.ts'
+import { unansweredCause } from './failure.ts'
+import { cellHop } from './telemetry.ts'
 import { PiRejected, pi } from './threads.ts'
 
 /** Response cost and timing for the screens' timing line. */
@@ -423,16 +424,19 @@ const done = Effect.fn('Response.done')(function* (
   )
 })
 
+/** An answered input whose answer could not be read back: the settlement says so in its cause. */
+const ANSWER_MISSING = cellHop(CodeName.make('Response.settlement'), CodeName.make('AnswerMissing'))
+
 /**
  * An input that can no longer be answered. A stop is its own outcome; anything else is said in
  * the product's closed words (`failure.ts`), and the text Pi kept stays in the runtime.
  */
 const unanswered = (record: Extract<SubmissionRecord, { status: 'unanswered' }>) => {
   if (record.reason === 'aborted') return RuntimeSettlement.cases.Stopped.make({})
-  const { failure, status } = classify(record.reason, record.detail)
+  const { failure, status, cause } = unansweredCause(record.reason, record.detail)
   return Option.match(status, {
-    onNone: () => RuntimeSettlement.cases.Failed.make({ failure }),
-    onSome: (code) => RuntimeSettlement.cases.Failed.make({ failure, status: code }),
+    onNone: () => RuntimeSettlement.cases.Failed.make({ failure, cause }),
+    onSome: (code) => RuntimeSettlement.cases.Failed.make({ failure, status: code, cause }),
   })
 }
 
@@ -469,7 +473,7 @@ export const settlement: (
       return yield* new PiRejected({ cause: 'Pi wait returned a non-input submission' })
     if (record.status === 'unanswered') return unanswered(record)
     return Option.getOrElse(yield* done(harness, record), () =>
-      RuntimeSettlement.cases.Failed.make({ failure: 'Unexplained' }),
+      RuntimeSettlement.cases.Failed.make({ failure: 'Unexplained', cause: [ANSWER_MISSING] }),
     )
   },
 )

@@ -104,8 +104,10 @@ export interface RuntimeStopped extends Schema.Schema.Type<typeof RuntimeStopped
  *   `reply` is the words of the final answer, and `toolCalls` counts the tools the response
  *   used, so an answer with no words after real work is told from no answer at all.
  * - `Failed`: it can no longer be answered. `failure` is the product's own category and `status`
- *   the provider's HTTP status when it gave one. The provider's words never leave the runtime:
- *   they can quote a request, a path or a key.
+ *   the provider's HTTP status when it gave one. `cause` is the cell's chain for it, outermost
+ *   first (Pi's reason, then the model's hop when the model failed), which the server's `RunFailed`
+ *   records: the cell opens no issue of its own for it, so one outcome is one Incident. The
+ *   provider's words never leave the runtime: they can quote a request, a path or a key.
  * - `Stopped`: it was stopped, or withdrawn before it was placed.
  */
 export const RuntimeSettlement = Schema.TaggedUnion({
@@ -117,6 +119,7 @@ export const RuntimeSettlement = Schema.TaggedUnion({
   Failed: {
     failure: RunFailure,
     status: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 400, maximum: 599 }))),
+    cause: IncidentCause,
   },
   Stopped: {},
 })

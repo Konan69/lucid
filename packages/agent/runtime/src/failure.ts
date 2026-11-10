@@ -52,7 +52,7 @@ const decodeWords = Schema.decodeUnknownOption(Schema.String)
  * message). A reason with no words to read is `Unexplained`, except a missing model.
  */
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Pi stores a failure's detail as JSON of any shape; it is decoded here.
-export const classify = (reason: string, detail: unknown) => {
+const classify = (reason: string, detail: unknown) => {
   // An explicit product category outranks diagnostic text that may describe a different attempt.
   const saved = decodeFailure(reason)
   if (Option.isSome(saved)) return { failure: saved.value, status: Option.none<number>() }
@@ -73,7 +73,8 @@ const UNNAMED = CodeName.make('Unanswered')
 const decodeReason = Schema.decodeUnknownOption(CodeName)
 
 /**
- * Why one input was settled with no answer, for the cell's report. The first hop is Pi's reason
+ * Why one input was settled with no answer, for its settlement (`RuntimeSettlement.Failed`): the
+ * category, the provider's status when it gave one, and the cause. The first hop is Pi's reason
  * (`model_error`, `no_model`, `faulted`, or a product category Vivid saved), read as a code name
  * because Pi and Vivid write it from code. Only `model_error` is the provider's doing, so only it
  * adds a `model` hop, tagged with the category and carrying the status the provider answered.
@@ -97,5 +98,5 @@ export const unansweredCause = (reason: string, detail: unknown) => {
       }) as const,
   })
   const cause: IncidentCause = reason === 'model_error' ? [own, model] : [own]
-  return { failure, cause }
+  return { failure, status, cause }
 }
