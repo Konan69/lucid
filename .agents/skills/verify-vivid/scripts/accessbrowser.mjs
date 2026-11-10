@@ -1,7 +1,7 @@
 import * as NodeAssert from 'node:assert/strict'
 import { ComputerHealth, ConnectionGrant, ConnectionState, ScopeEvidence } from '@vivid/contracts'
 import { Result, Schema } from 'effect'
-import { chat, history, json, rpc, settled } from './wire.mjs'
+import { history, json, rpc, settled } from './wire.mjs'
 
 const decodeText = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.String))
 

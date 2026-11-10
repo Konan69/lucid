@@ -515,7 +515,7 @@ async function completion(state, { id, integration }, directory) {
     path,
     'before',
   )
-  const receipt = await emit(state, { app: integration.app, marker, name: 'pulse' }, path)
+  const receipt = await emit(state, { app: integration.app, words: marker, name: 'pulse' }, path)
   await observe(state, {
     tag: 'WatchWork',
     payload: null,
