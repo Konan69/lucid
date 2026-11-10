@@ -144,10 +144,13 @@ const makeStore = (database: Database['Service']) => {
     const now = yield* Clock.currentTimeMillis
     return yield* database.transaction((tx) =>
       Effect.gen(function* () {
-        // The time moves too: a card put away now is settled now, not when it was posted.
+        // Looking at a card must not reorder it under the pointer; only putting it away moves time.
         const rows = yield* tx
           .update(feedCards)
-          .set({ state: request.state, updatedAt: now })
+          .set({
+            state: request.state,
+            updatedAt: request.state === 'done' ? now : feedCards.updatedAt,
+          })
           .where(
             and(
               eq(feedCards.id, request.card),
