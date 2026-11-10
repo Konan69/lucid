@@ -11,7 +11,7 @@ The recipe ([asks.mjs](../scripts/asks.mjs)) connects the disposable Verify Puls
 3. **Withdrawn.** While a second question waits, the composer is labelled Message Vivid. A message withdraws the question and its paused call is answered cancel: the request ends Withdrawn with a Cancelled outcome.
 4. **Expired.** An Approval and a question are left waiting, then the run's own Executor container is restarted, which drops both paused calls as #227's live proof does. Allow and Send then reach Executor too late and come back Expired at once, instead of after Executor's 15-minute deadline. Browser: after reload the Thread says "Expired before you answered. Nothing was sent." and "Expired before you answered. Verify Pulse may already have acted."
 
-A final export of the quiesced Executor shows one pulse for the allowed Approval and none for the cancelled question or the expired Approval.
+A final export of the quiesced Executor shows one pulse for the allowed Approval, one for the cancelled question (cancel reaches `ctx.elicit` as an answer, so the call ends instead of waiting out its deadline), and none for the expired Approval.
 
 Evidence stays in `asks/` and `browser/asks/`, with each wait's Thread detail, the question's DOM reading, the provider exports and, for the browser, snapshots and screenshots of every stage.
 

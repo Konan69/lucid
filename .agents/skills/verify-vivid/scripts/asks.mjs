@@ -384,7 +384,8 @@ async function asks(state, id, directory, client) {
     const provider = {}
     for (const [name, receipt, sent] of [
       ['allowed', allowed, 1],
-      ['cancelled', cancelled, 0],
+      // Cancel reaches `ctx.elicit` as an answer, so the call ends and emits its one pulse.
+      ['cancelled', cancelled, 1],
       ['expired', left, 0],
     ]) {
       const evidence = directory + '/provider-' + name
