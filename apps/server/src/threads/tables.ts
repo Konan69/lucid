@@ -10,7 +10,7 @@ import {
   text,
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
-import type { RunFailure, RunId } from '@vivid/contracts'
+import type { RunDeliveryReceipt, RunFailure, RunId } from '@vivid/contracts'
 import { companyColumn, epoch, personColumn, threadColumn } from '../database/owner.ts'
 import type { ThreadPlace } from './place.ts'
 import { TitleSource } from './title.ts'
@@ -118,6 +118,11 @@ export const runs = pgTable(
     responseId: text('response_id').$type<RunId>(),
     /** When the Person the Run acted for acknowledged drawing that response; null until then. */
     deliveredAt: epoch('delivered_at'),
+    /**
+     * Where they drew it (`RunDeliveryReceipt`'s case), written with `deliveredAt`. Null on a Run
+     * acknowledged before 10 November 2026: every one of those was drawn in its Thread.
+     */
+    deliveredOn: text('delivered_on').$type<RunDeliveryReceipt['_tag']>(),
   },
   (table) => [
     index('vivid_runs_thread').on(table.threadId, table.startedAt),

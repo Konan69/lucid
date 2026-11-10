@@ -1,0 +1,1 @@
+ALTER TABLE "vivid_runs" ADD COLUMN "delivered_on" text;
