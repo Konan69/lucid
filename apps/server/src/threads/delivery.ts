@@ -39,7 +39,7 @@ import {
   oweRunNotice,
 } from '../notifications/delivery.ts'
 import { deliveryRunId } from '../threads/key.ts'
-import { Incidents } from '../observability/incidents.ts'
+import { Incidents, recordFailure } from '../observability/incidents.ts'
 import { recordRunFailure } from '../runtime/failure.ts'
 import { Runtime, Settlement } from '../runtime/client.ts'
 import { audienceTopics, canSee, findThread, type StoredThread } from './access.ts'
@@ -350,8 +350,10 @@ const admissionFailed = Effect.fn('Conversation.admissionFailed')(function* (
     RunEnding.cases.Failed.make({ reason: 'Delivery' }),
   )
   if (changed)
-    yield* services.incidents.record(
+    yield* recordFailure(
+      services.incidents,
       Incident.cases.AdmissionFailed.make({ ...failed, cause: admissionCause(error) }),
+      error,
     )
 })
 

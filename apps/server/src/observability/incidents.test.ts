@@ -6,11 +6,12 @@ import {
   Incident,
   PersonId,
   RunId,
+  RuntimeUnavailable,
   ThreadId,
 } from '@vivid/contracts'
 import { Effect, Layer, Schema } from 'effect'
 import { observeFailures } from './failure.ts'
-import { Incidents } from './incidents.ts'
+import { Incidents, recordFailure } from './incidents.ts'
 import { Message } from './messages.ts'
 import { decisionLogs } from './testlogger.ts'
 import { ingest } from './tests/ingest.ts'
@@ -140,5 +141,33 @@ it.live(
 
       const sent = yield* events
       expect(sent.map((event) => event.message)).toEqual(['AdmissionFailed'])
+    }).pipe(Effect.scoped),
+)
+
+it.live(
+  'reports a recorded unavailable admission once and still reports other runtime outages',
+  () =>
+    Effect.gen(function* () {
+      const { context, events } = yield* ingest()
+      const unavailable = () =>
+        RuntimeUnavailable.make({
+          message: 'Vivid could not be reached',
+          cause: refusedSend.cause,
+        })
+      const send = Effect.fn('Probe.send')(function* () {
+        const incidents = yield* Incidents
+        const failure = yield* recordFailure(incidents, refusedSend, unavailable())
+        return yield* failure
+      }, observeFailures('rpc'))
+      const history = Effect.fn('Probe.history')(function* () {
+        return yield* unavailable()
+      }, observeFailures('rpc'))
+      yield* Effect.andThen(Effect.ignore(send()), Effect.ignore(history())).pipe(
+        Effect.provide(context),
+      )
+      const sent = yield* events
+      expect(sent).toHaveLength(2)
+      expect(sent[0]?.message).toBe('AdmissionFailed')
+      expect(sent[1]?.tags?.['vivid.operation']).toBe('Probe.history')
     }).pipe(Effect.scoped),
 )
