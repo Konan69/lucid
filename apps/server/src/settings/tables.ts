@@ -9,6 +9,8 @@ export const settingsTable = pgTable('settings', {
   theme: text().notNull().default('system'),
   /** An IANA zone name. Local dates and times are resolved in it. */
   timezone: text().notNull().default('UTC'),
+  /** Encoded WakingHours; null keeps the default until the Person states a window. */
+  wakingHours: jsonb(),
   /**
    * Whether the Computer's browser sends its traffic out through this Person's own computer
    * (`computers/egress/`). Off until the Person turns it on. Issue 61 removes the choice.

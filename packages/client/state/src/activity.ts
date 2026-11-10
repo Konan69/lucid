@@ -484,6 +484,14 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.name)],
   },
+  set_waking_hours: {
+    said: {
+      running: 'Saving your contact hours',
+      done: 'Saved your contact hours',
+      failed: 'Could not save your contact hours',
+    },
+    detail: () => [],
+  },
   notify_person: {
     said: {
       running: 'Sending you a notification',

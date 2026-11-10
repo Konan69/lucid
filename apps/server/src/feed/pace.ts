@@ -1,7 +1,13 @@
 import { and, desc, eq, gte, isNotNull, isNull, ne } from 'drizzle-orm'
 import { Clock, Effect, Layer, Option, Schedule } from 'effect'
-import type { CompanyId, PersonId, ThreadId } from '@vivid/contracts'
-import { Database } from '../database/client.ts'
+import {
+  DEFAULT_WAKING_HOURS,
+  WakingHours,
+  type CompanyId,
+  type PersonId,
+  type ThreadId,
+} from '@vivid/contracts'
+import { Database, decodeStored } from '../database/client.ts'
 import { Changes } from '../live/changes.ts'
 import { Push } from '../push/delivery.ts'
 import { notifyPosted } from '../notifications/attention.ts'
@@ -21,13 +27,11 @@ import { cardPostedBy, markTold } from './store.ts'
  * arrive at most once a day"; urgent ones go at once (the Post handler tells those itself). An
  * ordinary card is on the Feed silently from the moment it is posted; this pass decides when the
  * Person is told of one, quietly. It is a rule of the server, not a setting ("No quiet-hours
- * setting"); the Person steers what is posted and how urgent it is by saying so, and Vivid keeps
- * that in the `attention` page it reads before posting.
+ * setting"); the Person steers it by saying so. Contact preferences stay in the `attention` page;
+ * explicit hours are typed Settings data, changed by `set_waking_hours` and read here.
  */
 
-/** Muse's default window: "Messages may arrive from 09:00 to 21:30 local time" (`PROACTIVE_PREFERENCES.md`). */
-const WAKING_FROM = 9 * 60
-const WAKING_UNTIL = 21 * 60 + 30
+const decodeHours = decodeStored(WakingHours, 'wakingHours')
 /**
  * How long since the Person last started something in a conversation before the moment counts
  * as quiet. Muse names no number; half an hour is the choice closest to "a quiet stretch" that
@@ -89,6 +93,7 @@ const heldCards = Effect.fn('Pace.held')(function* () {
         title: feedCards.title,
         words: feedCards.words,
         zone: settingsTable.timezone,
+        wakingHours: settingsTable.wakingHours,
       })
       .from(feedCards)
       .innerJoin(threads, eq(threads.id, feedCards.threadId))
@@ -106,7 +111,13 @@ const heldCards = Effect.fn('Pace.held')(function* () {
   )
   const newest = new Map<PersonId, (typeof rows)[number]>()
   for (const row of rows) if (!newest.has(row.personId)) newest.set(row.personId, row)
-  return [...newest.values()]
+  return yield* Effect.forEach([...newest.values()], (row) =>
+    Effect.gen(function* () {
+      const wakingHours =
+        row.wakingHours === null ? DEFAULT_WAKING_HOURS : yield* decodeHours(row.wakingHours)
+      return { ...row, wakingHours }
+    }),
+  )
 })
 
 /** Whether this Person was already told of an ordinary card on their local today. */
@@ -160,13 +171,18 @@ const talkingLately = Effect.fn('Pace.talking')(function* (person: PersonId, now
  * is recorded, so two passes never tell it twice; a notice that then fails is not retried.
  */
 const tellOne = Effect.fn('Pace.tellOne')(function* (
-  held: Held & { readonly zone: string | null },
+  held: Held & { readonly zone: string | null; readonly wakingHours: WakingHours },
 ) {
   const now = yield* Clock.currentTimeMillis
   // A Person with no settings row has the documented defaults, UTC among them (`settings/tables.ts`).
   const zone = zoneOf(held.zone === null ? 'UTC' : held.zone)
   const { minutes } = localOf(now, zone)
-  if (minutes < WAKING_FROM || minutes >= WAKING_UNTIL) return
+  const hours = held.wakingHours
+  const awake =
+    hours.start < hours.end
+      ? minutes >= hours.start && minutes < hours.end
+      : minutes >= hours.start || minutes < hours.end
+  if (!awake) return
   if (yield* (yield* Presence).present(held.personId)) return
   if (yield* talkingLately(held.personId, now)) return
   if (yield* toldToday(held.personId, zone, now)) return

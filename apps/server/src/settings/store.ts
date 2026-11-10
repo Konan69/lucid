@@ -9,6 +9,7 @@ import {
   LocationNotShared,
   LocationSharing,
   Settings,
+  WakingHours,
   type LocationReading,
   type PatchSettingsRequest,
   type PersonId,
@@ -26,6 +27,7 @@ type SettingsStoreError = DatabaseInfrastructureError | InvalidRequest
 
 const decodeSettings = decodeStored(Settings, 'Settings')
 const decodeAppearance = decodeStored(Appearance, 'Appearance')
+const encodeHours = encodeStored(WakingHours, 'wakingHours')
 const encodeSharing = encodeStored(LocationSharing, 'location')
 
 export interface SettingsStoreService {
@@ -36,6 +38,10 @@ export interface SettingsStoreService {
     personId: PersonId,
     appearance: Appearance,
   ) => Effect.Effect<Appearance, DatabaseInfrastructureError>
+  readonly setWakingHours: (
+    personId: PersonId,
+    hours: WakingHours,
+  ) => Effect.Effect<Settings, DatabaseInfrastructureError>
   readonly patch: (
     personId: PersonId,
     request: PatchSettingsRequest,
@@ -56,6 +62,7 @@ const toSettings = (row: typeof settingsTable.$inferSelect) =>
     personId: row.personId,
     theme: row.theme,
     timezone: row.timezone,
+    wakingHours: row.wakingHours,
     egress: row.egress,
     location: row.location,
   })
@@ -182,7 +189,25 @@ const makeSettingsStore = Effect.fn('SettingsStore.make')(function* () {
     return yield* decodeAppearance(yield* returned(rows, 'Appearance'))
   })
 
-  return SettingsStore.of({ get, patch, setAppearance, shareLocation })
+  /** Only the contact window changes; other Settings writes keep it intact. */
+  const setWakingHours = Effect.fn('SettingsStore.setWakingHours')(function* (
+    personId: PersonId,
+    hours: WakingHours,
+  ) {
+    yield* get(personId)
+    const wakingHours = yield* encodeHours(hours)
+    const now = yield* Clock.currentTimeMillis
+    const rows = yield* database.run(
+      database
+        .update(settingsTable)
+        .set({ wakingHours, updatedAt: new Date(now) })
+        .where(eq(settingsTable.personId, personId))
+        .returning(),
+    )
+    return yield* toSettings(yield* returned(rows, 'Settings'))
+  })
+
+  return SettingsStore.of({ get, patch, setAppearance, shareLocation, setWakingHours })
 })
 
 export const settingsStoreLayer = Layer.effect(SettingsStore, makeSettingsStore())

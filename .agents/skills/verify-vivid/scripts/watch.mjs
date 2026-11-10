@@ -73,7 +73,7 @@ export async function watchRows(state, { table, field, id }, directory, name) {
 }
 
 /** The public live Feed carries the typed delivery receipt. A deadline can fail, never pass. */
-async function posted(state, marker, directory) {
+export async function posted(state, marker, directory) {
   const hasMarker = (candidate) => candidate.post && candidate.post.title.includes(marker)
   const feed = await observe(state, {
     tag: 'WatchFeed',
@@ -167,7 +167,7 @@ const longWords = (marker, end) => {
 }
 
 /** An external provider invokes Executor directly, outside every Vivid tool and approval adapter. */
-async function emit(state, { app, words, name }, directory) {
+export async function emit(state, { app, words, name }, directory) {
   const tools = await executorRequest(state, '/apps/' + encodeURIComponent(app) + '/tools', {
     schema: ExecutorTools,
   })

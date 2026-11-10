@@ -1,5 +1,5 @@
 import * as Effect from 'effect/Effect'
-import type { PatchSettingsRequest, ShareLocationRequest } from '@vivid/contracts'
+import type { PatchSettingsRequest, ShareLocationRequest, WakingHours } from '@vivid/contracts'
 import { requireActor, requirePerson, type Actor } from '../auth/access.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { live } from '../live/query.ts'
@@ -37,3 +37,11 @@ export const locationHandlers = {
     return saved
   }),
 }
+
+/** The model acts for the Person whose explicit contact preference it is recording. */
+export const setWakingHours = Effect.fn('Rpc.SetWakingHours')(function* (hours: WakingHours) {
+  const actor = yield* requireActor()
+  const saved = yield* (yield* SettingsStore).setWakingHours(actor.person.id, hours)
+  yield* (yield* Changes).publish([Topic.person(actor.person.id)])
+  return saved
+})
