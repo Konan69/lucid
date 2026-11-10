@@ -2,7 +2,6 @@ import * as Config from 'effect/Config'
 import * as Context from 'effect/Context'
 import * as Data from 'effect/Data'
 import * as Effect from 'effect/Effect'
-import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
@@ -39,7 +38,7 @@ export class ConfigurationError extends Schema.TaggedError<ConfigurationError>()
  * sign-in is off". Google refusing, or a Person closing its screen, is a failure of that one
  * sign-in and is answered there.
  */
-export interface GoogleOAuthConfiguration {
+interface GoogleOAuthConfiguration {
   readonly clientId: string
   readonly clientSecret: Redacted.Redacted
   readonly redirectUri: URL
@@ -293,8 +292,6 @@ const loadConfig = Effect.fn('loadServerConfig')(function* (): Effect.fn.Return<
     BUILD: buildOf(commit),
   }
 })
-
-export const serverConfigLayer = Layer.effect(ServerConfig, loadConfig())
 
 /** The validated configuration effect, useful for boot diagnostics and tests. */
 export const loadServerConfig = loadConfig()

@@ -99,18 +99,5 @@ export class ServiceUnavailable extends Schema.TaggedError<ServiceUnavailable>()
   { title: 'Service unavailable' },
 ) {}
 
-export const ApiError = Schema.Union([
-  Unauthenticated,
-  Forbidden,
-  NotFound,
-  Conflict,
-  DatabaseUnavailable,
-  DatabaseConstraintViolation,
-  DatabaseFailure,
-])
-export type ApiError = typeof ApiError.Type
-
 /** Existing runtime error envelope retained on the HTTP wire. */
 export const RuntimeErrorResponse = Schema.Struct({ error: Schema.String })
-/** Empty successful response used by 204 routes. */
-export const EmptyResponse = Schema.Void

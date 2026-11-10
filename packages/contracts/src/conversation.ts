@@ -15,8 +15,8 @@ import { Schema } from 'effect'
  */
 
 /** Whether a piece of a reply is still being written. */
-export const PartProgress = Schema.Literals(['streaming', 'done'])
-export type PartProgress = typeof PartProgress.Type
+const PartProgress = Schema.Literals(['streaming', 'done'])
+type PartProgress = typeof PartProgress.Type
 
 const ToolCall = {
   type: Schema.Literal('dynamic-tool'),

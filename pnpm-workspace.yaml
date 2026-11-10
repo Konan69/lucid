@@ -36,7 +36,6 @@ catalog:
   '@earendil-works/chord': 1.4.0
   '@earendil-works/pi-ai': 1.4.0
   '@earendil-works/pi-durable': 1.4.0
-  '@effect/ai-openrouter': 4.0.2
   '@effect/ai-typesafe': 4.0.2
   '@effect/atom-react': 4.0.2
   '@effect/platform-node': 4.0.2
@@ -63,7 +62,6 @@ catalog:
   '@types/react': 19.2.18
   '@types/react-dom': 19.2.3
   '@typeonce/effect-machine': 0.46.0
-  '@typeonce/effect-machine-react': 0.46.0
   '@typeonce/oxlint-plugin-effect-machine': 0.46.0
   '@vitejs/plugin-react': 6.1.1
   alchemy: 2.0.0-beta.81
@@ -96,8 +94,6 @@ catalog:
   expo-system-ui: 57.0.4
   expo-updates: 57.0.26
   expo-web-browser: 57.0.3
-  expo-widgets: 57.0.27
-  hono: 4.13.8
   kysely: 0.29.5
   lucide-react: 1.47.0
   lucide-react-native: 1.47.0

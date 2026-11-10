@@ -29,7 +29,7 @@ export class RuntimeRejected extends Schema.TaggedError<RuntimeRejected>()(
   },
   { title: 'Runtime rejected the request' },
 ) {}
-export type RuntimeFailure = RuntimeTransportFailed | RuntimeRejected | ConversationTooLarge
+
 export interface Address {
   readonly personId: PersonId
   readonly threadId: ThreadId
@@ -80,7 +80,7 @@ export const requestRuntime = Effect.fn('Runtime.request')(function* <R>(
  * A Whole contains the transcript. Limit pending events to 32 Mi UTF-16 code units, above the
  * default 10 Mi limit but finite even when upstream never terminates an event.
  */
-export const conversationFrameLimit = 32 * 1024 * 1024
+const conversationFrameLimit = 32 * 1024 * 1024
 
 export const conversationFrames = (
   response: HttpClientResponse.HttpClientResponse,

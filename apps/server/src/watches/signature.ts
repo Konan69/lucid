@@ -13,7 +13,7 @@ import type { WatchId } from '@vivid/contracts'
  */
 
 /** How far a delivery's timestamp may be from now, either way, before it is refused as a replay. */
-export const TOLERANCE_SECONDS = 5 * 60
+const TOLERANCE_SECONDS = 5 * 60
 
 /**
  * The secret a Watch subscribes with. It is never stored: it is derived from the server's own

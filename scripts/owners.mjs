@@ -404,7 +404,7 @@ function writeFindings(checker, node, tables, domain) {
  * Reads, joins and membership checks are legal. Raw SQL writes are outside this check.
  * Sources map repository-relative paths to text for working trees and historical replays.
  */
-export function checkOwners(sources) {
+function checkOwners(sources) {
   using api = new API({ cwd: '/' })
   using snapshot = sourceProgram(api, sources)
   const program = snapshot.operation.createdPrograms[0]
@@ -477,7 +477,7 @@ function sourcesAt(root, ref) {
 }
 
 /** The CLI fails with actionable owner diagnostics, including when replaying a past commit. */
-export function main(args) {
+function main(args) {
   const { values } = NodeUtil.parseArgs({
     args,
     options: { root: { type: 'string' }, ref: { type: 'string' } },

@@ -7,7 +7,7 @@ import * as NodeReadline from 'node:readline'
 /** The gate's own disposable PostgreSQL server. Nothing but gate runs ever connects to it. */
 const container = 'vivid-gate-pg'
 /** A gate must never pass with its database suites skipped, so an absent server is a failure. */
-export class GateDatabaseUnavailable extends Error {
+class GateDatabaseUnavailable extends Error {
   name = 'GateDatabaseUnavailable'
 }
 

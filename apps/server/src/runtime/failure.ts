@@ -9,7 +9,7 @@ export const ProviderStatus = Schema.Int.check(Schema.isBetween({ minimum: 400, 
 const isModelFailure = Schema.is(ModelFailureReason)
 
 /** The provider failed to answer; identities remain local and all diagnostics are closed values. */
-export class ModelProviderFailed extends Schema.TaggedError<ModelProviderFailed>()(
+class ModelProviderFailed extends Schema.TaggedError<ModelProviderFailed>()(
   'ModelProviderFailed',
   {
     threadId: ThreadId,
@@ -21,7 +21,7 @@ export class ModelProviderFailed extends Schema.TaggedError<ModelProviderFailed>
 ) {}
 
 /** A terminal failure without provider evidence must not be mislabeled as a provider outage. */
-export class RunFailed extends Schema.TaggedError<RunFailed>()(
+class RunFailed extends Schema.TaggedError<RunFailed>()(
   'RunFailed',
   {
     threadId: ThreadId,

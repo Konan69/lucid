@@ -31,7 +31,7 @@ import { ExecutorEvents } from './events.ts'
 import { WatchStore, type WatchRecord } from './store.ts'
 
 /** One new intent gets one durable key; timer retries read and reuse it. */
-export const awaiting = () =>
+const awaiting = () =>
   CheckinArming.cases.Awaiting.make({
     operationKey: TimerOperationKey.make(NodeCrypto.randomUUID()),
   })

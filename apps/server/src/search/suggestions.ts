@@ -11,7 +11,7 @@ import { manifest } from '@vivid/skills'
 const DAY_MS = 86_400_000
 /** Offer connected procedures only when every required service group has a ready account.
  * Unknown service names do not imply a capability; starter procedures can explain missing access. */
-export const procedureSuggestions = (connections: ReadonlyArray<Connection>) => {
+const procedureSuggestions = (connections: ReadonlyArray<Connection>) => {
   const ready = new Set(
     Arr.filterMap(connections, (connection) =>
       ConnectionState.guards.Ready(connection.state)
@@ -46,7 +46,7 @@ const librarySuggestions = (items: ReadonlyArray<LibraryItem>, now: number) =>
   )
 
 /** Fixed rules offer at most four useful next messages, with starters only when no work qualifies. */
-export const suggest = (
+const suggest = (
   data: {
     readonly items: ReadonlyArray<LibraryItem>
   },

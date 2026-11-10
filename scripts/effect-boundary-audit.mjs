@@ -37,7 +37,7 @@ const effectOperationKinds = new Map([
 ])
 
 /** Production TypeScript only; tests, declarations, generated files, and migration state are separate gates. */
-export function isProductionTypeScript(relativePath) {
+function isProductionTypeScript(relativePath) {
   if (!/\.[cm]?tsx?$/u.test(relativePath)) return false
   if (/(?:^|[/\\])(?:node_modules|dist|build|drizzle)(?:[/\\]|$)/u.test(relativePath)) return false
   if (/(?:\.test|\.spec|\.gen|worker-test-entry)\.[cm]?tsx?$/u.test(relativePath)) return false
@@ -51,7 +51,7 @@ export function isProductionTypeScript(relativePath) {
 }
 
 /** List files deterministically so reports and allowlist checks are stable across machines. */
-export function productionFiles(root = repositoryRoot) {
+function productionFiles(root = repositoryRoot) {
   const roots = [
     NodePath.join(root, 'apps', 'server', 'src'),
     NodePath.join(root, 'apps', 'cells', 'src'),
@@ -249,7 +249,7 @@ export function scanSource(file, source) {
 const entryKey = ({ file, symbol }) => `${file}\u0000${symbol}`
 
 /** Exact file+symbol allowlists fail on duplicates, wildcards, and stale classifications. */
-export function validateAllowlist(entries, findings) {
+function validateAllowlist(entries, findings) {
   const decoded = decodeAllowlist(entries)
   if (Result.isFailure(decoded)) {
     throw new Error('Every allowlist entry requires file, symbol(s), and classification strings')
@@ -275,7 +275,7 @@ export function validateAllowlist(entries, findings) {
 }
 
 /** Build a deterministic machine-readable report for migration planning and CI enforcement. */
-export function buildReport(mode, files, findings, allowed) {
+function buildReport(mode, files, findings, allowed) {
   const ordered = findings.toSorted(
     (left, right) =>
       left.file.localeCompare(right.file) ||
@@ -303,7 +303,7 @@ export function buildReport(mode, files, findings, allowed) {
   }
 }
 
-export function formatSummary(report) {
+function formatSummary(report) {
   return `Effect boundary audit: ${report.filesScanned} files; ${report.totalFindings} findings; ${report.unallowlistedFindings} unallowlisted`
 }
 

@@ -59,21 +59,18 @@ export interface ShelfOwner {
 }
 
 /** Mine belongs to the Person across workspace switches; an admin never gains another Mine. */
-export const mineScope = (columns: ShelfColumns, actor: Actor) =>
+const mineScope = (columns: ShelfColumns, actor: Actor) =>
   ownedHere(columns, { ...actor, workspace: Workspace.cases.Personal.make({}) })
 
 /** The only possible shelf sets: Mine, both shelves, or Company alone. */
-export type LibraryReadScope =
-  | readonly ['Mine']
-  | readonly ['Mine', 'Company']
-  | readonly ['Company']
+type LibraryReadScope = readonly ['Mine'] | readonly ['Mine', 'Company'] | readonly ['Company']
 
 /**
  * A Person and Vivid in a private Thread read Mine plus the active Company's shelf. A shared
  * Thread can read only the Company shelf: private files must not enter its metadata or results.
  * Thread access and audience are read now, so changing sharing immediately changes every reader.
  */
-export const readScope = Effect.fn('Library.readScope')(function* (actor: Actor) {
+const readScope = Effect.fn('Library.readScope')(function* (actor: Actor) {
   const ordinary = Workspace.match(actor.workspace, {
     Personal: (): LibraryReadScope => ['Mine'],
     Company: (): LibraryReadScope => ['Mine', 'Company'],

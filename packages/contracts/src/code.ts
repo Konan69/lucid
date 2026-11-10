@@ -85,7 +85,7 @@ export const DisplayProgramWaiting = Schema.TaggedStruct('DisplayProgramWaiting'
 export interface DisplayProgramWaiting extends Schema.Schema.Type<typeof DisplayProgramWaiting> {}
 
 /** How one call the program made ended. A call that needed a decision ended the program. */
-export const CodeCallEnd = Schema.Literals([
+const CodeCallEnd = Schema.Literals([
   'accepted',
   'completed',
   'refused',
@@ -93,7 +93,7 @@ export const CodeCallEnd = Schema.Literals([
   'needs input',
   'unknown',
 ] as const)
-export type CodeCallEnd = typeof CodeCallEnd.Type
+type CodeCallEnd = typeof CodeCallEnd.Type
 
 /** One call the program made, as the Thread shows it: what it was for and how it ended. */
 export const CodeCall = Schema.Struct({

@@ -43,7 +43,7 @@ import { keyedFiles, KeyedTransport } from './keyed.ts'
 import { discordAppName, discordFiles, discordServiceId } from './discord.ts'
 import { keyedService, keyedServices, keyedAddress, personalKeyAuthorization } from './curation.ts'
 import { ExecutorSourceUnsupported, ExecutorImportQueryUnsupported } from './source.ts'
-export { ExecutorSourceUnsupported, ExecutorImportQueryUnsupported } from './source.ts'
+
 import {
   encodeGoogleClient,
   googleAppName,
@@ -68,7 +68,7 @@ export const AdoptedSource = Schema.TaggedUnion({
     account: ExecutorAccountId,
   },
 })
-export const ExecutorVersionId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorVersionId'))
+const ExecutorVersionId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorVersionId'))
 /** An app either needs no account or binds one exact requirement in its declared scope. */
 export const ExecutorBinding = Schema.TaggedUnion({
   Public: {},
@@ -338,7 +338,7 @@ export class ExecutorRejected extends Schema.TaggedError<ExecutorRejected>()(
  * Keep that failure distinct from policy/transport refusal so input can be corrected and retried.
  * Foreign identities are intentionally excluded; summaries are filtered against call references before projection.
  */
-export class ExecutorInputInvalid extends Schema.TaggedError<ExecutorInputInvalid>()(
+class ExecutorInputInvalid extends Schema.TaggedError<ExecutorInputInvalid>()(
   'ExecutorInputInvalid',
   { ...errorContext, problems: Schema.Array(Schema.String) },
   { title: 'Integration tool input invalid' },
@@ -370,7 +370,7 @@ const OAuthSetupReason = Schema.Literals([
   'token_exchange',
   'unsupported',
 ])
-export class ExecutorOAuthSetupFailed extends Schema.TaggedError<ExecutorOAuthSetupFailed>()(
+class ExecutorOAuthSetupFailed extends Schema.TaggedError<ExecutorOAuthSetupFailed>()(
   'ExecutorOAuthSetupFailed',
   { ...errorContext, reason: OAuthSetupReason },
   { title: 'Integration sign-in setup failed' },
@@ -385,13 +385,13 @@ export class ExecutorConflict extends Schema.TaggedError<ExecutorConflict>()(
 /** A create-only install can lose a race to another Vivid process. Its exact name is safely
  * reread once; unrelated account conflicts must never trigger inventory recovery.
  */
-export class ExecutorAppNameTaken extends Schema.TaggedError<ExecutorAppNameTaken>()(
+class ExecutorAppNameTaken extends Schema.TaggedError<ExecutorAppNameTaken>()(
   'ExecutorAppNameTaken',
   errorContext,
   { title: 'Integration app name already installed' },
 ) {}
 /** An upstream 5xx or ToolCallFailed can follow external effects. */
-export class ExecutorExecutionUncertain extends Schema.TaggedError<ExecutorExecutionUncertain>()(
+class ExecutorExecutionUncertain extends Schema.TaggedError<ExecutorExecutionUncertain>()(
   'ExecutorExecutionUncertain',
   {
     ...errorContext,
@@ -441,35 +441,35 @@ export class ExecutorApprovalUnsupported extends Schema.TaggedError<ExecutorAppr
 ) {}
 
 /** The app account requirement changed. No credential or link is committed on this refusal. */
-export class ExecutorRequirementChanged extends Schema.TaggedError<ExecutorRequirementChanged>()(
+class ExecutorRequirementChanged extends Schema.TaggedError<ExecutorRequirementChanged>()(
   'ExecutorRequirementChanged',
   errorContext,
   { title: 'The app account requirement changed' },
 ) {}
 
 /** The account connection was refused. No credential or link is committed on this refusal. */
-export class ExecutorConnectionRefused extends Schema.TaggedError<ExecutorConnectionRefused>()(
+class ExecutorConnectionRefused extends Schema.TaggedError<ExecutorConnectionRefused>()(
   'ExecutorConnectionRefused',
   errorContext,
   { title: 'The account connection was refused' },
 ) {}
 
 /** Account choice is unsupported. No credential or link is committed on this refusal. */
-export class ExecutorAccountChoiceUnsupported extends Schema.TaggedError<ExecutorAccountChoiceUnsupported>()(
+class ExecutorAccountChoiceUnsupported extends Schema.TaggedError<ExecutorAccountChoiceUnsupported>()(
   'ExecutorAccountChoiceUnsupported',
   errorContext,
   { title: 'Account choice is unsupported' },
 ) {}
 
 /** The OAuth client is unavailable. No credential or link is committed on this refusal. */
-export class ExecutorOAuthClientUnavailable extends Schema.TaggedError<ExecutorOAuthClientUnavailable>()(
+class ExecutorOAuthClientUnavailable extends Schema.TaggedError<ExecutorOAuthClientUnavailable>()(
   'ExecutorOAuthClientUnavailable',
   errorContext,
   { title: 'The OAuth client is unavailable' },
 ) {}
 
 /** Select one OAuth client. No credential or link is committed on this refusal. */
-export class ExecutorOAuthClientAmbiguous extends Schema.TaggedError<ExecutorOAuthClientAmbiguous>()(
+class ExecutorOAuthClientAmbiguous extends Schema.TaggedError<ExecutorOAuthClientAmbiguous>()(
   'ExecutorOAuthClientAmbiguous',
   errorContext,
   { title: 'Select one OAuth client' },
@@ -662,7 +662,7 @@ const WireApp = Schema.Struct({
 })
 // Inventory identifies app provenance only. Unrelated apps may use requirement shapes this
 // adapter cannot authorize; decode requirements only on the selected app's detail endpoint.
-export const ExecutorInventory = Schema.Struct({
+const ExecutorInventory = Schema.Struct({
   apps: Schema.Array(
     Schema.Struct({
       id: ExecutorAppId,

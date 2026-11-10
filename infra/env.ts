@@ -67,7 +67,7 @@ export interface InfrastructureEnvironment {
  * `apps/server/src/computers/boat/transport.ts`). The key and the name of the prepared template
  * are required. The rest are choices the server has its own default for, sent only when set.
  */
-export interface ComputerAccess {
+interface ComputerAccess {
   readonly key: Redacted.Redacted
   /** The named Boat snapshot a Person's Computer is restored from (`infra/computer/prepare.py`). */
   readonly template: string
@@ -85,14 +85,14 @@ export interface ComputerAccess {
   readonly machine: Option.Option<string>
 }
 
-export interface GoogleAccess {
+interface GoogleAccess {
   readonly clientId: string
   readonly clientSecret: Redacted.Redacted
   readonly redirectUri: string
 }
 
 /** A Photon project: its id and the secret that signs the server in to it. */
-export interface TextingAccess {
+interface TextingAccess {
   readonly projectId: string
   readonly projectSecret: Redacted.Redacted
 }
@@ -102,7 +102,7 @@ export interface TextingAccess {
  * is generated once for an installation and kept: replacing it silently unsubscribes every browser
  * and phone that subscribed with the old public key.
  */
-export interface PushAccess {
+interface PushAccess {
   readonly publicKey: string
   readonly privateKey: Redacted.Redacted
   readonly subject: string
@@ -116,7 +116,7 @@ export interface ObservabilityAccess {
   readonly uploadToken: Redacted.Redacted
 }
 
-export interface ExecutorAccess {
+interface ExecutorAccess {
   readonly key: Redacted.Redacted
   readonly organization: string
   /** The installation owner's sign-in: it invites each Person's own Executor member. */

@@ -18,7 +18,7 @@ import { isCalled, LiveTally } from '../live/tally.ts'
  * pings every five seconds while it runs (`packages/client/rpc` `layerLive`), so this is three
  * pings missed in a row.
  */
-export const SILENT_AFTER_MS = 15_000
+const SILENT_AFTER_MS = 15_000
 
 /**
  * How long a client may send nothing before its socket is closed. A browser runs the timers of a
@@ -27,7 +27,7 @@ export const SILENT_AFTER_MS = 15_000
  * `layerLive`). So a client that is running is heard at least once a minute, and only a connection
  * nobody is at any more stays quiet for two.
  */
-export const CLOSED_AFTER_MS = 120_000
+const CLOSED_AFTER_MS = 120_000
 
 /**
  * One client's connection to the live socket, as the server hears it.

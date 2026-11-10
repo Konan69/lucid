@@ -35,7 +35,7 @@ const PROVIDER = 'fixture'
 const MODEL = 'text'
 
 /** A directory could not be made for a case, or a link ended early; nothing was started. */
-export class FixtureFailed extends Schema.TaggedError<FixtureFailed>()(
+class FixtureFailed extends Schema.TaggedError<FixtureFailed>()(
   'FixtureFailed',
   {},
   { title: 'Runtime fixture failed' },

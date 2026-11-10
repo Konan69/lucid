@@ -81,17 +81,22 @@ function tableCeilings(source) {
     .filter((statement) => statement !== null && statement.type === 'VariableDeclaration')
     .flatMap((statement) => statement.declarations)
     .filter(
-      (declaration) => declaration.id.type === 'Identifier' && declaration.id.name === 'ratchets',
+      (declaration) =>
+        declaration.id.type === 'Identifier' &&
+        ['ratchets', 'deadCodeRatchets'].includes(declaration.id.name),
     )
-  if (declarations.length !== 1) throw new Error('ceilings: expected one ratchets declaration')
-  const array = declarations[0].init
-  if (array === null || array.type !== 'ArrayExpression')
-    throw new Error('ceilings: ratchets must be a literal array')
+  if (!declarations.some((declaration) => declaration.id.name === 'ratchets'))
+    throw new Error('ceilings: expected one ratchets declaration')
   return ceilingMap(
-    array.elements.map((entry) => {
-      if (entry === null || entry.type !== 'ObjectExpression')
-        throw new Error('ceilings: expected a literal entry')
-      return Object.fromEntries(entry.properties.map(literalField))
+    declarations.flatMap((declaration) => {
+      const array = declaration.init
+      if (array === null || array.type !== 'ArrayExpression')
+        throw new Error('ceilings: ratchets must be a literal array')
+      return array.elements.map((entry) => {
+        if (entry === null || entry.type !== 'ObjectExpression')
+          throw new Error('ceilings: expected a literal entry')
+        return Object.fromEntries(entry.properties.map(literalField))
+      })
     }),
   )
 }
@@ -109,7 +114,7 @@ function hookCeilings(source) {
 }
 
 /** A missing table is legitimate only in the historical hook layout. Missing revisions fail. */
-export function readCeilings(root, revision, environment) {
+function readCeilings(root, revision, environment) {
   const files = git(
     root,
     ['ls-tree', '-r', '--name-only', revision, '--', tablePath, hookPath],
@@ -123,7 +128,7 @@ export function readCeilings(root, revision, environment) {
 }
 
 /** New rules may set their initial baseline. Every existing identity may only hold or fall. */
-export function raisedCeilings(before, after) {
+function raisedCeilings(before, after) {
   const failures = []
   for (const [rule, ceiling] of after) {
     const old = before.get(rule)
@@ -136,7 +141,7 @@ export function raisedCeilings(before, after) {
 }
 
 /** Read the table from disk so a local gate catches uncommitted ceiling edits. */
-export function workingCeilings(root) {
+function workingCeilings(root) {
   return tableCeilings(NodeFS.readFileSync(NodePath.join(root, tablePath), 'utf8'))
 }
 
@@ -146,12 +151,13 @@ export function checkRaises(root, base, environment) {
 }
 
 /** The CLI measures an existing log. The gate supplies these same fields from checkRatchets. */
-export function measureCeilings(output, ceilings) {
-  return Array.from(ceilings, ([identity, ceiling]) => {
+function measureCeilings(output, ceilings) {
+  return Array.from(ceilings).flatMap(([identity, ceiling]) => {
+    if (/^(knip|rpc)\//u.test(identity)) return []
     const slash = identity.lastIndexOf('/')
     const plugin = identity.slice(0, slash)
     const rule = identity.slice(slash + 1)
-    return { plugin, rule, ceiling, count: countFindings(output, { plugin, rule }) }
+    return [{ plugin, rule, ceiling, count: countFindings(output, { plugin, rule }) }]
   })
 }
 
@@ -168,7 +174,7 @@ export function checkTightCeilings(measurements) {
 }
 
 /** Explicit revisions support historical replays; normal use checks the tree against its merge base. */
-export function runCeilings(root, argv) {
+function runCeilings(root, argv) {
   const { values, positionals } = NodeUtil.parseArgs({
     args: argv,
     allowPositionals: true,

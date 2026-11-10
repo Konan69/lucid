@@ -44,7 +44,7 @@ type Command = typeof Command.Type
  * Source-verified: Effect PersistedQueue.ts take's scoped finalizer retries on failure, releases
  * on interruption, and acknowledges only success. Delivery uses the handle as its dedupe key.
  * Its finite int32 ceiling and malformed-payload dead letters remain SDK limits. */
-export const commandQueue = PersistedQueue.make({
+const commandQueue = PersistedQueue.make({
   name: 'computer-shell',
   schema: Command,
   maxAttempts: 2147483647,
@@ -85,7 +85,7 @@ const decode = (text: string) =>
 
 /** Replaying a launch only reads an existing handle; the Computer reserves it before spawning.
  * Store.run owns the takeover check. The command detaches before this short action returns. */
-export const launchCommand = Effect.fn('Shell.launch')(function* (job: Command) {
+const launchCommand = Effect.fn('Shell.launch')(function* (job: Command) {
   const store = yield* ComputerStore
   const payload = Buffer.from(
     JSON.stringify({ command: job.command, directory: job.directory }),
@@ -188,7 +188,7 @@ const wake = Effect.fn('Shell.wake')(function* (job: Command, result: ShellSnaps
  * when the server dies after admission and before the queue's success acknowledgement. Each read
  * of the receipt is written down for the work view (`background.ts`), which never asks the
  * Computer itself; the row leaves once the Thread has its wake, or was spared it by a Stop. */
-export const completeCommand = Effect.fn('Shell.complete')(function* (job: Command) {
+const completeCommand = Effect.fn('Shell.complete')(function* (job: Command) {
   const result = yield* launchCommand(job).pipe(
     Effect.tapError((failure) => noteUnreachable(job, executionReason(failure))),
   )

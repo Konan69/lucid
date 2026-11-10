@@ -54,7 +54,7 @@ const pages = [
 ] as const
 
 /** apps beta.92 implementation/openapi-names.ts combines the first tag and camel-cased operation id. */
-export const canonicalOperation = (service: ServiceId, name: string) => {
+const canonicalOperation = (service: ServiceId, name: string) => {
   const page = pages.find((entry) => entry.service === service && entry.tool === name)
   return page === undefined ? name : page.operation
 }

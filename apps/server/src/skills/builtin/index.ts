@@ -7,7 +7,7 @@ import { Result } from 'effect'
 const releasedAt = Date.UTC(2026, 9, 2)
 
 /** SKILL.md is the only source of descriptions and bodies; the manifest owns product metadata. */
-export const procedures = manifest.map((entry) => {
+const procedures = manifest.map((entry) => {
   const skill = Result.getOrThrow(readMarkdown(entry.runtimeName))
   return {
     runtimeName: entry.runtimeName,

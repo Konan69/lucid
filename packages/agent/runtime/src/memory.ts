@@ -32,7 +32,6 @@ export {
   MemoryEntry,
   MemoryFile,
   MemoryIndex,
-  MemoryLine,
   MemoryAddress,
   MemoryConflict,
   MemorySearchInvalid,
@@ -55,7 +54,7 @@ export class MemoryMissing extends Schema.TaggedError<MemoryMissing>()(
   { title: 'Memory entry absent' },
 ) {}
 
-export const INDEX_BUDGET = 8000
+const INDEX_BUDGET = 8000
 
 /**
  * Who writes memory in a call, and what the write rests on. The host builds both, from the Run

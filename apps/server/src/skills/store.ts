@@ -28,19 +28,19 @@ import { skills } from './tables.ts'
 import { builtins, catalogue } from './builtin/index.ts'
 
 /** An inaccessible identifier must reveal nothing about another scope. */
-export class SkillMissing extends Schema.TaggedError<SkillMissing>()(
+class SkillMissing extends Schema.TaggedError<SkillMissing>()(
   'SkillMissing',
   { id: SkillId },
   { title: 'Skill not found' },
 ) {}
 /** Being able to use a procedure does not grant permission to change it. */
-export class SkillNotEditable extends Schema.TaggedError<SkillNotEditable>()(
+class SkillNotEditable extends Schema.TaggedError<SkillNotEditable>()(
   'SkillNotEditable',
   { id: SkillId },
   { title: 'Skill edit denied' },
 ) {}
 /** Name collisions are scoped: personal and Company procedures may share a name. */
-export class SkillNameTaken extends Schema.TaggedError<SkillNameTaken>()(
+class SkillNameTaken extends Schema.TaggedError<SkillNameTaken>()(
   'SkillNameTaken',
   {
     id: SkillId,

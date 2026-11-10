@@ -1,12 +1,5 @@
 import { Schema } from 'effect'
-import {
-  CompanyId,
-  InvitationId,
-  MembershipId,
-  Person,
-  PersonId,
-  PersonSummary,
-} from './identity.js'
+import { CompanyId, InvitationId, MembershipId, Person, PersonSummary } from './identity.js'
 
 /**
  * What a Membership permits. An owner created the Company and can remove it; an admin manages
@@ -23,16 +16,6 @@ export class Company extends Schema.Class<Company>('Company')(
     slug: Schema.String,
   },
   { title: 'Company' },
-) {}
-
-export class Membership extends Schema.Class<Membership>('Membership')(
-  {
-    id: MembershipId,
-    companyId: CompanyId,
-    personId: PersonId,
-    role: Role,
-  },
-  { title: 'Membership' },
 ) {}
 
 /**
@@ -99,13 +82,6 @@ export class MeResponse extends Schema.Class<MeResponse>('MeResponse')(
   { title: 'Current Person response' },
 ) {}
 
-export class CompanyListResponse extends Schema.Class<CompanyListResponse>('CompanyListResponse')(
-  {
-    companies: Schema.Array(Company),
-  },
-  { title: 'Company list response' },
-) {}
-
 /** Where an invitation stands. Only a pending one can be accepted or revoked. */
 export const InvitationStatus = Schema.Literals([
   'pending',
@@ -114,17 +90,6 @@ export const InvitationStatus = Schema.Literals([
   'expired',
 ] as const)
 export type InvitationStatus = typeof InvitationStatus.Type
-
-export class InvitationResponse extends Schema.Class<InvitationResponse>('InvitationResponse')(
-  {
-    id: InvitationId,
-    companyId: CompanyId,
-    email: Schema.String,
-    role: Role,
-    status: InvitationStatus,
-  },
-  { title: 'Invitation response' },
-) {}
 
 /** One Person in a Company, as the People screen shows them. The email is visible to Members. */
 export const Member = Schema.Struct({

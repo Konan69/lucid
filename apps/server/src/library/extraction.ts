@@ -12,10 +12,7 @@ import {
 } from './extraction/contract.ts'
 
 /** The process adapter owns startup admission and its closed configuration failure vocabulary. */
-export {
-  ExtractionConfigurationError,
-  admission as extractionAdmission,
-} from './extraction/process.ts'
+export { admission as extractionAdmission } from './extraction/process.ts'
 import {
   type Launch,
   ProcessEnd,
@@ -31,7 +28,6 @@ import {
 export {
   ExtractionFaulted,
   ExtractionLimitExceeded,
-  ExtractionRpcs,
   ExtractionUnavailable,
   PdfLocked,
   PdfUnreadable,

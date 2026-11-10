@@ -26,6 +26,8 @@ export const stages = [
       ['node', 'scripts/effect-boundary-audit.mjs', 'enforce'],
       ['node', 'scripts/migrations.mjs', 'check'],
       ['node', 'scripts/owners.mjs'],
+      ['node', 'scripts/deadcode.mjs'],
+      ['node', 'scripts/rpccallers.mjs'],
       // Structure: one-word names, no dumping grounds, server layering (docs/00-structure.md).
       ['node', 'scripts/structure.mjs'],
     ],

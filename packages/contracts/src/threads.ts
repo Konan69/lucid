@@ -538,10 +538,6 @@ export const RuntimeRunRequest = Schema.Struct({
 })
 export interface RuntimeRunRequest extends Schema.Schema.Type<typeof RuntimeRunRequest> {}
 
-/** Durable runtime admission receipt for one accepted Run. */
-export const RuntimeRunResponse = Schema.Struct({ submissionId: Schema.String })
-export interface RuntimeRunResponse extends Schema.Schema.Type<typeof RuntimeRunResponse> {}
-
 /** Thread location and creator supplied when its conversation is created.
  * Evolving facts travel with each delivery. */
 export const ThreadOrigin = Schema.Struct({

@@ -41,10 +41,10 @@ export type SignInChallenge = typeof SignInChallenge.Type
  * The app's secret: 32 random bytes, base64url. It stays in the app until the trade, and is
  * `Redacted` everywhere it is held so that it cannot be logged or drawn by accident.
  */
-export const SignInVerifier = Schema.RedactedFromValue(
+const SignInVerifier = Schema.RedactedFromValue(
   Schema.String.check(Schema.isPattern(BASE64URL_OF_32_BYTES)),
 )
-export type SignInVerifier = typeof SignInVerifier.Type
+type SignInVerifier = typeof SignInVerifier.Type
 
 /**
  * Names one attempt, so the shell answers only the return of the attempt it started and the

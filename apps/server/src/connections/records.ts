@@ -40,6 +40,7 @@ import { Watches } from '../watches/lifecycle.ts'
 
 /** A stored Connection. The retired `label` column (`tables.ts`) is read by nothing, so it is
  * left out of the record here, once, and no caller ever sees it. */
+/** @public removal.ts derives persisted references through an import type. */
 export const storedRowSchema = createSelectSchema(connections, {
   id: ConnectionId,
   service: ServiceId,

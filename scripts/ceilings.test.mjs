@@ -310,3 +310,13 @@ void test('a historical table uses its own ceiling with a recorded lint log', (t
   assert.match(historical.stderr, /17 findings below ceiling 18; write ceiling: 17/u)
   assert.equal(repo.run(['HEAD^', 'HEAD', '--lint', log]).status, 0)
 })
+
+void test('dead-code ceilings share the historical no-raise policy', (t) => {
+  const extra = (count) =>
+    `export const deadCodeRatchets = [{ plugin: 'knip', rule: 'exports', ceiling: ${count} }]\n`
+  const repo = repository(t, table(0) + extra(3))
+  repo.write(table(0) + extra(4))
+  const result = repo.run()
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /knip\/exports: ceiling 3 -> 4/u)
+})

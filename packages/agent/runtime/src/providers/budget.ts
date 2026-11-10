@@ -5,10 +5,10 @@ import { Option } from 'effect'
 import { witness } from './witness.ts'
 
 /** Both gateways speak Chat Completions; its lazy adapter loads only when a request needs it. */
-export const completions = openAICompletionsApi()
+const completions = openAICompletionsApi()
 
 /** Pi owns abortable provider backoff; honor Retry-After without an arbitrary delay ceiling. */
-export const requestBudget = { maxRetries: 2, maxRetryDelayMs: 0 }
+const requestBudget = { maxRetries: 2, maxRetryDelayMs: 0 }
 
 /**
  * Durable generation.js and compaction.js forward settings.stream into pi-ai. settings.retry

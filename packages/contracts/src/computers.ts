@@ -232,7 +232,7 @@ export const ComputerResponse = Schema.Struct({ computer: Computer })
  * not asked about. The acting Person comes from the call's authority, never from these fields.
  */
 /** Absolute: the machine has no "current directory" between calls, so a relative path has no meaning. */
-export const ComputerPath = Schema.String.check(Schema.isPattern(/^\//u), Schema.isMaxLength(4096))
+const ComputerPath = Schema.String.check(Schema.isPattern(/^\//u), Schema.isMaxLength(4096))
 
 /** A command in a directory. The deadline is the caller's; the machine ends the command at it. */
 export const ComputerShellRequest = Schema.Struct({
@@ -301,8 +301,8 @@ export interface CommandResult extends Schema.Schema.Type<typeof CommandResult> 
 const Notches = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 }))
 
 /** The four ways anything on the Computer scrolls. */
-export const ScrollDirection = Schema.Literals(['up', 'down', 'left', 'right'] as const)
-export type ScrollDirection = typeof ScrollDirection.Type
+const ScrollDirection = Schema.Literals(['up', 'down', 'left', 'right'] as const)
+type ScrollDirection = typeof ScrollDirection.Type
 
 /**
  * One thing Vivid does in the Computer's browser. Targets are words from the page's own outline
@@ -348,16 +348,16 @@ export const BrowseRequest = Schema.Struct({
 export interface BrowseRequest extends Schema.Schema.Type<typeof BrowseRequest> {}
 
 /** One open tab, as the browser has it. */
-export const BrowserTab = Schema.Struct({
+const BrowserTab = Schema.Struct({
   title: Schema.String,
   address: Schema.String,
   /** The tab the next step acts on. Exactly one tab is showing. */
   showing: Schema.Boolean,
 })
-export interface BrowserTab extends Schema.Schema.Type<typeof BrowserTab> {}
+interface BrowserTab extends Schema.Schema.Type<typeof BrowserTab> {}
 
 /** 8 MiB encoded (about 6 MiB binary) caps one device answer before image/history retention. */
-export const MAX_BROWSER_PICTURE_ENCODED_LENGTH = 8 * 1024 * 1024
+const MAX_BROWSER_PICTURE_ENCODED_LENGTH = 8 * 1024 * 1024
 
 /** Base64 PNG bytes, never a data URL or an arbitrary text receipt. The PNG signature and base64
  * alphabet identify the representation; actual image decoding belongs to the consuming renderer. */

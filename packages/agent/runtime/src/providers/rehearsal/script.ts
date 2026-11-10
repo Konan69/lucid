@@ -53,7 +53,7 @@ function call(context: Context, name: string, input: ToolCall['arguments'], inde
  * Display examples are explicitly rehearsal data. A display is part of the reply itself: words,
  * then the program in an `openui-lang` fence, as OpenUI's inline mode has the model write it.
  */
-export const fenced = (program: string) => `\`\`\`openui-lang\n${program}\n\`\`\``
+const fenced = (program: string) => `\`\`\`openui-lang\n${program}\n\`\`\``
 
 function display(phrase: string, shown: string): Scene {
   return {
@@ -317,7 +317,7 @@ const examples = [
 ] satisfies Scene[]
 
 /** The help reply and tests derive their vocabulary from the same authoritative scenes. */
-export const phrases = Object.freeze(examples.map((scene) => scene.phrase))
+const phrases = Object.freeze(examples.map((scene) => scene.phrase))
 
 /** Reconstruct the scene and step solely from pi history; no counters, clock, randomness or network belong here. */
 export function script(context: Context): AssistantMessage {

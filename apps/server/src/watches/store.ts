@@ -142,7 +142,7 @@ const record = Effect.fn('WatchStore.record')(function* (row: typeof watches.$in
 })
 
 /** A new Watch, before Executor has been asked. */
-export interface NewWatch {
+interface NewWatch {
   readonly id: WatchId
   readonly personId: PersonId
   readonly companyId: CompanyId | null

@@ -8,7 +8,7 @@ import { connectionIdentity } from './link.ts'
 
 /** Where OpenSSH's server is on a Debian or Ubuntu machine; a suite that needs a peer is skipped
  * where it is not installed. */
-export const SSHD = '/usr/sbin/sshd'
+const SSHD = '/usr/sbin/sshd'
 export const peerAvailable = NodeFS.existsSync(SSHD)
 
 const keygen = (file: string) =>

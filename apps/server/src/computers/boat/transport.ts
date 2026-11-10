@@ -67,7 +67,7 @@ const FRAME_CHARACTERS = 1_048_576
  * whenever the key's account is in an organization, since Boat otherwise follows that account's
  * active wallet, which someone can change from the dashboard.
  */
-export const boatConfiguration = Effect.fn('Machine.boat.configuration')(function* () {
+const boatConfiguration = Effect.fn('Machine.boat.configuration')(function* () {
   const key = yield* requiredSetting('VIVID_BOAT_API_KEY', settingSecret, 'the Boat API key')
   const org = yield* optionalSetting('VIVID_BOAT_ORG', settingText, 'a Boat organization')
   const template = yield* requiredSetting(

@@ -21,7 +21,3 @@ export const summary = text(
   'One short sentence the person will read, saying what this call does and to what, such as "Email Friday\'s launch plan to Dana". No names of tools, no identifiers.',
   200,
 )
-export const forCompany = v.pipe(
-  v.boolean(),
-  v.description('True only when the person asks to share this with the Company.'),
-)

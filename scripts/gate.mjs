@@ -54,7 +54,7 @@ export function withoutRepositoryEnvironment(environment) {
 }
 
 /** Split and validate `--only`; an unknown stage is an error, never a silently empty gate. */
-export function selectStages(only) {
+function selectStages(only) {
   if (only === undefined) return stageNames
   const names = only.split(',').map((name) => name.trim())
   const unknown = names.filter((name) => !stageNames.includes(name))
@@ -88,7 +88,7 @@ export function parse(argv) {
 }
 
 /** Per-stage times, then one verdict line that names the commit it is about. */
-export function report(outcome, label) {
+function report(outcome, label) {
   const lines = outcome.results.map((result) => {
     const state = result.failed.length === 0 ? 'ok  ' : 'FAIL'
     const failures = result.failed.map((failure) => `\n      ${failure}`).join('')
@@ -116,7 +116,7 @@ function lastLines(file) {
  * What an affected run measures the change from: the commit where this branch left the remote
  * default branch, so the change is everything the branch adds, committed or not.
  */
-export function changeBase(root, options, environment) {
+function changeBase(root, options, environment) {
   if (options.mode !== 'affected') return undefined
   // Always a commit id: a name such as origin/main means nothing in the warm tree's repository,
   // and a name that moves would leave the forwarded argument, and so the task hash, unchanged.

@@ -21,7 +21,7 @@ export const LoadedSkill = Schema.Struct({
   files: Schema.Array(SkillFile),
 })
 export interface LoadedSkill extends Schema.Schema.Type<typeof LoadedSkill> {}
-export class SkillInvalid extends Schema.TaggedError<SkillInvalid>()(
+class SkillInvalid extends Schema.TaggedError<SkillInvalid>()(
   'SkillInvalid',
   {
     name: Schema.String,

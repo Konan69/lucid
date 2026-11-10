@@ -52,13 +52,13 @@ const ExpoConfig = Schema.StructWithRest(
   Schema.Struct({ extra: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)) }),
   [Schema.Record(Schema.String, Schema.Json)],
 )
-export type ExpoConfig = typeof ExpoConfig.Type
+type ExpoConfig = typeof ExpoConfig.Type
 
 const decodeMetadata = Schema.decodeUnknownEffect(Schema.fromJsonString(Metadata))
 const decodeExpoConfig = Schema.decodeUnknownEffect(Schema.fromJsonString(ExpoConfig))
 
 /** A release directory whose `metadata.json` or `expoConfig.json` is not what `expo export` writes. */
-export class ReleaseUnreadable extends Schema.TaggedError<ReleaseUnreadable>()(
+class ReleaseUnreadable extends Schema.TaggedError<ReleaseUnreadable>()(
   'ReleaseUnreadable',
   { directory: Schema.String, file: Schema.String },
   { title: 'Mobile update release unreadable' },
@@ -79,7 +79,7 @@ export interface ReleaseFile {
   readonly path: string
 }
 
-export interface PlatformFiles {
+interface PlatformFiles {
   readonly launchAsset: ReleaseFile
   readonly assets: ReadonlyArray<ReleaseFile>
 }

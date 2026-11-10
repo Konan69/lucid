@@ -15,7 +15,7 @@ import { personRequest, type PersonRequest } from './request.ts'
  * bytes (`apps/web/src/agent/execute/routing/jev.ts` `MAX_REQUEST_BYTES`); 12,000 characters
  * leaves room for the request and both questions under that bound.
  */
-export const INPUT_CHARACTERS = 12_000
+const INPUT_CHARACTERS = 12_000
 
 /**
  * How long an action waits for its review, from the first read of the request to the answer.
@@ -26,7 +26,7 @@ export const INPUT_CHARACTERS = 12_000
  * 490 to 810 ms measured per review through the gateway on 4 Oct 2026 (one first call took
  * 1,716 ms); past it the action is unreviewed.
  */
-export const REVIEW_BUDGET = '3 seconds'
+const REVIEW_BUDGET = '3 seconds'
 
 /**
  * What the reviewer reads. Names and descriptions only: no identifier, credential or Connection

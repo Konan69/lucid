@@ -8,7 +8,7 @@ const root = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta
 const multipleWords = /[-_]|[a-z][A-Z]/u
 const dumpingGround = /^(utils|helpers|common|shared|misc)$/u
 
-export const sourceStructure = {
+const sourceStructure = {
   meta: { type: 'problem', schema: [] },
   create(context) {
     const file = NodePath.relative(context.cwd, context.filename).split(NodePath.sep).join('/')

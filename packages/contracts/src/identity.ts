@@ -143,16 +143,6 @@ export const PersonSummary = Schema.Struct({
 }).annotate({ identifier: 'PersonSummary', title: 'Person summary' })
 export interface PersonSummary extends Schema.Schema.Type<typeof PersonSummary> {}
 
-export class Session extends Schema.Class<Session>('Session')(
-  {
-    id: SessionId,
-    personId: PersonId,
-    activeCompanyId: Schema.optional(CompanyId),
-    expiresAt: Schema.DateTimeUtc,
-  },
-  { title: 'Session' },
-) {}
-
 /** An opaque handle on one Person's Computer, independent of a server process. */
 export const ShellHandle = Schema.String.check(Schema.isPattern(/^[a-f0-9-]{36}$/u)).pipe(
   Schema.brand('ShellHandle'),

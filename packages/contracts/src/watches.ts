@@ -22,8 +22,8 @@ export type WatchId = typeof WatchId.Type
  * named value is equal (`EventArguments` in executor@2.0.0-beta.23
  * `packages/sdk/src/contracts/events.ts`); nothing richer is accepted there.
  */
-export const WatchFilterValue = Schema.Union([Schema.String, Schema.Finite, Schema.Boolean])
-export type WatchFilterValue = typeof WatchFilterValue.Type
+const WatchFilterValue = Schema.Union([Schema.String, Schema.Finite, Schema.Boolean])
+type WatchFilterValue = typeof WatchFilterValue.Type
 
 /** The filter values a Watch narrows its event by, keyed by the declared filter name. */
 export const WatchArguments = Schema.Record(Schema.String, WatchFilterValue)

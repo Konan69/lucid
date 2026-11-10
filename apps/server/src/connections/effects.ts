@@ -47,7 +47,7 @@ const EFFECT_FAILURE_TTL = '1 minute'
  * budget can censor a slow tail; such timeouts are below the outage-evidence floor.
  * Discovery stops waiting at its shared deadline while Layer-owned lookup work
  * retains this independent bound. No statistical tail guarantee is implied. */
-export const EFFECT_BATCH_BUDGET = '1800 millis'
+const EFFECT_BATCH_BUDGET = '1800 millis'
 
 /** Gateway, jev-latest, 4 Oct 2026: twenty final relevance/effect questions at this cap
  * use 5024/7783 input tokens. Effect eligibility rejects oversized metadata entirely, so
@@ -59,7 +59,7 @@ export const TOOL_DESCRIPTION_LIMIT = 500
  * room below that observed minimum while rejecting empty/terse identity-only text.
  * This is an evidence floor, not a safety claim: even a longer noun phrase must
  * satisfy the read rule. Trim first so whitespace cannot manufacture eligibility. */
-export const TOOL_DESCRIPTION_MINIMUM = 15
+const TOOL_DESCRIPTION_MINIMUM = 15
 /** Three whitespace-separated tokens containing Unicode letters reject punctuation,
  * one opaque identifier and two-word labels. The calibration's shortest description
  * has five words; this floor excludes real but terse descriptions such as "Fetch customer".

@@ -33,7 +33,7 @@ const authorization = (credentials: Credentials, seconds: number) =>
   })
 
 /** Each HTTP/2 exchange owns its socket. Cancellation and every response close both resources. */
-export const sendActivity = Effect.fn('Activity.send')(function* (
+const sendActivity = Effect.fn('Activity.send')(function* (
   credentials: Credentials,
   token: string,
   event: 'start' | 'update' | 'end',

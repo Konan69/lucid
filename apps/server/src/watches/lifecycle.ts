@@ -29,7 +29,7 @@ import type { ExecutorCaller } from '../connections/executor.ts'
 import { secretFor } from './signature.ts'
 import { WatchStore, subscriptionOf, type WatchRecord } from './store.ts'
 import { watchProgress, WatchMissing } from './progress.ts'
-export { WatchMissing } from './progress.ts'
+
 import { watchCheckins } from './checkins.ts'
 import { owedStoreLayer } from '../owed/store.ts'
 
@@ -89,7 +89,7 @@ const filtersOf = (definition: EventDefinition) => {
 }
 
 /** The events of one app, named without the app's slug, as Vivid is shown them. */
-export const eventsOfApp = (definitions: ReadonlyArray<EventDefinition>, slug: string) =>
+const eventsOfApp = (definitions: ReadonlyArray<EventDefinition>, slug: string) =>
   definitions.flatMap((definition) =>
     definition.name.startsWith(`${slug}.`)
       ? [
@@ -110,7 +110,7 @@ export const eventsOfApp = (definitions: ReadonlyArray<EventDefinition>, slug: s
  * subscribe), so an outage that outlasts the subscription costs the events of the outage and not
  * the Watch. An expired Watch stays Active with its past `refreshBefore`, which says it has lapsed.
  */
-export const renewalOutcome = (failure: ExecutorEventsFailure): Option.Option<WatchStopReason> => {
+const renewalOutcome = (failure: ExecutorEventsFailure): Option.Option<WatchStopReason> => {
   const stop = (reason: WatchStopReason) => () => Option.some(reason)
   const again = () => Option.none<WatchStopReason>()
   return Match.valueTags(failure, {

@@ -72,7 +72,7 @@ const REQUEST_BUDGET_MILLIS = 30_000
 const SIGN_IN_BUDGET_MILLIS = 300_000
 
 /** The Person's computer is carrying out another request; no new work was dispatched. */
-export class DeviceBusy extends Schema.TaggedError<DeviceBusy>()(
+class DeviceBusy extends Schema.TaggedError<DeviceBusy>()(
   'DeviceBusy',
   { device: DeviceId },
   { title: 'The Person’s computer is busy with an earlier request' },
@@ -940,7 +940,7 @@ const makeSignIns = (dispatch: ReturnType<typeof makeDispatch>) =>
  * The database does not have the tables this code was written for: product migrations have not
  * been applied to it. `missing` names what was looked for and not found.
  */
-export class ProductMigrationsBehind extends Schema.TaggedError<ProductMigrationsBehind>()(
+class ProductMigrationsBehind extends Schema.TaggedError<ProductMigrationsBehind>()(
   'ProductMigrationsBehind',
   { missing: Schema.Literals(['vivid_devices', 'vivid_device_requests.receipt']) },
   { title: 'Product migrations have not been applied to this database' },

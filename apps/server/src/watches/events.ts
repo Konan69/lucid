@@ -39,7 +39,7 @@ const CALLBACK_ENDPOINT = -32015
 const INVALID_PARAMS = -32602
 
 /** No event with this name, or the app is gone. Renewal reads this as the event having changed. */
-export class ExecutorEventMissing extends Schema.TaggedError<ExecutorEventMissing>()(
+class ExecutorEventMissing extends Schema.TaggedError<ExecutorEventMissing>()(
   'ExecutorEventMissing',
   {},
   { title: 'Executor event missing' },
@@ -51,7 +51,7 @@ export class ExecutorEventChanged extends Schema.TaggedError<ExecutorEventChange
   { title: 'Executor event changed' },
 ) {}
 /** The arguments name a filter the event does not declare, or a value of the wrong type. */
-export class ExecutorEventArgumentsInvalid extends Schema.TaggedError<ExecutorEventArgumentsInvalid>()(
+class ExecutorEventArgumentsInvalid extends Schema.TaggedError<ExecutorEventArgumentsInvalid>()(
   'ExecutorEventArgumentsInvalid',
   { message: Schema.String },
   { title: 'Executor event arguments invalid' },
@@ -69,7 +69,7 @@ export class ExecutorEventRefused extends Schema.TaggedError<ExecutorEventRefuse
   { title: 'Executor event refused' },
 ) {}
 /** This Executor cannot deliver events, or does not speak the protocol that has them. */
-export class ExecutorEventsUnsupported extends Schema.TaggedError<ExecutorEventsUnsupported>()(
+class ExecutorEventsUnsupported extends Schema.TaggedError<ExecutorEventsUnsupported>()(
   'ExecutorEventsUnsupported',
   {},
   { title: 'Executor events unsupported' },
@@ -177,7 +177,7 @@ export class ExecutorEvents extends Context.Service<ExecutorEvents, ExecutorEven
  * transport switches to Server-Sent Events when it writes more than one message (notifications
  * before the result), so each `data:` event is read until the answer is found.
  */
-export const answerIn = (contentType: string, body: string): Option.Option<Answer> => {
+const answerIn = (contentType: string, body: string): Option.Option<Answer> => {
   if (!contentType.includes('text/event-stream')) return decodeAnswer(body)
   for (const event of body.split(/\r?\n\r?\n/u)) {
     const data = event
@@ -195,7 +195,7 @@ export const answerIn = (contentType: string, body: string): Option.Option<Answe
  * An MCP error as the failure a caller can act on. Unsupported carries `reason: schema_changed`
  * when a refresh named filters the event no longer declares (`projectError` upstream).
  */
-export const failureOf = (error: {
+const failureOf = (error: {
   readonly code: number
   readonly message: string
   readonly data?: Schema.Json
@@ -220,7 +220,7 @@ export const failureOf = (error: {
 }
 
 /** Executor's settings for this adapter; the same three the Connection adapter reads. */
-export const executorSettings = Effect.fn('ExecutorEvents.settings')(function* () {
+const executorSettings = Effect.fn('ExecutorEvents.settings')(function* () {
   const url = yield* requiredSetting(
     'VIVID_EXECUTOR_URL',
     Schema.NonEmptyString.check(
@@ -239,7 +239,7 @@ export const executorSettings = Effect.fn('ExecutorEvents.settings')(function* (
 export type ExecutorSettings = Effect.Success<ReturnType<typeof executorSettings>>
 
 /** Build the service over one HTTP client and Executor's settings. */
-export const makeExecutorEvents = (transport: HttpClient.HttpClient, config: ExecutorSettings) => {
+const makeExecutorEvents = (transport: HttpClient.HttpClient, config: ExecutorSettings) => {
   // The call's Scope releases each response, read or not.
   const client = HttpClient.withScope(transport)
   /** Send the request and read request 1's answer out of the body, in the caller's Scope. */

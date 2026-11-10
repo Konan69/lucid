@@ -101,7 +101,7 @@ const fresh = (open: number): Counts => ({
 const still = (): Record<Moved, number> => ({ person: 0, company: 0, thread: 0, everything: 0 })
 
 /** What one report holds: a line for each query that did anything, and the bus's counts. */
-export interface Report {
+interface Report {
   readonly queries: ReadonlyArray<readonly [Watched, Readonly<Counts>]>
   readonly moved: Readonly<Record<Moved, number>>
   readonly calls: ReadonlyArray<readonly [Called, number]>

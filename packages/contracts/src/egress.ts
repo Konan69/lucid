@@ -158,13 +158,13 @@ const HOST_LIMIT = 255
  * names a host that way on the wire (an international name travels as its `xn--` form), and one
  * byte is then one character, so no text codec stands between the bytes and the name.
  */
-export const EgressHost = Schema.String.check(Schema.isPattern(/^[\x21-\x7e]{1,255}$/u))
+const EgressHost = Schema.String.check(Schema.isPattern(/^[\x21-\x7e]{1,255}$/u))
 
 /** A TCP port a stream may be opened to. */
-export const EgressPort = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65_535 }))
+const EgressPort = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65_535 }))
 
 /** How many more bytes a `Grant` allows: unsigned 32 bits, and never nothing. */
-export const EgressCredit = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 0xffff_ffff }))
+const EgressCredit = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 0xffff_ffff }))
 
 /**
  * What crosses the tunnel.
@@ -330,11 +330,11 @@ export const decodeEgressFrame = (bytes: Uint8Array): Result.Result<EgressFrame,
 }
 
 /** Why egress is on and cannot work. */
-export const EgressFailure = Schema.Literals([
+const EgressFailure = Schema.Literals([
   /** The Computer could not be reached, or would not start what carries the browser's traffic. */
   'Computer',
 ])
-export type EgressFailure = typeof EgressFailure.Type
+type EgressFailure = typeof EgressFailure.Type
 
 /**
  * What egress is doing for a Person right now. It is the server's reading of both ends and is

@@ -15,7 +15,7 @@ import type { MachineKey, MachineOperations } from '../machine.ts'
  * network for this.
  */
 export const EGRESS_TUNNEL_PORT = 8790
-export const EGRESS_PROXY_PORT = 8791
+const EGRESS_PROXY_PORT = 8791
 
 /** What the Computer's browser is told its proxy is. */
 export const EGRESS_PROXY_ADDRESS = `http://127.0.0.1:${EGRESS_PROXY_PORT}`
@@ -96,7 +96,7 @@ export const startCommand = (
 }
 
 /** The proxy's text, or nothing when it is not beside this module: a server built without it. */
-export const readProxy = Effect.sync(() =>
+const readProxy = Effect.sync(() =>
   Option.liftThrowable(() =>
     NodeFS.readFileSync(new URL('./proxy.mjs', import.meta.url), 'utf8'),
   )(),

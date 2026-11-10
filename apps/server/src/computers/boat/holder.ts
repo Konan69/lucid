@@ -91,7 +91,7 @@ const GROUPS = [8, 4, 4, 4, 12] as const
 const INTENT = new RegExp(`^${GROUPS.map((digits) => `[0-9a-f]{${digits}}`).join('-')}$`, 'u')
 
 /** Whether an intent may be named on a machine. */
-export const holdable = (intent: string): boolean => INTENT.test(intent)
+const holdable = (intent: string): boolean => INTENT.test(intent)
 
 /**
  * The same two shapes as shell patterns, for the machine to hold a record against. Every
@@ -194,7 +194,7 @@ export const snapshotRules = [
 
 /** One wake: the holder is settled first, then the snapshot rules, and only then is its own
  * desktop opened. */
-export const wakeCommand = (input: { readonly id: ProviderId; readonly intent: string }): string =>
+const wakeCommand = (input: { readonly id: ProviderId; readonly intent: string }): string =>
   `${holderClaim(input)}\n${snapshotRules}\n/opt/vivid/python/bin/python3 /opt/vivid/computer/desktop.py start || exit ${UNOPENED}`
 
 /** One command that settles the holder before anything else is done on the machine. */
@@ -205,7 +205,7 @@ export interface HolderStep {
 }
 
 /** A process meeting a running machine it did not wake: the holder is settled, nothing more. */
-export const admission: HolderStep = { operation: 'holder', command: holderClaim }
+const admission: HolderStep = { operation: 'holder', command: holderClaim }
 
 /** A wake: the holder is settled and the desktop opened, in one command. */
 export const wake: HolderStep = { operation: 'desktop-launcher', command: wakeCommand }

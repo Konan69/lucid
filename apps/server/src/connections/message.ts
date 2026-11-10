@@ -7,8 +7,8 @@ export const toolRejectionMessage =
 /** Ten summaries of at most 400 characters keep a malformed upstream response from consuming
  * the model context while leaving normal field paths readable. These are output limits only.
  */
-export const MAX_VALIDATION_PROBLEMS = 10
-export const MAX_VALIDATION_PROBLEM_LENGTH = 400
+const MAX_VALIDATION_PROBLEMS = 10
+const MAX_VALIDATION_PROBLEM_LENGTH = 400
 
 /** SDK implementation/tools.ts runtimeFailure currently emits only the constant "Input did not
  * match the tool schema"; contracts/tools.ts InputInvalid permits richer safe strings later.

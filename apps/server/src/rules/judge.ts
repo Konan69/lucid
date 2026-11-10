@@ -25,7 +25,7 @@ export class RuleJudge extends Context.Service<RuleJudge, RuleJudgeService>()('v
 
 /** A missed Never rule is worse than an extra match; 0.5 includes uncertain matches
  * rather than demanding high confidence before the gate can enforce a prohibition. */
-export const RULE_APPLICABILITY_THRESHOLD = 0.5
+const RULE_APPLICABILITY_THRESHOLD = 0.5
 
 const Action = Schema.Struct({
   summary: Schema.String,

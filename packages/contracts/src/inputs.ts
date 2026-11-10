@@ -21,8 +21,8 @@ export interface InputOption extends Schema.Schema.Type<typeof InputOption> {}
  * How many of a question's options one answer may hold. `One`: the Person picks a single option.
  * `Several`: they may pick any number of them, at least one.
  */
-export const InputSelection = Schema.Literals(['One', 'Several'])
-export type InputSelection = typeof InputSelection.Type
+const InputSelection = Schema.Literals(['One', 'Several'])
+type InputSelection = typeof InputSelection.Type
 
 /**
  * One question inside an Input request. A request carries one or more of them, asked together
@@ -93,13 +93,13 @@ export interface InputRequest extends Schema.Schema.Type<typeof InputRequest> {}
 export const INPUT_QUESTIONS_MOST = 4
 
 /** One question as Vivid supplies it. */
-export const AskInputQuestion = Schema.Struct({
+const AskInputQuestion = Schema.Struct({
   question: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(400)),
   options: Schema.Array(InputOption).check(Schema.isMaxLength(6)),
   selection: InputSelection,
   allowsOwnAnswer: Schema.Boolean,
 })
-export interface AskInputQuestion extends Schema.Schema.Type<typeof AskInputQuestion> {}
+interface AskInputQuestion extends Schema.Schema.Type<typeof AskInputQuestion> {}
 
 /** What Vivid supplies when it asks. The Thread and the Person asked come from the Run. */
 export const AskInputRequest = Schema.Struct({
@@ -115,15 +115,6 @@ export const AnswerInputRequest = Schema.Struct({
 export interface AnswerInputRequest extends Schema.Schema.Type<typeof AnswerInputRequest> {}
 
 export const InputRequestResponse = Schema.Struct({ request: InputRequest })
-export const InputRequestListResponse = Schema.Struct({ requests: Schema.Array(InputRequest) })
-
-/** What a Thread shows in place of a tool result while a request is open: the questions' words. */
-export const InputRequestMessage = Schema.Struct({
-  kind: Schema.Literal('input-request'),
-  requestId: InputRequestId,
-  questions: Schema.NonEmptyArray(Schema.String),
-}).annotate({ identifier: 'InputRequestMessage', title: 'Input request message' })
-export interface InputRequestMessage extends Schema.Schema.Type<typeof InputRequestMessage> {}
 
 /**
  * What only the Person can do on the Computer, so Vivid hands them that one step and carries on.
@@ -260,11 +251,11 @@ export type HandoffRequest = typeof HandoffRequest.Type
 export const HANDOFF_FIELDS_MOST = 6
 
 /** A field as Vivid asks for it: the label it read on the page and what it holds. */
-export const PrepareHandoffField = Schema.Struct({
+const PrepareHandoffField = Schema.Struct({
   label: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
   purpose: HandoffFieldPurpose,
 })
-export interface PrepareHandoffField extends Schema.Schema.Type<typeof PrepareHandoffField> {}
+interface PrepareHandoffField extends Schema.Schema.Type<typeof PrepareHandoffField> {}
 
 const prepareSummary = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(400))
 
@@ -285,11 +276,11 @@ export const PrepareHandoffRequest = Schema.TaggedUnion({
 export type PrepareHandoffRequest = typeof PrepareHandoffRequest.Type
 
 /** A field Vivid named that could not be prepared, with why. */
-export const HandoffFieldRefusal = Schema.Struct({
+const HandoffFieldRefusal = Schema.Struct({
   label: Schema.String,
   reason: HandoffRefusalReason,
 })
-export interface HandoffFieldRefusal extends Schema.Schema.Type<typeof HandoffFieldRefusal> {}
+interface HandoffFieldRefusal extends Schema.Schema.Type<typeof HandoffFieldRefusal> {}
 
 /**
  * What Vivid hears back when it hands a step over. Every refusal is an answer it can act on:
@@ -328,13 +319,6 @@ export const FillHandoffRequest = Schema.Struct({
 export interface FillHandoffRequest extends Schema.Schema.Type<typeof FillHandoffRequest> {}
 
 export const HandoffResponse = Schema.Struct({ handoff: HandoffRequest })
-
-/** What a Thread shows in place of the tool result: the step, drawn from the server's record. */
-export const HandoffMessage = Schema.Struct({
-  kind: Schema.Literal('handoff'),
-  handoffId: HandoffId,
-}).annotate({ identifier: 'HandoffMessage', title: 'Handoff message' })
-export interface HandoffMessage extends Schema.Schema.Type<typeof HandoffMessage> {}
 
 /** Typed answers to an existing Integration Input request use its saved schema and continuation. */
 export const AnswerIntegrationInputRequest = Schema.Struct({

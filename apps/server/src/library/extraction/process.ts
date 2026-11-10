@@ -35,7 +35,7 @@ type Emit = (message: NodeChildProcess.Serializable) => void
  * hands over what was held, then every later message directly. After `detach` it holds again, so a
  * second reader loses nothing either. Messages pass through unread: the framing belongs to the SDK.
  */
-export interface Inbox {
+interface Inbox {
   readonly attach: (emit: Emit) => void
   readonly detach: () => void
 }
@@ -135,7 +135,7 @@ export interface Inherited {
 }
 
 /** Why the child's old-generation limit can, or cannot, be established before spawning. */
-export const CapStanding = Schema.TaggedUnion({
+const CapStanding = Schema.TaggedUnion({
   Holds: {},
   PercentageNamed: {},
   OptionsQuoted: {},
@@ -221,7 +221,7 @@ const refuse = ({ _tag }: Exclude<typeof CapStanding.Type, { _tag: 'Holds' }>) =
  * rc.116 TaggedUnion.match takes one output type; name the common Effect so the successful
  * branch does not infer a `never` error channel and erase the configuration refusals.
  */
-export const admit = Effect.fn('LibraryExtractionProcess.admit')((inherited: Inherited) =>
+const admit = Effect.fn('LibraryExtractionProcess.admit')((inherited: Inherited) =>
   CapStanding.match<Effect.Effect<void, ExtractionConfigurationError>>(capStanding(inherited), {
     Holds: () => Effect.void,
     PercentageNamed: refuse,

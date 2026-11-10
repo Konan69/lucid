@@ -18,7 +18,7 @@ import { Schema } from 'effect'
  */
 
 /** The longest stack or component trace kept; enough for the frames that matter. */
-export const FAULT_TRACE_LIMIT = 8000
+const FAULT_TRACE_LIMIT = 8000
 const FAULT_LINE_LIMIT = 2000
 const FAULT_BUILD_LIMIT = 300
 

@@ -24,7 +24,7 @@ const CurationEntry = Schema.Struct({
 })
 
 /** The checked-in file owns the snapshot, every judgement and the single popularity list. */
-export const CurationDocument = Schema.Struct({
+const CurationDocument = Schema.Struct({
   version: Schema.Literal(1),
   keyed: Schema.Record(ServiceId, KeyedService),
   worksNowRule: Schema.NonEmptyString,
@@ -82,7 +82,7 @@ const missingCuration = () =>
   })
 
 /** Compare both identity and name: renaming an upstream entry can invalidate its judgement. */
-export function coversCatalog(
+function coversCatalog(
   document: typeof CurationDocument.Type,
   catalog: readonly { readonly id: ServiceId; readonly name: string }[],
 ) {
@@ -154,7 +154,7 @@ function visible({ service, tier }: Placed, query: string) {
  * upstream catalogue grows daily, so a service with no judgement yet is Niche: found by its name,
  * never offered unasked, and without curation facts nobody has checked. It never takes the page down.
  */
-export function curatedSearch(document: typeof CurationDocument.Type) {
+function curatedSearch(document: typeof CurationDocument.Type) {
   const entries = new Map(document.entries.map((entry) => [entry.id, entry]))
   const places = new Map(document.priority.map((id, index) => [id, index]))
   const last = document.priority.length

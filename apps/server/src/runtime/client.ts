@@ -88,14 +88,14 @@ export class AdmissionUncertain extends Schema.TaggedError<AdmissionUncertain>()
 ) {}
 
 /** One read of a Thread's conversation, forwarded as the client sent it. */
-export interface ConversationRead {
+interface ConversationRead {
   readonly threadId: ThreadId
   /** `''`, or `/attachments/<id>`. */
   readonly suffix: string
 }
 
 /** One delivery for the runtime to accept, in the server's terms. */
-export interface AdmissionInput {
+interface AdmissionInput {
   readonly threadId: ThreadId
   readonly message: RuntimeDelivery
   readonly origin: ThreadOrigin
