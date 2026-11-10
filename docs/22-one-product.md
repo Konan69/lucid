@@ -129,8 +129,7 @@ The runtime proposes; the server decides. Nothing consequential runs from model 
      failure gets one retry. Reading the request stays inside the first attempt's three-second
      limit; each provider attempt uses the same remaining budget. Missing requests, oversized arguments, disabled decisions,
      or unavailable review after retry leave the action unreviewed: a write runs, a destructive
-     action asks. Never, Company and ask-first rules still bind. Unwatched work still needs a
-     contained review; sends, spending and deletes become Feed drafts.
+     action asks. Never, Company and ask-first rules still bind. Background changes run only when Jev rates them contained; otherwise Vivid asks.
    - Executor's per-tool approval is machinery underneath. A Jev-reviewed action or the Person's
      approval can answer its saved request at once. A read or an Allow-rule action goes back
      through the Gate for a review when Executor reveals that it needs approval. An unreviewed
