@@ -42,6 +42,7 @@ import { actingRun } from '../threads/runs.ts'
 import { Watches } from '../watches/lifecycle.ts'
 import {
   Claim,
+  ActionLookup,
   answerBefore,
   claim,
   operationOf,
@@ -406,6 +407,7 @@ const claimPausedRead = Effect.fn('Connections.claimPausedRead')(function* (
   // Approved reads already own a journal row; their runner intentionally carries no Thread on the Actor.
   if (Option.isNone(actor.threadId)) return Option.none<import('@vivid/contracts').ActionReceipt>()
   const claimed = yield* claim({
+    personId: actor.person.id,
     id: input.operation.value,
     threadId: actor.threadId.value,
     runId: yield* runOf(actor.threadId.value, actor.person.id),
@@ -496,7 +498,10 @@ export const runConnection = Effect.fn('Connections.run')(
         | ExecutorApprovalUnsupported
         | import('@vivid/contracts').Conflict
         | import('../database/client.ts').DatabaseInfrastructureError,
-        ConnectionStore | IntegrationAnswers | import('../database/client.ts').Database
+        | ConnectionStore
+        | IntegrationAnswers
+        | ActionLookup
+        | import('../database/client.ts').Database
       >
     >(outcome, {
       UncertainPause: Effect.fnUntraced(function* () {
@@ -884,6 +889,7 @@ const sendJournaled = Effect.fn('Connections.sendJournaled')(function* (
 ) {
   const operation = call.journal
   const claimed = yield* claim({
+    personId: actor.person.id,
     id: operation.id,
     threadId: operation.threadId,
     runId: yield* runOf(operation.threadId, actor.person.id),
@@ -982,7 +988,7 @@ const useToolAs = Effect.fn('Connections.useTool')(function* (
   }))
   const journaled = Option.filter(prospective, () => tool.effect !== 'read')
   if (Option.isSome(prospective)) {
-    const answer = yield* answerBefore({ ...prospective.value, target })
+    const answer = yield* answerBefore({ ...prospective.value, personId: actor.person.id, target })
     if (Option.isSome(answer)) return yield* notRead(answeredOutcome(answer.value))
   }
   const decision = yield* (yield* Gate).check(

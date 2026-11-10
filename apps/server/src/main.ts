@@ -1,3 +1,4 @@
+import { actionLookupLayer } from './connections/reconcile.ts'
 import { integrationAnswersLayer } from './connections/asks.ts'
 import { activitiesLayer } from './activity/service.ts'
 import { commandWorkerLayer } from './computers/commands.ts'
@@ -161,6 +162,7 @@ const serverProgram = Effect.gen(function* () {
   const conversation = conversationLayer.pipe(Layer.provideMerge(named))
   const helpers = childRunsLayer.pipe(Layer.provideMerge(conversation))
   const accounts = Layer.mergeAll(
+    actionLookupLayer,
     connectionStoreLayer,
     toolEffectsLayer,
     computerStoreLayer,
