@@ -6,7 +6,7 @@ import { deadCodeRatchets } from './gate/ratchets.mjs'
 
 // Run the pinned binary directly so pnpm banners cannot corrupt the JSON receipt.
 const require = NodeModule.createRequire(import.meta.url)
-const binary = NodePath.join(NodePath.dirname(require.resolve('knip/package.json')), 'bin/knip.js')
+const binary = NodePath.resolve(NodePath.dirname(require.resolve('knip')), '../bin/knip.js')
 const result = NodeChildProcess.spawnSync(process.execPath, [binary, '--reporter', 'json'], {
   encoding: 'utf8',
   maxBuffer: 16 * 1024 * 1024,
@@ -18,7 +18,9 @@ if (result.status !== 0 && result.status !== 1) {
 }
 const Receipt = Schema.Struct({
   issues: Schema.Array(
-    Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Array(Schema.Json)])),
+    Schema.StructWithRest(Schema.Struct({ file: Schema.String }), [
+      Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Array(Schema.Json)])),
+    ]),
   ),
 })
 const { issues } = Result.getOrThrow(

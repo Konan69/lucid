@@ -6,6 +6,10 @@ import { Result, Schema } from 'effect'
 import { deadCodeRatchets } from './gate/ratchets.mjs'
 import { parseSource, walk, sourcePositions, isStringLiteral } from './syntax.mjs'
 
+const decodeAllowlist = Schema.decodeUnknownResult(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.NonEmptyString)),
+)
+
 /** Read the actual Rpc.make declarations and the group that publishes them. */
 function catalogue(file, source) {
   const declarations = new Map()
@@ -77,9 +81,7 @@ export function uncalledProcedures(root) {
 export function checkCallers(root) {
   const uncalled = uncalledProcedures(root)
   const allowed = Result.getOrThrow(
-    Schema.decodeUnknownResult(
-      Schema.fromJsonString(Schema.Record(Schema.String, Schema.NonEmptyString)),
-    )(NodeFS.readFileSync(NodePath.join(root, 'scripts/rpccallers.json'), 'utf8')),
+    decodeAllowlist(NodeFS.readFileSync(NodePath.join(root, 'scripts/rpccallers.json'), 'utf8')),
   )
   const missing = new Set(uncalled.map(({ name }) => name))
   const failures = uncalled

@@ -1,8 +1,12 @@
 {
   "$schema": "./node_modules/knip/schema.json",
   // Agent skills are reference material, not shipped application entry points.
-  "ignore": [".agents/**", "scripts/__fixtures__/**"],
+  "ignore": [".agents/**", "scripts/__fixtures__/**", "tools/oxlint/anti-slop/vendor/**"],
+  // These binaries are host prerequisites, not packages to add to a manifest.
+  "ignoreBinaries": ["mkfifo", "ssh-keygen", "agent-browser"],
   "includeEntryExports": true,
+  // Declaration emit and import types need the explicitly documented public names.
+  "tags": ["-@public"],
   // Framework loaders consume these exports without a static import.
   "ignoreIssues": {
     "scripts/structure.mjs": ["exports"],
