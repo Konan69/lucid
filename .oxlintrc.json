@@ -137,6 +137,7 @@
     "vivid/effect-no-service-object-syntax": "error",
     "vivid/effect-prefer-match-effect": "error",
     "vivid/effect-require-effect-fn": "warn",
+    "vivid/keep-incident-cause": "warn",
     "vivid/no-async-callback-api": "warn",
     "vivid/no-config-provider-from-env-in-library": "error",
     "vivid/no-cross-package-import": "error",
@@ -155,6 +156,7 @@
     "vivid/no-parse-method-alias": "error",
     "vivid/no-platform-runtime-runmain-in-library": "warn",
     "vivid/no-promise-constructor": "warn",
+    "vivid/no-refusal-as-unavailable": "warn",
     "vivid/no-runpromise-in-library": "warn",
     "vivid/no-runpromise-nested": "error",
     "vivid/no-runtime-env-mutation": "error",
@@ -166,7 +168,8 @@
     "vivid/require-named-effect-fn": "warn",
     "vivid/require-schema-class-identifier": "error",
     "vivid/require-schema-class-title": "warn",
-    "vivid/require-schema-decode-in-boundary": "warn"
+    "vivid/require-schema-decode-in-boundary": "warn",
+    "vivid/severity-from-impact": "warn"
   },
   "overrides": [
     {
@@ -264,6 +267,25 @@
       }
     },
     {
+      "files": [
+        "apps/server/src/**/*.ts",
+        "apps/cells/src/**/*.ts",
+        "packages/agent/runtime/src/**/*.ts",
+        "packages/client/state/src/**/*.{ts,tsx}"
+      ],
+      "excludeFiles": ["**/*.test.{ts,tsx}", "**/tests/**", "apps/server/src/observability/**"],
+      "rules": {
+        "vivid/no-silent-failure": "warn"
+      }
+    },
+    {
+      "files": ["apps/server/src/**/*.ts"],
+      "excludeFiles": ["**/*.test.ts", "**/tests/**", "apps/server/src/observability/**"],
+      "rules": {
+        "vivid/no-ad-hoc-failure-log": "warn"
+      }
+    },
+    {
       "files": ["apps/server/src/auth/provider.ts"],
       "rules": {
         "vivid/better-auth-secure-options": "error"
@@ -287,6 +309,9 @@
       "files": ["**/*.test.{ts,tsx}", "**/*.spec.{ts,tsx}", "**/tests/**"],
       "rules": {
         "typescript/no-explicit-any": "off",
+        "vivid/keep-incident-cause": "off",
+        "vivid/no-refusal-as-unavailable": "off",
+        "vivid/severity-from-impact": "off",
         "no-restricted-properties": "off",
         "vivid/no-direct-process-env": "off",
         "vivid/no-runtime-env-mutation": "off",
@@ -297,6 +322,9 @@
       "files": ["**/*.config.*", "scripts/**", "**/scripts/**"],
       "rules": {
         "typescript/no-explicit-any": "off",
+        "vivid/keep-incident-cause": "off",
+        "vivid/no-refusal-as-unavailable": "off",
+        "vivid/severity-from-impact": "off",
         "no-restricted-properties": "off",
         "vivid/no-direct-process-env": "off",
         "vivid/no-runtime-env-mutation": "off",
