@@ -27,3 +27,26 @@ Neither recipe has been run for the recovery commit yet. A recipe implementation
 These recipes never post a card: `Post` answers only a Background Thread with an acting Run. A posted card, drawn with no words, is proved by the [Watch recipe](watch.md). Posted-card actions, Done, retry, successful seen marks, and display Query/Mutation execution remain unproved. The ordinary-Thread recipe does not activate Watches or establish those paths. The device permission recipe is separate and unchanged.
 
 Phone and desktop native controls require device runs. The HTTP desktop Stop report proves the server boundary, not the native Stop control. Database-backed Feed tests separately cover owner isolation, empty first Threads, old-history dating, and idempotent Stop announcements.
+
+## Spoken contact hours
+
+Run `verify feature pacing <run>` with a real model. The recipe in
+[pacing recipe](../scripts/pacing.mjs) asks “Don't message me before 11 in the morning” without naming
+any tool or field. GetSettings and history must show the model saved 660–1290 local
+minutes. Memory remains prose. A Watch on the disposable Verify Pulse Integration
+then produces one ordinary report and one urgent security alert through the real
+background model and Post path.
+
+The recipe chooses an IANA zone currently before eleven. With no browser present,
+it runs the production pacer over the Launch-owned database at controlled future
+local ten and eleven, after the quiet stretch. SQL connections keep their real
+clock. At ten there is no ordinary notice; at eleven exactly one quiet `posted`
+notice exists, including after a repeated pass. The actual urgent Post, while the
+real clock is outside the window, must immediately owe one `needs-you` notice.
+The real server consumes the persisted delivery queue. This proves notice creation
+and pacing, not receipt on a physical phone or browser. The existing Feed browser
+recipe remains the rendering proof; pacing has no new Settings control.
+
+Retain `spoken-hours.json`, history, provider event receipts, clock receipts,
+`outside-notices.json`, `inside-notices.json`, `urgent-outside-notices.json`, and the
+pacing verdict. A recipe implementation without those receipts is unverified.

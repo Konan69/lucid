@@ -25,6 +25,7 @@ import { memory } from './memory.mjs'
 import { learningFact } from './phonememory.mjs'
 import { procedure } from './procedure.mjs'
 import { feed } from './feed.mjs'
+import { pacing } from './pacing.mjs'
 import { owed } from './owed.mjs'
 import { todos } from './todos.mjs'
 import { projects } from './projects.mjs'
@@ -65,6 +66,7 @@ export const features = [
   'checkin',
   'library',
   'feed',
+  'pacing',
   'owed',
   'todos',
   'projects',
@@ -603,6 +605,7 @@ const recipes = {
   files,
   devices,
   feed,
+  pacing,
   memory,
   learning,
   procedure,

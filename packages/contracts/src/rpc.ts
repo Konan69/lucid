@@ -274,7 +274,7 @@ import { SearchRequest, SearchResponse, SuggestionListResponse } from './search.
 import { Appearance } from './appearance.js'
 import { EgressStatus } from './egress.js'
 import { StopAllWorkResponse, StopWorkResponse, WorkListResponse, WorkRef } from './work.js'
-import { PatchSettingsRequest, Settings } from './settings.js'
+import { PatchSettingsRequest, Settings, WakingHours } from './settings.js'
 import { LocationNotShared, ShareLocationRequest } from './location.js'
 import {
   SaveSkillRequest,
@@ -1365,6 +1365,13 @@ const ShareLocation = Rpc.make('ShareLocation', {
   error: Schema.Union([RpcFailure, LocationNotShared]),
 })
 
+/** Spoken contact hours belong to the acting Person, regardless of the current workspace. */
+const SetWakingHours = Rpc.make('SetWakingHours', {
+  ...call,
+  payload: WakingHours,
+  success: Settings,
+})
+
 export const VividRpc = RpcGroup.make(
   Me,
   WatchMe,
@@ -1556,4 +1563,5 @@ export const VividRpc = RpcGroup.make(
   StopWork,
   StopAllWork,
   ShareLocation,
+  SetWakingHours,
 ).middleware(RpcAuthMiddleware)

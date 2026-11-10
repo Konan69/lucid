@@ -1,3 +1,4 @@
+import { pacingTools } from './pacing.ts'
 import { revisionTools } from './revision.ts'
 import type { ToolRegistration } from '@earendil-works/pi-durable'
 import {
@@ -187,6 +188,11 @@ const definitions: ReadonlyArray<{
       'Notify the Person through the app when something needs attention; delivery depends on their settings and devices.',
     requirement: 'Product',
     mount: ({ runTool }) => notifyTools(runTool),
+  },
+  {
+    description: 'Save explicit spoken contact hours for ordinary unasked notices.',
+    requirement: 'Product',
+    mount: ({ runTool }) => pacingTools(runTool),
   },
   {
     description: 'Keep and reuse verified ways of working.',
