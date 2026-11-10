@@ -3,6 +3,7 @@ import { expect, it } from '@effect/vitest'
 import { Effect, Layer, Logger, Queue, Ref, Schema } from 'effect'
 import { HttpClient, HttpServer, HttpServerResponse } from 'effect/http'
 import * as TestClock from 'effect/testing/TestClock'
+import { Message } from '../observability/messages.ts'
 import { retainCatalog } from './catalog.ts'
 import { ExecutorAccessDenied, ExecutorServiceEntry, ExecutorTransportFailure } from './executor.ts'
 
@@ -44,7 +45,7 @@ const fixture = Effect.fn('CatalogTest.fixture')(function* (initialStatus: numbe
       )
     })
     const capture = Logger.make(({ message }) => {
-      if (JSON.stringify(message) === '["Connection catalog refresh failed"]') {
+      if (JSON.stringify(message) === JSON.stringify([Message.catalogAttempt])) {
         Queue.offerUnsafe(failed, undefined)
       }
     })

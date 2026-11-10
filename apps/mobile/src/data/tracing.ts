@@ -1,4 +1,4 @@
-import { isRoutineRefusal, isRemoteIncident } from '@vivid/contracts'
+import { impactOfFailure, impactSignal, isRemoteIncident } from '@vivid/contracts'
 import { captureException, getActiveSpan, startInactiveSpan, type Span } from '@sentry/react-native'
 import { Effect, ErrorReporter, Exit, Layer, Option, Predicate, Tracer } from 'effect'
 import { Atom } from 'effect/reactivity'
@@ -59,7 +59,14 @@ export const telemetryLayer = Layer.mergeAll(
   ErrorReporter.layer([
     Effect.sync(() =>
       ErrorReporter.make(({ error, fiber }) => {
-        if (isRoutineRefusal(error) || isRemoteIncident(error)) return
+        if (isRemoteIncident(error)) return
+        // An issue is opened by impact (`impactSignal`): a refusal the Person can correct is not one.
+        if (
+          Predicate.hasProperty(error, '_tag') &&
+          Predicate.isString(error._tag) &&
+          !impactSignal[impactOfFailure({ _tag: error._tag })].issue
+        )
+          return
         const span = fiber.cache.span
         captureException(error, {
           captureContext: {

@@ -1,9 +1,11 @@
 import { and, eq, isNull } from 'drizzle-orm'
 import { Cause, Clock, Effect, Layer, Option, Schedule, Schema } from 'effect'
 import * as PersistedQueue from 'effect/persistence/PersistedQueue'
-import { NotificationId, PersonId, PushTargetId, RunId, ThreadId } from '@vivid/contracts'
+import { Incident, NotificationId, PersonId, PushTargetId, RunId, ThreadId } from '@vivid/contracts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
 import { announce, Topic } from '../live/changes.ts'
+import { failureType, recordFailures } from '../observability/failure.ts'
+import { causeOf, hop, Incidents, recorder } from '../observability/incidents.ts'
 import { notifications } from './tables.ts'
 import { deliverTarget } from '../push/delivery.ts'
 import { Settlement } from '../runtime/settlement.ts'
@@ -111,32 +113,50 @@ const publishNotice = Effect.fn('Notifications.publish')(function* (
   )
 })
 
-/** The publication receipt and NOTIFY share one commit, including across queue replays. */
-export const takeNotification = Effect.fn('Notifications.take')(function* () {
-  const queue = yield* notificationDelivery
-  return yield* queue.take((job, metadata) =>
-    NotificationDelivery.match<
-      Effect.Effect<
-        void,
-        DatabaseInfrastructureError,
-        Effect.Services<ReturnType<typeof retryRunNotice> | ReturnType<typeof deliverTarget>>
-      >
-    >(job, {
-      OweRun: retryRunNotice,
-      Publish: publishNotice,
-      Push: deliverTarget,
-    }).pipe(
-      Effect.tapCause((cause) =>
-        metadata.attempts >= DELIVERY_ATTEMPTS && !Cause.hasInterruptsOnly(cause)
-          ? Effect.logError('Notification delivery exhausted its attempts', {
-              noticeId: job.notificationId,
-              attempts: metadata.attempts,
-            })
-          : Effect.void,
-      ),
-    ),
-  )
+/** The Person a delivery job is owed to, whichever kind of job it is. */
+const personOf = NotificationDelivery.match({
+  OweRun: ({ run }) => run.personId,
+  Publish: ({ personId }) => personId,
+  Push: ({ personId }) => personId,
 })
+
+/**
+ * The publication receipt and NOTIFY share one commit, including across queue replays. A job that
+ * fails on its last attempt is left in the queue's failed state and is never tried again, so its
+ * notification did not reach the Person: that is said here, once, as an Incident.
+ */
+export const takeNotification = Effect.fn('Notifications.take')(
+  function* () {
+    const queue = yield* notificationDelivery
+    const incidents = yield* Incidents
+    return yield* queue.take((job, metadata) =>
+      NotificationDelivery.match<
+        Effect.Effect<
+          void,
+          DatabaseInfrastructureError,
+          Effect.Services<ReturnType<typeof retryRunNotice> | ReturnType<typeof deliverTarget>>
+        >
+      >(job, {
+        OweRun: retryRunNotice,
+        Publish: publishNotice,
+        Push: deliverTarget,
+      }).pipe(
+        Effect.tapCause((cause) =>
+          metadata.attempts >= DELIVERY_ATTEMPTS && !Cause.hasInterruptsOnly(cause)
+            ? incidents.record(
+                Incident.cases.NotificationUndelivered.make({
+                  personId: personOf(job),
+                  notificationId: job.notificationId,
+                  cause: causeOf(hop('server', 'Notifications.take', failureType(cause))),
+                }),
+              )
+            : Effect.void,
+        ),
+      ),
+    )
+  },
+  Effect.provideService(Incidents, recorder),
+)
 
 /** SDK finalizers retry each failed item; this scope also restarts a failed SQL consumer. */
 export const notificationDeliveryLayer = Layer.effectDiscard(
@@ -144,7 +164,8 @@ export const notificationDeliveryLayer = Layer.effectDiscard(
     Effect.forever,
     Effect.catchCauseIf(
       (cause) => !Cause.hasInterrupts(cause),
-      () => Effect.logWarning('Notification delivery consumer failed; restarting'),
+      // Said as a failure answered at a scheduled boundary; the consumer starts again below.
+      recordFailures('schedule'),
     ),
     Effect.repeat(Schedule.spaced('500 millis')),
     Effect.forkScoped,

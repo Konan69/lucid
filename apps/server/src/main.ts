@@ -62,6 +62,7 @@ import { threadTitlesLayer } from './threads/generation.ts'
 import { notificationDeliveryLayer } from './notifications/delivery.ts'
 import { notifierLayer } from './notifications/notifier.ts'
 import { observabilityLayer } from './observability/export.ts'
+import { incidentsLayer } from './observability/incidents.ts'
 import { issuesLayer } from './observability/issues.ts'
 import { notificationStoreLayer } from './notifications/store.ts'
 import { projectStoreLayer } from './projects/store.ts'
@@ -215,8 +216,9 @@ const serverProgram = Effect.gen(function* () {
 
 NodeRuntime.runMain(
   Layer.launch(
+    // The Incident recorder sends through the client `issuesLayer` initialises (`incidents.ts`).
     Layer.effectDiscard(serverProgram.pipe(Effect.withErrorReporting)).pipe(
-      Layer.provide(issuesLayer),
+      Layer.provide(Layer.mergeAll(issuesLayer, incidentsLayer)),
     ),
   ),
 )

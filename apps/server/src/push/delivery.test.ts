@@ -51,6 +51,7 @@ import { PushReceipt } from './receipts.ts'
 import { pushDeliveries } from './tables.ts'
 import { PushTargets } from './targets.ts'
 import { fixture, pushTestLayer, pushTestFoundation, PushProbe, testPushConfig } from './testing.ts'
+import { ingest } from '../observability/tests/ingest.ts'
 
 /** Acquire presence watchers, adapter recordings and delivery state per case so one test cannot observe another test's devices or sends; the block shares the database. */
 const withPush = <A, E, R>(program: Effect.Effect<A, E, R>) =>
@@ -423,6 +424,48 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
             )
             yield* recordNotice(input)
             expect(yield* Ref.get(probe.sent)).toHaveLength(2)
+          }),
+        ),
+    )
+    it.effect(
+      'says a notice the push service could not confirm as one Incident, and a gone phone as none',
+      () =>
+        withPush(
+          Effect.gen(function* () {
+            const { events } = yield* ingest
+            const owner = yield* fixture()
+            const targets = yield* PushTargets
+            const probe = yield* PushProbe
+            yield* targets.register({
+              personId: owner.person.id,
+              sessionId: owner.sessionId,
+              destination: owner.destination,
+            })
+            yield* Ref.set(probe.mode, 'Gone')
+            yield* recordNotice(notice(owner))
+            const target = yield* targets.register({
+              personId: owner.person.id,
+              sessionId: owner.sessionId,
+              destination: owner.destination,
+            })
+            yield* Ref.set(probe.mode, 'Uncertain')
+            const input = notice(owner)
+            yield* recordNotice(input)
+            // The ledger sends a notice once, so a replay decides nothing and says nothing.
+            yield* recordNotice(input)
+
+            const sent = yield* events
+            expect(sent.map((event) => [event.level, event.fingerprint])).toEqual([
+              ['error', ['PushUndelivered', 'push.PushUncertain']],
+            ])
+            expect(sent[0]?.tags).toMatchObject({
+              'vivid.incident.kind': 'PushUndelivered',
+              'vivid.incident.notificationId': input.id,
+              'vivid.incident.targetId': target.id,
+              'vivid.incident.cause.0.service': 'push',
+              'vivid.incident.cause.0.operation': 'Push.attempt',
+              'vivid.incident.cause.0.tag': 'PushUncertain',
+            })
           }),
         ),
     )

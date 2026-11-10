@@ -2,6 +2,7 @@ import * as NodeCrypto from 'node:crypto'
 import { and, eq, getTableColumns, inArray, sql } from 'drizzle-orm'
 import {
   Array as Arr,
+  Cause,
   Clock,
   Context,
   Duration,
@@ -54,8 +55,18 @@ import {
   BrowserPicture,
   type HandoffFieldResult,
   type HandoffRefusalReason,
+  Incident,
 } from '@vivid/contracts'
+import {
+  causeOf,
+  hop,
+  Incidents,
+  incidentsLayer,
+  type IncidentsService,
+} from '../observability/incidents.ts'
 import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
+import { FailureAttribute, observeFailures, recordFailures } from '../observability/failure.ts'
+import { Message } from '../observability/messages.ts'
 import { egressChosen } from './egress/setting.ts'
 import { type Actor } from '../auth/access.ts'
 import { Gate, GateDecision, ActionOutcome, ActionOrigin, actionOrigin } from '../approvals/gate.ts'
@@ -428,11 +439,12 @@ const IDLE_PERIOD = Duration.minutes(20)
  * refuses after that (`bind`), so starting again cannot create and pay for a second machine.
  */
 const startMachine = Effect.fn('ComputerStore.boot')(function* (
-  machine: typeof Machine.Service,
+  services: { readonly machine: typeof Machine.Service; readonly incidents: IncidentsService },
   rows: Persistence,
   person: PersonId,
   before: Stored,
 ) {
+  const { machine, incidents } = services
   const current = yield* rows.load(person)
   if (
     Option.isNone(current) ||
@@ -448,13 +460,20 @@ const startMachine = Effect.fn('ComputerStore.boot')(function* (
     }),
     Effect.result,
   )
-  // Said in the log either way, by the failure's name only. A start that failed is a successful
-  // answer to whoever asked, so nothing else records it: on 6 October 2026 a Person's Computer
-  // failed to start and the log held no line that said so or why.
+  // A start that failed is a successful answer to whoever asked, so nothing else records it: on
+  // 6 October 2026 a Person's Computer failed to start and the log held no line that said so or
+  // why. It is an Incident whatever the record says next, a provider outage and no free machine
+  // included: the Person or the action that asked for the Computer did not get it.
   const tookMillis = (yield* Clock.currentTimeMillis) - began
   yield* Result.match(started, {
     onFailure: (failure) =>
-      Effect.logWarning('Computer start failed', { failure: failure._tag, tookMillis }),
+      incidents.record(
+        Incident.cases.ComputerFailed.make({
+          personId: person,
+          step: 'Start',
+          cause: causeOf(hop('server', 'ComputerStore.boot', failure._tag)),
+        }),
+      ),
     onSuccess: () => Effect.logInfo('Computer started', { tookMillis }),
   })
   const state = Result.match(started, {
@@ -694,10 +713,9 @@ const observations = (
     const observed = yield* observe(row.value.machine).pipe(Effect.result)
     // By the failure's name only; the read itself answers the caller with a state, not a failure.
     if (Result.isFailure(observed))
-      yield* Effect.logWarning('Computer could not be observed', {
-        failure: observed.failure._tag,
-        recorded: !isOutage(observed.failure),
-      })
+      yield* Effect.logWarning(Message.computerUnobserved).pipe(
+        Effect.annotateLogs(FailureAttribute.type, observed.failure._tag),
+      )
     if (Result.isFailure(observed) && isOutage(observed.failure))
       return {
         computer: wire(row.value, unanswered(row.value.since)),
@@ -741,7 +759,9 @@ const observations = (
     const shown = yield* machine.status(row.value.machine).pipe(Effect.result)
     if (Result.isSuccess(shown))
       return Computer.make(yield* reconcile(person, row.value, shown.success))
-    yield* Effect.logWarning('Computer could not be shown', { failure: shown.failure._tag })
+    yield* Effect.logWarning(Message.computerUnshown).pipe(
+      Effect.annotateLogs(FailureAttribute.type, shown.failure._tag),
+    )
     const { computer } = yield* observe(person)
     const facts = computer.state
     // Not running, or the provider could not be asked at all: the facts are the answer.
@@ -767,6 +787,7 @@ const observations = (
 /** Scoped lifecycle workers and Person locks order start/stop/hold/execution without tying startup to an RPC fiber. */
 const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
   const machine = yield* Machine
+  const incidents = yield* Incidents
   // Each Person owns a Computer; independent Computers never share a lifecycle permit.
   const lock = keyedPermits<PersonId>()
   const rows = yield* persistence(machine, lock)
@@ -817,15 +838,13 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
         yield* forget(person)
         return yield* inspect(person)
       }
-      const worker = yield* startMachine(machine, rows, person, row.value).pipe(
+      const worker = yield* startMachine({ machine, incidents }, rows, person, row.value).pipe(
         Effect.tap((ended) => (ended.standing ? rest(person) : Effect.void)),
         Effect.map((ended) => ended.refusal),
         (effect) => lock.withPermit(person, effect),
-        Effect.catch(() =>
-          Effect.logError('Computer startup state could not be persisted.').pipe(
-            Effect.as(Option.none<MachineNoCapacity>()),
-          ),
-        ),
+        // A lost write is said by its tag, as any failure answered at a boundary is.
+        observeFailures('schedule'),
+        Effect.orElseSucceed(() => Option.none<MachineNoCapacity>()),
         Effect.ensuring(forget(person)),
         Effect.forkIn(scope, { startImmediately: false }),
       )
@@ -1027,7 +1046,8 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
       Effect.andThen(Effect.sync(() => timers.delete(person))),
       Effect.andThen(settle),
       Effect.asVoid,
-      Effect.catch(() => Effect.logError('Computer idle stop could not be persisted.')),
+      observeFailures('schedule'),
+      Effect.ignore,
       Effect.forkIn(scope, { startImmediately: false }),
     )
     timers.set(person, timer)
@@ -1054,8 +1074,8 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
       yield* activity(person)
       yield* arm(person)
     },
-    (effect, person) => state.lock.withPermit(person, effect),
-    Effect.catch(() => Effect.logError('Computer watch release could not be persisted.')),
+    (effect, person) =>
+      state.lock.withPermit(person, effect).pipe(observeFailures('schedule'), Effect.ignore),
   )
   /** The stream scope owns presence, including cancellation and disconnected clients. */
   const watching = Effect.fn('ComputerStore.watching')((person: PersonId) =>
@@ -1078,11 +1098,7 @@ const attached = Effect.fn('ComputerStore.attach')(function* (
   const inactivity = state.rows.inactivity
   yield* inactivity.activity(person)
   yield* prepare(state, person).pipe(
-    Effect.onError(() =>
-      inactivity
-        .arm(person)
-        .pipe(Effect.catch(() => Effect.logError('Computer idle deadline could not be restored.'))),
-    ),
+    Effect.onError(() => inactivity.arm(person).pipe(observeFailures('schedule'), Effect.ignore)),
   )
   yield* inactivity.watching(person)
   const key = yield* state.lock.withPermit(person, requireReady(state, person))
@@ -1184,6 +1200,11 @@ const handoffFields = (
     person: PersonId,
     action: (key: MachineKey) => Effect.Effect<A, MachineFailure>,
   ) => Effect.Effect<A, StoreError | MachineFailure | ReadinessFailure>,
+  said: (
+    person: PersonId,
+  ) => <A, E extends { readonly _tag: string }, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>,
 ) => {
   const personal = Effect.fn('ComputerStore.personal')(
     function* <A>(person: PersonId, action: (key: MachineKey) => Effect.Effect<A, MachineFailure>) {
@@ -1193,7 +1214,7 @@ const handoffFields = (
       yield* state.rows.inactivity.activity(person)
       return yield* action(row.value.machine)
     },
-    (effect, person) => state.lock.withPermit(person, effect),
+    (effect, person) => said(person)(state.lock.withPermit(person, effect)),
   )
   return {
     findFields: (person: PersonId, labels: ReadonlyArray<string>) =>
@@ -1214,6 +1235,28 @@ export const computerStoreLayer = Layer.effect(
   Effect.gen(function* () {
     const state = yield* lifecycle()
     const database = yield* Database
+    const incidents = yield* Incidents
+    /**
+     * Says an action's failure as the Incident it is when it means the Person's Computer could not
+     * be used (`unusable`), where Vivid's actions meet the Computer: every action, command, file
+     * call and handoff step goes through `execute` or `personal`, and its caller turns the failure
+     * into an outcome (`executionRefusals`), after which nothing else would say it. On 6 October
+     * 2026 every action on a Person's Computer was refused for seven hours and the log was silent.
+     */
+    const said =
+      (person: PersonId) =>
+      <A, E extends { readonly _tag: string }, R>(effect: Effect.Effect<A, E, R>) =>
+        Effect.tapError(effect, (failure) =>
+          unusable(failure)
+            ? incidents.record(
+                Incident.cases.ComputerFailed.make({
+                  personId: person,
+                  step: 'Use',
+                  cause: causeOf(hop('server', 'ComputerStore.execute', failure._tag)),
+                }),
+              )
+            : Effect.void,
+        )
     const inactivity = state.rows.inactivity
     /** Resolve provider identity only after a current lifecycle and keyboard-ownership check. */
     const access = Effect.fn('ComputerStore.access')(function* (person: PersonId) {
@@ -1247,10 +1290,13 @@ export const computerStoreLayer = Layer.effect(
         const key = yield* requireReady(state, person)
         return yield* action(key).pipe(
           Effect.ensuring(
-            inactivity.activity(person).pipe(
-              Effect.andThen(inactivity.arm(person)),
-              Effect.catch(() => Effect.logError('Computer activity could not be persisted.')),
-            ),
+            inactivity
+              .activity(person)
+              .pipe(
+                Effect.andThen(inactivity.arm(person)),
+                observeFailures('schedule'),
+                Effect.ignore,
+              ),
           ),
         )
       },
@@ -1258,19 +1304,20 @@ export const computerStoreLayer = Layer.effect(
     )
     /** Idle cleanup must preserve the original readiness failure even if its database write fails. */
     const recoverIdle = Effect.fn('ComputerStore.recoverIdle')((person: PersonId) =>
-      inactivity
-        .arm(person)
-        .pipe(Effect.catch(() => Effect.logError('Computer idle deadline could not be restored.'))),
+      inactivity.arm(person).pipe(observeFailures('schedule'), Effect.ignore),
     )
     /** Startup never waits while holding the action permit needed by the boot worker. */
-    const execute = Effect.fn('ComputerStore.execute')(function* <A>(
-      person: PersonId,
-      action: (key: MachineKey) => Effect.Effect<A, MachineFailure>,
-    ) {
-      yield* inactivity.activity(person)
-      yield* prepare(state, person).pipe(Effect.onError(() => recoverIdle(person)))
-      return yield* executeReady(person, action)
-    })
+    const execute = Effect.fn('ComputerStore.execute')(
+      function* <A>(
+        person: PersonId,
+        action: (key: MachineKey) => Effect.Effect<A, MachineFailure>,
+      ) {
+        yield* inactivity.activity(person)
+        yield* prepare(state, person).pipe(Effect.onError(() => recoverIdle(person)))
+        return yield* executeReady(person, action)
+      },
+      (effect, person) => said(person)(effect),
+    )
     /**
      * A read beside whatever the Computer is doing: no action permit, no preparing, no activity.
      * Context reads must never start a machine or postpone its idle shutdown, and must never queue
@@ -1348,11 +1395,12 @@ export const computerStoreLayer = Layer.effect(
       browse,
       desktop,
       attach,
-      ...handoffFields(state, execute),
+      ...handoffFields(state, execute, said),
       ...ownMachine(state.machine, execute),
     })
   }),
-)
+  // The recorder holds no state (`incidents.ts`), so the Layer that says Incidents provides it.
+).pipe(Layer.provide(incidentsLayer))
 
 type ExecutionFailure = MachineFailure | ReadinessFailure | DatabaseInfrastructureError
 
@@ -1371,31 +1419,33 @@ export const executionReason = (failure: ExecutionFailure): string =>
     Match.orElse(machineFailureReason),
   )
 
-/** Refusals that answer what was asked, not whether the Computer can be used. They are not logged. */
-const ordinaryRefusals: ReadonlySet<(MachineFailure | ReadinessFailure)['_tag']> = new Set([
+/**
+ * Failures of an action that do not mean the Computer could not be used: refusals that answer what
+ * was asked, and database failures, which reach a boundary as themselves (`observeFailures`).
+ */
+const usable: ReadonlySet<string> = new Set<ExecutionFailure['_tag']>([
   'MachineFileRefused',
   'MachineInputInvalid',
   'BrowserAddressRefused',
   'BrowserStepFailed',
   'ComputerHeld',
+  'DatabaseFailure',
+  'DatabaseUnavailable',
+  'DatabaseConstraintViolation',
 ])
+
+/** Whether an action's failure means the Person's Computer could not be used. */
+const unusable = (failure: { readonly _tag: string }) => !usable.has(failure._tag)
 
 /**
  * Only known provider/readiness refusals become tool outcomes; database failures remain visible.
- *
- * A refusal that means the Computer could not be used is said in the log first, by the failure's
- * name only. It is a successful answer to the caller, so nothing else records it: on 6 October
- * 2026 every action on a Person's Computer was refused for seven hours and the log was silent.
+ * A refusal that means the Computer could not be used was said already, as an Incident, by the
+ * store where the action failed (`computerStoreLayer` `said`).
  */
 export const executionRefusals = <A>(
   answer: (failure: MachineFailure | ReadinessFailure) => Effect.Effect<A>,
 ) => {
-  const handle = (failure: MachineFailure | ReadinessFailure) =>
-    ordinaryRefusals.has(failure._tag)
-      ? answer(failure)
-      : Effect.logWarning('Computer could not be used', { failure: failure._tag }).pipe(
-          Effect.andThen(answer(failure)),
-        )
+  const handle = (failure: MachineFailure | ReadinessFailure) => answer(failure)
   return {
     MachineNotRunning: handle,
     MachineOperationFailed: handle,
@@ -1441,11 +1491,6 @@ const browserEffect = (action: BrowserAction, target: BrowseTarget) =>
     CloseTab: () => (BrowseTarget.guards.Person(target) ? ('write' as const) : ('read' as const)),
   })
 
-/** A command or file call whose end was not heard: it may have run, and it is never sent again. */
-const lostReceipt = Effect.logWarning('Computer could not be used', {
-  failure: 'MachineExecutionUnknown',
-})
-
 /** A refusal by the machine's file system is told apart from a Computer that cannot be used. */
 const fileOutcome = <A, Done>(
   work: Effect.Effect<A, ExecutionFailure>,
@@ -1457,8 +1502,9 @@ const fileOutcome = <A, Done>(
 ) =>
   work.pipe(
     Effect.map(outcomes.done),
+    // A call whose end was not heard may have run and is never sent again; `execute` said it.
     Effect.catchTag('MachineExecutionUnknown', (failure) =>
-      lostReceipt.pipe(Effect.as(outcomes.unavailable(machineFailureReason(failure)))),
+      Effect.succeed(outcomes.unavailable(machineFailureReason(failure))),
     ),
     Effect.catchTags(
       executionRefusals((failure) =>
@@ -1484,7 +1530,7 @@ export const computerShell = Effect.fn('Computer.shell')(function* (
   return yield* store.run(actor.person.id, request).pipe(
     Effect.map((run) => ComputerShellOutcome.cases.Completed.make(run)),
     Effect.catchTag('MachineExecutionUnknown', () =>
-      lostReceipt.pipe(Effect.as(ComputerShellOutcome.cases.OutcomeUnknown.make({}))),
+      Effect.succeed(ComputerShellOutcome.cases.OutcomeUnknown.make({})),
     ),
     Effect.catchTags(
       executionRefusals((failure) =>
@@ -1814,7 +1860,8 @@ const failedExecution = (failure: MachineFailure | ReadinessFailure) =>
  * Record the infrastructure tag while allowing Approvals.decide to durably settle not-sent.
  * A failed settlement write still propagates from the Approval owner and cannot be hidden here. */
 const notSent = Effect.fn('Computer.notSent')(function* (failure: DatabaseInfrastructureError) {
-  yield* Effect.logError('Approved Computer action was not sent', failure._tag)
+  // Said as a failure answered at the runtime's boundary, so it is an issue and leaves the process.
+  yield* recordFailures('runtime')(Cause.fail(failure))
   return ActionOutcome.cases.Failed.make({
     reason: 'Nothing was sent, because the Computer record could not be read or updated.',
   })
