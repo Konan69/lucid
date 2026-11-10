@@ -16,6 +16,7 @@ import { chat, history, json, rpc, settled } from './wire.mjs'
 
 /** A real model chooses a Project check, advances it on waking, and its next firing reads completion. */
 export async function projectChecks(state, id, directory) {
+  NodeAssert.equal(state.modelKind, 'real', 'Project check-ins require a real model')
   const name = 'Launch review'
   const created = await rpc(
     state,
@@ -30,7 +31,7 @@ export async function projectChecks(state, id, directory) {
     `My ${name} project is done when I approve a launch checklist. Its next step is to draft three launch checks. Keep it moving while I am away and decide when to revisit it. On your next visit, write your checklist into the Project's progress, leave my approval as its next step, and post the result to my Feed titled ${name}. My time zone is Africa/Lagos.`,
     directory,
   )
-  await settled(state, id, 4, 'Completed', directory)
+  await settled(state, id, 1, 'Completed', directory)
   const list = await rpc(state, 'ListWatches', undefined, directory, 'project-check-chosen')
   const watch = list.watches.find(
     (item) =>
@@ -52,10 +53,10 @@ export async function projectChecks(state, id, directory) {
   await chat(
     state,
     id,
-    `For this proof, bring ${watch.name} forward to the timer Integration's shortest positive delay. Keep its Project source and checklist instruction. Let the timer fire on its own, then choose the next visit while my approval is pending.`,
+    `For this proof, bring ${watch.name} forward to one second from now. Record my requested timing. Arm it with the timer Integration's relative delay (1/60 minute), not an absolute timestamp or an external clock. Keep its Project source and checklist instruction. Let the timer fire on its own, then choose the next visit while my approval is pending.`,
     directory,
   )
-  await settled(state, id, 5, 'Completed', directory)
+  await settled(state, id, 2, 'Completed', directory)
   const feed = await observe(state, {
     tag: 'WatchFeed',
     payload: null,
@@ -105,7 +106,7 @@ export async function projectChecks(state, id, directory) {
   await chat(
     state,
     id,
-    `For this proof, bring ${watch.name} forward to five seconds from now, once, keeping its Project source. Record my exact timing request as five seconds from now. Do not complete the Project or stop its check.`,
+    `For this proof, bring ${watch.name} forward to five seconds from now, once, keeping its Project source. Record my exact timing request as five seconds from now. Use the relative delay (1/12 minute); do not calculate an absolute timestamp or read an external clock. Do not complete the Project or stop its check.`,
     directory,
   )
   const confirmed = await confirmation
@@ -121,7 +122,7 @@ export async function projectChecks(state, id, directory) {
     'project-check-completed',
   )
   NodeAssert.equal(completed.work._tag, 'Completed')
-  await settled(state, id, 6, 'Completed', directory)
+  await settled(state, id, 3, 'Completed', directory)
   const ended = await observe(state, {
     tag: 'WatchWork',
     payload: null,
