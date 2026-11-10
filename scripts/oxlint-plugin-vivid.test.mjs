@@ -9,6 +9,7 @@ import * as NodeURL from 'node:url'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 import { scanDefinition, scanDockerfile } from './gate/commands.mjs'
+import { contractImports, unregisteredWireSchemas, wireFinding } from './gate/wire.mjs'
 
 const assert = NodeAssert
 const { execFileSync } = NodeChildProcess
@@ -860,4 +861,57 @@ void test('deploy commands: a Dockerfile CMD runs one program, never a shell', (
     ),
     [],
   )
+})
+
+void test('wire: only value imports from @vivid/contracts count, with their subpath', () => {
+  assert.deepEqual(
+    contractImports(
+      'apps/server/src/runtime/client.ts',
+      [
+        "import { RuntimeAdmissionBody, type RuntimeDelivery } from '@vivid/contracts'",
+        "import type { ThreadId } from '@vivid/contracts'",
+        "import { RuntimeRefusal } from '@vivid/contracts/runtime'",
+        "import { Effect } from 'effect'",
+      ].join('\n'),
+    ).map(({ subpath, name }) => [subpath, name]),
+    [
+      [undefined, 'RuntimeAdmissionBody'],
+      ['runtime', 'RuntimeRefusal'],
+    ],
+  )
+})
+
+void test('wire: the admission body that drifted outside the fingerprint fails, registering it passes', () => {
+  // c2481042c replaced the body's `type`/`body`/`attributes` with `delivery`; the cell's Worker
+  // kept the old body and refused every send from 8 November 2026. Both sides import the body.
+  const ThreadId = Schema.String.pipe(Schema.brand('ThreadId'))
+  const RuntimeDelivery = Schema.TaggedStruct('Message', { text: Schema.String, thread: ThreadId })
+  const RuntimeAdmissionBody = Schema.Struct({
+    delivery: RuntimeDelivery,
+    run: Schema.optional(ThreadId),
+  })
+  const share = (name, value) => ({
+    name,
+    value,
+    server: 'apps/server/src/runtime/client.ts',
+    cell: 'packages/agent/runtime/src/app.ts',
+  })
+  const shared = [
+    share('RuntimeAdmissionBody', RuntimeAdmissionBody),
+    share('RuntimeDelivery', RuntimeDelivery),
+    share('ThreadId', ThreadId),
+    // A helper both sides call is not wire; it is told apart by being no Schema.
+    share('deliveryText', (delivery) => delivery.text),
+  ]
+  const unregistered = unregisteredWireSchemas(shared, {})
+  assert.deepEqual(
+    unregistered.map(({ name }) => name),
+    ['RuntimeAdmissionBody', 'RuntimeDelivery', 'ThreadId'],
+  )
+  assert.match(
+    wireFinding(unregistered[0]),
+    /^RuntimeAdmissionBody: crosses the server <-> cell wire \(apps\/server\/src\/runtime\/client\.ts, packages\/agent\/runtime\/src\/app\.ts\) and is not in wireSchemas .* Add it to wireSchemas, or register a schema that contains it\.$/u,
+  )
+  // The delivery and the id are inside the registered body, so its hash already covers them.
+  assert.deepEqual(unregisteredWireSchemas(shared, { RuntimeAdmissionBody }), [])
 })

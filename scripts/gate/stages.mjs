@@ -30,6 +30,8 @@ export const stages = [
       ['node', 'scripts/rpccallers.mjs'],
       // Deploy commands are one program each, never a shell chain.
       ['node', 'scripts/gate/commands.mjs'],
+      // Every schema the server and the cell both import is part of the contract fingerprint.
+      ['node', 'scripts/gate/wire.mjs'],
       // Structure: one-word names, no dumping grounds, server layering (docs/00-structure.md).
       ['node', 'scripts/structure.mjs'],
     ],

@@ -290,4 +290,7 @@ export const deadCodeRatchets = [
   { plugin: 'rpc', rule: 'uncalled', ceiling: 1 },
   // Added 10 November 2026 at the server's pre-deploy chain in `infra/railway.ts`.
   { plugin: 'deploy', rule: 'shell-chain', ceiling: 1 },
+  // Added 10 November 2026: the server <-> cell schemas outside the contract fingerprint at
+  // bab8c618d, where no registry existed; the admission body that drifted in production is one.
+  { plugin: 'wire', rule: 'unregistered', ceiling: 120 },
 ]

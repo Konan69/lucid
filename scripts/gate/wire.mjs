@@ -82,8 +82,7 @@ export function unregisteredWireSchemas(shared, registry) {
   const registered = Object.values(registry)
   const inside = reachable(registered)
   return shared.filter(
-    ({ value }) =>
-      Schema.isSchema(value) && !registered.includes(value) && !inside.has(value.ast),
+    ({ value }) => Schema.isSchema(value) && !registered.includes(value) && !inside.has(value.ast),
   )
 }
 
@@ -116,9 +115,15 @@ async function sharedValues(directory) {
   }
   const [server, cell] = bySide
   return [...server].flatMap(([value, use]) =>
-    cell.has(value) ? [{ value, name: use.name, server: use.file, cell: cell.get(value).file }] : [],
+    cell.has(value)
+      ? [{ value, name: use.name, server: use.file, cell: cell.get(value).file }]
+      : [],
   )
 }
+
+/** One finding's line: the schema, where each side imports it, and the fix. */
+export const wireFinding = ({ name, server, cell }) =>
+  `${name}: crosses the server <-> cell wire (${server}, ${cell}) and is not in wireSchemas (packages/contracts/src/fingerprint.ts), so a Worker built from another version of it passes the fingerprint. Add it to wireSchemas, or register a schema that contains it.`
 
 export async function checkWire(directory) {
   return unregisteredWireSchemas(await sharedValues(directory), await wireRegistry(directory))
@@ -131,10 +136,7 @@ if (
   const unregistered = await checkWire(root)
   const ceiling = deadCodeRatchets.find((entry) => entry.plugin === 'wire').ceiling
   if (unregistered.length !== ceiling) {
-    for (const { name, server, cell } of unregistered)
-      process.stderr.write(
-        `${name}: crosses the server <-> cell wire (${server}, ${cell}) and is not in wireSchemas (packages/contracts/src/fingerprint.ts), so a Worker built from another version of it passes the fingerprint. Add it to wireSchemas, or register a schema that contains it.\n`,
-      )
+    unregistered.forEach((entry) => process.stderr.write(`${wireFinding(entry)}\n`))
     process.stderr.write(
       `wire/unregistered: ${unregistered.length} findings; ceiling ${ceiling}. Register new ones; lower scripts/gate/ratchets.mjs when one is registered.\n`,
     )
