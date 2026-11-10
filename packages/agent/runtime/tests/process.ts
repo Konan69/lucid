@@ -9,7 +9,16 @@ import {
   type FauxProviderHandle,
   type FauxResponseFactory,
 } from '@earendil-works/pi-ai/providers/faux'
-import { ConversationFrame, PersonId, ThreadId } from '@vivid/contracts'
+import {
+  CONTRACT_HEADER,
+  ConversationFrame,
+  incidentHop,
+  type Issue,
+  PersonId,
+  type RuntimeRefusal,
+  ThreadId,
+} from '@vivid/contracts'
+import { contractFingerprint } from '@vivid/contracts/fingerprint'
 import { runtimeHeaders } from '@vivid/contracts/auth'
 import { Deferred, Effect, Layer, Option, Redacted, Schema } from 'effect'
 import * as HttpClient from 'effect/http/HttpClient'
@@ -323,7 +332,9 @@ export const start = Effect.fn('RuntimeFixture.start')(function* (given: World) 
       readonly headers?: Readonly<Record<string, string>>
     },
   ) {
+    // A sender of this build, as the server is, says its contract unless the test says another.
     const headers = {
+      [CONTRACT_HEADER]: contractFingerprint,
       ...input.headers,
       authorization: `Bearer ${input.token === undefined ? TOKEN : input.token}`,
       'content-type': 'application/json',
@@ -375,4 +386,24 @@ export const held = Effect.fn('RuntimeFixture.held')(function* (answer: string |
     entered: Deferred.await(entered),
     release: Deferred.succeed(released, undefined).pipe(Effect.asVoid),
   }
+})
+
+/**
+ * The body a cell answers a refusal with (`RuntimeRefusal`): what the caller acts on, the cell's
+ * one hop (the route's `operation`, the failure's `tag`, the status, the fields it names) and
+ * this build's contract fingerprint.
+ */
+export const refusal = (
+  error: RuntimeRefusal['error'],
+  status: number,
+  operation: string,
+  tag: string,
+  issues: ReadonlyArray<Issue>,
+) => ({
+  status,
+  body: {
+    error,
+    cause: [incidentHop({ service: 'cell', operation, tag, status: Option.some(status), issues })],
+    contract: contractFingerprint,
+  },
 })

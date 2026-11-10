@@ -5,6 +5,7 @@ import { fauxAssistantMessage, fauxText, fauxToolCall } from '@earendil-works/pi
 import { createRegistry, defineExtension, Harness } from '@earendil-works/pi-durable'
 import { describe, expect, it } from '@effect/vitest'
 import {
+  CodeName,
   CodeOutcome,
   ConversationFrame,
   ConversationState,
@@ -12,7 +13,7 @@ import {
   ThreadId,
 } from '@vivid/contracts'
 import { ConfigProvider, Effect, Exit, Predicate, Schema, Scope } from 'effect'
-import { held, start, world, type World } from '../tests/process.ts'
+import { held, refusal, start, world, type World } from '../tests/process.ts'
 import {
   ada,
   admit,
@@ -174,15 +175,21 @@ describe('main runtime parity on Pi', () => {
     scenario((given, runtime) =>
       Effect.gen(function* () {
         const valid = delivery(THREAD, 'valid')
-        for (const body of [
-          { ...valid, turn: 0 },
-          { ...valid, scope: {} },
-          { ...valid, delivery: { ...valid.delivery, attachments: 'bad' } },
-        ]) {
-          expect(yield* runtime.send(path, { method: 'POST', body })).toEqual({
-            status: 400,
-            body: { error: 'InvalidRequest' },
-          })
+        // Each refusal names the declared field that failed and how, never the value sent.
+        for (const [body, issue] of [
+          [{ ...valid, turn: 0 }, { path: [CodeName.make('turn')], kind: 'InvalidValue' }],
+          [
+            { ...valid, scope: {} },
+            { path: [CodeName.make('scope'), CodeName.make('acting')], kind: 'MissingKey' },
+          ],
+          [
+            { ...valid, delivery: { ...valid.delivery, attachments: 'bad' } },
+            { path: [CodeName.make('delivery')], kind: 'AnyOf' },
+          ],
+        ] as const) {
+          expect(yield* runtime.send(path, { method: 'POST', body })).toEqual(
+            refusal('InvalidRequest', 400, 'Runtime.admission', 'SchemaError', [issue]),
+          )
         }
         expect(given.faux.state.callCount).toBe(0)
         expect(given.requests).toHaveLength(0)

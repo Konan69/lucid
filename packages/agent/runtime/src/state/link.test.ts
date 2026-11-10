@@ -10,7 +10,7 @@ import { describe, expect, it } from '@effect/vitest'
 import { ConversationFrame, ConversationState, emptyConversation, ThreadId } from '@vivid/contracts'
 import { Deferred, Effect, Option, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
-import { held } from '../../tests/process.ts'
+import { held, refusal } from '../../tests/process.ts'
 import { conversationOf, pi } from '../threads.ts'
 import {
   ada,
@@ -412,13 +412,12 @@ describe('the state link', () => {
           `${threadPath(ada, 'thread-1')}/attachments/1-0`,
           `${threadPath(ada, 'thread-1')}/attachments/nonsense`,
         ])
-          expect(yield* runtime.send(path, { method: 'GET' })).toEqual({
-            status: 404,
-            body: { error: 'NotFound' },
-          })
+          expect(yield* runtime.send(path, { method: 'GET' })).toEqual(
+            refusal('NotFound', 404, 'Runtime.attachment', 'AttachmentMissing', []),
+          )
         expect(
           yield* runtime.send(`${threadPath(grace, 'thread-1')}/${file.url}`, { method: 'GET' }),
-        ).toEqual({ status: 404, body: { error: 'UnknownThread' } })
+        ).toEqual(refusal('UnknownThread', 404, 'Runtime.attachment', 'UnknownThread', []))
         return yield* Effect.void
       }),
     ),
@@ -432,7 +431,7 @@ describe('the state link', () => {
             method: 'GET',
             token: 'wrong',
           }),
-        ).toEqual({ status: 401, body: { error: 'Unauthorized' } })
+        ).toEqual(refusal('Unauthorized', 401, 'Runtime.state', 'Unauthorized', []))
       }),
     ),
   )
