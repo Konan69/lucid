@@ -24,6 +24,18 @@ function trackedInstructionFiles(root) {
   return [...new Set(listed.split('\0').filter((path) => path !== ''))]
 }
 
+/** Loader metadata is checked separately from instruction siblings so neither policy nests inside the other. */
+function skillMetadataErrors(root, file) {
+  const body = NodeFS.readFileSync(NodePath.join(root, file), 'utf8')
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(body)
+  return ['name', 'description']
+    .filter(
+      (field) =>
+        frontmatter === null || !new RegExp(`^${field}:[ \t]*\\S`, 'mu').test(frontmatter[1]),
+    )
+    .map((field) => `${file}: add ${field}: <value> to YAML frontmatter; skill loaders require it`)
+}
+
 /**
  * Check that every directory with an `AGENTS.md` has a `CLAUDE.md` beside it holding only the
  * import line, and that no `CLAUDE.md` stands without the file it imports. Each error names the
@@ -35,14 +47,7 @@ function validateInstructions(root, files = trackedInstructionFiles(root)) {
   const present = new Set(files)
   for (const file of files.toSorted((left, right) => left.localeCompare(right))) {
     if (NodePath.posix.basename(file) === 'SKILL.md') {
-      const body = NodeFS.readFileSync(NodePath.join(root, file), 'utf8')
-      const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(body)
-      for (const field of ['name', 'description']) {
-        if (frontmatter === null || !new RegExp(`^${field}:[ \t]*\\S`, 'mu').test(frontmatter[1]))
-          errors.push(
-            `${file}: add ${field}: <value> to YAML frontmatter; skill loaders require it`,
-          )
-      }
+      errors.push(...skillMetadataErrors(root, file))
       continue
     }
     const directory = NodePath.posix.dirname(file)
