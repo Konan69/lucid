@@ -1,5 +1,6 @@
 import * as NodeAssert from 'node:assert/strict'
 import { Schema } from 'effect'
+import { PatchSettingsRequest } from '@vivid/contracts'
 import { decodeText } from './receipts.mjs'
 import { chat, history, json, rpc, settled } from './wire.mjs'
 import { connectPulse, emit, posted } from './watch.mjs'
@@ -70,7 +71,13 @@ export async function pacing(state, id, directory) {
     (candidate) => hour(candidate) >= 8 && hour(candidate) < 10,
   )
   NodeAssert.ok(zone, 'No IANA zone currently before eleven')
-  await rpc(state, 'PatchSettings', { timezone: zone }, directory, 'timezone')
+  await rpc(
+    state,
+    'PatchSettings',
+    PatchSettingsRequest.make({ timezone: zone }),
+    directory,
+    'timezone',
+  )
   await chat(state, id, "Don't message me before 11 in the morning.", directory)
   await settled(state, id, 1, 'Completed', directory)
   const saved = await rpc(state, 'GetSettings', undefined, directory, 'spoken-hours')
