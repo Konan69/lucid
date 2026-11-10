@@ -52,7 +52,7 @@ layer(testDatabaseLayer)((it) => {
     })
     const message = StoredRunOrigin.cases.Message.make({})
     const decision = StoredRunOrigin.cases.Decision.make({})
-    const unreviewed = Review.cases.Unreviewed.make({})
+    const unreviewed = Review.cases.Unreviewed.make({ reason: 'Unavailable' })
     const contained = Review.cases.Reviewed.make({ asked: 0.95, beyond: 0.1, contained: 0.95 })
     for (const [name, place, origin, review, effect, allowRule, expected] of [
       ['background send', 'Background', watch, reviewed, 'write', false, 'ApprovalRequired'],
@@ -229,7 +229,10 @@ layer(testDatabaseLayer)((it) => {
           return yield* Effect.gen(function* () {
             const test = yield* fixture()
             const gate = yield* Gate
-            yield* Ref.set((yield* Observation).review, Review.cases.Unreviewed.make({}))
+            yield* Ref.set(
+              (yield* Observation).review,
+              Review.cases.Unreviewed.make({ reason: 'Unavailable' }),
+            )
             expect(yield* gate.check(test.vivid, browserWrite, 'Ordinary', unbound)).toEqual(
               GateDecision.cases.Allowed.make({ basis: 'Unreviewed' }),
             )
@@ -577,7 +580,10 @@ layer(testDatabaseLayer)((it) => {
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
           const gate = yield* Gate
-          yield* Ref.set((yield* Observation).review, Review.cases.Unreviewed.make({}))
+          yield* Ref.set(
+            (yield* Observation).review,
+            Review.cases.Unreviewed.make({ reason: 'Unavailable' }),
+          )
           expect(yield* gate.check(test.vivid, test.connectionAction, 'Ordinary', unbound)).toEqual(
             GateDecision.cases.Allowed.make({ basis: 'Unreviewed' }),
           )

@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect'
+import { Schema } from 'effect'
 import { DecisionUnavailable } from '../decisions/model.ts'
 import type { ActionEffect } from '@vivid/contracts'
 
@@ -31,7 +31,7 @@ export const Review = Schema.TaggedUnion({
     contained: Schema.Finite,
   },
   Unreviewed: {
-    reason: UnreviewedReason.pipe(Schema.withConstructorDefault(Effect.succeed('Unavailable'))),
+    reason: UnreviewedReason,
   },
 })
 export type Review = typeof Review.Type
