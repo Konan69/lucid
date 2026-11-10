@@ -33,6 +33,9 @@ export function Decide({ approval, room }: { approval: Approval; room: 'card' | 
   const decide = (decision: ApprovalDecision) =>
     decideApproval({ id: approval.id, digest: approval.digest, decision })
   const { action } = approval
+  // An Integration's paused call is answered as it was asked: the server refuses an edit to it,
+  // so it is never offered as a draft.
+  const draft = form.isIntegrationApproval(approval) ? Option.none() : draftOf(action)
   return (
     <div className="flex flex-col">
       {/* What Vivid would do, in its own sentence, then why, then how much it can change. */}
@@ -55,54 +58,49 @@ export function Decide({ approval, room }: { approval: Approval; room: 'card' | 
           {riskWords(action.effect)}
         </span>
       </p>
-      {/* An Integration's paused call is answered as it was asked: the server refuses an edit
-          to it, so it is never offered as a draft. */}
-      {Option.match(
-        form.isIntegrationApproval(approval) ? Option.none() : draftOf(approval.action),
-        {
-          onSome: (draft) => (
-            <DraftForm
-              // A newer record of the same ask is a new draft: the words start again from it.
-              key={`${approval.id}:${approval.digest}`}
-              draft={draft}
-              room={room}
-              held={held}
-              sending={!going('Deny') && Option.isSome(sending)}
-              discarding={going('Deny')}
-              refusal={refusal}
-              onDiscard={() => decide(ApprovalDecision.cases.Deny.make({}))}
-              onSend={(words) =>
-                decide(
-                  Option.match(editedInput(draft, words), {
-                    onNone: () => ApprovalDecision.cases.AllowOnce.make({}),
-                    onSome: (input) => ApprovalDecision.cases.AllowEdited.make({ input }),
-                  }),
-                )
-              }
-            />
-          ),
-          onNone: () => (
-            <>
-              <Refusal refusal={refusal} />
-              <footer className="mt-3 flex justify-end gap-2">
-                <Button
-                  variant="secondary"
-                  disabled={held}
-                  onClick={() => decide(ApprovalDecision.cases.Deny.make({}))}
-                >
-                  Don’t allow
-                </Button>
-                <Button
-                  disabled={held}
-                  onClick={() => decide(ApprovalDecision.cases.AllowOnce.make({}))}
-                >
-                  {going('AllowOnce') ? 'Allowing…' : 'Allow'}
-                </Button>
-              </footer>
-            </>
-          ),
-        },
-      )}
+      {Option.match(draft, {
+        onSome: (draft) => (
+          <DraftForm
+            // A newer record of the same ask is a new draft: the words start again from it.
+            key={`${approval.id}:${approval.digest}`}
+            draft={draft}
+            room={room}
+            held={held}
+            sending={!going('Deny') && Option.isSome(sending)}
+            discarding={going('Deny')}
+            refusal={refusal}
+            onDiscard={() => decide(ApprovalDecision.cases.Deny.make({}))}
+            onSend={(words) =>
+              decide(
+                Option.match(editedInput(draft, words), {
+                  onNone: () => ApprovalDecision.cases.AllowOnce.make({}),
+                  onSome: (input) => ApprovalDecision.cases.AllowEdited.make({ input }),
+                }),
+              )
+            }
+          />
+        ),
+        onNone: () => (
+          <>
+            <Refusal refusal={refusal} />
+            <footer className="mt-3 flex justify-end gap-2">
+              <Button
+                variant="secondary"
+                disabled={held}
+                onClick={() => decide(ApprovalDecision.cases.Deny.make({}))}
+              >
+                Don’t allow
+              </Button>
+              <Button
+                disabled={held}
+                onClick={() => decide(ApprovalDecision.cases.AllowOnce.make({}))}
+              >
+                {going('AllowOnce') ? 'Allowing…' : 'Allow'}
+              </Button>
+            </footer>
+          </>
+        ),
+      })}
     </div>
   )
 }
