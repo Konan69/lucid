@@ -28,7 +28,7 @@ import type { FaceMood } from './face.js'
  * state. Here it is the least time any pose is held, a blink excepted.
  */
 
-export const FACE_STATES = [
+const FACE_STATES = [
   'idle',
   'listening',
   'thinking',
@@ -51,28 +51,28 @@ export const FACE_STATES = [
 export type FaceState = (typeof FACE_STATES)[number]
 
 /** One pose of a sequence: the look, and the bounds its hold is drawn from, in milliseconds. */
-export interface FacePose {
+interface FacePose {
   readonly mood: FaceMood
   readonly hold: readonly [min: number, max: number]
 }
 
 /** A state's poses: those shown once as it begins, then those it repeats for as long as it lasts. */
-export interface FaceSequence {
+interface FaceSequence {
   readonly once: ReadonlyArray<FacePose>
   readonly loop: readonly [FacePose, ...Array<FacePose>]
 }
 
 /** The reference's cross-fade between poses (`CROSSFADE_MS`, `GXe=300`). */
-export const FACE_CROSSFADE_MS = 300
+const FACE_CROSSFADE_MS = 300
 
 /** The reference's floor (`MIN_HOLD_MS`, `N3t=1500`): no pose but a blink is held for less. */
-export const FACE_MIN_HOLD_MS = 1500
+const FACE_MIN_HOLD_MS = 1500
 
 /**
  * How long the eyes stay shut in a blink. A person's blink is 100 to 150 ms; the reference has
  * no blink of its own (its idle alternates two sprites), so this value is Vivid's.
  */
-export const FACE_BLINK_MS = 140
+const FACE_BLINK_MS = 140
 
 const blink: FacePose = { mood: 'asleep', hold: [FACE_BLINK_MS, FACE_BLINK_MS] }
 
@@ -104,7 +104,7 @@ const rest: FaceSequence['loop'] = [{ mood: 'neutral', hold: HOLD.idle }, blink]
  * `thinking` and `working` open on the same pose on purpose. Vivid moves between them many times
  * in one answer (a tool starts, a tool ends), and a face that changed on each would twitch.
  */
-export const FACE_SEQUENCES = {
+const FACE_SEQUENCES = {
   // Reference `idle`: poses [0, 8], held 9 to 16 s. Here: level, and a blink.
   idle: { once: [], loop: rest },
   // Reference `listening`: three poses, 2.8 to 5 s. Here: leaning in to the Person, then level.

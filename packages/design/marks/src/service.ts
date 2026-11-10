@@ -5,7 +5,7 @@ import type { MarkFigure } from './figure.js'
  * reads at a glance. These are the providers behind a Connection; the identifiers match the
  * `ConnectionId` the server reports, which is how a Connection row finds its mark.
  */
-export const SERVICE_MARK_IDS = [
+const SERVICE_MARK_IDS = [
   'gmail',
   'calendar',
   'drive',
