@@ -136,6 +136,12 @@ async function approvalStep(state, id, directory, client) {
   if (client) {
     await client.run(['wait', 'section[aria-label="Vivid asks first"]'])
     assert.deepEqual(await read(client, bannerRows('Vivid asks first')), ['Allow', 'Don’t allow'])
+    // The paused call waits on the Person: the Thread must not say it was never heard back about.
+    assert.equal(
+      await read(client, `document.body.innerText.includes('didn’t hear back')`),
+      false,
+      'A waiting Integration ask is not an unheard action',
+    )
     const card = await feed(state, id, client, pending.action.summary, 'feed-approval')
     assert.ok(card, 'The Feed shows the Integration Approval')
     // The card's other button is its Thread's title, which opens the Thread.
