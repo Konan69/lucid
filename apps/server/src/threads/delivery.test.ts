@@ -29,8 +29,13 @@ import {
   DeviceAnswer,
   WindowAction,
   WindowResult,
+  CodeName,
   Conflict,
   DatabaseUnavailable,
+  DeliveryRefused,
+  Incident,
+  incidentHop,
+  type IncidentCause,
   PersonId,
   Company,
   Workspace,
@@ -117,7 +122,39 @@ import { Presence } from './presence.ts'
 import { RunStore, runStoreLayer, TurnReservation } from './runs.ts'
 import { threadStoreLayer } from './store.ts'
 import { threads } from './tables.ts'
-import { incidentsTestLayer, RecordedIncidents } from '../runtime/testing.ts'
+import { incidentsTestLayer, RecordedIncidents, unreachableCause } from '../runtime/testing.ts'
+
+/**
+ * What the real client says when a cell refused the body as unreadable (`runtime/client.ts`
+ * `makeAdmit`): the server's hop at the status the cell answered, then the cell's own hop naming
+ * the field it could not read. The chain the server must keep all the way to the Person.
+ */
+const unreadableCause: IncidentCause = [
+  incidentHop({
+    service: 'server',
+    operation: 'Runtime.admit',
+    tag: 'RuntimeRejected',
+    status: Option.some(400),
+    issues: [],
+  }),
+  incidentHop({
+    service: 'cell',
+    operation: 'Runtime.admission',
+    tag: 'SchemaError',
+    status: Option.some(400),
+    issues: [{ path: [CodeName.make('delivery')], kind: 'MissingKey' }],
+  }),
+]
+
+/** The hop `Conversation.admitRuntime` puts in front when it answers for the runtime client. */
+const admittedHop = (tag: string) =>
+  incidentHop({
+    service: 'server',
+    operation: 'Conversation.admitRuntime',
+    tag,
+    status: Option.none(),
+    issues: [],
+  })
 
 const databaseLayer = runStoreLayer.pipe(Layer.provideMerge(testDatabaseLayer))
 const decodeRuntimeRequest = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeRunRequest))
@@ -905,11 +942,12 @@ layer(
               threadId: test.threadId,
               runId: deliveryRunId(test.threadId, delivery.idempotencyKey),
               reason: 'Rejected',
+              cause: unreadableCause,
             }),
           ),
         )
         const refused = yield* Effect.result(test.conversation.admit(delivery))
-        expect(Result.isFailure(refused) && refused.failure._tag).toBe('RuntimeUnavailable')
+        expect(Result.isFailure(refused) && refused.failure._tag).toBe('DeliveryRefused')
         expect(yield* test.inputs.inThread(test.threadId)).toEqual([waiting])
         yield* Ref.set(test.failure, Option.none())
         yield* test.conversation.admit(said(test.threadId, test.ada))
@@ -1178,12 +1216,24 @@ layer(
       {
         name: 'refused',
         make: (threadId: ThreadId, runId: RunId) =>
-          AdmissionRefused.make({ threadId, runId, reason: 'Rejected' }),
+          AdmissionRefused.make({ threadId, runId, reason: 'Rejected', cause: unreadableCause }),
+        /** A refusal stays a refusal, and keeps the cell's chain behind the server's hop. */
+        answer: (runId: RunId) =>
+          DeliveryRefused.make({
+            runId,
+            cause: [admittedHop('AdmissionRefused'), ...unreadableCause],
+          }),
       },
       {
         name: 'uncertain',
         make: (threadId: ThreadId, runId: RunId) =>
-          AdmissionUncertain.make({ threadId, runId, reason: 'Transport' }),
+          AdmissionUncertain.make({ threadId, runId, reason: 'Transport', cause: unreachableCause }),
+        /** Still uncertain after its retries: unavailable, with why it could not be told. */
+        answer: (_runId: RunId) =>
+          RuntimeUnavailable.make({
+            message: 'Vivid could not be reached',
+            cause: [admittedHop('AdmissionUncertain'), ...unreachableCause],
+          }),
       },
     ]
     layer(
@@ -1214,9 +1264,19 @@ layer(
                     yield* TestClock.adjust('2 seconds')
                   }
                   const rejected = yield* Fiber.join(rejecting)
-                  expect(Result.isFailure(rejected) && rejected.failure).toBeInstanceOf(
-                    RuntimeUnavailable,
+                  expect(Result.isFailure(rejected) && rejected.failure).toEqual(
+                    failure.answer(runId),
                   )
+                  // The Run's terminal write is where the outcome is decided, so it is said there.
+                  expect(yield* test.incidents).toEqual([
+                    Incident.cases.AdmissionFailed.make({
+                      personId: test.ada,
+                      threadId: test.threadId,
+                      runId,
+                      delivery: 'Words',
+                      cause: failure.answer(runId).cause,
+                    }),
+                  ])
                   const recorded = yield* (yield* RunStore).list(test.threadId)
                   expect(recorded.map((run) => run.state)).toEqual([
                     RunState.cases.Failed.make({

@@ -10,6 +10,7 @@ import { eq, sql } from 'drizzle-orm'
 import * as NodeCrypto from 'node:crypto'
 import { expect, layer } from '@effect/vitest'
 import {
+  Context,
   Effect,
   Exit,
   Fiber,
@@ -58,7 +59,7 @@ import { threadStoreLayer } from '../threads/store.ts'
 import { threadHandlers } from '../threads/handlers.ts'
 import { ChildRuns } from '../runs/store.ts'
 import { Runtime, runtimeLayer } from './client.ts'
-import { productFixture, productLayer } from './testing.ts'
+import { incidentsTestLayer, productFixture, productLayer, RecordedIncidents } from './testing.ts'
 
 const decodeBody = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))
 
@@ -232,9 +233,12 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (
   )
   let serverScope = yield* Scope.make()
   yield* Effect.addFinalizer(() => Scope.close(serverScope, Exit.void))
+  // One capture for every Conversation this fixture builds, restarts included.
+  const incidentContext = yield* Layer.build(incidentsTestLayer)
   const serverLayer = conversationLayer.pipe(
     Layer.provide([
       foundation,
+      Layer.succeedContext(incidentContext),
       Layer.succeed(ChannelReplies, {
         ended: ({ settlement }) => Queue.offer(reported, settlement._tag).pipe(Effect.asVoid),
       }),
@@ -260,6 +264,7 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (
     stopped,
     reported,
     titles,
+    incidents: Ref.get(Context.get(incidentContext, RecordedIncidents)),
     store: {
       ...store,
       get: (id: RunId) =>
