@@ -114,7 +114,7 @@ export interface Chosen {
 
 const UNPICKABLE = 'The file picker didn’t open. Try again.'
 const TOO_LARGE = 'Choose a file smaller than 10 MB.'
-const UNSENT = 'That file did not reach Vivid. Check your connection and try again.'
+const UNSENT = 'File not sent. Check your connection and try again.'
 
 /**
  * Whether the system's file picker is open. On Android the picker is another app's screen, so the

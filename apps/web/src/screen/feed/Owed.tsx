@@ -110,9 +110,7 @@ function Row({
     <li data-folded={folded ? '' : undefined} inert={folded} className="motion-fold">
       <div>
         {standing === 'failed' && (
-          <p className="px-3 pt-2 text-label text-danger">
-            That didn’t reach Vivid. Click it again.
-          </p>
+          <p className="px-3 pt-2 text-label text-danger">Not sent. Try again.</p>
         )}
         <ContextMenu>
           <ContextMenuTrigger

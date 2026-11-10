@@ -143,7 +143,7 @@ export const refusedWords = (failure: ProductFailure): string =>
       HandoffNotCleared: ({ labels }) =>
         `The Computer still shows what you typed in ${labels.join(', ')}. Leave that page on the screen, then try again.`,
     }),
-    Match.orElse(() => 'That did not reach Vivid. Try again.'),
+    Match.orElse(() => 'Not sent. Try again.'),
   )
 
 /** Every handoff control waits while any call is out; the machine refuses the press as well. */
