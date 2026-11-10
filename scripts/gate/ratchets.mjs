@@ -289,7 +289,7 @@ export const deadCodeRatchets = [
   { plugin: 'knip', rule: 'optionalPeerDependencies', ceiling: 0 },
   { plugin: 'rpc', rule: 'uncalled', ceiling: 1 },
   // Added 10 November 2026 at the server's pre-deploy chain in `infra/railway.ts`.
-  { plugin: 'deploy', rule: 'shell-chain', ceiling: 1 },
+  { plugin: 'deploy', rule: 'shell-chain', ceiling: 0 },
   // Added 10 November 2026: every server <-> cell schema is in the contract fingerprint
   // (`wireSchemas`); the admission body that drifted in production was outside it at bab8c618d.
   { plugin: 'wire', rule: 'unregistered', ceiling: 0 },
