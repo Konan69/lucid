@@ -1,3 +1,4 @@
+import { observeFailures } from '../observability/failure.ts'
 import * as NodeBuffer from 'node:buffer'
 import * as NodeCrypto from 'node:crypto'
 import { eq } from 'drizzle-orm'
@@ -224,7 +225,9 @@ const queryFor = (operation: ActionOperation, row: ConnectionRecord): Option.Opt
 
 /** Provider transport, validation and pagination uncertainty never count as evidence of absence. */
 const look = Effect.fn('Connections.lookupAction')(function* (operation: ActionOperation) {
+  yield* Effect.annotateCurrentSpan('vivid.operation.id', operation.id)
   if (!ActionTarget.guards.Connection(operation.target)) return Lookup.cases.Unsupported.make({})
+  yield* Effect.annotateCurrentSpan('vivid.connection.id', operation.target.connectionId)
   const database = yield* Database
   // The journal's trusted target was authorized at dispatch; only a digest leaves this adapter.
   const [stored] = yield* database.run(
@@ -280,6 +283,7 @@ export const actionLookupLayer = Layer.effect(
       look: (operation) =>
         look(operation).pipe(
           Effect.provideContext(services),
+          observeFailures('http'),
           Effect.orElseSucceed(() => Lookup.cases.Unsupported.make({})),
         ),
     })

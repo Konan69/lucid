@@ -1,3 +1,5 @@
+import { observeFailures } from '../observability/failure.ts'
+import { Message } from '../observability/messages.ts'
 import * as NodeCrypto from 'node:crypto'
 import { eq, sql } from 'drizzle-orm'
 import { DatabaseFailure, type PersonId } from '@vivid/contracts'
@@ -146,6 +148,7 @@ function makeAuth(transport: HttpClient.HttpClient, url: string) {
       if (response.status >= 500) return yield* ExecutorTransportFailure.make(context)
       const body = yield* response.json.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.Json)),
+        observeFailures('http'),
         Effect.option,
       )
       const answer: Answer = { status: response.status, cookies: response.cookies, body }
@@ -204,7 +207,7 @@ function makeAuth(transport: HttpClient.HttpClient, url: string) {
       return yield* sessionOf(answer)
     }),
     /** Pinned to the organization; no expiry, as the installation key has none. */
-    mintKey: (member: Session, organization: string) =>
+    mintKey: Effect.fn('ExecutorMembers.mintKey')((member: Session, organization: string) =>
       post(
         '/api-key/create',
         { name: 'Vivid', metadata: { organization } },
@@ -213,11 +216,13 @@ function makeAuth(transport: HttpClient.HttpClient, url: string) {
         Effect.flatMap(read(CreatedKey)),
         Effect.map(({ key }) => Redacted.make(key)),
       ),
-    userOf: (member: Session) =>
+    ),
+    userOf: Effect.fn('ExecutorMembers.userOf')((member: Session) =>
       exchange(HttpClientRequest.get(`${url}/api/auth/get-session`), Option.some(member)).pipe(
         Effect.flatMap(read(CurrentSession)),
         Effect.map(({ user }) => user.id),
       ),
+    ),
   }
 }
 type Auth = ReturnType<typeof makeAuth>
@@ -297,9 +302,13 @@ const makeMembers = Effect.fn('ExecutorMembers.make')(function* () {
     )
 
   const member = Effect.fn('ExecutorMembers.member')(function* (person: PersonId) {
+    yield* Effect.annotateCurrentSpan('vivid.person.id', person)
     const existing = yield* database.run(readMember(database, person))
-    if (Option.isSome(existing) && MemberState.guards.Ready(existing.value.state))
-      return yield* keyOf(person, existing.value.state)
+    if (Option.isSome(existing) && MemberState.guards.Ready(existing.value.state)) {
+      const caller = yield* keyOf(person, existing.value.state)
+      yield* Effect.logInfo(Message.memberReused)
+      return caller
+    }
     const claimed = yield* claimMember(database, person)
     // Executor calls run inside the lock's transaction so a second process waits for this one's
     // member instead of making another; the Provisioning row they continue from is already
@@ -309,12 +318,27 @@ const makeMembers = Effect.fn('ExecutorMembers.make')(function* () {
   })
 
   return ExecutorMembers.of({
-    caller: ({ principal, personId }) =>
-      Match.value(principal).pipe(
+    caller: Effect.fn('ExecutorMembers.caller')(function* ({ principal, personId }) {
+      yield* Effect.annotateCurrentSpan({
+        'vivid.executor.principal': principal,
+        'vivid.person.id': personId,
+      })
+      return yield* Match.value(principal).pipe(
         Match.when('installation', () => Effect.succeed(installationCaller)),
         Match.whenOr('member', 'adopted-account', 'adopted-public', () => member(personId)),
         Match.exhaustive,
-      ),
+        Effect.annotateLogs({ 'vivid.executor.principal': principal, 'vivid.person.id': personId }),
+        observeFailures('http'),
+        Effect.tapError(() =>
+          Effect.logWarning(Message.memberRefused).pipe(
+            Effect.annotateLogs({
+              'vivid.executor.principal': principal,
+              'vivid.person.id': personId,
+            }),
+          ),
+        ),
+      )
+    }),
   })
 })
 
@@ -328,14 +352,17 @@ const completeMember = Effect.fn('ExecutorMembers.complete')(function* (
     Effect.gen(function* () {
       yield* tx.execute(memberLock(person))
       const current = yield* readMember(tx, person)
-      if (Option.isSome(current) && MemberState.guards.Ready(current.value.state))
+      if (Option.isSome(current) && MemberState.guards.Ready(current.value.state)) {
+        yield* Effect.logInfo(Message.memberReused)
         return current.value.state
+      }
       const state = yield* provision()
       const now = yield* Clock.currentTimeMillis
       yield* tx
         .update(executorMembers)
         .set({ state: yield* encodeState(state), updatedAt: now })
         .where(eq(executorMembers.personId, person))
+      yield* Effect.logInfo(Message.memberProvisioned)
       return state
     }),
   )
@@ -426,13 +453,12 @@ function makeProvision(input: {
  * Person's own member, made on first use. A member that cannot be made or read answers as any
  * other Executor failure.
  */
-export const callerOf = (connection: {
-  readonly executorPrincipal: ExecutorPrincipal
-  readonly personId: PersonId
-}) =>
-  Effect.flatMap(ExecutorMembers, (members) =>
-    members.caller({ principal: connection.executorPrincipal, personId: connection.personId }),
-  ).pipe(Effect.mapError(memberFailure))
+export const callerOf = Effect.fn('ExecutorMembers.callerOf')(
+  (connection: { readonly executorPrincipal: ExecutorPrincipal; readonly personId: PersonId }) =>
+    Effect.flatMap(ExecutorMembers, (members) =>
+      members.caller({ principal: connection.executorPrincipal, personId: connection.personId }),
+    ).pipe(Effect.mapError(memberFailure)),
+)
 
 /** Watch authority is explicit for every principal. Account delegation grants app use, not
  * direct personal-account use, which beta.23 requires when authorizing event delivery. */
@@ -467,6 +493,7 @@ export const operationsOf = Effect.fn('ExecutorMembers.operationsOf')(function* 
   readonly executorPrincipal: ExecutorPrincipal
   readonly personId: PersonId
 }) {
+  yield* Effect.annotateCurrentSpan('vivid.executor.principal', connection.executorPrincipal)
   const caller = yield* callerOf(connection)
   const executor = yield* Executor
   const own = executor.as(caller)

@@ -1,3 +1,5 @@
+import { Message } from '../observability/messages.ts'
+import { FailureAttribute, observeFailures } from '../observability/failure.ts'
 import * as NodeCrypto from 'node:crypto'
 import {
   ActionEffect,
@@ -1689,9 +1691,18 @@ function makeStatus(http: ExecutorHttp) {
     },
     (effect, references) =>
       effect.pipe(
+        observeFailures('http'),
         Effect.catchTags({
-          ExecutorNotReady: () =>
-            Effect.succeed(ExecutorStatus.cases.NeedsAuthorization.make({ references })),
+          ExecutorNotReady: Effect.fn('Executor.statusNotReady')(function* (error) {
+            yield* Effect.annotateCurrentSpan('vivid.executor.notready', error.cause)
+            yield* Effect.logWarning(Message.executorNotReady).pipe(
+              Effect.annotateLogs({
+                [FailureAttribute.type]: error._tag,
+                'vivid.executor.notready': error.cause,
+              }),
+            )
+            return ExecutorStatus.cases.NeedsAuthorization.make({ references })
+          }),
           ExecutorResourceMissing: ({ resource }) =>
             Effect.succeed(
               ExecutorStatus.cases.Failed.make({
@@ -2662,6 +2673,7 @@ function makeResolveRemovalAccount(http: ExecutorHttp) {
       .readConnection(Effect.succeed(HttpClientRequest.get(path)), null)
       .pipe(
         Effect.asSome,
+        observeFailures('http'),
         Effect.catchTag('ExecutorResourceMissing', (error) =>
           error.resource === 'App' ? Effect.succeedNone : Effect.fail(error),
         ),
@@ -2703,9 +2715,16 @@ function makeCall(
 ) {
   return Effect.fn('Executor.call')(
     function* ({ references, tool, input }: typeof CallInput.Type) {
+      yield* Effect.annotateCurrentSpan(
+        'vivid.executor.app',
+        ExecutorReferences.guards.ReconnectRequired(references)
+          ? references.retired.original
+          : references.app,
+      )
       if (ExecutorReferences.guards.ReconnectRequired(references))
         return ExecutorCallOutcome.cases.NotReady.make({})
       const catalog = yield* discover(references).pipe(
+        observeFailures('http'),
         Effect.catchTags({
           ExecutorTransportFailure: discoveryFailed,
           ExecutorExecutionUncertain: discoveryFailed,
@@ -2733,13 +2752,14 @@ function makeCall(
         )
         .pipe(
           Effect.map(completedCall),
+          observeFailures('http'),
           Effect.catchTag('ExecutorApprovalUnsupported', () =>
             callPaused(http, mcp, {
               references,
               tool,
               input: routed,
               effect: selected.tool.effect,
-            }),
+            }).pipe(observeFailures('http')),
           ),
           Effect.catchTags({
             ExecutorInputInvalid: ({ problems }) =>
@@ -2770,10 +2790,20 @@ function makeCall(
     (effect) =>
       effect.pipe(
         Effect.catchTags({
-          ExecutorNotReady: () => Effect.succeed(ExecutorCallOutcome.cases.NotReady.make({})),
+          ExecutorNotReady: Effect.fn('Executor.callNotReady')(function* (error) {
+            yield* Effect.annotateCurrentSpan('vivid.executor.notready', error.cause)
+            yield* Effect.logWarning(Message.executorNotReady).pipe(
+              Effect.annotateLogs({
+                [FailureAttribute.type]: error._tag,
+                'vivid.executor.notready': error.cause,
+              }),
+            )
+            return ExecutorCallOutcome.cases.NotReady.make({})
+          }),
           ExecutorRejected: ({ message }) =>
             Effect.succeed(ExecutorCallOutcome.cases.Rejected.make({ message })),
         }),
+        Effect.tap((outcome) => Effect.annotateCurrentSpan('vivid.executor.outcome', outcome._tag)),
       ),
   )
 }
@@ -2818,27 +2848,32 @@ const fromMcp = (outcome: McpCallOutcome, effect: ActionEffect) =>
 
 /** A response always names the saved request. Expiry and transport loss never start another call. */
 function makeResume(mcp: ReturnType<typeof mcpCalls>) {
-  return Effect.fn('Executor.resume')(function* ({
-    pause,
-    response,
-    effect,
-  }: Parameters<ExecutorConnectionOperations['resume']>[0]) {
-    if (pause.expiresAt <= (yield* Clock.currentTimeMillis))
-      return ExecutorCallOutcome.cases.Expired.make({})
-    const encoded = yield* encodeIntegrationResponse(response).pipe(
-      Effect.mapError(() => ExecutorResponseInvalid.make({ service: 'connections', tool: null })),
-    )
-    return fromMcp(
-      yield* mcp('resume', { requestId: pause.requestId, response: encoded }, null).pipe(
-        Effect.catchTags({
-          ExecutorExecutionUncertain: () => Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),
-          ExecutorTransportFailure: () => Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),
-          ExecutorResponseInvalid: () => Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),
-        }),
+  return Effect.fn('Executor.resume')(
+    function* ({ pause, response, effect }: Parameters<ExecutorConnectionOperations['resume']>[0]) {
+      yield* Effect.annotateCurrentSpan('vivid.executor.request', pause.requestId)
+      if (pause.expiresAt <= (yield* Clock.currentTimeMillis))
+        return ExecutorCallOutcome.cases.Expired.make({})
+      const encoded = yield* encodeIntegrationResponse(response).pipe(
+        Effect.mapError(() => ExecutorResponseInvalid.make({ service: 'connections', tool: null })),
+      )
+      return fromMcp(
+        yield* mcp('resume', { requestId: pause.requestId, response: encoded }, null).pipe(
+          observeFailures('http'),
+          Effect.catchTags({
+            ExecutorExecutionUncertain: () =>
+              Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),
+            ExecutorTransportFailure: () => Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),
+            ExecutorResponseInvalid: () => Effect.succeed(McpCallOutcome.cases.Uncertain.make({})),
+          }),
+        ),
+        effect,
+      )
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.tap((outcome) => Effect.annotateCurrentSpan('vivid.executor.outcome', outcome._tag)),
       ),
-      effect,
-    )
-  })
+  )
 }
 
 /** Active app access carries separate deletion authority. Pending requests preserve their exact
@@ -2920,6 +2955,7 @@ function makePrepareRetirement(http: ExecutorHttp) {
         )
         .pipe(
           Effect.asSome,
+          observeFailures('http'),
           Effect.catchTags({
             ExecutorNotReady: () => Effect.succeedNone,
             ExecutorResourceMissing: () => Effect.succeedNone,

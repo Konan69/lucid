@@ -1,3 +1,6 @@
+import { Logger, Tracer } from 'effect'
+import { decisionLogs } from '../observability/testlogger.ts'
+import { Message } from '../observability/messages.ts'
 import { connections } from './tables.ts'
 import { inputRequests } from '../inputs/tables.ts'
 import { actionRunnerLayer } from '../approvals/runner.ts'
@@ -38,7 +41,7 @@ import { eq } from 'drizzle-orm'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { actions } from '../actions/tables.ts'
-import { claim, operationOf } from '../actions/journal.ts'
+import { claim, operationOf, reconcile } from '../actions/journal.ts'
 import { ApprovalStore, approvalStoreLayer } from '../approvals/store.ts'
 import { InputStore } from '../inputs/store.ts'
 import { trustTestLayer, fixture } from '../approvals/testing.ts'
@@ -133,7 +136,7 @@ const restart = Effect.fn('IntegrationAsksProof.restart')(function* () {
       ['inspect', '--format', '{{index .Config.Labels "vivid.proof"}}', container],
       { encoding: 'utf8' },
     ).trim(),
-  ).toMatch(/^(integration-asks|retire-adoption)$/u)
+  ).toMatch(/^(integration-asks|retire-adoption|tracing)$/u)
   const since = new Date().toISOString()
   NodeChildProcess.execFileSync('docker', ['restart', '--timeout', '0', container])
   yield* Effect.callback<void>((resume) => {
@@ -175,8 +178,17 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
   })((it) => {
     it.effect(
       'resumes approvals and typed input, and journals lost sessions without reissuing',
-      () =>
-        Effect.gen(function* () {
+      () => {
+        const logs = decisionLogs()
+        const spans: Tracer.NativeSpan[] = []
+        const tracer = Tracer.make({
+          span(options) {
+            const span = new Tracer.NativeSpan(options)
+            spans.push(span)
+            return span
+          },
+        })
+        return Effect.gen(function* () {
           const test = yield* fixture()
           const sent = yield* Ref.make<ReadonlyArray<string>>([])
           const real = yield* Layer.build(
@@ -460,6 +472,59 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
               expect((yield* Ref.get(sent)).slice(before)).toEqual(['resume'])
               if (answered.integrationOutcome === null)
                 return expect.fail('Expected Integration answer')
+              if (ApprovalDecision.guards.AllowOnce(decision)) {
+                const checked = yield* reconcile(test.personal.person.id, started.operation)
+                expect(checked.reconciliation._tag).toBe('Applied')
+                for (const name of [
+                  'IntegrationAsks.pause',
+                  'IntegrationAsks.answer',
+                  'Actions.reconcile',
+                ]) {
+                  expect(
+                    spans.some(
+                      (span) =>
+                        span.name === name &&
+                        span.attributes.get('vivid.operation.id') === started.operation,
+                    ),
+                  ).toBe(true)
+                }
+                expect(
+                  spans.some(
+                    (span) =>
+                      span.name === 'IntegrationAsks.pause' &&
+                      span.attributes.get('vivid.operation.id') === started.operation &&
+                      span.attributes.get('vivid.connection.id') === row.id &&
+                      span.attributes.get('vivid.integration.pause') === 'Approval',
+                  ),
+                ).toBe(true)
+                expect(
+                  spans.some(
+                    (span) =>
+                      span.name === 'Actions.reconcile' &&
+                      span.attributes.get('vivid.operation.id') === started.operation &&
+                      span.attributes.get('vivid.reconciliation.outcome') === 'Applied',
+                  ),
+                ).toBe(true)
+                for (const message of [
+                  Message.integrationPause,
+                  Message.integrationAnswer,
+                  Message.reconciliation,
+                ]) {
+                  expect(
+                    logs
+                      .recorded()
+                      .some((line) => line.includes(message) && line.includes(started.operation)),
+                  ).toBe(true)
+                }
+                expect(
+                  spans.some(
+                    (span) =>
+                      span.name === 'IntegrationAsks.answer' &&
+                      span.attributes.get('vivid.connection.id') === row.id &&
+                      span.attributes.get('vivid.integration.outcome') === 'Completed',
+                  ),
+                ).toBe(true)
+              }
               expect(answered.integrationOutcome._tag).toBe(
                 ApprovalDecision.guards.AllowOnce(decision)
                   ? 'Completed'
@@ -764,7 +829,14 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
               expect(ActionReceipt.guards.Unknown(yield* decodeReceipt(saved.receipt))).toBe(true)
             }
           }).pipe(Effect.provide(complete))
-        }),
+        }).pipe(
+          Effect.updateService(
+            Logger.CurrentLoggers,
+            (loggers) => new Set([...loggers, logs.capture]),
+          ),
+          Effect.provideService(Tracer.Tracer, tracer),
+        )
+      },
       { timeout: 240_000 },
     )
   })
