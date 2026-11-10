@@ -382,7 +382,12 @@ const assertContainerPolicy = (root) => {
   const trigger = railwaySource.match(/^const builtFromMain = \{([\s\S]*?)^\} as const/m)
   assert.notEqual(trigger, null, 'the repository source must be declared once')
   assert.ok(trigger[1].includes("branch: 'main'"), 'production is built from main')
-  assert.ok(trigger[1].includes('autoUpdates: true'), 'a push to main must deploy')
+  // Releases deploy one commit and read it back (`Infra.Release`, `infra/release.ts`); Railway
+  // deploying a push by itself would put code in production that no release verified.
+  assert.ok(
+    trigger[1].includes('autoUpdates: false'),
+    'Railway must not deploy a push by itself; Infra.Release deploys the server',
+  )
   for (const { name, dockerfilePath, stages } of [
     {
       name: 'Server',
@@ -456,10 +461,11 @@ const assertRepositoryPolicy = (root) => {
   const workflowNames = NodeFS.existsSync(workflowDirectory)
     ? NodeFS.readdirSync(workflowDirectory)
     : []
+  // One deploy workflow, the one that runs `pnpm deploy:production`.
   assert.deepEqual(
     workflowNames.filter((name) => name.startsWith('deploy')),
-    [],
-    'deploy workflows must not be added while remote deployment is disabled',
+    ['deploy.yml'],
+    'production deploys only through .github/workflows/deploy.yml',
   )
   assert.ok(
     NodeFS.existsSync(NodePath.join(root, '.agents/skills/infra/SKILL.md')),

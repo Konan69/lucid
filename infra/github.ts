@@ -2,10 +2,20 @@ import * as GitHub from 'alchemy/GitHub'
 import * as Effect from 'effect/Effect'
 
 /**
- * The repository this stack is kept in. Railway builds the server and the runtime from it
- * (`infra/railway.ts`) and the Computer binaries' release below lives in it.
+ * The repository this stack is kept in, under its live name. Railway builds the server from it
+ * (`infra/railway.ts`). It was renamed from `Konan69/vivid`, which GitHub now redirects; Railway's
+ * service records `Konan69/lucid`, and Alchemy rewrites the service's trigger to whatever name is
+ * given here (`alchemy/src/Railway/ServiceProvider.ts`, `syncBranch`).
  */
-export const repository = { owner: 'Konan69', name: 'vivid' } as const
+export const repository = { owner: 'Konan69', name: 'lucid' } as const
+
+/**
+ * The name the Computer binaries' release was created under, the same repository before the
+ * rename. A changed `repository` replaces a `GitHub.Release` (`alchemy/src/GitHub/Release.ts`,
+ * `diff`), and on one physical repository that replace deletes the release and the binaries
+ * uploaded beside it, so the release keeps its recorded name until its state is moved.
+ */
+const releaseRepository = 'vivid'
 
 /**
  * The Computer binaries' release, as infrastructure. The supervisor and its engine are never
@@ -23,7 +33,7 @@ export const repository = { owner: 'Konan69', name: 'vivid' } as const
 export const computerBinariesRelease = Effect.fn('Infra.GitHub.computerBinaries')(function* () {
   return yield* GitHub.Release('computer-binaries', {
     owner: repository.owner,
-    repository: repository.name,
+    repository: releaseRepository,
     tagName: 'computer-v1',
     name: 'The Computer binaries (Windows)',
     body: [

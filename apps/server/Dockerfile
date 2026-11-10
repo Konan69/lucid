@@ -48,6 +48,10 @@ COPY apps/desktop/src/shared apps/desktop/src/shared
 # Declared here, after the slow steps, because its value changes with every commit.
 ARG RAILWAY_GIT_COMMIT_SHA=""
 RUN VIVID_COMMIT="$RAILWAY_GIT_COMMIT_SHA" pnpm --filter @vivid/web build
+# Stamp Sentry debug IDs into the web bundles and their maps here, at build time: the pre-deploy
+# step uploads these maps (`infra/predeploy.mjs`), but anything it writes is gone when it ends, and
+# the bundles this image serves must carry the same IDs as the maps it uploads. Needs no token.
+RUN node_modules/.bin/sentry-cli sourcemaps inject --ext js --ext mjs --ext map apps/web/dist
 
 # The mobile app's JavaScript, exported as an over-the-air update beside the web build, so every
 # deploy carries the app that matches its contracts (`apps/server/src/updates`). A stage of its
@@ -84,6 +88,9 @@ COPY --from=updates --chown=node:node /app/apps/mobile/updates apps/mobile/updat
 COPY --chown=node:node scripts/migrate.mjs scripts/migrate.mjs
 COPY --chown=node:node scripts/sentry-upload.mjs scripts/sentry-upload.mjs
 COPY --chown=node:node infra/cli.mjs infra/cli.mjs
+# The pre-deploy program (`preDeploy.command` in `infra/railway.ts`) and the fleet pointer reader.
+COPY --chown=node:node infra/predeploy.mjs infra/predeploy.mjs
+COPY --chown=node:node infra/pointer.ts infra/pointer.ts
 # The server names the same commit as the page it serves (`apps/server/src/config.ts` `BUILD`),
 # under a name the host does not set at run time, so the image's own value is the one read.
 ARG RAILWAY_GIT_COMMIT_SHA=""

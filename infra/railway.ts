@@ -4,9 +4,12 @@ import * as RemovalPolicy from 'alchemy/RemovalPolicy'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import type { InfrastructureEnvironment } from './env.ts'
-import { cellVariables, cellsUrl, railwayCells } from './cells.ts'
+import { CellWorker, cellVariables, cellsUrl, railwayCells } from './cells.ts'
 import { cellInputs } from './inputs.ts'
 import { repository } from './github.ts'
+import type { Input } from 'alchemy/Input'
+import type { BucketStorage } from './pointer.ts'
+import { Release, releaseSource } from './release.ts'
 import type { DeploymentTarget } from './targets.ts'
 
 /**
@@ -34,28 +37,27 @@ const privateUrl = (name: string, port: number) => `http://${name}.railway.inter
 const listenHost = '::'
 
 /**
- * The server is built by Railway from this repository, on a push to `main`
- * (Railway's GitHub trigger; `alchemy/src/Railway/ServiceProvider.ts`, `syncBranch`). Before
- * 7 October 2026 a person ran the deploy, which uploaded a working tree for Railway to build, so
- * production held `main` only when someone had remembered to. Railway builds the server's
- * Dockerfile, the server's image exports the phone
- * app's update, and the server's pre-deploy command migrates and publishes the Worker.
+ * The server is built by Railway from this repository's `main`, but only when this stack asks:
+ * Railway's own deploy on push is off (`autoUpdates: false`), and `Infra.Release`
+ * (`infra/release.ts`) deploys one exact commit and waits for it. From 7 October to 10 November
+ * 2026 Railway deployed every push by itself, this stack ran only when a person remembered, and
+ * the live settings drifted from `main` with nobody seeing it (the pre-deploy command among them,
+ * whose Worker publish never ran in 59 deploys).
  *
  * Railway's GitHub app must be able to read the repository; that was proved on a disposable
- * project before this was written. A push is deployed without this stack seeing it, so nothing
- * here can refuse one: the gate `git push` runs (`.husky/pre-push`) is what keeps a failing tree
- * off `main`. Railway can also wait for GitHub's checks, which do not run for this repository
- * today.
+ * project before this was written. Railway builds the server's Dockerfile, the image exports the
+ * phone app's update, and the pre-deploy program migrates, uploads source maps and publishes the
+ * Worker (`infra/predeploy.mjs`).
  *
- * The server is given what its image is built from as `watchPatterns` (the list below),
- * so a push that changes none of it starts no build there (Railway "Watch Paths":
- * gitignore-style, from the repository's root). `scripts/infra-verify.mjs` fails when a
- * Dockerfile copies a path its service does not watch.
+ * `watchPatterns` (the list below) no longer starts builds, since nothing deploys on push; it stays
+ * the one list of what the image is built from. `releaseSource` hashes those files into the
+ * release's identity, so a push that changes none of them releases nothing, and
+ * `scripts/infra-verify.mjs` fails when the Dockerfile copies a path the list misses.
  */
 const builtFromMain = {
   repo: `${repository.owner}/${repository.name}`,
   branch: 'main',
-  autoUpdates: true,
+  autoUpdates: false,
 } as const
 
 /**
@@ -74,6 +76,8 @@ const serverInputs = [
   '/patches/**',
   '/scripts/migrate.mjs',
   '/infra/cli.mjs',
+  '/infra/predeploy.mjs',
+  '/infra/pointer.ts',
   '/scripts/sentry-upload.mjs',
   '/package.json',
   '/pnpm-lock.yaml',
@@ -174,6 +178,39 @@ const computerAccess = ({ computer }: InfrastructureEnvironment) => ({
   ...whenSet('VIVID_BOAT_SIZE', computer.size),
   ...whenSet('VIVID_BOAT_LIFETIME_SECONDS', computer.lifetimeSeconds),
   ...whenSet('VIVID_BOAT_MACHINE', computer.machine),
+})
+
+/**
+ * The server's code reaches production only here: one release of this checkout's commit, carrying
+ * the Worker version the pre-deploy step must find in its own bundle and leave selected
+ * (`infra/predeploy.mjs`). The version is its own `Railway.Variable`, so Railway stores it without
+ * a deploy (`skipDeploys`) and drift reads it back.
+ */
+const releaseServer = Effect.fn('releaseServer')(function* (
+  project: Railway.Project,
+  server: Railway.Service,
+  worker: CellWorker,
+  fleet: Input<BucketStorage>,
+) {
+  const workerVersion = yield* Railway.Variable('CellWorkerVersion', {
+    project,
+    service: server,
+    name: 'VIVID_CELL_WORKER_VERSION',
+    value: worker.version,
+  })
+  const source = releaseSource(serverInputs)
+  yield* Release('ServerRelease', {
+    serviceId: server.serviceId,
+    environmentId: server.environmentId,
+    url: server.url,
+    commit: source.commit,
+    inputs: source.inputs,
+    cellWorkerVersion: worker.version,
+    versionVariable: workerVersion.digest,
+    storage: fleet,
+    /** The server image builds in about ten minutes; Alchemy's own wait stops at 90 seconds. */
+    timeoutMinutes: 25,
+  })
 })
 
 /**
@@ -310,6 +347,17 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
 
   const storage = yield* railwayCells(project, target)
 
+  /** The Worker's bindings, given once to the server and once to the Worker's identity below. */
+  const cellVars = cellVariables(environment, privateUrl(serviceNames.server, ports.server))
+  const fleet = {
+    bucket: storage.CELLD_BUCKET,
+    endpoint: storage.S3_ENDPOINT,
+    region: storage.AWS_REGION,
+    accessKeyId: storage.AWS_ACCESS_KEY_ID,
+    secretAccessKey: storage.AWS_SECRET_ACCESS_KEY,
+  }
+  const worker = yield* CellWorker('CellWorker', { vars: cellVars, storage: fleet })
+
   /** The server keeps product PostgreSQL and relays private runtime calls to the native fleet. */
   const server = yield* Railway.Service('Server', {
     project,
@@ -323,14 +371,11 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     /** Pin the image entry: omitting this prop preserves an existing Railway override. */
     startCommand: 'env -u SENTRY_AUTH_TOKEN pnpm --filter @vivid/server start',
     /**
-     * Auth tables, then product tables, in the order `scripts/migrate.mjs` owns. Railway runs this
-     * in the freshly built image before the new server takes traffic; a failure keeps the previous
-     * deployment serving. The matching Worker is published before the new server takes traffic.
+     * One program, no shell: migrations, source maps, then the Worker with its pointer read back
+     * (`infra/predeploy.mjs`). Railway runs it in the freshly built image before the new server
+     * takes traffic; a failure keeps the previous deployment serving and fails the release.
      */
-    preDeploy: {
-      command:
-        'node scripts/migrate.mjs server && node scripts/sentry-upload.mjs vivid-mobile apps/mobile/updates && node apps/cells/scripts/build.mjs deploy',
-    },
+    preDeploy: { command: 'node infra/predeploy.mjs' },
     env: {
       DATABASE_URL: databaseUrl,
       AUTH_SECRET: environment.authSecret,
@@ -342,7 +387,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
        */
       PUBLIC_URL: 'https://${{RAILWAY_PUBLIC_DOMAIN}}',
       ...storage,
-      VIVID_CELL_VARS: cellVariables(environment, privateUrl(serviceNames.server, ports.server)),
+      VIVID_CELL_VARS: cellVars,
       VIVID_RUNTIME_URL: cellsUrl,
       VIVID_RUNTIME_TOKEN: environment.runtimeToken,
       OPENROUTER_API_KEY: environment.openRouterKey,
@@ -361,5 +406,6 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     },
   })
 
+  yield* releaseServer(project, server, worker, fleet)
   return { serverUrl: server.url }
 })
