@@ -1,3 +1,4 @@
+import { inputRequests } from '../inputs/tables.ts'
 import { actionRunnerLayer } from '../approvals/runner.ts'
 import { DeviceRegistry } from '../computers/device.ts'
 import { ComputerStore } from '../computers/store.ts'
@@ -28,6 +29,7 @@ import {
   Option,
   Predicate,
   Ref,
+  Result,
   Schema,
 } from 'effect'
 import { HttpClient } from 'effect/http'
@@ -562,6 +564,34 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
             })
             if (!ToolOutcome.guards.InputRequired(asked.outcome))
               return expect.fail('Expected input before Connection removal')
+            // An unrelated caller cannot recover another Person's in-flight answer before winning a claim.
+            yield* database.run(
+              database
+                .update(inputRequests)
+                .set({ status: 'answering' })
+                .where(eq(inputRequests.id, asked.outcome.requestId)),
+            )
+            const denied = yield* inputs
+              .answerIntegration(test.other, {
+                id: asked.outcome.requestId,
+                response: { action: 'decline' },
+              })
+              .pipe(Effect.result)
+            expect(Result.isFailure(denied)).toBe(true)
+            const [stillHeld] = yield* database.run(
+              database
+                .select()
+                .from(inputRequests)
+                .where(eq(inputRequests.id, asked.outcome.requestId)),
+            )
+            if (stillHeld === undefined) return expect.fail('Expected the addressed request')
+            expect(stillHeld.status).toBe('answering')
+            yield* database.run(
+              database
+                .update(inputRequests)
+                .set({ status: 'waiting' })
+                .where(eq(inputRequests.id, asked.outcome.requestId)),
+            )
             yield* store.remove(test.personal, doomedRow.id)
             const uncertain = yield* inputs.answerIntegration(test.personal, {
               id: asked.outcome.requestId,
