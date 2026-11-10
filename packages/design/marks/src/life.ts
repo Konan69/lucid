@@ -62,9 +62,6 @@ interface FaceSequence {
   readonly loop: readonly [FacePose, ...Array<FacePose>]
 }
 
-/** The reference's cross-fade between poses (`CROSSFADE_MS`, `GXe=300`). */
-const FACE_CROSSFADE_MS = 300
-
 /** The reference's floor (`MIN_HOLD_MS`, `N3t=1500`): no pose but a blink is held for less. */
 const FACE_MIN_HOLD_MS = 1500
 
