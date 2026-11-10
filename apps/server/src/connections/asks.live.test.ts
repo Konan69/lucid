@@ -249,6 +249,7 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
                   effect: 'write',
                   policy: DisplayCallPolicy.cases.Press.make({}),
                   operation: Option.some(operation),
+                  summary: 'Record one approved effect with the proof Integration',
                 }),
               }
             })
@@ -639,6 +640,7 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
               effect: 'write',
               operation: Option.some(failedOperation),
               policy: DisplayCallPolicy.cases.Press.make({}),
+              summary: 'Record one approved effect with the proof Integration',
             })
             if (!ToolOutcome.guards.ApprovalRequired(asked.outcome))
               return expect.fail('Expected approval before input')

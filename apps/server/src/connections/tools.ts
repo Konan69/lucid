@@ -422,6 +422,30 @@ const claimPausedRead = Effect.fn('Connections.claimPausedRead')(function* (
   return Claim.guards.Answered(claimed) ? Option.some(claimed.receipt) : Option.none()
 })
 
+/**
+ * The head of an Integration's own Approval or question, as the Person reads it: what the tool
+ * says it does (its declared title, else the first sentence of its description) and the account
+ * it acts through, "Send a message with Gmail (Work)". Both come from the Integration and the
+ * Person; nothing here is model text. A tool that declares neither is named by its account alone.
+ */
+const pausedSummary = (tool: typeof ExecutorTool.Type, account: string): string =>
+  Option.match(
+    Option.orElse(tool.title, () => firstSentence(tool.description)),
+    {
+      onNone: () => `Use ${account}`,
+      onSome: (words) => `${words} with ${account}`,
+    },
+  )
+
+/** A description's first sentence without its full stop, when it has words at all. */
+const firstSentence = (description: string): Option.Option<string> =>
+  Option.filter(
+    Option.map(Arr.head(description.trim().split(/(?<=[.!?])\s/u)), (sentence) =>
+      sentence.replace(/[.!?]$/u, '').trim(),
+    ),
+    (sentence) => sentence.length > 0,
+  )
+
 /** Save the remote question under its original operation; a display press without one cannot offer a continuation. */
 const pauseConnection = Effect.fn('Connections.pause')(function* (
   actor: Actor,
@@ -431,6 +455,7 @@ const pauseConnection = Effect.fn('Connections.pause')(function* (
     readonly effect: ActionEffect
     readonly operation: Option.Option<ActionOperationId>
     readonly pause: import('@vivid/contracts').IntegrationPause
+    readonly summary: string
   },
 ) {
   if (Option.isNone(input.operation))
@@ -443,7 +468,7 @@ const pauseConnection = Effect.fn('Connections.pause')(function* (
     .pause(
       actor,
       ProposedAction.make({
-        summary: `The Integration asks to run ${target.tool}`,
+        summary: input.summary,
         rationale: input.pause.form.message,
         effect: input.effect,
         target,
@@ -472,9 +497,11 @@ export const runConnection = Effect.fn('Connections.run')(
       readonly effect: ActionEffect
       readonly operation: Option.Option<ActionOperationId>
       readonly policy: DisplayCallPolicy
+      /** What the call does, in a sentence the Person reads, should the Integration ask first. */
+      readonly summary: string
     },
   ) {
-    const { effect, operation } = call
+    const { effect, operation, summary } = call
     const refusal = yield* permissionRefusal(row)
     if (Option.isSome(refusal)) return yield* notRead(refusal.value)
     const sending =
@@ -529,7 +556,7 @@ export const runConnection = Effect.fn('Connections.run')(
                   'This Integration needs the Person before it can continue. Ask in the Thread.',
               }),
             ),
-          Press: () => pauseConnection(actor, row, target, { effect, operation, pause }),
+          Press: () => pauseConnection(actor, row, target, { effect, operation, pause, summary }),
         }),
       Expired: () =>
         unknownConnection(
@@ -880,6 +907,7 @@ const sendJournaled = Effect.fn('Connections.sendJournaled')(function* (
   call: {
     readonly effect: ActionEffect
     readonly journal: { readonly id: ActionOperationId; readonly threadId: ThreadId }
+    readonly summary: string
   },
 ) {
   const operation = call.journal
@@ -895,6 +923,7 @@ const sendJournaled = Effect.fn('Connections.sendJournaled')(function* (
     effect: call.effect,
     operation: Option.some(operation.id),
     policy: DisplayCallPolicy.cases.Press.make({}),
+    summary: call.summary,
   }).pipe(Effect.tapError(() => release(operation.id)))
   yield* ToolOutcome.match(result.outcome, {
     Accepted: ({ receipt }) => (receipt === null ? Effect.void : settle(receipt)),
@@ -1010,8 +1039,14 @@ const useToolAs = Effect.fn('Connections.useTool')(function* (
             effect: tool.effect,
             operation: Option.map(prospective, (value) => value.id),
             policy,
+            summary: pausedSummary(tool, target.account),
           }),
-        onSome: (journal) => sendJournaled(actor, row, target, { effect: tool.effect, journal }),
+        onSome: (journal) =>
+          sendJournaled(actor, row, target, {
+            effect: tool.effect,
+            journal,
+            summary: pausedSummary(tool, target.account),
+          }),
       }),
   }).pipe(
     Effect.catchTag('ExecutorApprovalUnsupported', (error) => Effect.fail(executorFailure(error))),
@@ -1104,7 +1139,12 @@ export const useDisplayTool = Effect.fn('Connections.useDisplayTool')(function* 
       tool: tool.name,
       input: request.input,
     }),
-    { effect: tool.effect, operation: Option.none(), policy: displayCallPolicy(request.kind) },
+    {
+      effect: tool.effect,
+      operation: Option.none(),
+      policy: displayCallPolicy(request.kind),
+      summary: pausedSummary(tool, account.account),
+    },
   ).pipe(
     Effect.catchTag('ExecutorApprovalUnsupported', () =>
       Effect.fail(new DisplayApprovalUnsupported({})),
@@ -1199,6 +1239,7 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
       effect: tool.effect,
       operation: input.operation,
       policy: DisplayCallPolicy.cases.Press.make({}),
+      summary: pausedSummary(tool, input.target.account),
     })
     yield* recordTimerOutcome(actor, input.target, outcome)
     return actionOutcome(outcome)
