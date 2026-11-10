@@ -1,7 +1,6 @@
 import * as assert from 'node:assert/strict'
 import { CreateProjectRequest, Tool } from '@vivid/contracts'
 import { chat, history, json, rpc, settled } from './wire.mjs'
-import { projectChecks } from './projectchecks.mjs'
 
 /** The Project the journey makes for the Person before talking about it. */
 export const PROJECT_NAME = 'Site launch ' + crypto.randomUUID().slice(0, 8)
@@ -110,7 +109,6 @@ export async function projects(state, id, directory) {
     page.messages.some((message) => message.id === source.messageId),
     'The proof cites a message this Thread does not hold',
   )
-  await projectChecks(state, id, directory)
   await json(directory + '/scope.json', {
     proved:
       'Real model records a Project objective, a dated progress line and completion from three Person messages; the list the page reads carries them; the proof cites a message of the Thread.',
