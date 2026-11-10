@@ -35,7 +35,7 @@ This is the first draft for UI-owner review. The executable source is the single
 ^Card$                                        allow: layout, spacing
 
 # Small visual primitives own their treatment; callers place them.
-^(Avatar|PersonAvatar|Face|StatusLabel|StatusDot)$ allow: layout
+^(Avatar|PersonAvatar|Face|StatusLabel)$ allow: layout
 
 # All other discovered design-system components.
 default                                      allow: layout

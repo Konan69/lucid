@@ -34,8 +34,7 @@ export const waitingOf = (owed: ReadonlyArray<Owed>): ReadonlyArray<Waiting> =>
   owed.filter(isWaiting)
 
 /** The last chase and how many there were, for a record Vivid has chased. */
-export const nudgeOf = (record: Waiting) =>
-  Option.liftPredicate(record.state, OwedState.guards.Nudged)
+const nudgeOf = (record: Waiting) => Option.liftPredicate(record.state, OwedState.guards.Nudged)
 
 /** How the Person closes a record from its row: they have it, or they stopped caring. */
 export const Closing = Schema.TaggedUnion({ Resolve: {}, Drop: {} })
@@ -89,7 +88,7 @@ export class Closer extends Context.Service<Closer, ClosingService>()('@vivid/st
  * Where a press on a record stands. `Sending` takes no second press; `Sent` keeps the row folded
  * until the list drops the record; `Unsent` puts it back, saying so, to be pressed again.
  */
-export const CloseStates = Machine.state({
+const CloseStates = Machine.state({
   states: {
     Idle: {},
     Sending: { fields: Delivery.fields },
@@ -123,7 +122,7 @@ const deliveryOf = (event: Delivery): Delivery => ({
  * delivery they answer and are declined when it is not the current one (the 0.46 queued-outcome
  * rule, `feed.ts` `PressMachine`).
  */
-export const CloseMachine = Machine.make({
+const CloseMachine = Machine.make({
   id: 'OwedClose',
   root: CloseStates,
   events: CloseEvents,
@@ -184,7 +183,7 @@ export type CloseAtoms = ReturnType<typeof makeClose>
  * ahead. Where the device is somewhere the deadline falls on another day (`here`), the quiet line
  * also says when that is where the Person is now, so both zones are in front of them.
  */
-export function makeOwedWords(person: Reader, here: Reader) {
+function makeOwedWords(person: Reader, here: Reader) {
   const weekday = new Intl.DateTimeFormat(person.locale, {
     timeZone: person.timeZone,
     weekday: 'long',

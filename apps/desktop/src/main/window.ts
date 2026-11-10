@@ -22,14 +22,14 @@ export const RendererSource = Schema.TaggedUnion({
 export type RendererSource = typeof RendererSource.Type
 
 /** Electron could not load the selected renderer resource. */
-export class RendererLoadFailed extends Schema.TaggedError<RendererLoadFailed>()(
+class RendererLoadFailed extends Schema.TaggedError<RendererLoadFailed>()(
   'RendererLoadFailed',
   { source: Schema.String },
   { title: 'Desktop renderer failed to load' },
 ) {}
 
 /** Electron could not hand an allowed external URL to the operating system. */
-export class ExternalUrlOpenFailed extends Schema.TaggedError<ExternalUrlOpenFailed>()(
+class ExternalUrlOpenFailed extends Schema.TaggedError<ExternalUrlOpenFailed>()(
   'ExternalUrlOpenFailed',
   { url: Schema.String },
   { title: 'External URL could not be opened' },

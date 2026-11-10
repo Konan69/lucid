@@ -55,9 +55,9 @@ import {
  */
 
 /** The supervisor's file name, as vendored (`vendor/computer/README.md`). */
-export const COMPUTER_EXECUTABLE = 'codex-computer-use.exe'
+const COMPUTER_EXECUTABLE = 'codex-computer-use.exe'
 /** The engine's file name and where it sits beside the supervisor, as the reference lays it out. */
-export const COMPUTER_ENGINE = 'swift/x64/codex-computer-use-swift.exe'
+const COMPUTER_ENGINE = 'swift/x64/codex-computer-use-swift.exe'
 
 /**
  * How long past its own budget a request may run before the desktop stops waiting. The
@@ -116,7 +116,7 @@ export const locateComputer = (input: {
 }
 
 /** The Computer could not be started at all. Nothing ran. */
-export class ComputerUnavailable extends Schema.TaggedError<ComputerUnavailable>()(
+class ComputerUnavailable extends Schema.TaggedError<ComputerUnavailable>()(
   'ComputerUnavailable',
   {},
   { title: 'Vivid’s Computer could not be started' },

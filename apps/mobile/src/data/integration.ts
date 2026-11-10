@@ -32,7 +32,7 @@ export type Authorization = typeof ConnectionAuthorization.Type
  * opened is also said at the top of the page (`refusalSentence`). A key the service did not
  * accept is said by the service's name.
  */
-export const pressedWords = (standing: connecting.Standing): Option.Option<string> =>
+const pressedWords = (standing: connecting.Standing): Option.Option<string> =>
   connecting.Standing.match(standing, {
     Still: () => Option.none(),
     Starting: () => Option.some('Connecting…'),

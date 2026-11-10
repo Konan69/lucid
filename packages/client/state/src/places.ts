@@ -118,7 +118,7 @@ const zoomFor = (points: ReadonlyArray<{ readonly x: number; readonly y: number 
 }
 
 /** One tile image: its two layers' addresses and where it sits, in percent of the frame. */
-export interface Tile {
+interface Tile {
   readonly key: string
   readonly base: string
   readonly names: string

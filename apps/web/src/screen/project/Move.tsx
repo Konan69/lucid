@@ -21,7 +21,7 @@ import { Mark } from './Mark'
  * Files a Thread in a Project, or takes it out of one, and shows it before the server has
  * confirmed. A refusal puts the Thread back where it was and says so.
  */
-export function fileThread(thread: Thread, projectId: ProjectId | null) {
+function fileThread(thread: Thread, projectId: ProjectId | null) {
   void act(
     orSay(
       changing(

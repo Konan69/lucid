@@ -37,7 +37,7 @@ export const Why = Schema.TaggedUnion({
 export type Why = typeof Why.Type
 
 /** A failure of one attempt's work, carrying the attempt so a late one is declined. */
-export class Stopped extends Schema.TaggedError<Stopped>()(
+class Stopped extends Schema.TaggedError<Stopped>()(
   'DictationStopped',
   { attempt: Schema.String, why: Why },
   { title: 'DictationStopped' },
@@ -68,7 +68,7 @@ export class Dictation extends Context.Service<Dictation, DictationService>()(
 /** One attempt: its id (made by the presser) and the composer it writes into. */
 const attempt = { attempt: Schema.String, owner: Schema.String }
 
-export const DictatingStates = Machine.state({
+const DictatingStates = Machine.state({
   states: {
     /** Nothing held. The microphone and any recording are let go here. */
     Idle: { fields: {} },
@@ -120,7 +120,7 @@ const current = ({
   readonly event: { readonly attempt: string }
 }) => state.attempt === event.attempt
 
-export const DictatingMachine = Machine.make({
+const DictatingMachine = Machine.make({
   id: 'Dictating',
   root: DictatingStates,
   events: DictatingEvents,
@@ -317,4 +317,3 @@ export const LONGEST_SECONDS = 5 * 60
 /** Creates the session's dictation machine in the app registry with the surface's microphone. */
 export const makeDictating = (services: Layer.Layer<Dictation>) =>
   AtomMachine.bind(Atom.runtime(services)).make(DictatingMachine)
-export type DictatingAtoms = ReturnType<typeof makeDictating>

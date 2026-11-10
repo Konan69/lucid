@@ -123,7 +123,7 @@ export class PageRefused extends Schema.TaggedError<PageRefused>()(
 ) {}
 
 /** The form for a key could not be brought up: there was nowhere to show it. */
-export class FormRefused extends Schema.TaggedError<FormRefused>()(
+class FormRefused extends Schema.TaggedError<FormRefused>()(
   'FormRefused',
   {},
   { title: 'FormRefused' },
@@ -273,7 +273,7 @@ export const ConnectingEvents = Machine.events({
 })
 
 /** What an attempt tells whoever is listening when it ends. It is not kept: it is said once. */
-export const ConnectingEmitted = Machine.emittedEvents({
+const ConnectingEmitted = Machine.emittedEvents({
   /** An account was connected. `card` is the card to carry on from, when one is still owed it. */
   Connected: { pressed: Pressed, card: Schema.Option(Schema.String), connection: Connection },
 })
@@ -347,7 +347,7 @@ interface Arrived {
   readonly at: number
 }
 
-export const Connecting = Machine.make({
+const Connecting = Machine.make({
   id: 'Connecting',
   root: ConnectingStates,
   events: ConnectingEvents,

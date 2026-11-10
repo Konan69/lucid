@@ -49,7 +49,7 @@ interface Able {
   known: Option.Option<boolean>
 }
 const able: Able = { known: Option.none() }
-export const canDictate = (): boolean =>
+const canDictate = (): boolean =>
   Option.getOrElse(able.known, () => {
     const now = Option.exists(transcriber, (system) => system.isAvailable(language()))
     able.known = Option.some(now)
@@ -302,13 +302,13 @@ const machine = dictating.makeDictating(
 const EMPTY = dictating.Reading.cases.Ready.make({})
 
 /** How dictation stands for one composer, by its draft's place. */
-export const useDictation = (owner: string): dictating.Reading => {
+const useDictation = (owner: string): dictating.Reading => {
   const result = useAtomValue(machine.result)
   return AsyncResult.isSuccess(result) ? dictating.readingOf(result.value, owner) : EMPTY
 }
 
 /** The microphone tapped in a composer: start, or stop and write what was said. */
-export const tapMicrophone = (data: LiveData, owner: string, reading: dictating.Reading) =>
+const tapMicrophone = (data: LiveData, owner: string, reading: dictating.Reading) =>
   dictating.Reading.match(reading, {
     Ready: () =>
       data.registry.set(
@@ -329,7 +329,7 @@ export const tapMicrophone = (data: LiveData, owner: string, reading: dictating.
   })
 
 /** Throws away what is being said, or puts away the word about a refusal. */
-export const dropDictation = (data: LiveData, reading: dictating.Reading) =>
+const dropDictation = (data: LiveData, reading: dictating.Reading) =>
   dictating.Reading.match(reading, {
     Ready: () => undefined,
     Elsewhere: () => undefined,

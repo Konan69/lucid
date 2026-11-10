@@ -268,7 +268,7 @@ export class Stopper extends Context.Service<Stopper, StoppingService>()(
  * server's answer (a Stop that did not take keeps its warning); `Unsent` puts the row back, saying
  * so, to be pressed again.
  */
-export const StopStates = Machine.state({
+const StopStates = Machine.state({
   states: {
     Idle: {},
     Sending: { fields: Delivery.fields },
@@ -288,7 +288,7 @@ const deliveryOf = (event: Delivery): Delivery => ({ work: event.work, attempt: 
  * One piece of work's Stop. `Sending` is entered again from `Unsent`, so both outcomes carry the
  * attempt they answer and are declined when it is not the current one (`todos.ts` `CloseMachine`).
  */
-export const StopMachine = Machine.make({
+const StopMachine = Machine.make({
   id: 'WorkStop',
   root: StopStates,
   events: StopEvents,
@@ -375,7 +375,7 @@ export const rowStandingOf = (state: StopState): RowStanding =>
  * press; `Reported` keeps the server's line per piece until the Person dismisses it; `Unsent`
  * says the call did not get through and offers it again.
  */
-export const StopAllStates = Machine.state({
+const StopAllStates = Machine.state({
   states: {
     Idle: {},
     Armed: {},
@@ -393,7 +393,7 @@ export const StopAllEvents = Machine.events({
   Dismiss: {},
 })
 
-export const StopAllMachine = Machine.make({
+const StopAllMachine = Machine.make({
   id: 'WorkStopAll',
   root: StopAllStates,
   events: StopAllEvents,

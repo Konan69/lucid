@@ -139,7 +139,7 @@ export interface LiveQuery<Value> {
  *   and the server's first answer replaces it within a moment of the socket opening.
  * - `server`: the server's own answer.
  */
-export type Origin = 'nothing' | 'device' | 'server'
+type Origin = 'nothing' | 'device' | 'server'
 
 /**
  * A live query whose last answer a device keeps between launches (`snapshot.ts`), so the first
@@ -158,9 +158,6 @@ export interface KeptQuery<Value> extends LiveQuery<Value> {
   readonly seed: Atom.Writable<Option.Option<Value>>
   readonly origin: Atom.Atom<Origin>
 }
-
-/** What `useLive` returns for a query, for code that names that type. */
-export type LiveStateOf<Query> = Query extends LiveQuery<infer Value> ? LiveState<Value> : never
 
 /** Every live query of one kind, one per argument. */
 export interface LiveFamily<Argument, Value> {

@@ -21,21 +21,21 @@ const mediaTypes = new Map([
 ])
 
 /** A missing packaged asset is distinct from a server being unreachable. */
-export class RendererAssetUnavailable extends Schema.TaggedError<RendererAssetUnavailable>()(
+class RendererAssetUnavailable extends Schema.TaggedError<RendererAssetUnavailable>()(
   'RendererAssetUnavailable',
   {},
   { title: 'Packaged renderer asset is unavailable' },
 ) {}
 
 /** Malformed percent escapes must not throw out of an Electron protocol callback. */
-export class RendererPathInvalid extends Schema.TaggedError<RendererPathInvalid>()(
+class RendererPathInvalid extends Schema.TaggedError<RendererPathInvalid>()(
   'RendererPathInvalid',
   {},
   { title: 'Packaged renderer path is invalid' },
 ) {}
 
 /** Resolve only contained assets; extensionless document navigation uses the SPA entry point. */
-export const rendererAssetPath = Effect.fn('DesktopRenderer.assetPath')(function* (
+const rendererAssetPath = Effect.fn('DesktopRenderer.assetPath')(function* (
   root: string,
   pathname: string,
   navigation: boolean,

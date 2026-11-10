@@ -156,7 +156,7 @@ export function useOpenThread(): (id: ThreadId) => void {
  * showed the Thread Home still held, when the Person had come from the drawer and expected it back
  * (the owner, 24 October 2026), and on these pages the drawer could not be dragged open at all.
  */
-export const DRAWER_PAGES = [
+const DRAWER_PAGES = [
   'Feed',
   'Library',
   'Notifications',

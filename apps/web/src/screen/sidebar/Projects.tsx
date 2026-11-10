@@ -12,7 +12,7 @@ import { Mark } from '../project/Mark'
 import { CAPTION, FULL, HOVER, ROW } from './rows'
 
 /** Going to a Project is scoping to it: its page opens and the Thread list narrows to it. */
-export function openProject(id: ProjectId) {
+function openProject(id: ProjectId) {
   scope.enter(id)
   void router.navigate({ to: '/projects/{-$id}', params: { id: id } })
 }

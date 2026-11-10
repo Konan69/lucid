@@ -104,7 +104,7 @@ const scopeWord = (scope: OAuthScope) =>
   Option.getOrElse(Option.fromUndefinedOr(SCOPE_WORDS.get(scope)), () => scope.replace(GOOGLE, ''))
 
 /** Each scope once, in words, in the order the service listed them. */
-export const scopeWords = (scopes: ReadonlyArray<OAuthScope>): ReadonlyArray<string> =>
+const scopeWords = (scopes: ReadonlyArray<OAuthScope>): ReadonlyArray<string> =>
   Arr.dedupe(scopes.map(scopeWord))
 
 /**
@@ -167,7 +167,7 @@ export const grantedOf = (grant: ConnectionGrant): Granted =>
 // ── What Vivid may read through it ─────────────────────────────────────────
 
 /** Each kind of data a Person can keep from Vivid on one account, in their words. */
-export const DATA_CLASS = {
+const DATA_CLASS = {
   GmailDrafts: { name: 'Drafts', detail: 'Mail you have written and not sent' },
   CalendarEventSchedules: {
     name: 'Event times',

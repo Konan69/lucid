@@ -26,7 +26,7 @@ import { Effect } from 'effect'
  * and stop where they are left. When one arrives, port Grok Bot's snappy spring
  * (`SPRINGS[1]`: stiffness 500, damping 25, mass 1).
  */
-export const MOTION = {
+const MOTION = {
   /** Something arriving in a column: a Message, a card, a row. Class `motion-enter`. */
   enter: { duration: '--dur-enter', easing: '--ease-out-expo' },
   /** Something leaving because the Person sent it away. Faster than it came. */

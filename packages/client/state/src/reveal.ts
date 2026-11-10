@@ -1,7 +1,7 @@
 /** Pace incoming reply chunks in the client so durable writes never wait for animation.
  * The backlog sets the character rate, bounded below by `floor`, and drains within `settleMs`.
  * Hidden pages skip pacing because nobody can see it and their timers are throttled. */
-export const REVEAL = {
+const REVEAL = {
   /** The slowest the words come out, in characters a second, when little is waiting. */
   floor: 40,
   /** How long a backlog takes to drain, in milliseconds: a little over the gap between lumps. */
@@ -14,7 +14,7 @@ export const REVEAL = {
  * How many characters are shown after `elapsedMs` more, given how many were shown and how many
  * there are. Always at least one more while any are waiting, and never more than there are.
  */
-export const paced = (at: {
+const paced = (at: {
   readonly shown: number
   readonly total: number
   readonly elapsedMs: number

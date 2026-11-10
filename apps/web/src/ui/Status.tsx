@@ -3,7 +3,7 @@ import { cn } from './cn'
 
 export type ConversationStatus = 'ready' | 'working' | 'attention' | 'approve' | 'failed' | 'done'
 
-export const STATUS = {
+const STATUS = {
   working: {
     text: 'text-working',
     dot: 'bg-working',
@@ -62,20 +62,5 @@ export function StatusLabel({
       {s.label}
       {children}
     </span>
-  )
-}
-
-/** The mark a slim row leads with. */
-export function StatusDot({
-  status,
-  className,
-}: {
-  status: ConversationStatus
-  className?: string
-}) {
-  if (status === 'ready') return <i className={cn('size-1.5 rounded-full bg-line-4', className)} />
-  const s = STATUS[status]
-  return (
-    <i className={cn('size-2 rounded-full', s.dot, s.pulse && 'animate-status-pulse', className)} />
   )
 }

@@ -1,15 +1,9 @@
 import { MenuView, type MenuAction, type MenuComponentRef } from '@react-native-menu/menu'
 import { Platform, StyleSheet, View, type PressableStateCallbackType } from 'react-native'
-import { useState, type ComponentProps, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { hold } from '../data/haptics'
 import { useTheme } from '../theme'
 import { Press } from '../ui/motion/Pressable'
-
-/** The system's menu in the app's palette, opened by a tap on what it wraps. */
-export function ControlPillMenu(props: ComponentProps<typeof MenuView>) {
-  const { dark } = useTheme()
-  return <MenuView {...props} themeVariant={dark ? 'dark' : 'light'} />
-}
 
 /**
  * How long a finger rests on a row before the row is being held, not tapped. It is a little

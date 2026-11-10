@@ -164,7 +164,7 @@ const ROOTS = [
  * Every address and path in a report goes through this: a frame's file and module, a debug
  * image's file, the page's address and a breadcrumb's.
  */
-export const place = (address: string): string =>
+const place = (address: string): string =>
   ROOTS.reduce(
     (path, root) => path.replace(root, ''),
     withoutQuery(address).replaceAll('\\', '/').replace(ORIGIN, ''),
@@ -381,7 +381,7 @@ const isEvent = (item: EventEnvelope[1][number]): item is EventItem => item[0].t
  * are left behind here, whatever switched them on. The header's `trace` goes too: it names the
  * screen a trace started on, and Vivid sends no traces.
  */
-export const outbound = (envelope: Envelope): Option.Option<EventEnvelope> => {
+const outbound = (envelope: Envelope): Option.Option<EventEnvelope> => {
   if (!carriesEvent(envelope)) return Option.none()
   const [headers, items] = envelope
   const reports: Array<EventItem> = []

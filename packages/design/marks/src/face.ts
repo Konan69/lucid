@@ -5,12 +5,12 @@
  * from here rather than each holding its own copy of the multipliers.
  */
 
-export const FACE_MOODS = ['neutral', 'happy', 'thinking', 'asleep'] as const
+const FACE_MOODS = ['neutral', 'happy', 'thinking', 'asleep'] as const
 
 export type FaceMood = (typeof FACE_MOODS)[number]
 
 /** Head tilt per mood, in degrees: thinking leans back, happy leans in, the rest sit level. */
-export const FACE_TILT_DEGREES = {
+const FACE_TILT_DEGREES = {
   neutral: 0,
   happy: 4,
   thinking: -8,
@@ -39,7 +39,7 @@ const EYE_TOP_FRACTION = 0.38
  * rounded square, pill, triangle, hexagon, cloud, drop. That app's own outlines could not be
  * read from the screenshot at path level, so these are drawn here to the same eight forms.
  */
-export const FACE_OUTLINES = [
+const FACE_OUTLINES = [
   'circle',
   'blob',
   'square',

@@ -21,8 +21,7 @@ export type Asked =
   | { readonly id: ArtifactId }
 
 /** The key one Artifact's live query is kept under. */
-export const askedKey = (asked: Asked) =>
-  'version' in asked ? `${asked.id}@${asked.version}` : asked.id
+const askedKey = (asked: Asked) => ('version' in asked ? `${asked.id}@${asked.version}` : asked.id)
 
 /**
  * The session's document editor. A save is a new version made from the one the Person started

@@ -23,7 +23,7 @@ const daysBetween = (earlier: number, later: number): number =>
   Math.round((startOfDay(later) - startOfDay(earlier)) / DAY)
 
 /** The quiet bands, in the order they are drawn. */
-export const BANDS = ['Today', 'Yesterday', 'This week', 'Earlier'] as const
+const BANDS = ['Today', 'Yesterday', 'This week', 'Earlier'] as const
 export type Band = (typeof BANDS)[number]
 
 /** Which quiet band a Thread belongs in, by when it last moved. */

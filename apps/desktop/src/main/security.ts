@@ -33,11 +33,7 @@ export function isTrustedDocument(url: string, server: ServerSettings, chooser: 
 }
 
 /** Refuse malformed or foreign redirect destinations before any redirected bytes are sent. */
-export function isAllowedRedirect(
-  from: string,
-  destination: string,
-  server: ServerSettings,
-): boolean {
+function isAllowedRedirect(from: string, destination: string, server: ServerSettings): boolean {
   if (!isAppRequest(from, server) || !URL.canParse(destination, from)) return false
   return isAppRequest(new URL(destination, from).href, server)
 }

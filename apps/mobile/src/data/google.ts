@@ -69,7 +69,7 @@ export class TradeUnanswered extends Schema.TaggedError<TradeUnanswered>()(
 ) {}
 
 /** The answer to one trade request, unread: whether the server said yes, and the body it sent. */
-export interface Answer {
+interface Answer {
   readonly ok: boolean
   readonly body: string
 }
@@ -135,7 +135,7 @@ export const Standing = Data.taggedEnum<Standing>()
  * - `SignInTradeRefused`, `SignInTradeUnanswered`, `SignInUnkept`: the trade, or keeping its token.
  * - `SignInPhoneUnable`: the phone could not run its part.
  */
-export type SignInLoss =
+type SignInLoss =
   | 'SignInSheetClosed'
   | 'SignInReturnUnread'
   | 'SignInReturnForeign'
@@ -171,7 +171,7 @@ const URL_SAFE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
  * The bytes are read as one run of bits, six at a time. `held` keeps the bits not yet written
  * (never more than five after each byte), and a last short group is padded with zero bits.
  */
-export const base64url = (bytes: Uint8Array): string => {
+const base64url = (bytes: Uint8Array): string => {
   let text = ''
   let held = 0
   let bits = 0
@@ -193,7 +193,7 @@ export const base64url = (bytes: Uint8Array): string => {
  * PKCE's `S256` form (RFC 7636 section 4.2), which the server computes over the secret's text
  * and compares.
  */
-export const challengeText = (digest: string): string =>
+const challengeText = (digest: string): string =>
   digest.replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '')
 
 const LETTERS_AND_DIGITS = URL_SAFE.slice(0, 62)
@@ -204,7 +204,7 @@ const LETTERS_AND_DIGITS = URL_SAFE.slice(0, 62)
  * first eight characters come up slightly more often; that is fine for a name, which only has to
  * differ from another attempt's and is not what keeps the code safe. The secret is.
  */
-export const attemptName = (bytes: Uint8Array): string =>
+const attemptName = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => LETTERS_AND_DIGITS.charAt(byte % 62)).join('')
 
 /**
@@ -212,7 +212,7 @@ export const attemptName = (bytes: Uint8Array): string =>
  * answer means it is not coming, and the button stops saying it is signing the Person in. The
  * desktop window gives its trade the same (`TRADE_WITHIN` in the web app's `data/signin.ts`).
  */
-export const TRADE_WITHIN = Duration.seconds(15)
+const TRADE_WITHIN = Duration.seconds(15)
 
 const decodeChallenge = Schema.decodeUnknownEffect(SignInChallenge)
 const decodeAttempt = Schema.decodeUnknownEffect(SignInAttempt)
@@ -256,9 +256,9 @@ const beginning = Effect.fn('Google.beginning')(function* (phone: Phone, server:
  * return that names another attempt is neither an answer nor a failure of this one.
  */
 /** A link with every value taken out, so a report can say what came back without the code. */
-export const formOf = (link: string): string => link.replace(/=[^&#]*/gu, '=')
+const formOf = (link: string): string => link.replace(/=[^&#]*/gu, '=')
 
-export const returnFor = (attempt: Attempt, link: string): Option.Option<SignInReturn> =>
+const returnFor = (attempt: Attempt, link: string): Option.Option<SignInReturn> =>
   Option.filter(readPhoneSignInReturn(link), (back) => back.state === attempt.state)
 
 /**

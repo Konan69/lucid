@@ -8,7 +8,7 @@ import {
   useStateField,
   useTriggerAction,
 } from "@openuidev/react-lang";
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useId, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { z } from "zod/v4";
 import { Glyph } from "./glyph";
 import { bg, children, color, onColor, cx, option, radius, radiusSchema, space, textOf, toOption, type Option } from "./style";
@@ -79,34 +79,6 @@ export const Button = defineComponent({
       >
         {props.icon ? <Glyph name={props.icon} size={props.size === "sm" ? 14 : 16} /> : null}
         {label}
-      </button>
-    );
-  },
-});
-
-export const IconButton = defineComponent({
-  name: "IconButton",
-  props: z.object({
-    icon: z.string(),
-    action: action().optional(),
-    label: z.string().optional(),
-    variant: z.enum(["outline", "ghost", "solid"]).optional(),
-  }),
-  description: "Round icon-only button; label is read aloud.",
-  component: ({ props }) => {
-    const run = useRunAction();
-    const streaming = useIsStreaming();
-    const label = props.label || String(props.icon ?? "");
-    return (
-      <button
-        type="button"
-        className={cx("iui-icon-button", `iui-icon-button-${props.variant ?? "outline"}`)}
-        aria-label={label}
-        title={props.label || undefined}
-        disabled={streaming}
-        onClick={() => run(label, props.action, false)}
-      >
-        <Glyph name={props.icon} size={16} />
       </button>
     );
   },
@@ -285,67 +257,6 @@ export const SegmentedControl = defineComponent({
   },
 });
 
-export const Slider = defineComponent({
-  name: "Slider",
-  props: z.object({
-    value: reactive(z.number()),
-    min: z.number(),
-    max: z.number(),
-    step: z.number().optional(),
-    label: z.string().optional(),
-    unit: z.string().optional(),
-    marks: z.array(z.object({ value: z.number(), label: z.string() })).optional(),
-  }),
-  description: 'Shows label and value; unit like "%" or "$" formats the value.',
-  component: function SliderView({ props, statementId }) {
-    const field = useStateField(useFieldName(props.label, statementId), props.value);
-    const min = Number.isFinite(props.min) ? props.min : 0;
-    const max = Number.isFinite(props.max) && props.max > min ? props.max : min + 100;
-    const step = props.step && props.step > 0 ? props.step : 1;
-    const raw = typeof field.value === "number" ? field.value : Number(field.value);
-    const value = Number.isFinite(raw) ? Math.min(max, Math.max(min, raw)) : min;
-    const unit = props.unit ?? "";
-    const prefix = /^[$€£¥₹]/.test(unit);
-    const readout = prefix ? `${unit}${numberText(value)}` : `${numberText(value)}${unit}`;
-    const marks = (props.marks ?? []).filter((m) => m && Number.isFinite(m.value) && m.value >= min && m.value <= max);
-    const id = useId();
-    return (
-      <div className="iui-slider">
-        {(props.label || props.unit) && (
-          <div className="iui-slider-head">
-            <label htmlFor={id}>{props.label}</label>
-            <output htmlFor={id}>{readout}</output>
-          </div>
-        )}
-        <input
-          id={id}
-          className="iui-range"
-          type="range"
-          min={min}
-          max={max}
-          step={step}
-          value={value}
-          aria-label={props.label ? undefined : "Value"}
-          aria-valuetext={readout}
-          onChange={(event) => field.setValue(Number(event.target.value))}
-        />
-        {marks.length > 0 && (
-          <div className="iui-slider-marks" aria-hidden>
-            {marks.map((m, i) => {
-              const at = (m.value - min) / (max - min);
-              return (
-                <span key={i} className={cx(at <= 0.02 && "is-start", at >= 0.98 && "is-end")} style={{ left: `calc(9px + (100% - 18px) * ${at})` }}>
-                  {m.label}
-                </span>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    );
-  },
-});
-
 export const Checkbox = defineComponent({
   name: "Checkbox",
   props: z.object({ checked: reactive(z.boolean()), label: z.string(), lineThrough: z.boolean().optional() }),
@@ -400,101 +311,3 @@ export const RadioGroup = defineComponent({
   },
 });
 
-const DATE = /^\d{4}-\d{2}-\d{2}$/;
-
-export const DatePicker = defineComponent({
-  name: "DatePicker",
-  props: z.object({
-    value: reactive(z.string()),
-    label: z.string().optional(),
-    min: z.string().optional(),
-    max: z.string().optional(),
-  }),
-  description: 'Dates are "YYYY-MM-DD".',
-  component: ({ props, statementId }) => {
-    const field = useStateField(useFieldName(props.label, statementId), props.value);
-    const value = typeof field.value === "string" && DATE.test(field.value) ? field.value : "";
-    return (
-      <Field label={props.label}>
-        <input
-          className="iui-input iui-date"
-          type="date"
-          value={value}
-          min={props.min && DATE.test(props.min) ? props.min : undefined}
-          max={props.max && DATE.test(props.max) ? props.max : undefined}
-          aria-label={props.label ? undefined : "Date"}
-          onChange={(event) => field.setValue(event.target.value)}
-        />
-      </Field>
-    );
-  },
-});
-
-const clock = (seconds: number) => {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  const mm = h ? String(m).padStart(2, "0") : String(m);
-  return `${h ? `${h}:` : ""}${mm}:${String(s).padStart(2, "0")}`;
-};
-
-export const Timer = defineComponent({
-  name: "Timer",
-  props: z.object({
-    seconds: reactive(z.number()),
-    label: z.string().optional(),
-  }),
-  description: "Countdown with start, pause and reset. It counts the bound seconds down to 0, so other statements can react, e.g. $left == 0.",
-  component: function TimerView({ props, statementId }) {
-    const field = useStateField(useFieldName(props.label, statementId), props.seconds);
-    const streaming = useIsStreaming();
-    const raw = typeof field.value === "number" ? field.value : Number(field.value);
-    const left = Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
-    const [running, setRunning] = useState(false);
-    // The ticking interval reads the latest value and setter, not the ones from when it started
-    const live = useRef({ left, setValue: field.setValue });
-    live.current = { left, setValue: field.setValue };
-    // What Reset goes back to: the value when the countdown first started
-    const [startedAt, setStartedAt] = useState<number | null>(null);
-
-    useEffect(() => {
-      if (!running) return;
-      const id = setInterval(() => {
-        const next = Math.max(0, live.current.left - 1);
-        live.current.left = next;
-        live.current.setValue(next);
-        if (next === 0) setRunning(false);
-      }, 1000);
-      return () => clearInterval(id);
-    }, [running]);
-
-    const toggle = () => {
-      if (!running && startedAt === null) setStartedAt(left);
-      setRunning(!running);
-    };
-    const reset = () => {
-      setRunning(false);
-      if (startedAt !== null) field.setValue(startedAt);
-      setStartedAt(null);
-    };
-    const done = left === 0 && startedAt !== null;
-    return (
-      <div className={cx("iui-timer", running && "is-running", done && "is-done")} role="timer" aria-label={props.label || "Timer"}>
-        <div className="iui-timer-read">
-          {props.label && <span className="iui-label">{props.label}</span>}
-          <span className="iui-timer-time">{clock(left)}</span>
-        </div>
-        <div className="iui-timer-actions">
-          <button type="button" className="iui-button iui-button-solid iui-button-sm" disabled={streaming || left === 0} onClick={toggle}>
-            <Glyph name={running ? "pause" : "play"} size={14} />
-            {running ? "Pause" : startedAt === null || left === 0 ? "Start" : "Resume"}
-          </button>
-          <button type="button" className="iui-button iui-button-ghost iui-button-sm" disabled={streaming || startedAt === null} onClick={reset}>
-            <Glyph name="rotate-ccw" size={14} />
-            Reset
-          </button>
-        </div>
-      </div>
-    );
-  },
-});

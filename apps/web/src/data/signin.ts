@@ -87,14 +87,14 @@ export class ShellUnreadable extends Schema.TaggedError<ShellUnreadable>()(
 ) {}
 
 /** The server answered the trade with a no, or with a yes this window could not read. */
-export class TradeRefused extends Schema.TaggedError<TradeRefused>()(
+class TradeRefused extends Schema.TaggedError<TradeRefused>()(
   'TradeRefused',
   {},
   { title: 'The code could not be traded for a session' },
 ) {}
 
 /** The trade got no answer, or none in time. */
-export class TradeUnanswered extends Schema.TaggedError<TradeUnanswered>()(
+class TradeUnanswered extends Schema.TaggedError<TradeUnanswered>()(
   'TradeUnanswered',
   {},
   { title: 'Trading the code got no answer' },
@@ -182,7 +182,7 @@ export interface Handoff {
  * from, so a quarter of a minute without an answer means it is not coming; the card then says so
  * instead of resting on "Signing you in…" over a window that never is.
  */
-export const TRADE_WITHIN = Duration.seconds(15)
+const TRADE_WITHIN = Duration.seconds(15)
 
 const unreadable = () => new ShellUnreadable({})
 const decodeBrowser = Schema.decodeUnknownEffect(SignInBrowser)

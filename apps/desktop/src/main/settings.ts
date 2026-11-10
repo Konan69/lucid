@@ -77,7 +77,7 @@ const preserveDamagedSettings = Effect.fn('DesktopSettings.preserveDamaged')(fun
  * Decode disk ingress once. Missing settings start where an installation with no choice starts
  * (`unchosen`); damaged and unreadable ones start at the chooser.
  */
-export const readServerSettings = Effect.fn('DesktopSettings.read')(function* (
+const readServerSettings = Effect.fn('DesktopSettings.read')(function* (
   path: string,
   home: Option.Option<ServerAddress>,
 ) {

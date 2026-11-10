@@ -838,27 +838,3 @@ export function describeToolCall(
     ? { state, label, account }
     : { state, label, detail: details.join(' · '), account }
 }
-
-/**
- * The one line a reply's steps collapse to, on every surface. While Vivid is working it is what
- * it is doing right now ("Searching the Library…"), not the word "Working". Afterwards it is what
- * was done: the step itself when there was one, the first and a count when there were more.
- *
- * `current` is the id of the step Vivid is on, when it is on one; a surface finds it, because only
- * the surface knows whether the reply is still being written.
- */
-export function summarizeSteps(
-  steps: ReadonlyArray<{ readonly id: string; readonly label: string }>,
-  current: Option.Option<string>,
-): string {
-  const doing = Option.flatMap(current, (id) =>
-    Option.fromUndefinedOr(steps.find((step) => step.id === id)),
-  )
-  if (Option.isSome(doing)) return `${doing.value.label}…`
-  const [first, ...rest] = steps
-  if (first === undefined) return ''
-  if (rest.length === 0) return first.label
-  return rest.length === 1
-    ? `${first.label} and 1 more step`
-    : `${first.label} and ${rest.length} more steps`
-}

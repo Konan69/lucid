@@ -156,7 +156,7 @@ export const ratchets = [
     label: 'state set after a wait',
     plugin: 'vivid',
     rule: 'react-no-state-after-wait',
-    ceiling: 96,
+    ceiling: 95,
   },
   { label: 'design-system raw colors', plugin: 'shadcn', rule: 'no-raw-colors', ceiling: 0 },
   {
@@ -237,9 +237,9 @@ export function effectRule(line) {
 
 /** Knip findings and justified uncalled procedures are measured separately from lint output. */
 export const deadCodeRatchets = [
-  { plugin: 'knip', rule: 'files', ceiling: 5 },
-  { plugin: 'knip', rule: 'exports', ceiling: 304 },
-  { plugin: 'knip', rule: 'types', ceiling: 53 },
+  { plugin: 'knip', rule: 'files', ceiling: 0 },
+  { plugin: 'knip', rule: 'exports', ceiling: 21 },
+  { plugin: 'knip', rule: 'types', ceiling: 4 },
   { plugin: 'knip', rule: 'dependencies', ceiling: 6 },
   { plugin: 'knip', rule: 'devDependencies', ceiling: 1 },
   { plugin: 'knip', rule: 'unlisted', ceiling: 0 },
@@ -247,7 +247,7 @@ export const deadCodeRatchets = [
   { plugin: 'knip', rule: 'binaries', ceiling: 0 },
   { plugin: 'knip', rule: 'catalog', ceiling: 0 },
   { plugin: 'knip', rule: 'catalogReferences', ceiling: 0 },
-  { plugin: 'knip', rule: 'duplicates', ceiling: 2 },
+  { plugin: 'knip', rule: 'duplicates', ceiling: 1 },
   { plugin: 'knip', rule: 'enumMembers', ceiling: 0 },
   { plugin: 'knip', rule: 'namespaceMembers', ceiling: 0 },
   { plugin: 'knip', rule: 'optionalPeerDependencies', ceiling: 0 },

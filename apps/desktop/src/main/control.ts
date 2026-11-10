@@ -32,13 +32,13 @@ export class StepFailed extends Schema.TaggedError<StepFailed>()(
   { title: 'The step did not work' },
 ) {}
 /** The desktop app will not go there: a local address, a file, or text that is not an address. */
-export class StepNotAllowed extends Schema.TaggedError<StepNotAllowed>()(
+class StepNotAllowed extends Schema.TaggedError<StepNotAllowed>()(
   'StepNotAllowed',
   {},
   { title: 'The desktop app does not allow this' },
 ) {}
 /** The desktop app has no way to do this, such as a key outside the ones Vivid may press. */
-export class StepUnsupported extends Schema.TaggedError<StepUnsupported>()(
+class StepUnsupported extends Schema.TaggedError<StepUnsupported>()(
   'StepUnsupported',
   {},
   { title: 'The desktop app cannot do this' },
@@ -72,7 +72,7 @@ export interface CommandParameters {
 }
 
 /** A picture of a page: a PNG in base64 as the contract carries it, and its size in pixels. */
-export interface PagePicture {
+interface PagePicture {
   readonly png: BrowserPicture
   readonly width: number
   readonly height: number
@@ -138,7 +138,7 @@ const SCROLL_UNITS = {
 }
 
 /** The scroll for a direction and a number of notches, as `window.scrollBy` takes it. */
-export function scrollDelta(direction: keyof typeof SCROLL_UNITS, notches: number) {
+function scrollDelta(direction: keyof typeof SCROLL_UNITS, notches: number) {
   const unit = SCROLL_UNITS[direction]
   const distance = notches * NOTCH_PIXELS
   // `|| 0` keeps a zero from becoming negative zero, which would be written as "-0".

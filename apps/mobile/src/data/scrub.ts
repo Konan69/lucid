@@ -177,7 +177,7 @@ const ROOTS = [
  * Every address and path in a report goes through this: a frame's file and module, a debug
  * image's file, the page's address and a breadcrumb's.
  */
-export const place = (address: string): string =>
+const place = (address: string): string =>
   ROOTS.reduce(
     (path, root) => path.replace(root, ''),
     withoutQuery(address).replaceAll('\\', '/').replace(ORIGIN, ''),
@@ -465,7 +465,7 @@ const sessionHeaders = Schema.decodeUnknownOption(
 )
 
 /** Rebuild error and performance events independently; attachment and private scope data never leave. */
-export const outbound = (envelope: Envelope): Option.Option<EventEnvelope> => {
+const outbound = (envelope: Envelope): Option.Option<EventEnvelope> => {
   const [headers, items] = envelope
   const reports: Array<EventItem> = []
   if (carriesEvent(envelope))

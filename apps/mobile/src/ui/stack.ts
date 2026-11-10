@@ -8,8 +8,8 @@ import { GLASS_SUPPORTED } from './Glass'
  * The native stack's option sets. Every screen transition in the app is the platform's own
  * cross-fade, sheet or modal; nothing here is animated from JavaScript.
  *
- * Ported from T3 Code mobile `src/Stack.tsx` (`GLASS_HEADER_OPTIONS`, `SOLID_HEADER_OPTIONS`,
- * the sheet variants) and
+ * Ported from T3 Code mobile `src/Stack.tsx` (`GLASS_HEADER_OPTIONS`, the sheet
+ * variants) and
  * `src/native/scrollEdgeEffects.ts` (`nativeHeaderScrollEdgeEffects`). The title's weight is
  * carried by `HEADER_TITLE`, in Vivid's type scale.
  *
@@ -79,18 +79,6 @@ export const GLASS_HEADER = {
   // UIKit's editor layout: the title stands at the leading edge, beside the way back, and the
   // centre is left free. The reference sets it only where the bar is glass.
   unstable_navigationItemStyle: GLASS_SUPPORTED ? 'editor' : undefined,
-} satisfies NativeStackNavigationOptions
-
-/** An opaque bar, for a screen whose content scrolls inside itself and gives glass nothing to sample. */
-export const SOLID_HEADER = {
-  headerShown: true,
-  headerBackButtonDisplayMode: 'minimal',
-  headerBackTitle: '',
-  headerLargeTitle: false,
-  headerShadowVisible: false,
-  headerTitleStyle: HEADER_TITLE,
-  headerTransparent: false,
-  unstable_navigationItemStyle: Platform.OS === 'ios' ? 'editor' : undefined,
 } satisfies NativeStackNavigationOptions
 
 /**
