@@ -12,6 +12,8 @@ import type {
 } from '@sentry/core'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
+import * as Struct from 'effect/Struct'
+import { CodeName, DEEPEST_CAUSE, Incident, IncidentSource } from '@vivid/contracts'
 
 /**
  * What an error report may carry to Sentry, as an allowlist: `scrub` builds a new report from the
@@ -44,6 +46,33 @@ const flag = Schema.optionalKey(Schema.Boolean)
 const named = Schema.optionalKey(Schema.Struct({ name: text, version: text }))
 
 /**
+ * The tags an Incident's report adds (`sending.reportOf` in `@vivid/state`), each admitted by the
+ * closed set or the shape its field has in `Incident` (`@vivid/contracts`): the case by
+ * `Incident`'s cases, a hop's service by `IncidentSource`, its operation and tag as `CodeName`s,
+ * its status as an HTTP status. One set of keys for each place a cause can have a hop
+ * (`DEEPEST_CAUSE`), so the keys are finite and known, and a case or a source added to the
+ * contract is admitted without a second list.
+ */
+/** A tag an Incident's report adds: every one is a string of a closed set or of a fixed shape. */
+type IncidentTag = Schema.optionalKey<Schema.Codec<string>>
+
+/** The tags of the hop at place `n` of a cause. */
+const causeTags = (n: number): ReadonlyArray<readonly [string, IncidentTag]> => [
+  [`vivid.incident.cause.${n}.service`, Schema.optionalKey(IncidentSource)],
+  [`vivid.incident.cause.${n}.operation`, Schema.optionalKey(CodeName)],
+  [`vivid.incident.cause.${n}.tag`, Schema.optionalKey(CodeName)],
+  [
+    `vivid.incident.cause.${n}.status`,
+    Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[1-5][0-9]{2}$/u))),
+  ],
+]
+
+const incidentTags = Object.fromEntries<IncidentTag>([
+  ['vivid.incident.kind', Schema.optionalKey(Schema.Literals(Struct.keys(Incident.cases)))],
+  ...Array.from({ length: DEEPEST_CAUSE }, (_, n) => causeTags(n)).flat(),
+])
+
+/**
  * The tags a report keeps: which process and which over-the-air update it came from. The SDKs set
  * these themselves (`event.process` in `@sentry/electron`, `expo.updates.*` in
  * `@sentry/react-native`'s `expoContextIntegration`).
@@ -54,12 +83,16 @@ const named = Schema.optionalKey(Schema.Struct({ name: text, version: text }))
  * other one behind. A part that does not decode is left out whole.
  */
 const Tags = Schema.Struct({
+  'vivid.operation': Schema.optionalKey(
+    Schema.String.check(Schema.isPattern(/^[A-Za-z_$][A-Za-z0-9_$.]{0,119}$/)),
+  ),
   'event.process': text,
   'event.origin': text,
   'event.environment': text,
   'expo.updates.update_id': text,
   'expo.updates.channel': text,
   'expo.updates.runtime_version': text,
+  ...incidentTags,
 })
 
 /**
@@ -68,6 +101,12 @@ const Tags = Schema.Struct({
  * fields that describe a model or a version.
  */
 const Contexts = Schema.Struct({
+  trace: Schema.optionalKey(
+    Schema.Struct({
+      trace_id: Schema.String.check(Schema.isPattern(/^[0-9a-f]{32}$/)),
+      span_id: Schema.String.check(Schema.isPattern(/^[0-9a-f]{16}$/)),
+    }),
+  ),
   os: Schema.optionalKey(
     Schema.Struct({ name: text, version: text, build: text, kernel_version: text }),
   ),
@@ -285,12 +324,28 @@ const request = (from: NonNullable<ErrorEvent['request']>): ErrorEvent['request'
 /** The one fingerprint the SDK writes itself: group this report the way Sentry would anyway. */
 const DEFAULT_FINGERPRINT = '{{ default }}'
 
+const isKind = Schema.is(Schema.Literals(Struct.keys(Incident.cases)))
+const isCodeName = Schema.is(CodeName)
+const isSource = Schema.is(IncidentSource)
+
+/**
+ * An Incident's fingerprint (`sending.reportOf` in `@vivid/state`): its case, then
+ * `<service>.<tag>` of each hop of its cause, every part a code name from a closed set.
+ */
+const isIncidentFingerprint = (from: ReadonlyArray<string>) =>
+  from.length <= DEEPEST_CAUSE + 1 &&
+  isKind(from[0]) &&
+  from.slice(1).every((part) => isCodeName(part) && isSource(part.split('.')[0]))
+
 /**
  * A fingerprint is free text that code chooses to group reports by, so it can be anything: an
- * email, a Thread's title. Only one made of nothing but the SDK's default marker is kept.
+ * email, a Thread's title. Only one made of nothing but the SDK's default marker is kept, or an
+ * Incident's, which is made of nothing but code names.
  */
 const fingerprint = (from: ReadonlyArray<string>) =>
-  from.every((part) => part === DEFAULT_FINGERPRINT) ? [...from] : undefined
+  from.every((part) => part === DEFAULT_FINGERPRINT) || isIncidentFingerprint(from)
+    ? [...from]
+    : undefined
 
 /**
  * One loaded file a frame can belong to, cut to what turns a frame back into a name: which kind

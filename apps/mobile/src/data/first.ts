@@ -1,4 +1,5 @@
 import type { ConversationMessage, ProjectId, ThreadId } from '@vivid/contracts'
+import type { sending } from '@vivid/state'
 import { Data, Effect, Option } from 'effect'
 import type { Delivery } from './delivery'
 
@@ -28,14 +29,15 @@ import type { Delivery } from './delivery'
  * Where a Thread's first words stand.
  *
  * - `Sending`: on their way. The Thread is being made, or the words are being handed to it.
- * - `Unsent`: they did not arrive, and `why` is what to tell the Person. `born` says whether the
- *   Thread was made, which is where sending again starts from.
+ * - `Unsent`: they did not arrive, and `why` says why (`sending.Unarrival`), which decides what
+ *   the Person is told. `born` says whether the Thread was made, which is where sending again
+ *   starts from.
  * - `Said`: with Vivid. Kept, so the words keep their place in the list for as long as the Thread
  *   is on this phone's screen.
  */
 export type First = Data.TaggedEnum<{
   Sending: { readonly start: Start }
-  Unsent: { readonly start: Start; readonly born: boolean; readonly why: string }
+  Unsent: { readonly start: Start; readonly born: boolean; readonly why: sending.Unarrival }
   Said: { readonly start: Start }
 }>
 export const First = Data.taggedEnum<First>()
@@ -90,8 +92,8 @@ export type Firsts = ReturnType<typeof makeFirsts>
  * `make` and `say` answer with why they did not go through, when they did not.
  */
 export interface Way {
-  readonly make: (id: ThreadId, start: Start) => Effect.Effect<Option.Option<string>>
-  readonly say: (id: ThreadId, start: Start) => Effect.Effect<Option.Option<string>>
+  readonly make: (id: ThreadId, start: Start) => Effect.Effect<Option.Option<sending.Unarrival>>
+  readonly say: (id: ThreadId, start: Start) => Effect.Effect<Option.Option<sending.Unarrival>>
   /** The words did not arrive: they are the Person's again. */
   readonly returned: (start: Start) => void
   /** The words are with Vivid: nothing of them is left to send. */
@@ -112,7 +114,7 @@ const deliver = Effect.fn('First.deliver')(function* (
 ) {
   const { start } = attempt
   firsts.put(id, First.Sending({ start }))
-  const unsent = (born: boolean) => (why: string) => {
+  const unsent = (born: boolean) => (why: sending.Unarrival) => {
     way.returned(start)
     firsts.put(id, First.Unsent({ start, born, why }))
   }

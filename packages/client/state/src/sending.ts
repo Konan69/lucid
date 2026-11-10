@@ -2,17 +2,24 @@ import { Machine } from '@typeonce/effect-machine'
 import { AtomMachine } from '@typeonce/effect-machine/reactivity'
 import { VividRpcClient } from '@vivid/client-runtime'
 import {
+  causeAfter,
+  CodeName,
   CreateThreadRequest,
+  Incident,
+  impactOfFailure,
   MessageAttachment,
   RunId,
   RunState,
   ThreadId,
   type ConversationMessage,
+  type IncidentCause,
+  type IncidentHop,
+  type IncidentSource,
   type ConversationState,
   type Run,
   type ThreadAttention,
 } from '@vivid/contracts'
-import { Context, Effect, type Layer, Option, Predicate, Result, Schema } from 'effect'
+import { Context, Effect, type Layer, Match, Option, Result, Schema } from 'effect'
 import { AsyncResult, Atom, type AtomRegistry } from 'effect/reactivity'
 import type { Live } from './live.js'
 
@@ -50,19 +57,147 @@ const Taken = Schema.Struct({
 })
 interface Taken extends Schema.Schema.Type<typeof Taken> {}
 
+/**
+ * Why words are kept as not sent, which decides who tells the Person, so one send is said once.
+ *
+ * - `Unstarted`: the server reserved this delivery's Run and the runtime did not take it. The
+ *   server ended that Run `Failed` with reason `Delivery` before it answered
+ *   (`apps/server/src/threads/delivery.ts`, the admission's `tapError`), so the Run's ending says
+ *   what happened and a screen says nothing of its own for these words. Sent again under the same
+ *   key it is that same Run reserved again (`makeStart`, `apps/server/src/threads/runs.ts`: a
+ *   reservation the runtime never admitted keeps its id and turn and is admitted anew), never a
+ *   second Run beside a failed one.
+ * - `Refused`: the server refused it before any Run, in a sentence meant for the Person.
+ * - `Unconfirmed`: nothing more is known than that the words are not known to have arrived. No
+ *   answer came back, the server refused it without words for the Person, the call was called
+ *   off, or the words waited behind a delivery that failed. No Run for them is known, so the
+ *   client is the one to say so.
+ */
+export const Unarrival = Schema.TaggedUnion({
+  Unstarted: {},
+  Refused: { words: Schema.String },
+  Unconfirmed: {},
+})
+export type Unarrival = typeof Unarrival.Type
+
 /** Unanswered or refused words retained for an explicit same-key retry. */
 export const Unsent = Schema.Struct({
   delivery: Delivery,
-  why: Schema.Option(Schema.String),
+  why: Unarrival,
 })
 export interface Unsent extends Schema.Schema.Type<typeof Unsent> {}
 
 /** The send was refused or its receipt was lost. Placement remains uncertain. */
 class Undelivered extends Schema.TaggedError<Undelivered>()(
   'Undelivered',
-  { why: Schema.Option(Schema.String) },
+  { why: Unarrival },
   { title: 'Undelivered' },
 ) {}
+
+/**
+ * How a client says a failure its Person saw (`Incident` `ClientFailed`): which client it is, the
+ * first hop of every cause it records, and its error tracker. Each app gives its own
+ * (`data/telemetry.ts` on the phone and the web).
+ */
+export interface Recording {
+  readonly source: Extract<IncidentSource, 'phone' | 'web' | 'desktop'>
+  readonly record: (incident: typeof Incident.cases.ClientFailed.Type) => Effect.Effect<void>
+}
+
+/**
+ * What a client's error tracker is given for a `ClientFailed`, so the phone and the web say it the
+ * same way the server says an Incident (`apps/server/src/observability/incidents.ts`): one group
+ * per path of failure (`fingerprint`: the case, then `<service>.<tag>` of every hop), and the
+ * closed fields as `vivid.incident.*` tags. `vivid.operation` is the first hop's operation, the tag
+ * the clients' reports already keep.
+ */
+export const reportOf = (incident: typeof Incident.cases.ClientFailed.Type) => ({
+  fingerprint: [incident._tag, ...incident.cause.map((hop) => `${hop.service}.${hop.tag}`)],
+  tags: Object.fromEntries([
+    ...incident.cause.slice(0, 1).map((hop): Tag => ['vivid.operation', hop.operation]),
+    ['vivid.incident.kind', incident._tag] satisfies Tag,
+    ...incident.cause.flatMap(hopTags),
+  ]),
+})
+
+/** A tag of a report: its key, then its value. */
+type Tag = readonly [string, string]
+
+/** One hop's tags, under the hop's place in the cause. */
+const hopTags = (hop: IncidentHop, n: number): ReadonlyArray<Tag> => [
+  [`vivid.incident.cause.${n}.service`, hop.service],
+  [`vivid.incident.cause.${n}.operation`, hop.operation],
+  [`vivid.incident.cause.${n}.tag`, hop.tag],
+  ...Option.toArray(
+    Option.map(Option.fromUndefinedOr(hop.status), (status): Tag => [
+      `vivid.incident.cause.${n}.status`,
+      String(status),
+    ]),
+  ),
+]
+
+/** One send of a delivery, as the server is asked it. */
+const asking = (delivery: Delivery) =>
+  Effect.gen(function* () {
+    const client = yield* VividRpcClient
+    return yield* client.SendToThread({
+      threadId: delivery.thread,
+      text: delivery.words,
+      pictures: delivery.pictures,
+      key: delivery.key,
+    })
+  })
+
+/** Every way one send can fail: `SendToThread`'s refusals and its transport's. */
+type SendFailure = Effect.Error<ReturnType<typeof asking>>
+
+/**
+ * Who says a failed send, by every tag it can fail with. A tag added to `SendToThread` does not
+ * compile until it is named here.
+ *
+ * `DeliveryRefused` (the runtime answered and refused) and `RuntimeUnavailable` (the runtime's
+ * answer is still unknown after the server's retries) are `Unstarted`: in a send both are raised
+ * only by the admission, after the reservation, and the server ends the reserved Run before
+ * answering (`admitRuntime` and its `tapError`, `apps/server/src/threads/delivery.ts`). A refusal
+ * is never said as unavailability, but to the Person both are the same Run that never started,
+ * and its ending is what is said. `Conflict` is the server's own sentence
+ * (another Person's reply in progress, a key reused for other words). Everything else names no Run
+ * and no sentence for the Person.
+ */
+const unarrivalOf = Match.type<SendFailure>().pipe(
+  Match.tagsExhaustive({
+    RuntimeUnavailable: () => Unarrival.cases.Unstarted.make({}),
+    DeliveryRefused: () => Unarrival.cases.Unstarted.make({}),
+    Conflict: ({ message }) => Unarrival.cases.Refused.make({ words: message }),
+    ConversationTooLarge: () => Unarrival.cases.Unconfirmed.make({}),
+    Unauthenticated: () => Unarrival.cases.Unconfirmed.make({}),
+    Forbidden: () => Unarrival.cases.Unconfirmed.make({}),
+    NotFound: () => Unarrival.cases.Unconfirmed.make({}),
+    InvalidRequest: () => Unarrival.cases.Unconfirmed.make({}),
+    ServiceUnavailable: () => Unarrival.cases.Unconfirmed.make({}),
+    DatabaseConstraintViolation: () => Unarrival.cases.Unconfirmed.make({}),
+    DatabaseUnavailable: () => Unarrival.cases.Unconfirmed.make({}),
+    DatabaseFailure: () => Unarrival.cases.Unconfirmed.make({}),
+    UnsupportedAttachment: () => Unarrival.cases.Unconfirmed.make({}),
+    InvalidAttachment: () => Unarrival.cases.Unconfirmed.make({}),
+    AttachmentTooLarge: () => Unarrival.cases.Unconfirmed.make({}),
+    TooManyAttachments: () => Unarrival.cases.Unconfirmed.make({}),
+    PicturesRequirePrivateThread: () => Unarrival.cases.Unconfirmed.make({}),
+    RpcClientError: () => Unarrival.cases.Unconfirmed.make({}),
+  }),
+)
+
+/**
+ * The chain the server gave a failed send, outermost first: its own hop, then the cell's. Only an
+ * admission's failures carry one; every other failure's root is the client's own hop.
+ */
+const causeOf = Match.type<SendFailure>().pipe(
+  Match.tag('DeliveryRefused', 'RuntimeUnavailable', ({ cause }) => Option.some(cause)),
+  Match.orElse(() => Option.none<IncidentCause>()),
+)
+
+/** The operation a failed send's first hop names: the span `delivering`'s `send` runs in. */
+const SEND = CodeName.make('Sending.send')
 
 /** How the server is asked; see `Delivering`. */
 export interface DeliveringService {
@@ -78,42 +213,45 @@ export class Delivering extends Context.Service<Delivering, DeliveringService>()
 /**
  * Admission is acceptance even when a terminal Run lacks its runtime receipt. The runtime may
  * have placed the submission before the server failed to store that receipt.
+ *
+ * A send that fails for good is a failure the Person sees, so it is recorded (`Recording`) where
+ * it is decided, in the send's own span: the span's trace is the one the RPC carried to the
+ * server (`RpcClient` puts the current span's trace and span id on each request), so the record
+ * opens the server's trace of the same send. A refusal that is the Person's to correct
+ * (`impactOfFailure`) is not recorded.
  */
-export const delivering = (run: Live['run']): DeliveringService => ({
+export const delivering = (run: Live['run'], recording: Recording): DeliveringService => ({
   create: Effect.fn('Sending.create')(function* (request: CreateThreadRequest) {
     const answered = yield* run(VividRpcClient.use((client) => client.CreateThread(request)))
     if (Result.isFailure(answered))
-      return yield* new Undelivered({ why: Option.some(answered.failure.message) })
+      return yield* new Undelivered({ why: Unarrival.cases.Unconfirmed.make({}) })
     return yield* Effect.void
   }),
-  send: (delivery) =>
-    Effect.gen(function* () {
-      const asked = run(
-        Effect.gen(function* () {
-          const client = yield* VividRpcClient
-          return yield* client.SendToThread({
-            threadId: delivery.thread,
-            text: delivery.words,
-            pictures: delivery.pictures,
-            key: delivery.key,
-          })
+  send: Effect.fn('Sending.send')(function* (delivery: Delivery) {
+    const asked = run(asking(delivery))
+    // A failed send is not proof the words did not arrive: on 26 October 2026 a phone's send
+    // failed after the server had taken it. The same key and payload are the same delivery, so
+    // it is asked once more, and only a second failure keeps the words as not sent.
+    const once = yield* asked
+    const answered = Result.isFailure(once) ? yield* asked : once
+    if (Result.isSuccess(answered)) return answered.success.run
+    const refused = answered.failure
+    const hop: IncidentHop = {
+      service: recording.source,
+      operation: SEND,
+      tag: CodeName.make(refused._tag),
+    }
+    if (impactOfFailure(refused) === 'Incident')
+      yield* recording.record(
+        Incident.cases.ClientFailed.make({
+          cause: Option.match(causeOf(refused), {
+            onNone: () => [hop],
+            onSome: (chain) => causeAfter(hop, chain),
+          }),
         }),
       )
-      // A failed send is not proof the words did not arrive: on 26 October 2026 a phone's send
-      // failed after the server had taken it. The same key and payload are the same delivery, so
-      // it is asked once more, and only a second failure keeps the words as not sent.
-      const once = yield* asked
-      const answered = Result.isFailure(once) ? yield* asked : once
-      if (Result.isFailure(answered)) {
-        const refused = answered.failure
-        return yield* new Undelivered({
-          why: Predicate.isTagged(refused, 'Conflict')
-            ? Option.some(refused.message)
-            : Option.none(),
-        })
-      }
-      return answered.success.run
-    }),
+    return yield* new Undelivered({ why: unarrivalOf(refused) })
+  }),
 })
 
 /** Ownership survives payload release as an exact canonical identity, never a raw shared key. */
@@ -157,7 +295,7 @@ export const SendingStates = Machine.state({
         creation: CreateThreadRequest,
         delivery: Delivery,
         behind: Schema.Array(Delivery),
-        why: Schema.Option(Schema.String),
+        why: Unarrival,
       },
     },
     /**
@@ -238,7 +376,10 @@ const reconciled = (held: Held, seen: Seen): Held => {
 }
 
 /** A delivery retained for an explicit retry with the same identity and payload. */
-const kept = (delivery: Delivery): Unsent => ({ delivery, why: Option.none() })
+const kept = (delivery: Delivery): Unsent => ({
+  delivery,
+  why: Unarrival.cases.Unconfirmed.make({}),
+})
 
 /** The fields of `Held` in a state's value, without what else the state holds. */
 const heldIn = (state: Held): Held => ({
@@ -345,7 +486,7 @@ const Sending = Machine.make({
             creation: state.creation,
             delivery: state.delivery,
             behind: state.behind,
-            why: Option.none(),
+            why: Unarrival.cases.Unconfirmed.make({}),
           }),
         },
       },
@@ -861,7 +1002,7 @@ export const isCreating = (state: Option.Option<SendingState>): boolean =>
 const Admission = Schema.TaggedUnion({
   Accepted: { submission: Schema.Option(Schema.String) },
   Unanswered: {},
-  Uncreated: { why: Schema.Option(Schema.String) },
+  Uncreated: { why: Unarrival },
 })
 type Admission = typeof Admission.Type
 

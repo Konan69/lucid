@@ -3,6 +3,7 @@ import { sending, type Live } from '@vivid/state'
 import { Effect, Layer, Option } from 'effect'
 import type { Atom } from 'effect/reactivity'
 import { start } from './app'
+import { recording } from './telemetry'
 
 /**
  * Sending in a Thread, as the phone does it: the shared machine (`@vivid/state` `sending.ts`),
@@ -41,13 +42,19 @@ const arrival = (
 
 /** A session's sending: every Thread's machine, which outlives the screen that sent. */
 export function makeSending(engine: Live) {
-  const machines = sending.makeSending(
-    Layer.succeed(sending.Delivering, sending.delivering(engine.run)),
-  )
+  const transport = sending.delivering(engine.run, recording)
+  const machines = sending.makeSending(Layer.succeed(sending.Delivering, transport))
   const stateIn = (thread: ThreadId) => sending.stateOf(machines(thread))
 
   return {
     stateIn,
+    /**
+     * Hands one delivery to the server the way every Thread's machine does, outside a machine:
+     * a Thread's first words, which are said before its screen keeps one (`data/first.ts`). It
+     * asks again once, says why it did not arrive (`sending.Unarrival`) and records what the
+     * Person saw fail, as a machine's send does.
+     */
+    deliver: transport.send,
     /**
      * Sends one delivery and answers whether it arrived. Whatever sent the words (a card with a
      * choice on it, a form) closes while they are on their way and needs the answer to know

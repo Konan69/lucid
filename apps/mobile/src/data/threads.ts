@@ -1,7 +1,7 @@
 import { regenerateThreadTitle, VividRpcClient } from '@vivid/client-runtime'
 import { ThreadId, type ProjectId } from '@vivid/contracts'
-import { titleFromMessage } from '@vivid/state'
-import { Data, Effect, Result, Schema } from 'effect'
+import { sending, titleFromMessage } from '@vivid/state'
+import { Data, Effect, Option, Result, Schema } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { draft } from './drafts'
 import type { Delivery } from './delivery'
@@ -129,6 +129,11 @@ export const startThread = Effect.fn('Threads.start')(function* (
  * How the first screen's first words reach the server (`deliver`, `data/first.ts`): the Thread is
  * made, then spoken in, each answering with why it did not go through.
  *
+ * A Thread that was not made has no Run, so the server's sentence about it is what is said
+ * (`Refused`). The words go to a made Thread the way every message does (`data.sending.deliver`),
+ * so the same failure is said the same way: when the server held their Run and the runtime never
+ * started it (`Unstarted`), the Thread says that Run's ending (`data/outcome.ts`).
+ *
  * Words that did not arrive are put back in the composer they were typed in, unless the Person
  * has written something else there since. A Thread that was never made is not in the menu, so
  * its screen is not somewhere they can come back to; the composer is. Once the words are with
@@ -137,7 +142,9 @@ export const startThread = Effect.fn('Threads.start')(function* (
 export const firstWay = (data: LiveData): Way => ({
   make: (id, start) =>
     createThread(data, { id, message: start.message.words, projectId: start.projectId }).pipe(
-      Effect.map(refusalOf),
+      Effect.map((made) =>
+        Option.map(refusalOf(made), (words) => sending.Unarrival.cases.Refused.make({ words })),
+      ),
     ),
   say: (id, start) =>
     // The Person's first words are the moment Vivid offers to notify them (`data/notifying.ts`),
@@ -147,14 +154,15 @@ export const firstWay = (data: LiveData): Way => ({
       shareLocation(data)
     }).pipe(
       Effect.andThen(
-        say(data, {
-          id,
-          body: start.message.words,
+        data.sending.deliver({
+          thread: id,
           key: firstKey(id),
+          words: start.message.words,
           pictures: start.message.pictures,
         }),
       ),
-      Effect.map(refusalOf),
+      Effect.as(Option.none<sending.Unarrival>()),
+      Effect.catchTag('Undelivered', ({ why }) => Effect.succeedSome(why)),
     ),
   returned: (start) => {
     if (draft.in(start.place).length === 0) draft.keep(start.place, start.words)
