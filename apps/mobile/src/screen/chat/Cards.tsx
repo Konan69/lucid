@@ -152,6 +152,12 @@ function Drawn({
  * (`form.EXPIRED_APPROVAL`).
  */
 function ApprovalOutcome({ approval }: { approval: Approval }) {
+  if (form.approvalExpired(approval))
+    return (
+      <Label size="label" tone="ink-2">
+        {form.EXPIRED_APPROVAL}
+      </Label>
+    )
   return ApprovalState.match(approval.state, {
     Pending: () => null,
     Executing: ({ decidedBy }) => (
@@ -181,7 +187,7 @@ function ApprovalOutcome({ approval }: { approval: Approval }) {
     ),
     Expired: () => (
       <Label size="label" tone="ink-2">
-        {form.isIntegrationApproval(approval) ? form.EXPIRED_APPROVAL : 'This request expired.'}
+        This request expired.
       </Label>
     ),
     Withdrawn: () => (

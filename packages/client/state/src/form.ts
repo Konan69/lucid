@@ -1,5 +1,6 @@
 import {
   ActionTarget,
+  ApprovalState,
   IntegrationAnswerOutcome,
   IntegrationPause,
   InputRequestState,
@@ -380,6 +381,17 @@ export const titled = (entries: ReadonlyArray<Entry>): boolean =>
  * already have done part of the work (`integrationExpiredMessage`, `@vivid/contracts`).
  */
 export const EXPIRED_APPROVAL = 'Expired before you answered. Nothing was sent.'
+
+/**
+ * Whether an Integration's own Approval ran out: nobody answered by its deadline, or Allow
+ * reached the Integration after it had let the paused call go (the answer comes back `Expired`).
+ */
+export const approvalExpired = (approval: Approval): boolean =>
+  isIntegrationApproval(approval) &&
+  (ApprovalState.guards.Expired(approval.state) ||
+    Option.exists(Option.fromNullOr(approval.integrationOutcome), (outcome) =>
+      IntegrationAnswerOutcome.guards.Expired(outcome),
+    ))
 
 /**
  * How an Integration's question ended, as the Thread says it.

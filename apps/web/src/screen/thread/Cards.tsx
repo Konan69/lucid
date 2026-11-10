@@ -221,6 +221,8 @@ const SETTLED = 'inline-flex items-center gap-1.5 text-label'
  * says nothing was sent: it paused before its call ran (`form.EXPIRED_APPROVAL`).
  */
 function ApprovalOutcome({ approval }: { approval: Approval }) {
+  if (form.approvalExpired(approval))
+    return <span className={cn(SETTLED, 'text-ink-3')}>{form.EXPIRED_APPROVAL}</span>
   return ApprovalState.match(approval.state, {
     Pending: () => null,
     Executing: ({ decidedBy }) => (
@@ -248,11 +250,7 @@ function ApprovalOutcome({ approval }: { approval: Approval }) {
         Not allowed by {decidedBy.name}.
       </span>
     ),
-    Expired: () => (
-      <span className={cn(SETTLED, 'text-ink-3')}>
-        {form.isIntegrationApproval(approval) ? form.EXPIRED_APPROVAL : 'This request expired.'}
-      </span>
-    ),
+    Expired: () => <span className={cn(SETTLED, 'text-ink-3')}>This request expired.</span>,
     Withdrawn: () => <span className={cn(SETTLED, 'text-ink-3')}>Withdrawn.</span>,
     Invalidated: ({ reason }) => (
       <span className={cn(SETTLED, 'text-ink-3')}>{changedLine(reason)}</span>
