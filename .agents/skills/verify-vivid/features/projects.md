@@ -16,7 +16,7 @@ After Launch and Doctor, run `verify feature projects <run>` and `verify browser
 
 The HTTP recipe ([projects.mjs](../scripts/projects.mjs)) makes the Project with `CreateProject` and checks it is `Unspecified`. It sends the two sentences above and then "Good news on Site launch: the domain resolves now." through the public Thread transport, waits for each Run's WatchThread settlement, requires a successful `update_project` call in each Run, and reads `ListProjects` after each: `Active` with an objective about the domain and a next step; then a progress line about the domain or host, dated after the message and attributed to Vivid, with the objective unchanged; then `Completed` with a proof whose source is a message this Thread holds.
 
-The browser recipe ([projectsbrowser.mjs](../scripts/projectsbrowser.mjs)) makes the Project the same way, types the first two sentences into the composer and presses Send, opens `/projects/<id>`, waits for "Where it stands", reads its Goal, Latest and Next lines from the page and compares them with the listed Project, reloads, and reads the same lines again.
+The browser recipe ([projectsbrowser.mjs](../scripts/projectsbrowser.mjs)) makes the Project the same way, types the first two sentences into the current composer and presses Send, opens `/projects/<id>`, waits for "Where it stands" and the saved progress text, compares Goal and Next plus the newest entry in the separate Progress list with the listed Project, then reloads and reads them again.
 
 ## Evidence
 
