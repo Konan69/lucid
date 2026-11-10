@@ -921,7 +921,7 @@ function ChannelFace({ channel, line }: { channel: ChannelLink['channel']; line:
  *
  * It reads no live data, so each standing can be drawn without a server behind it.
  */
-export function ChannelTile({ link }: { link: ChannelLink }) {
+function ChannelTile({ link }: { link: ChannelLink }) {
   const { channel, standing } = link
   const settings = () => void openSettings('texting')
   /** The tile for a channel with nothing to text yet: all of it opens Settings. */

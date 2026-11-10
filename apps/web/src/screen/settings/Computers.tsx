@@ -94,7 +94,7 @@ export function VividComputer() {
 }
 
 /** The panel's rows for one reading: its standing, what Vivid can do, and how Vivid fixes it. */
-export function Health({
+function Health({
   health: reading,
   recovery,
 }: {

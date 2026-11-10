@@ -12,7 +12,7 @@ import { firstArrival, googleAddresses, outcomeOf, type GoogleOutcome } from './
  */
 
 /** Why an account request did not succeed, in words the form can show beside the field. */
-export class AccountRefused extends Data.TaggedError('AccountRefused')<{
+class AccountRefused extends Data.TaggedError('AccountRefused')<{
   readonly message: string
 }> {}
 
@@ -100,7 +100,7 @@ export const signIn = (input: { readonly email: string; readonly password: strin
   post('sign-in/email', input)
 
 /** Why Google sign-in did not start, as the outcome the welcome has a sentence for. */
-export class GoogleRefused extends Data.TaggedError('GoogleRefused')<{
+class GoogleRefused extends Data.TaggedError('GoogleRefused')<{
   readonly outcome: GoogleOutcome
 }> {}
 

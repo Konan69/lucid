@@ -11,7 +11,7 @@ import { create } from 'zustand'
  * not, so the dialog appeared as a dimmed strip the width of the sidebar with its buttons cut
  * off. Anything that covers the page belongs to the page.
  */
-export function Layer({ children }: { children: ReactNode }) {
+function Layer({ children }: { children: ReactNode }) {
   return createPortal(children, document.body)
 }
 
@@ -98,7 +98,7 @@ export function useSurface(onClose: () => void) {
 }
 
 /** Keeps Tab inside a modal surface: past the last control comes the first, and the reverse. */
-export function keepFocusInside(event: KeyboardEvent<HTMLElement>) {
+function keepFocusInside(event: KeyboardEvent<HTMLElement>) {
   if (event.key !== 'Tab') return
   const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE))
   const first = controls.at(0)

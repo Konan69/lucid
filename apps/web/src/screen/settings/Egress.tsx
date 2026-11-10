@@ -15,7 +15,7 @@ const SWITCH = [
  * Settings. It can be the computer at home while Settings is open at work, and Settings in a
  * browser is on a computer that may have no app at all.
  */
-export const LABEL = 'Send Vivid’s browsing through your computer'
+const LABEL = 'Send Vivid’s browsing through your computer'
 
 /**
  * What is said under the switch: one true sentence for each thing the server can have said, and
@@ -26,7 +26,7 @@ export const LABEL = 'Send Vivid’s browsing through your computer'
  * (`apps/server/src/computers/README.md`, "Egress"), so one that was already open goes on as it
  * was until Vivid's computer opens it again. The line for the working case says so.
  */
-export const said = (status: LiveState<EgressStatus>): string =>
+const said = (status: LiveState<EgressStatus>): string =>
   LiveState.$match(status, {
     Loading: () => 'Checking whether Vivid is browsing through your computer.',
     Failed: () => 'Couldn’t check whether Vivid is browsing through your computer.',

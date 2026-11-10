@@ -106,7 +106,7 @@ function Download() {
  * Everything the section draws, from the visit's reading alone. It starts nothing itself, so
  * every state can be drawn without a server behind it.
  */
-export function Remembered({
+function Remembered({
   reading,
   send,
   now,

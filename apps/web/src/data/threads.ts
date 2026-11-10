@@ -90,7 +90,7 @@ export function startThread(message: string, projectId: ProjectId | null = scope
  * Opens an empty Thread, for when the Person wants the page before the words. This describes the
  * opening; whoever calls it starts it, and reads where it is filed when it starts.
  */
-export const openThread = (projectId: ProjectId | null = scope.filing()) =>
+const openThread = (projectId: ProjectId | null = scope.filing()) =>
   Effect.gen(function* () {
     const id = ThreadId.make(crypto.randomUUID())
     const created = yield* changing((client) =>
@@ -99,8 +99,6 @@ export const openThread = (projectId: ProjectId | null = scope.filing()) =>
     if (Result.isSuccess(created)) void router.navigate({ to: '/t/$id', params: { id } })
     return created
   })
-
-export { live }
 
 /**
  * Tells Vivid to go on in a Thread once a card's wait is over ("GitHub is connected"). It is sent

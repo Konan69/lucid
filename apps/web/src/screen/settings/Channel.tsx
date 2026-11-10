@@ -77,7 +77,7 @@ type Asking = 'nothing' | 'connecting' | 'disconnecting'
  * see that it is connected, disconnect it. What it draws is decided by where the channel stands,
  * and a refusal from the last thing asked is said once underneath, whatever the standing.
  */
-export function ChannelControl({ link, acts }: { link: ChannelLink; acts: TextingActs }) {
+function ChannelControl({ link, acts }: { link: ChannelLink; acts: TextingActs }) {
   const { channel, standing } = link
   const [asking, setAsking] = useState<Asking>('nothing')
   const [refused, setRefused] = useState<string | null>(null)

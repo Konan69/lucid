@@ -5,13 +5,11 @@ import { Layer } from 'effect'
 import * as RpcClientError from 'effect/rpc/RpcClientError'
 import * as Socket from 'effect/socket/Socket'
 
-export type { ProductFailure }
-
 /** An Effect program the web runtime can run. */
-export type Program<Value> = Effect.Effect<Value, ProductFailure, VividRpcClient>
+type Program<Value> = Effect.Effect<Value, ProductFailure, VividRpcClient>
 
 /** Turns a browser-only transport failure into the same failure the screens already draw. */
-export function clientFailure(message: string, cause: unknown): RpcClientError.RpcClientError {
+function clientFailure(message: string, cause: unknown): RpcClientError.RpcClientError {
   return RpcClientError.RpcClientError.make({
     reason: RpcClientError.RpcClientDefect.make({ message, cause }),
   })

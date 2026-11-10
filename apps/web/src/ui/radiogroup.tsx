@@ -32,4 +32,4 @@ function RadioGroupItem({ className, ...props }: RadioPrimitive.Root.Props) {
   )
 }
 
-export { RadioGroup, RadioGroupItem }
+export { RadioGroup }
