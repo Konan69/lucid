@@ -18,9 +18,8 @@ import {
  * - `MORPH`: `src/components/SegmentedControl.tsx` (`LinearTransition.duration(200)` with
  *   `Easing.out(Easing.cubic)`), also the composer's `DICTATION_LAYOUT` family in
  *   `src/features/voice-input/ComposerDictationControl.tsx`.
- * - `ROW_MORPH`, `APPEAR`, `LEAVE`: `src/features/connection/ConnectionEnvironmentRow.tsx`
- *   (`LinearTransition.duration(250)`, `FadeIn.duration(200)`, `FadeOut.duration(150)`).
- * - `MENU_APPEAR`: `src/components/AndroidAnchoredMenu.tsx` (`FadeIn.duration(120)`).
+ * - `APPEAR`, `LEAVE`: `src/features/connection/ConnectionEnvironmentRow.tsx`
+ *   (`FadeIn.duration(200)`, `FadeOut.duration(150)`).
  * - `SAID`, `ANSWERED`: `src/features/threads/ThreadFeed.tsx` (a fresh message of the user's
  *   enters with `FadeInUp.duration(220)`, a fresh one of the assistant's with
  *   `FadeIn.duration(220)`).
@@ -31,17 +30,11 @@ export const MORPH = LinearTransition.duration(200)
   .easing(Easing.out(Easing.cubic))
   .reduceMotion(ReduceMotion.System)
 
-/** A row or group that makes room for something appearing inside it. */
-export const ROW_MORPH = LinearTransition.duration(250).reduceMotion(ReduceMotion.System)
-
 /** What arrives inside a control that has changed shape. */
 export const APPEAR = FadeIn.duration(200).reduceMotion(ReduceMotion.System)
 
 /** What leaves it: quicker than it arrived, so the control is never waiting on something going. */
 export const LEAVE = FadeOut.duration(150).reduceMotion(ReduceMotion.System)
-
-/** A menu or popover: it is asked for, so it is there almost at once. */
-export const MENU_APPEAR = FadeIn.duration(120).reduceMotion(ReduceMotion.System)
 
 /**
  * A message the Person has just sent: it fades in while rising into its place from the composer
