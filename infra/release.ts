@@ -92,7 +92,12 @@ export const Release = Resource<Release>('Infra.Release')
 /** Railway's GraphQL API refused or could not be read; `operation` names which call. */
 class ReleaseRefused extends Schema.TaggedError<ReleaseRefused>()(
   'ReleaseRefused',
-  { operation: Schema.String, message: Schema.String },
+  {
+    operation: Schema.String,
+    message: Schema.String,
+    /** The tag of the failure this one was made from, when it was caught rather than decided here. */
+    cause: Schema.optionalKey(Schema.String),
+  },
   { title: 'Release refused' },
 ) {}
 
@@ -117,7 +122,12 @@ class ReleaseTimedOut extends Schema.TaggedError<ReleaseTimedOut>()(
 /** The deployment reports success, but a read from outside disagrees with what was released. */
 class ReleaseUnverified extends Schema.TaggedError<ReleaseUnverified>()(
   'ReleaseUnverified',
-  { check: Schema.Literals(['health', 'commit', 'worker'] as const), message: Schema.String },
+  {
+    check: Schema.Literals(['health', 'commit', 'worker'] as const),
+    message: Schema.String,
+    /** The tag of the failure this one was made from, when it was caught rather than decided here. */
+    cause: Schema.optionalKey(Schema.String),
+  },
   { title: 'Release unverified' },
 ) {}
 
@@ -207,6 +217,8 @@ const railway = <A>(
     const token = Redacted.value(credentials.token).trim()
     const client = yield* HttpClient.HttpClient
     const refused = (message: string) => new ReleaseRefused({ operation, message })
+    const refusedBy = (error: { readonly _tag: string }, message: string) =>
+      new ReleaseRefused({ operation, message, cause: error._tag })
     const response = yield* client
       .execute(
         HttpClientRequest.post(`${credentials.apiBaseUrl.replace(/\/$/, '')}/graphql/v2`).pipe(
@@ -218,10 +230,12 @@ const railway = <A>(
           HttpClientRequest.bodyJsonUnsafe({ query, variables }),
         ),
       )
-      .pipe(Effect.mapError(() => refused('the request failed')))
-    const body = yield* response.text.pipe(Effect.mapError(() => refused('no response body')))
+      .pipe(Effect.mapError((error) => refusedBy(error, 'the request failed')))
+    const body = yield* response.text.pipe(
+      Effect.mapError((error) => refusedBy(error, 'no response body')),
+    )
     const answered = yield* decode(body).pipe(
-      Effect.mapError(() => refused(`unexpected answer, HTTP ${response.status}`)),
+      Effect.mapError((error) => refusedBy(error, `unexpected answer, HTTP ${response.status}`)),
     )
     if (answered.errors !== undefined || answered.data === null)
       return yield* refused(
@@ -329,7 +343,12 @@ const deploy = Effect.fn('Infra.Release.deploy')(function* (props: ReleaseProps)
     return yield* new ReleaseUnverified({ check: 'health', message: 'the server has no address' })
   const health = yield* HttpClient.get(`${props.url}/health`).pipe(
     Effect.mapError(
-      () => new ReleaseUnverified({ check: 'health', message: '/health could not be reached' }),
+      (error) =>
+        new ReleaseUnverified({
+          check: 'health',
+          message: '/health could not be reached',
+          cause: error._tag,
+        }),
     ),
   )
   if (health.status !== 200)

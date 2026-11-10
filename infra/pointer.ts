@@ -59,7 +59,11 @@ export const fleetStorage = Effect.fn('Infra.fleetStorage')(function* (outputs: 
  */
 class FleetPointerUnreadable extends Schema.TaggedError<FleetPointerUnreadable>()(
   'FleetPointerUnreadable',
-  { reason: Schema.String },
+  {
+    reason: Schema.String,
+    /** The tag of the failure this one was made from, when it was caught rather than decided here. */
+    cause: Schema.optionalKey(Schema.String),
+  },
   { title: 'Fleet pointer unreadable' },
 ) {}
 
@@ -120,19 +124,23 @@ const signedGet = (storage: FleetStorage, key: string) => {
  * 30 October to 10 November 2026 outage lacked: 59 deploys never published and nothing looked.
  * `None` when the bucket holds no pointer yet.
  */
+/** The pointer could not be read because `error` happened, kept by its tag. */
+const unreadable = (error: { readonly _tag: string }, reason: string) =>
+  new FleetPointerUnreadable({ reason, cause: error._tag })
+
 export const readPointer = Effect.fn('Infra.readPointer')(function* (storage: FleetStorage) {
   const client = yield* HttpClient.HttpClient
   const response = yield* client
     .execute(signedGet(storage, 'deploy/current.json'))
-    .pipe(Effect.mapError(() => new FleetPointerUnreadable({ reason: 'the request failed' })))
+    .pipe(Effect.mapError((error) => unreadable(error, 'the request failed')))
   if (response.status === 404) return Option.none<string>()
   if (response.status !== 200)
     return yield* new FleetPointerUnreadable({ reason: `refused with HTTP ${response.status}` })
   const body = yield* response.text.pipe(
-    Effect.mapError(() => new FleetPointerUnreadable({ reason: 'the body could not be read' })),
+    Effect.mapError((error) => unreadable(error, 'the body could not be read')),
   )
   const pointer = yield* decodePointer(body).pipe(
-    Effect.mapError(() => new FleetPointerUnreadable({ reason: 'not a celld pointer' })),
+    Effect.mapError((error) => unreadable(error, 'not a celld pointer')),
   )
   return Option.some(pointer.version)
 })

@@ -89,7 +89,11 @@ export const CellWorker = Resource<CellWorker>('Infra.CellWorker')
 /** celld could not bundle the Worker, so it has no version to compare or release. */
 class CellWorkerUnbuilt extends Schema.TaggedError<CellWorkerUnbuilt>()(
   'CellWorkerUnbuilt',
-  { message: Schema.String },
+  {
+    message: Schema.String,
+    /** The tag of the failure this one was made from, when it was caught rather than decided here. */
+    cause: Schema.optionalKey(Schema.String),
+  },
   { title: 'Cell Worker unbuilt' },
 ) {}
 
@@ -116,7 +120,11 @@ const workerVersion = Effect.fn('Infra.CellWorker.version')(function* (vars: Red
   })
   const receipt = yield* decodeReceipt(stdout.trim().split('\n').pop()).pipe(
     Effect.mapError(
-      () => new CellWorkerUnbuilt({ message: 'celld printed no deployment receipt' }),
+      (error) =>
+        new CellWorkerUnbuilt({
+          message: 'celld printed no deployment receipt',
+          cause: error._tag,
+        }),
     ),
   )
   return receipt.version

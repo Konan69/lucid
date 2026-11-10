@@ -56,7 +56,11 @@ export const SentryAlerts = Resource<SentryAlerts>('Infra.SentryAlerts')
 /** Sentry refused, could not be reached, or answered something the policy does not describe. */
 class SentryAlertsUnread extends Schema.TaggedError<SentryAlertsUnread>()(
   'SentryAlertsUnread',
-  { message: Schema.String },
+  {
+    message: Schema.String,
+    /** The tag of the failure this one was made from, when it was caught rather than decided here. */
+    cause: Schema.optionalKey(Schema.String),
+  },
   { title: 'Sentry alerts unread' },
 ) {}
 
@@ -118,7 +122,10 @@ const decodeReceipt = Schema.decodeEffect(
 )
 
 const token = Config.Redacted('SENTRY_MANAGEMENT_TOKEN').pipe(
-  Effect.mapError(() => new SentryAlertsUnread({ message: 'SENTRY_MANAGEMENT_TOKEN is not set' })),
+  Effect.mapError(
+    (error) =>
+      new SentryAlertsUnread({ message: 'SENTRY_MANAGEMENT_TOKEN is not set', cause: error._tag }),
+  ),
 )
 
 const decodeWorkflow = Schema.decodeEffect(Schema.fromJsonString(Workflow))
@@ -128,17 +135,22 @@ const decodeMonitor = Schema.decodeEffect(Schema.fromJsonString(Monitor))
 const fetchRule = Effect.fn('Infra.SentryAlerts.fetch')(function* (path: string) {
   const bearer = yield* token
   const unread = (why: string) => new SentryAlertsUnread({ message: `${path}: ${why}` })
+  const unreadBy = (error: { readonly _tag: string }, why: string) =>
+    new SentryAlertsUnread({ message: `${path}: ${why}`, cause: error._tag })
   const response = yield* HttpClient.execute(
     HttpClientRequest.get(`${origin}${path}`).pipe(
       HttpClientRequest.bearerToken(Redacted.value(bearer)),
     ),
-  ).pipe(Effect.mapError(() => unread('the request failed')))
+  ).pipe(Effect.mapError((error) => unreadBy(error, 'the request failed')))
   if (response.status !== 200) return yield* unread(`HTTP ${response.status}`)
-  return yield* response.text.pipe(Effect.mapError(() => unread('no body')))
+  return yield* response.text.pipe(Effect.mapError((error) => unreadBy(error, 'no body')))
 })
 
-const unexpected = (path: string) =>
-  new SentryAlertsUnread({ message: `${path}: not the rule the policy describes` })
+const unexpected = (path: string, error: { readonly _tag: string }) =>
+  new SentryAlertsUnread({
+    message: `${path}: not the rule the policy describes`,
+    cause: error._tag,
+  })
 
 /** The settings an issue alert workflow carries that the policy sets. */
 const workflowSettings = (workflow: typeof Workflow.Type) => [
@@ -174,8 +186,12 @@ const observeRule = Effect.fn('Infra.SentryAlerts.observeRule')(function* (rule:
   const body = yield* fetchRule(path)
   const settings =
     rule.kind === 'workflow'
-      ? workflowSettings(yield* decodeWorkflow(body).pipe(Effect.mapError(() => unexpected(path))))
-      : monitorSettings(yield* decodeMonitor(body).pipe(Effect.mapError(() => unexpected(path))))
+      ? workflowSettings(
+          yield* decodeWorkflow(body).pipe(Effect.mapError((error) => unexpected(path, error))),
+        )
+      : monitorSettings(
+          yield* decodeMonitor(body).pipe(Effect.mapError((error) => unexpected(path, error))),
+        )
   return { id: rule.id, kind: rule.kind, settings: Arr.sort(settings, Order.String) }
 })
 
@@ -211,7 +227,10 @@ const apply = Effect.fn('Infra.SentryAlerts.apply')(function* () {
     catch: () => new SentryAlertsUnread({ message: 'scripts/monitoring.mjs wrote no receipt' }),
   }).pipe(
     Effect.flatMap(decodeReceipt),
-    Effect.mapError(() => new SentryAlertsUnread({ message: 'the alert receipt does not decode' })),
+    Effect.mapError(
+      (error) =>
+        new SentryAlertsUnread({ message: 'the alert receipt does not decode', cause: error._tag }),
+    ),
   )
   return yield* observe([
     ...applied.workflows.map(({ id }) => ({ id, kind: 'workflow' as const, settings: [] })),
