@@ -35,8 +35,8 @@ export class Answering extends Context.Service<Answering, AnsweringService>()(
 
 /**
  * - `Sending`: an answer is on its way; no other is taken until it ends.
- * - `Sent`: the server took it. That request is never waiting again, so its banner keeps its
- *   controls off until the request's record takes it away.
+ * - `Sent`: the server took it. That request is never waiting again: its banner keeps its controls
+ *   off until the request's record takes it away, and the machine refuses another answer to it.
  * - `Refused`: the server did not take it, for `words`. The form is as the Person left it and may
  *   be sent again.
  */
@@ -79,7 +79,16 @@ const machine = Machine.make({
         },
       },
     },
-    Sent: { on: { Answer: answer } },
+    // A request whose answer was taken is never answered again from here; the next one may be.
+    Sent: {
+      on: {
+        Answer: {
+          target: 'Sending',
+          guard: ({ state, event }) => event.request.id !== state.id,
+          data: ({ event }) => ({ request: event.request }),
+        },
+      },
+    },
     Refused: { on: { Answer: answer } },
   },
 })
