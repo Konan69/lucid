@@ -57,6 +57,8 @@ function normaliseReply(text) {
 
 const missing = {
   handoff: 'No proof-owned Computer',
+  checkin: 'No browser recipe for a check-in yet; feature checkin proves its timer and Feed post',
+  monitoring: 'Monitoring has no browser surface; feature monitoring proves the Sentry receipt',
   discord: 'No browser recipe for the Discord Key form and Allow card yet',
   github: 'No browser recipe for the GitHub Key form yet',
   'texting-discord': 'No browser recipe for Text Vivid Discord connect yet',
