@@ -30,6 +30,9 @@ export const stages = [
       ['node', 'scripts/rpccallers.mjs'],
       // Structure: one-word names, no dumping grounds, server layering (docs/00-structure.md).
       ['node', 'scripts/structure.mjs'],
+      // The action protocol's TLA+ models and their code anchors, about 12 s with TLC
+      // (.agents/skills/verify-actions/SKILL.md). Needs Java 11+.
+      ['node', '.agents/skills/verify-actions/check.mjs'],
     ],
   },
   { name: 'lint', lane: 'checks', tasks: ['lint', 'lint:root'] },
