@@ -137,7 +137,7 @@ export type AccountIdentity = typeof AccountIdentity.Type
 const decodeAccountIdentity = Schema.decodeUnknownOption(AccountIdentity)
 
 /** Deletion authority is either a Vivid allocation, a proven migration copy, or access only. */
-export const AdoptionFinalization = Schema.TaggedUnion({ Pending: {}, Completed: {} })
+export const AdoptionFinalization = Schema.TaggedUnion({ Completed: {} })
 export const ExecutorAppOwnership = Schema.TaggedUnion({
   Dedicated: {},
   Adopted: { group: AdoptionGroupId, source: AdoptedSource, finalization: AdoptionFinalization },
@@ -154,7 +154,7 @@ const referenceFields = {
 }
 
 /** Exact resources survive refusal until the store can prove exclusive reclamation. */
-export const ExecutorRetired = Schema.Struct({
+const ExecutorRetired = Schema.Struct({
   original: ExecutorAppId,
   ownership: Schema.Literals(['Dedicated', 'Unproven']),
   account: Schema.OptionFromNullOr(ExecutorAccountId),
@@ -199,14 +199,6 @@ export const ExecutorReferences = Schema.TaggedUnion({
     googleState: GoogleState,
   },
   Authorized: { ...referenceFields, account: ExecutorAccountId },
-  /** Durable bridge: original user links keep Installation calls valid until the principal commits. */
-  Adopting: {
-    ...referenceFields,
-    account: ExecutorAccountId,
-    group: AdoptionGroupId,
-    original: Schema.NonEmptyString,
-    adopted: Schema.NonEmptyString,
-  },
 })
 export type ExecutorReferences = typeof ExecutorReferences.Type
 
@@ -1271,15 +1263,6 @@ function validateSelections(
   ].filter((slot) => slot.ids.length > 0)
   const matches = ExecutorReferences.match(references, {
     Public: () => actual.length === 0,
-    Adopting: (value) =>
-      actual.length > 0 &&
-      actual.every(
-        (slot) =>
-          slot.ids.length === 1 &&
-          slot.ids[0] === value.account &&
-          ((slot.scope === 'user' && slot.name === value.original) ||
-            (slot.scope === 'app' && slot.name === value.adopted)),
-      ),
     Authorized: (value) =>
       ExecutorBinding.match(value.binding, {
         Public: () => false,
@@ -1361,7 +1344,7 @@ function makeDiscovery(http: ExecutorHttp) {
  */
 function listedTool(references: ExecutorReferences, tool: typeof WireTool.Type): ListedTool {
   const listed = { input: tool.inputSchema, output: Option.fromUndefinedOr(tool.outputSchema) }
-  const branch = ExecutorReferences.isAnyOf(['Authorized', 'Adopting'])(references)
+  const branch = ExecutorReferences.guards.Authorized(references)
     ? Option.map(accountBranch(listed, references.account), (own) => ({
         own,
         account: ToolAccount.cases.Account.make({ accountId: references.account }),
@@ -1584,7 +1567,7 @@ function makeAuthorize(
       }),
     }
     const path = yield* bindingPath(bound)
-    const body: Schema.Json = ExecutorReferences.isAnyOf(['Authorized', 'Adopting'])(references)
+    const body: Schema.Json = ExecutorReferences.guards.Authorized(references)
       ? { account: references.account }
       : {}
     const connection = isPending(references)
@@ -1629,8 +1612,7 @@ function makeAuthorize(
  */
 function makeIdentity(http: ExecutorHttp) {
   return Effect.fn('Executor.identity')(function* (references: ExecutorReferences) {
-    if (!ExecutorReferences.isAnyOf(['Authorized', 'Adopting'])(references))
-      return Option.none<AccountIdentity>()
+    if (!ExecutorReferences.guards.Authorized(references)) return Option.none<AccountIdentity>()
     const health = yield* http.readHealth(
       Effect.succeed(HttpClientRequest.post(`/accounts/${query(references.account)}/health`)),
       null,
@@ -2528,7 +2510,7 @@ function makeReauthorize(
       }
     }
     if (
-      ExecutorReferences.isAnyOf(['Authorized', 'Adopting'])(references) ||
+      ExecutorReferences.guards.Authorized(references) ||
       ExecutorReferences.guards.Public(input.references)
     ) {
       const current = yield* status(references)
@@ -2642,7 +2624,6 @@ function makeRemove(http: ExecutorHttp) {
       Public: () => Effect.succeedNone,
       ReconnectRequired: () => Effect.succeedNone,
       Authorized: (value) => Effect.succeedSome(value.account),
-      Adopting: (value) => Effect.succeedSome(value.account),
       EnteringKey: resolveRemovalAccount,
       SigningIn: resolveRemovalAccount,
       OAuthSigningIn: resolveRemovalAccount,
@@ -2866,10 +2847,10 @@ export function retirementOf(references: ExecutorActiveReferences) {
   })
   return ExecutorRetired.make({
     ...app,
-    account: ExecutorReferences.isAnyOf(['Authorized', 'Adopting'])(references)
+    account: ExecutorReferences.guards.Authorized(references)
       ? Option.some(references.account)
       : Option.none(),
-    authorization: ExecutorReferences.isAnyOf(['Public', 'Authorized', 'Adopting'])(references)
+    authorization: ExecutorReferences.isAnyOf(['Public', 'Authorized'])(references)
       ? Option.none()
       : Option.some(references.authorization),
   })
@@ -3051,7 +3032,7 @@ const makeToolCache = Effect.fn('Executor.toolCache')(function* (http: ExecutorH
     timeToLive: (exit) => (Exit.isSuccess(exit) ? TOOL_SNAPSHOT_TTL : 0),
   })
   const discover = Effect.fn('Executor.discoverCached')(function* (references: ExecutorReferences) {
-    if (ExecutorReferences.isAnyOf(['Authorized', 'Adopting'])(references)) {
+    if (ExecutorReferences.guards.Authorized(references)) {
       const path = yield* bindingPath(references)
       const links = yield* http.readLinks(
         Effect.succeed(HttpClientRequest.get(path.slice(0, path.lastIndexOf('/')))),

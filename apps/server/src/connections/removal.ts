@@ -45,7 +45,6 @@ function storedResources(
       account: retired.account,
     }),
     Authorized: activeResources,
-    Adopting: activeResources,
     Public: activeResources,
     EnteringKey: activeResources,
     SigningIn: activeResources,
@@ -118,7 +117,7 @@ const removeResources = Effect.fn('Connections.removeResources')(function* (row:
   if (
     !ExecutorReferences.guards.ReconnectRequired(row.references) &&
     (ExecutorAppOwnership.guards.Adopted(row.references.appOwnership) ||
-      (ExecutorReferences.isAnyOf(['Public', 'Authorized', 'Adopting'])(row.references) &&
+      (ExecutorReferences.isAnyOf(['Public', 'Authorized'])(row.references) &&
         ExecutorAppOwnership.guards.Dedicated(row.references.appOwnership)))
   ) {
     const ownership = row.references.appOwnership
@@ -128,10 +127,6 @@ const removeResources = Effect.fn('Connections.removeResources')(function* (row:
     if (ExecutorAppOwnership.guards.Adopted(ownership))
       yield* (yield* ExecutorAdoption)
         .removeGroup(ownership.group)
-        .pipe(Effect.mapError(executorFailure))
-    if (ExecutorReferences.guards.Adopting(row.references))
-      yield* (yield* ExecutorAdoption)
-        .removeGroup(row.references.group)
         .pipe(Effect.mapError(executorFailure))
     const stopped = yield* database.transaction((tx) => removeRow(tx, row))
     yield* unsubscribeWatches(caller, stopped)
@@ -208,8 +203,8 @@ const removeResources = Effect.fn('Connections.removeResources')(function* (row:
   yield* unsubscribeWatches(caller, stopped)
 })
 
-/** Hold the same cross-process claim as adoption before deleting foreign resources. A stale
- * removal must reload rather than delete an app whose execution principal changed meanwhile. */
+/** Serialize removals of the same Connection before deleting foreign resources. A stale
+ * removal must reload rather than delete resources whose references changed meanwhile. */
 export const removeConnection = Effect.fn('Connections.remove')(function* (row: ConnectionRecord) {
   const database = yield* Database
   const context = yield* Effect.context<Effect.Services<ReturnType<typeof removeResources>>>()
