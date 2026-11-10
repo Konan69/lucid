@@ -23,7 +23,7 @@ export function artifactTools(runTool: RunTool) {
     defineTool({
       name: Tool.inspect_file,
       description:
-        'Capture a DOCX, PDF or PNG on your Computer and look at its exact bytes before delivery. Returns a PNG preview and an inspection reference for publish_file. DOCX/PDF previews show the first page. For PDF exports retain the editable source. A failed render cannot be published.',
+        'Capture a DOCX, PDF, PNG or XLSX on your Computer and look at its exact bytes before delivery. Returns a PNG preview and an inspection reference for publish_file. DOCX/PDF/XLSX previews show the first exported page. XLSX also returns sheet names and A1:E5 cells for up to ten sheets, formulas and cached values, with omissions named. Cached values may be absent or stale. For PDF exports retain the editable source. A failed render cannot be published.',
       input: v.strictObject({
         summary,
         path: text('Computer path to the output file.', 4096),
@@ -57,8 +57,9 @@ export function artifactTools(runTool: RunTool) {
                 ok: true,
                 inspection: outcome.inspection,
                 file: outcome.output,
+                workbook: outcome.workbook === undefined ? null : outcome.workbook,
                 message:
-                  'Look at this captured preview. Publish this inspection only after checking it. DOCX/PDF preview covers the first page.',
+                  'Look at this captured preview. Publish this inspection only after checking it. The image covers the first exported page. Workbook read-back covers only its named sheet ranges; formulas are not recalculated.',
               },
             }
           }),
@@ -75,7 +76,7 @@ export function artifactTools(runTool: RunTool) {
         inspection: text('Inspection reference returned by inspect_file.', 100),
         title: text('File title, unique within this Thread.', 120),
         review: text(
-          'What you checked visually and any limitations, including pages not shown in the preview.',
+          'What you checked visually and any limitations, including pages, sheets and cells not inspected and missing formula caches.',
           2000,
         ),
         note: v.optional(text('One sentence about what changed.', 200)),
