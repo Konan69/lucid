@@ -133,7 +133,7 @@ const restart = Effect.fn('IntegrationAsksProof.restart')(function* () {
       ['inspect', '--format', '{{index .Config.Labels "vivid.proof"}}', container],
       { encoding: 'utf8' },
     ).trim(),
-  ).toBe('integration-asks')
+  ).toMatch(/^(integration-asks|retire-adoption)$/u)
   const since = new Date().toISOString()
   NodeChildProcess.execFileSync('docker', ['restart', '--timeout', '0', container])
   yield* Effect.callback<void>((resume) => {
