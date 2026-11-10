@@ -4,9 +4,10 @@ import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import { ActionReconciliation, ServiceId, ToolCallId, ToolOutcome } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
-import { ConfigProvider, Context, Effect, Layer, Option, Redacted, Schema } from 'effect'
+import { Clock, ConfigProvider, Context, Effect, Layer, Option, Redacted, Schema } from 'effect'
 import type { Actor } from '../auth/access.ts'
 import { reconcile } from '../actions/journal.ts'
+import { actions } from '../actions/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { executorLayer } from './executor.ts'
@@ -153,6 +154,17 @@ const scenario = Effect.fn('ReconciliationProof.scenario')(function* (input: {
   const operationId = result.outcome.receipt.operationId
   const operations = yield* operationsOf(row)
   const before = yield* operations.call({ references: row.references, tool: 'attempts', input: {} })
+  if (!present && row.service === 'google/calendar') {
+    const early = yield* reconcile(actor.person.id, operationId)
+    expect(early.reconciliation._tag).toBe('Inconclusive')
+    const database = yield* Database
+    yield* database.run(
+      database
+        .update(actions)
+        .set({ claimedAt: (yield* Clock.currentTimeMillis) - 600_000 })
+        .where(eq(actions.id, operationId)),
+    )
+  }
   const checked = yield* reconcile(actor.person.id, operationId)
   // Gmail only ever proves a send happened; an empty search stays Inconclusive (`reconcile.ts`).
   const absent = row.service === 'google/gmail' ? 'Inconclusive' : 'NotApplied'

@@ -16,13 +16,13 @@
 (* be refused, pause for the Person, or still be running when Vivid's     *)
 (* 90 second request timeout ends the wait (executor.ts responseReader).  *)
 (* ExecutorContinues says whether Executor keeps running a request after  *)
-(* Vivid stopped waiting. Not confirmed from Executor's source; the        *)
-(* default is TRUE, the cautious reading.                                 *)
+(* Vivid stopped waiting. Cancellation does not prove a provider write   *)
+(* stopped. TRUE keeps that uncertainty until the landing window closes. *)
 (*                                                                         *)
 (* Lookup names what reconciliation can ask the provider                  *)
 (* (connections/reconcile.ts look): "none" (every other tool), "mail"     *)
 (* (Gmail send: can find, never proves absence), "calendar" (Calendar     *)
-(* event insert: can prove absence of a settled operation).               *)
+(* event insert: proves absence only after the ten-minute landing window).*)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -36,7 +36,7 @@ VARIABLES
   pc,         \* [Ops -> step of the server process sending that operation]
   pending,    \* [Ops -> [op, back]]: the operation to reconcile first and the step to rerun
   rechecked,  \* [Ops -> TRUE once afterReconciliation already reran the attempt]
-  row,        \* [Ops -> [st, rec, at]] the actions table; st "none" means no row
+  row,        \* [Ops -> [st, rec, at, closed, invalidated]] the actions table; st "none" means no row
   clock,      \* claimedAt order
   inflight,   \* operations Executor is running
   paused,     \* operations Executor holds paused for the Person
@@ -50,7 +50,7 @@ VARIABLES
 vars == <<pc, pending, rechecked, row, clock, inflight, paused, answer, resuming, crashes,
           landed, knew>>
 
-NoRow == [st |-> "none", rec |-> "unchecked", at |-> 0]
+NoRow == [st |-> "none", rec |-> "unchecked", at |-> 0, closed |-> FALSE, invalidated |-> FALSE]
 NoPending == [op |-> "none", back |-> "none"]
 
 (* journal.ts `unresolved`: being sent or settled Unknown, and not reconciled either way. *)
@@ -118,7 +118,7 @@ Before(o) ==
 Claim(o) ==
   /\ pc[o] = "claim"
   /\ Route(o, AnswerFor(o),
-           /\ row' = [row EXCEPT ![o] = [st |-> "dispatching", rec |-> "unchecked", at |-> clock + 1]]
+           /\ row' = [row EXCEPT ![o] = [st |-> "dispatching", rec |-> "unchecked", at |-> clock + 1, closed |-> FALSE, invalidated |-> FALSE]]
            /\ clock' = clock + 1
            /\ pc' = [pc EXCEPT ![o] = "send"]
            /\ UNCHANGED pending)
@@ -133,7 +133,7 @@ Claim(o) ==
 LookupSays(p) ==
   IF Lookup = "none" THEN "inconclusive"
   ELSE IF p \in LandedOps THEN "applied"                                   \* Found
-  ELSE IF Lookup = "calendar" /\ row[p].st # "dispatching" THEN "notapplied" \* Absent
+  ELSE IF Lookup = "calendar" /\ row[p].closed THEN "notapplied" \* Absent
   ELSE "inconclusive"                                                      \* Unsupported
 
 Reconcile(o) ==
@@ -154,6 +154,7 @@ Reconcile(o) ==
 (* tools.ts runConnection / sendJournaled: the request reaches Executor. *)
 Send(o) ==
   /\ pc[o] = "send"
+  /\ ~row[o].closed
   /\ inflight' = inflight \cup {o}
   /\ knew' = [knew EXCEPT ![o] = KnownDone]
   /\ pc' = [pc EXCEPT ![o] = "wait"]
@@ -198,6 +199,7 @@ Timeout(o) ==
 (* The Person (or Jev's review) accepts the held pause: asks.ts answer -> makeResume. *)
 Resume(o) ==
   /\ o \in paused
+  /\ ~row[o].closed
   /\ paused' = paused \ {o}
   /\ inflight' = inflight \cup {o}
   /\ resuming' = resuming \cup {o}
@@ -209,6 +211,28 @@ PauseExpires(o) ==
   /\ paused' = paused \ {o}
   /\ row' = [row EXCEPT ![o].st = IF @ = "dispatching" THEN "unknown" ELSE @]
   /\ UNCHANGED <<pc, pending, rechecked, clock, inflight, answer, resuming, crashes, landed, knew>>
+
+(* Product assumption: provider requests finish within ten minutes of the attempt's claim.
+   Execute may land before this step; closing drops anything still in flight. Nothing can be
+   dispatched after its window. Held pauses must end or resume before their attempt closes. *)
+CloseWindow(o) ==
+  /\ row[o].st # "none"
+  /\ ~row[o].closed
+  /\ pc[o] # "send"
+  /\ o \notin paused
+  /\ row' = [row EXCEPT ![o].closed = TRUE]
+  /\ inflight' = inflight \ {o}
+  /\ UNCHANGED <<pc, pending, rechecked, clock, paused, answer, resuming, crashes,
+                 landed, knew>>
+
+(* approvals/stale.ts invalidatePending: closing a held ask and settling its journal is one
+   transaction. Like expiry, earlier work may have landed, so its receipt is Unknown. *)
+PauseInvalidates(o) ==
+  /\ o \in paused
+  /\ paused' = paused \ {o}
+  /\ row' = [row EXCEPT ![o].st = IF @ = "dispatching" THEN "unknown" ELSE @, ![o].invalidated = TRUE]
+  /\ UNCHANGED <<pc, pending, rechecked, clock, inflight, answer, resuming, crashes,
+                 landed, knew>>
 
 (* The server restarts. Every server process stops where it is; rows stay as written.
    The runtime retries its tool calls under the same call ids; an executing Approval is never
@@ -228,6 +252,7 @@ Crash ==
 Next ==
   \/ \E o \in Ops : Start(o) \/ Before(o) \/ Claim(o) \/ Reconcile(o) \/ Send(o)
                     \/ Execute(o) \/ Read(o) \/ Timeout(o) \/ Resume(o) \/ PauseExpires(o)
+                    \/ CloseWindow(o) \/ PauseInvalidates(o)
   \/ Crash
 
 Spec == Init /\ [][Next]_vars
@@ -236,6 +261,8 @@ Spec == Init /\ [][Next]_vars
 TypeOK ==
   /\ \A o \in Ops : row[o].st \in {"none", "dispatching", "completed", "accepted", "unknown"}
   /\ \A o \in Ops : row[o].rec \in {"unchecked", "applied", "notapplied", "inconclusive"}
+
+InvalidatedSettles == \A o \in Ops : row[o].invalidated => row[o].st # "dispatching"
 
 (* Reconciliation never records NotApplied for an operation that took effect, before or after. *)
 NotAppliedIsTrue == \A o \in Ops : row[o].rec = "notapplied" => o \notin LandedOps
