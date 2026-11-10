@@ -1,0 +1,290 @@
+{
+  "sync": "c6ac4f716",
+  "anchors": [
+    {
+      "model": "authority.tla Gate",
+      "file": "apps/server/src/approvals/gate.ts",
+      "symbol": "gateLayer",
+      "snippets": [
+        "if (action.effect === 'read' && exposure === 'Ordinary')",
+        "const never = applicable.find((rule) => rule.decision === 'Never')",
+        "return GateDecision.cases.Blocked.make({ rule: never.action })",
+        "applicable.some((rule) => rule.decision === 'Ask') || BindingJudgment.guards.Uncertain(judged) || exposure === 'PersonalInShared' ) return yield* ask(approvals, actor, action, prepared)",
+        "const background = yield* checkUnwatched(actor, action, origin, prepared)",
+        "action.effect !== 'destructive' && applicable.some((rule) => rule.decision === 'Allow') ) return yield* allow(audit, actor, action, 'AllowRule')",
+        "const outcome = reviewOutcome(action.effect, review)",
+        "if (outcome === 'Ask') return yield* ask(approvals, actor, action, prepared)"
+      ]
+    },
+    {
+      "model": "authority.tla Gate (reviewable)",
+      "file": "apps/server/src/approvals/gate.ts",
+      "symbol": "reviewable",
+      "snippets": ["action.effect === 'destructive' || ActionTarget.guards.Connection(action.target) ||"]
+    },
+    {
+      "model": "authority.tla Gate (reviewOutcome)",
+      "file": "apps/server/src/approvals/policy.ts",
+      "symbol": "reviewOutcome",
+      "snippets": [
+        "(asked >= ASKED_THRESHOLD && beyond < BEYOND_THRESHOLD) || contained >= CONTAINED_THRESHOLD ? 'Run' : 'Ask'",
+        "Unreviewed: () => (effect === 'destructive' ? 'Ask' : 'Run')"
+      ]
+    },
+    {
+      "model": "authority.tla Gate (unwatchedOutcome)",
+      "file": "apps/server/src/approvals/policy.ts",
+      "symbol": "unwatchedOutcome",
+      "snippets": ["Unreviewed: () => 'Ask'"]
+    },
+    {
+      "model": "authority.tla Resolve",
+      "file": "apps/server/src/connections/asks.ts",
+      "symbol": "approve",
+      "snippets": [
+        "if (basis === 'Unreviewed') return Result.fail(yield* pause(addressed, action))",
+        "if (basis === 'Read' || basis === 'AllowRule' || basis === 'Contained') {",
+        "effect: 'destructive',",
+        "reviewed === 'Reviewed' ? resumeApproved(addressed, row, { pause: input.pause, action, basis: reviewed }) : pause(addressed, action).pipe(Effect.map(Result.fail))",
+        "response: { action: 'decline' },",
+        "return yield* resumeApproved(addressed, row, { pause: input.pause, action, basis })"
+      ]
+    },
+    {
+      "model": "authority.tla Accept",
+      "file": "apps/server/src/connections/asks.ts",
+      "symbol": "resumeApproved",
+      "snippets": [
+        "while (IntegrationPause.guards.Approval(current)) {",
+        "response: { action: 'accept', content: {} },"
+      ]
+    },
+    {
+      "model": "authority.tla AnswerHeld, InputAnswer",
+      "file": "apps/server/src/connections/asks.ts",
+      "symbol": "answer",
+      "snippets": [
+        "operation.resume({ pause: saved.pause, response, effect: action.effect }),",
+        "response.action === 'accept' && IntegrationPause.guards.Approval(saved.pause) ? 'PersonApproved' : 'Read',"
+      ]
+    },
+    {
+      "model": "authority.tla Accept, AnswerHeld, InputAnswer, CancelWithdrawn (expiry)",
+      "file": "apps/server/src/connections/executor.ts",
+      "symbol": "makeResume",
+      "snippets": [
+        "if (pause.expiresAt <= (yield* Clock.currentTimeMillis)) return ExecutorCallOutcome.cases.Expired.make({})"
+      ]
+    },
+    {
+      "model": "authority.tla DeviceClaims",
+      "file": "apps/server/src/approvals/store.ts",
+      "symbol": "move",
+      "snippets": [
+        "eq(approvals.digest, request.digest), eq(approvals.status, 'pending'), row.action.continuation === null ? gt(approvals.expiresAt, now) : undefined,"
+      ]
+    },
+    {
+      "model": "authority.tla DeviceReads",
+      "file": "apps/server/src/approvals/store.ts",
+      "symbol": "requireUnexpired",
+      "snippets": [
+        "if (Row.guards.expired(row)) return yield* new ApprovalExpired({ id: row.id })",
+        "if (row.action.continuation !== null) return",
+        "if (Row.guards.pending(row) && row.expiresAt <= now)"
+      ]
+    },
+    {
+      "model": "authority.tla RunOwn, AnswerHeld",
+      "file": "apps/server/src/approvals/store.ts",
+      "symbol": "decide",
+      "snippets": [
+        "if (row.action.continuation !== null) return yield* answerPausedApproval(decisionActor, row, request)",
+        "if (ApprovalDecision.isAnyOf(['Deny', 'Cancel'])(request.decision)) {",
+        "const outcome = yield* runJournaled("
+      ]
+    },
+    {
+      "model": "authority.tla ExpireApproval",
+      "file": "apps/server/src/approvals/store.ts",
+      "symbol": "expire",
+      "snippets": ["and(eq(approvals.status, 'pending'), lte(approvals.expiresAt, now))"]
+    },
+    {
+      "model": "authority.tla OwnDeadline, PauseDeadline",
+      "file": "apps/server/src/approvals/store.ts",
+      "symbol": "raise",
+      "snippets": [
+        "action.continuation === null ? now + 24 * 60 * 60 * 1000 : action.continuation.pause.expiresAt,"
+      ]
+    },
+    {
+      "model": "authority.tla InputClaim",
+      "file": "apps/server/src/inputs/store.ts",
+      "symbol": "answerIntegration",
+      "snippets": [
+        "status: 'answering',",
+        ".where(and(eq(inputRequests.id, request.id), eq(inputRequests.status, 'waiting')))"
+      ]
+    },
+    {
+      "model": "authority.tla Withdraw",
+      "file": "apps/server/src/inputs/store.ts",
+      "symbol": "withdrawWaiting",
+      "snippets": ["status: 'withdrawn'", "eq(inputRequests.status, 'waiting'),"]
+    },
+    {
+      "model": "authority.tla CancelWithdrawn",
+      "file": "apps/server/src/inputs/store.ts",
+      "symbol": "cancelWithdrawn",
+      "snippets": [
+        "eq(inputRequests.status, 'withdrawn'),",
+        "isNull(inputRequests.integrationOutcome),",
+        ".answer(addressed, action, { action: 'cancel' })"
+      ]
+    },
+    {
+      "model": "authority.tla ExpireInput",
+      "file": "apps/server/src/inputs/store.ts",
+      "symbol": "expireIntegrationInputs",
+      "snippets": [
+        "or(eq(inputRequests.status, 'waiting'), eq(inputRequests.status, 'answering')),",
+        "->'continuation'->'pause'->>'expiresAt')::numeric <= ${now}"
+      ]
+    },
+    {
+      "model": "authority.tla Propose; journal.tla Before",
+      "file": "apps/server/src/connections/tools.ts",
+      "symbol": "useToolAs",
+      "snippets": [
+        "const answer = yield* answerBefore({ ...prospective.value, personId: actor.person.id, target })",
+        "const decision = yield* (yield* Gate).check(",
+        "Blocked: ({ rule }) => notRead(ToolOutcome.cases.Blocked.make({ rule })),"
+      ]
+    },
+    {
+      "model": "authority.tla Dispatch; journal.tla Claim, Read",
+      "file": "apps/server/src/connections/tools.ts",
+      "symbol": "sendJournaled",
+      "snippets": [
+        "const claimed = yield* claim({",
+        "if (Claim.guards.Answered(claimed)) return yield* notRead(answeredOutcome(claimed.receipt))",
+        "yield* settleCall(result.outcome, operation.id)"
+      ]
+    },
+    {
+      "model": "authority.tla Resolve (entry)",
+      "file": "apps/server/src/connections/tools.ts",
+      "symbol": "resolveApproval",
+      "snippets": ["basis: call.basis,"]
+    },
+    {
+      "model": "authority.tla RunOwn (basis)",
+      "file": "apps/server/src/connections/tools.ts",
+      "symbol": "connectionRunner",
+      "snippets": ["basis: 'PersonApproved',"]
+    },
+    {
+      "model": "journal.tla AnswerFor",
+      "file": "apps/server/src/actions/journal.ts",
+      "symbol": "unresolved",
+      "snippets": [
+        "or(isNull(actions.receipt), sql`${actions.receipt}->>'_tag' = 'Unknown'`), sql`${actions.reconciliation}->>'_tag' not in ('Applied', 'NotApplied')`,"
+      ]
+    },
+    {
+      "model": "journal.tla AnswerFor",
+      "file": "apps/server/src/actions/journal.ts",
+      "symbol": "answerFor",
+      "snippets": [
+        "const [same] = yield* tx.select().from(actions).where(eq(actions.id, input.id))",
+        "if (open !== undefined) return yield* new ActionReconciliationRequired({ operationId: open.id })",
+        ".orderBy(sql`${actions.claimedAt} desc`)",
+        "return ActionReconciliation.guards.Applied(reconciliation) ? { answer: Option.some<ActionReceipt>(reconciliation.receipt), retryOf: Option.none() }"
+      ]
+    },
+    {
+      "model": "journal.tla Claim",
+      "file": "apps/server/src/actions/journal.ts",
+      "symbol": "claim",
+      "snippets": [
+        "yield* lockAct(tx, input.threadId, fingerprint) const found = yield* answerFor(tx, { id: input.id, threadId: input.threadId, fingerprint })",
+        "receipt: null,"
+      ]
+    },
+    {
+      "model": "journal.tla Read (settle)",
+      "file": "apps/server/src/actions/journal.ts",
+      "symbol": "settle",
+      "snippets": [".where(and(eq(actions.id, receipt.operationId), isNull(actions.receipt))),"]
+    },
+    {
+      "model": "journal.tla Read (release)",
+      "file": "apps/server/src/actions/journal.ts",
+      "symbol": "release",
+      "snippets": ["database.delete(actions).where(and(eq(actions.id, id), isNull(actions.receipt))),"]
+    },
+    {
+      "model": "journal.tla Reconcile",
+      "file": "apps/server/src/actions/journal.ts",
+      "symbol": "reconcile",
+      "snippets": [
+        "if (ActionReconciliation.isAnyOf(['Applied', 'NotApplied'])(recorded))",
+        "sql`${actions.reconciliation}->>'_tag' not in ('Applied', 'NotApplied')`,"
+      ]
+    },
+    {
+      "model": "journal.tla Reconcile (rerun once)",
+      "file": "apps/server/src/actions/journal.ts",
+      "symbol": "afterReconciliation",
+      "snippets": [
+        "if (!ActionReconciliation.isAnyOf(['Applied', 'NotApplied'])(checked.reconciliation)) return yield* error",
+        "return yield* attempt"
+      ]
+    },
+    {
+      "model": "journal.tla LookupSays",
+      "file": "apps/server/src/connections/reconcile.ts",
+      "symbol": "look",
+      "snippets": [
+        "if (parsed.items.length > 0) return Lookup.cases.Found.make({",
+        "return Search.guards.Calendar(query.value) && parsed.nextPageToken === undefined && !ActionPhase.guards.Dispatching(operation.phase) ? Lookup.cases.Absent.make({}) : Lookup.cases.Unsupported.make({})"
+      ]
+    },
+    {
+      "model": "journal.tla Timeout",
+      "file": "apps/server/src/connections/executor.ts",
+      "symbol": "responseReader",
+      "snippets": [
+        "duration: '90 seconds',",
+        "Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool })),"
+      ]
+    },
+    {
+      "model": "journal.tla Start(ap), Read",
+      "file": "apps/server/src/approvals/store.ts",
+      "symbol": "runJournaled",
+      "snippets": [
+        "const operationId = operationOf.approval(row.id)",
+        "Effect.catchTag('ActionReconciliationRequired', () => Effect.succeedNone),",
+        "Failed: () => release(operationId),",
+        "Unknown: () => settle(ActionReceipt.cases.Unknown.make({ operationId, observedAt: now })),"
+      ]
+    },
+    {
+      "model": "journal.tla PauseExpires, Read (pause answers)",
+      "file": "apps/server/src/connections/asks.ts",
+      "symbol": "record",
+      "snippets": [
+        "Rejected: () => release(operationId),",
+        "Expired: () => settle(ActionReceipt.cases.Unknown.make({ operationId, observedAt: now })),"
+      ]
+    },
+    {
+      "model": "journal.tla Crash",
+      "file": "apps/server/src/approvals/store.ts",
+      "symbol": "recover",
+      "snippets": ["{ status: 'unknown', finishedAt: now, outcome: null }"]
+    }
+  ]
+}
