@@ -1,5 +1,5 @@
 import { ApprovalDecision, draftOf, type Approval, type SendDraft } from '@vivid/contracts'
-import { allowing, draftWords, editedInput, riskWords, type DraftWords } from '@vivid/state'
+import { allowing, draftWords, editedInput, form, riskWords, type DraftWords } from '@vivid/state'
 import { Option } from 'effect'
 import { Paperclip } from 'lucide-react-native'
 import { useState, type ReactNode } from 'react'
@@ -44,47 +44,52 @@ export function Decide({ approval }: { approval: Approval }) {
       <Label size="caption" tone={action.effect === 'destructive' ? 'status-danger' : 'ink-3'}>
         {riskWords(action.effect)}
       </Label>
-      {Option.match(draftOf(approval.action), {
-        onSome: (draft) => (
-          <DraftForm
-            // A newer record of the same ask is a new draft: the words start again from it.
-            key={`${approval.id}:${approval.digest}`}
-            draft={draft}
-            held={held}
-            sending={!going('Deny') && Option.isSome(sending)}
-            discarding={going('Deny')}
-            refusal={refusal}
-            onDiscard={() => decide(ApprovalDecision.cases.Deny.make({}))}
-            onSend={(words) =>
-              decide(
-                Option.match(editedInput(draft, words), {
-                  onNone: () => ApprovalDecision.cases.AllowOnce.make({}),
-                  onSome: (input) => ApprovalDecision.cases.AllowEdited.make({ input }),
-                }),
-              )
-            }
-          />
-        ),
-        onNone: () => (
-          <>
-            <Refusal refusal={refusal} />
-            <Answers>
-              <Answer
-                words={going('Deny') ? 'Not allowing…' : 'Don’t allow'}
-                primary={false}
-                held={held}
-                onPress={() => decide(ApprovalDecision.cases.Deny.make({}))}
-              />
-              <Answer
-                words={going('AllowOnce') ? 'Allowing…' : 'Allow'}
-                primary
-                held={held}
-                onPress={() => decide(ApprovalDecision.cases.AllowOnce.make({}))}
-              />
-            </Answers>
-          </>
-        ),
-      })}
+      {/* An Integration's paused call is answered as it was asked: the server refuses an edit
+          to it, so it is never offered as a draft. */}
+      {Option.match(
+        form.isIntegrationApproval(approval) ? Option.none() : draftOf(approval.action),
+        {
+          onSome: (draft) => (
+            <DraftForm
+              // A newer record of the same ask is a new draft: the words start again from it.
+              key={`${approval.id}:${approval.digest}`}
+              draft={draft}
+              held={held}
+              sending={!going('Deny') && Option.isSome(sending)}
+              discarding={going('Deny')}
+              refusal={refusal}
+              onDiscard={() => decide(ApprovalDecision.cases.Deny.make({}))}
+              onSend={(words) =>
+                decide(
+                  Option.match(editedInput(draft, words), {
+                    onNone: () => ApprovalDecision.cases.AllowOnce.make({}),
+                    onSome: (input) => ApprovalDecision.cases.AllowEdited.make({ input }),
+                  }),
+                )
+              }
+            />
+          ),
+          onNone: () => (
+            <>
+              <Refusal refusal={refusal} />
+              <Answers>
+                <Answer
+                  words={going('Deny') ? 'Not allowing…' : 'Don’t allow'}
+                  primary={false}
+                  held={held}
+                  onPress={() => decide(ApprovalDecision.cases.Deny.make({}))}
+                />
+                <Answer
+                  words={going('AllowOnce') ? 'Allowing…' : 'Allow'}
+                  primary
+                  held={held}
+                  onPress={() => decide(ApprovalDecision.cases.AllowOnce.make({}))}
+                />
+              </Answers>
+            </>
+          ),
+        },
+      )}
     </View>
   )
 }
@@ -234,7 +239,7 @@ function Attached({ name }: { name: string }) {
 }
 
 /** The answers' row, at the foot of the card as a said card's buttons are (`Feed.tsx`). */
-function Answers({ children }: { children: ReactNode }) {
+export function Answers({ children }: { children: ReactNode }) {
   return <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>{children}</View>
 }
 
@@ -243,7 +248,7 @@ function Answers({ children }: { children: ReactNode }) {
  * corners, the accent for the answer and its soft tint for the way out), so a card decided here
  * reads as one of the Feed's.
  */
-function Answer({
+export function Answer({
   words,
   primary,
   held,

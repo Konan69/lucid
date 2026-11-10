@@ -3,6 +3,7 @@ import { ApprovalDecision, type DecideApprovalRequest } from '@vivid/contracts'
 import { allowing, responding, type makeLive } from '@vivid/state'
 import { Effect, Layer, Option, Result } from 'effect'
 import { makeDeviceDecisions } from './devices'
+import { makeIntegrationAnswers } from './filling'
 import { confirm, warn } from './haptics'
 import { useLiveData, useLiveValue, type LiveData } from './live'
 
@@ -29,10 +30,14 @@ export const makeApprovalDecisions = (engine: ReturnType<typeof makeLive>) => {
   return { ...decisions, inbox: engine.query((client) => client.WatchInbox()) }
 }
 
-/** The session's decision machines: a computer's access, and an Approval away from its Thread. */
+/**
+ * The session's decision machines: a computer's access, an Approval away from its Thread, and an
+ * answer to an Integration's question (`filling.ts`), each of which outlives what pressed it.
+ */
 export const makeDecisions = (engine: ReturnType<typeof makeLive>) => ({
   devices: makeDeviceDecisions(engine),
   approvals: makeApprovalDecisions(engine),
+  filling: makeIntegrationAnswers(engine),
 })
 
 /** The Feed and Notifications read the same attempt, and its refusal, wherever it was pressed. */

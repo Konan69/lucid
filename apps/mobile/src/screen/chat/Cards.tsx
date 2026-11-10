@@ -7,7 +7,7 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { Option } from 'effect'
-import { access, changedLine, helpers } from '@vivid/state'
+import { access, changedLine, form, helpers } from '@vivid/state'
 import { View } from 'react-native'
 import { Card, cardOf, type ToolPart } from '../../data/message'
 import { Label } from '../../ui/ui'
@@ -146,9 +146,13 @@ function Drawn({
   })
 }
 
-/** How an Approval that is no longer waiting ended, in a sentence and the color of its outcome. */
-function ApprovalOutcome({ state }: { state: ApprovalState }) {
-  return ApprovalState.match(state, {
+/**
+ * How an Approval that is no longer waiting ended, in a sentence and the color of its outcome. An
+ * Integration's that ran out says nothing was sent: it paused before its call ran
+ * (`form.EXPIRED_APPROVAL`).
+ */
+function ApprovalOutcome({ approval }: { approval: Approval }) {
+  return ApprovalState.match(approval.state, {
     Pending: () => null,
     Executing: ({ decidedBy }) => (
       <Label size="label" tone="status-working">
@@ -177,7 +181,7 @@ function ApprovalOutcome({ state }: { state: ApprovalState }) {
     ),
     Expired: () => (
       <Label size="label" tone="ink-2">
-        This request expired.
+        {form.isIntegrationApproval(approval) ? form.EXPIRED_APPROVAL : 'This request expired.'}
       </Label>
     ),
     Withdrawn: () => (
@@ -215,7 +219,7 @@ function AskedFirst({ approval, me }: { approval: Approval; me: PersonId }) {
         Asked first
       </Label>
       <Words text={approval.action.summary} />
-      <ApprovalOutcome state={approval.state} />
+      <ApprovalOutcome approval={approval} />
       {theirs && (
         <Label size="label" tone="ink-2">
           Waiting on {approval.askedOf.name}.
