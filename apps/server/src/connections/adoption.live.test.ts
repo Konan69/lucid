@@ -11,6 +11,7 @@ import {
   Fiber,
   Exit,
   Layer,
+  Match,
   Option,
   Queue,
   Redacted,
@@ -30,6 +31,11 @@ import { watches } from '../watches/tables.ts'
 import {
   Executor,
   ExecutorAppOwnership,
+  ExecutorAppId,
+  ExecutorAccountId,
+  ExecutorAuthorizationId,
+  ExecutorBinding,
+  ExecutorRetired,
   AdoptionFinalization,
   ExecutorCallOutcome,
   ExecutorCaller,
@@ -43,6 +49,7 @@ import {
 import { ExecutorAdoption, executorAdoptionLayer } from './adopter.ts'
 import { ExecutorMembers, executorMembersLayer, operationsOf, watchPrincipal } from './members.ts'
 import { adoptConnections } from './migration.ts'
+import { adoptionFiles } from './adoption.ts'
 import { madeFiles } from './made.ts'
 import { decodeRow, encodeReferences } from './records.ts'
 import { removeConnection } from './removal.ts'
@@ -50,6 +57,60 @@ import { connections } from './tables.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import { makeWatchedApps } from '../watches/apps.ts'
 import { connectionTestLayer, fixture } from './testing.ts'
+
+/** Exact read-only captured file arrays. Provider endpoints/auth are altered only in the call fixture below. */
+const gmailWorkspace = {
+  files: [
+    {
+      path: 'index.ts',
+      content:
+        'import { defineApp } from "apps";\nimport { liveOpenapiRouter } from "apps/openapi";\nimport { provider } from "./provider.ts";\nexport default defineApp({ accounts: { google: provider } }, async ({ accounts, cache, fetch, signal }) => ({ tools: liveOpenapiRouter({ cache, fetch, signal, source: { url: "https://integrations.sh/specs/google/google-gmail.json" }, allowedOrigin: "https://gmail.googleapis.com", securitySchemes: {"googleOAuth2":{"type":"oauth2","flows":{"authorizationCode":{"authorizationUrl":"https://accounts.google.com/o/oauth2/v2/auth","tokenUrl":"https://oauth2.googleapis.com/token","scopes":{"openid":"","email":"","profile":"","https://mail.google.com/":"","https://www.googleapis.com/auth/gmail.settings.basic":""}}}}}, methods: {}, oauth: ["googleOAuth2"], account: accounts.google }) }));\n',
+    },
+    {
+      path: 'package.json',
+      content:
+        '{"name":"vivid-google-gmail","private":true,"type":"module","dependencies":{"apps":"0.0.1-beta.22"}}',
+    },
+    {
+      path: 'provider.ts',
+      content:
+        'import { decodeJson, defineProvider, oauth2, object, string } from "apps";\nexport const provider = defineProvider({ name: "Gmail", hosts: ["gmail.googleapis.com","openidconnect.googleapis.com"], auth: { googleOAuth2: oauth2({"discover":"https://accounts.google.com","scopes":["openid","email","profile","https://mail.google.com/","https://www.googleapis.com/auth/gmail.settings.basic"],"resource":null,"authorizationParams":{"access_type":"offline","prompt":"consent"}}) }, async health({ account, fetch, signal }) { const response = await fetch("https://openidconnect.googleapis.com/v1/userinfo", { signal, headers: { Authorization: "Bearer " + account.fields.access_token } }); const user = await decodeJson(response, object({ email: string() })); return { accountInfo: { email: user.email } }; } });\n',
+    },
+  ],
+}
+const calendarWorkspace = {
+  files: [
+    {
+      path: 'index.ts',
+      content:
+        'import { defineApp } from "apps";\nimport { liveOpenapiRouter } from "apps/openapi";\nimport { provider } from "./provider.ts";\nexport default defineApp({ accounts: { google: provider } }, async ({ accounts, cache, fetch, signal }) => ({ tools: liveOpenapiRouter({ cache, fetch, signal, source: { url: "https://integrations.sh/specs/google/google-calendar.json" }, allowedOrigin: "https://www.googleapis.com", securitySchemes: {"googleOAuth2":{"type":"oauth2","flows":{"authorizationCode":{"authorizationUrl":"https://accounts.google.com/o/oauth2/v2/auth","tokenUrl":"https://oauth2.googleapis.com/token","scopes":{"openid":"","email":"","profile":"","https://www.googleapis.com/auth/calendar":""}}}}}, methods: {}, oauth: ["googleOAuth2"], account: accounts.google }) }));\n',
+    },
+    {
+      path: 'package.json',
+      content:
+        '{"name":"vivid-google-calendar","private":true,"type":"module","dependencies":{"apps":"0.0.1-beta.22"}}',
+    },
+    {
+      path: 'provider.ts',
+      content:
+        'import { decodeJson, defineProvider, oauth2, object, string } from "apps";\nexport const provider = defineProvider({ name: "Google Calendar", hosts: ["www.googleapis.com","openidconnect.googleapis.com"], auth: { googleOAuth2: oauth2({"discover":"https://accounts.google.com","scopes":["openid","email","profile","https://www.googleapis.com/auth/calendar"],"resource":null,"authorizationParams":{"access_type":"offline","prompt":"consent"}}) }, async health({ account, fetch, signal }) { const response = await fetch("https://openidconnect.googleapis.com/v1/userinfo", { signal, headers: { Authorization: "Bearer " + account.fields.access_token } }); const user = await decodeJson(response, object({ email: string() })); return { accountInfo: { email: user.email } }; } });\n',
+    },
+  ],
+}
+const githubWorkspace = {
+  files: [
+    {
+      path: 'index.ts',
+      content:
+        'import { defineApp, defineProvider, secrets, object, string } from "apps";\nimport { mcpRouter } from "apps/mcp";\nconst service = defineProvider({ name: "GitHub", hosts: ["api.githubcopilot.com"], auth: { pat: secrets({ label: "Personal access token", fields: object({ token: string() }) }) } });\nexport default defineApp({ accounts: { service } }, async ({ accounts, signal, cache }) => ({ tools: await mcpRouter({ url: "https://api.githubcopilot.com/mcp/", headers: { ["Authorization"]: "Bearer " + accounts.service.fields.token }, accountId: accounts.service.id, cache: cache.forAccount(accounts.service), signal }) }));\n',
+    },
+    {
+      path: 'package.json',
+      content:
+        '{"name":"vivid-keyed-mcp","private":true,"type":"module","dependencies":{"apps":"0.0.1-beta.19","@modelcontextprotocol/sdk":"1.30.0"}}',
+    },
+  ],
+}
 
 const decodeCallbackJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Json))
 const decodeVerification = Schema.decodeUnknownOption(
@@ -591,8 +652,355 @@ const unsupported = Effect.fn('AdoptionProof.unsupported')(function* (actor: Act
   yield* removeConnection(kept)
 })
 
+const decodeRpc = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Finite])),
+    method: Schema.String,
+    params: Schema.optionalKey(Schema.Json),
+  }),
+)
+const decodeInitialize = Schema.decodeUnknownEffect(
+  Schema.Struct({ protocolVersion: Schema.String }),
+)
+
+/** Stand-ins replace only provider destinations and OAuth in the proof. The captured files,
+ * old framework pins and router construction are the actual deployed workspaces. */
+const capturedProvider = Effect.fn('AdoptionProof.capturedProvider')(function* () {
+  const server = yield* NodeHttpServer.make(() => NodeHttp.createServer(), {
+    host: '127.0.0.1',
+    port: 0,
+  })
+  if (!NetAddress.isInetAddress(server.address)) return expect.fail('Expected provider listener')
+  const origin = (yield* Effect.fromResult(NetAddress.toUrl(server.address))).origin
+  yield* server.serve(
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest
+      if (request.url.startsWith('/spec/')) {
+        const mail = request.url.includes('gmail')
+        const path = mail ? '/gmail/v1/users/me/profile' : '/calendar/v3/calendars/primary'
+        return yield* HttpServerResponse.json({
+          openapi: '3.0.3',
+          info: { title: 'Captured Google proof', version: '1' },
+          servers: [{ url: origin }],
+          paths: {
+            [path]: {
+              get: {
+                operationId: mail ? 'gmail.users.getProfile' : 'calendar.calendars.get',
+                tags: [mail ? 'Gmail API' : 'Calendar API'],
+                security: [{ googleOAuth2: [] }],
+                responses: {
+                  '200': {
+                    description: 'Saved data',
+                    content: { 'application/json': { schema: { type: 'object' } } },
+                  },
+                },
+              },
+            },
+          },
+        })
+      }
+      if (request.headers['authorization'] !== 'Bearer synthetic')
+        return HttpServerResponse.empty({ status: 401 })
+      if (request.url !== '/mcp')
+        return yield* HttpServerResponse.json({ marker: 'saved-provider-data' })
+      const rpc = yield* request.json.pipe(Effect.flatMap(decodeRpc))
+      if (rpc.id === undefined) return HttpServerResponse.empty({ status: 202 })
+      let result: Schema.Json
+      switch (rpc.method) {
+        case 'initialize': {
+          const input = yield* decodeInitialize(rpc.params)
+          result = {
+            protocolVersion: input.protocolVersion,
+            capabilities: { tools: {} },
+            serverInfo: { name: 'Captured GitHub proof', version: '1' },
+          }
+          break
+        }
+        case 'tools/list':
+          result = {
+            tools: [
+              {
+                name: 'get_me',
+                description: 'Read saved identity',
+                inputSchema: { type: 'object', properties: {} },
+                annotations: { readOnlyHint: true },
+              },
+            ],
+          }
+          break
+        case 'tools/call':
+          result = {
+            content: [{ type: 'text', text: '{"marker":"saved-provider-data"}' }],
+            structuredContent: { marker: 'saved-provider-data' },
+          }
+          break
+        default:
+          return yield* HttpServerResponse.json({
+            jsonrpc: '2.0',
+            id: rpc.id,
+            error: { code: -32601, message: 'Method not found' },
+          })
+      }
+      return yield* HttpServerResponse.json({ jsonrpc: '2.0', id: rpc.id, result })
+    }).pipe(Effect.orElseSucceed(() => HttpServerResponse.empty({ status: 400 }))),
+  )
+  return origin
+})
+
+/** Retain every captured router expression. Only the proof's OAuth and network destinations
+ * are replaced; the production transformation never edits provider.ts or upstream addresses. */
+function capturedFiles(workspace: typeof gmailWorkspace, name: string, origin: string) {
+  return workspace.files.map((file) => {
+    if (file.path === 'provider.ts')
+      return {
+        path: file.path,
+        content: `import { defineProvider, secrets, object, string } from "apps";
+export const provider = defineProvider({ name: ${JSON.stringify(name)}, hosts: [${JSON.stringify(new URL(origin).host)}], auth: { googleOAuth2: secrets({ label: "Key", fields: object({ access_token: string() }) }) } });`,
+      }
+    if (file.path !== 'index.ts') return file
+    return {
+      path: file.path,
+      content: file.content
+        .replace('https://integrations.sh/specs/google/google-gmail.json', origin + '/spec/gmail')
+        .replace(
+          'https://integrations.sh/specs/google/google-calendar.json',
+          origin + '/spec/calendar',
+        )
+        .replace('https://gmail.googleapis.com', origin)
+        .replace('https://www.googleapis.com', origin)
+        .replace('https://api.githubcopilot.com/mcp/', origin + '/mcp')
+        .replace('api.githubcopilot.com', new URL(origin).host),
+    }
+  })
+}
+
+/** Old single-account apps cannot use today's authored-app pre-auth schedule inspection.
+ * Seed them with the public deploy/connect APIs used by their original installation path. */
+const capturedCreate = Effect.fn('AdoptionProof.capturedCreate')(function* (
+  actor: Actor,
+  name: 'Gmail' | 'Google Calendar' | 'GitHub',
+  files: typeof gmailWorkspace.files,
+  key: string,
+) {
+  const database = yield* Database
+  const owner = (yield* Executor).as(installationCaller)
+  const id = ConnectionId.make(crypto.randomUUID())
+  let inserted = false
+  let held = Option.none<{
+    app: typeof ExecutorAppId.Type
+    account: Option.Option<typeof ExecutorAccountId.Type>
+  }>()
+  yield* Effect.addFinalizer(() =>
+    Effect.gen(function* () {
+      const [stored] = yield* database.run(
+        database.select().from(connections).where(eq(connections.id, id)),
+      )
+      if (stored !== undefined) return yield* removeConnection(yield* decodeRow(stored))
+      if (inserted) return
+      if (Option.isSome(held))
+        yield* owner.retire({
+          resources: ExecutorRetired.make({
+            original: held.value.app,
+            ownership: 'Dedicated',
+            account: held.value.account,
+            copies: [],
+            authorization: Option.none(),
+          }),
+          retainedApps: [],
+          retainedAccounts: [],
+        })
+    }).pipe(
+      Effect.result,
+      Effect.map((result) => expect(Result.isSuccess(result)).toBe(true)),
+    ),
+  )
+  const app = yield* capturedRequest(
+    'POST',
+    `/apps/deploy`,
+    { name: `captured-${id}`, files },
+    Schema.Struct({ id: ExecutorAppId }),
+  )
+  held = Option.some({ app: app.id, account: Option.none() })
+  const requirement = key === 'token' ? 'service' : 'google'
+  const method = key === 'token' ? 'pat' : 'googleOAuth2'
+  const connection = yield* capturedRequest(
+    'POST',
+    `/apps/${app.id}/accounts/user/${requirement}/connections`,
+    {},
+    Schema.Struct({ id: ExecutorAuthorizationId }),
+  )
+  const account = yield* capturedRequest(
+    'POST',
+    `/connections/${connection.id}/submit`,
+    { method, fields: { [key]: 'synthetic' } },
+    Schema.Struct({ id: ExecutorAccountId }),
+  )
+  held = Option.some({ app: app.id, account: Option.some(account.id) })
+  const references = ExecutorReferences.cases.Authorized.make({
+    service: ServiceId.make(
+      Match.value(name).pipe(
+        Match.when('GitHub', () => 'curated/github-com-mcp'),
+        Match.when('Gmail', () => 'google/gmail'),
+        Match.when('Google Calendar', () => 'google/calendar'),
+        Match.exhaustive,
+      ),
+    ),
+    app: app.id,
+    owner: ExecutorOwnerId.make(`p-${actor.person.id}`),
+    binding: ExecutorBinding.cases.Account.make({ scope: 'user', requirement }),
+    appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
+    account: account.id,
+  })
+  yield* database.run(
+    database.insert(connections).values({
+      id,
+      personId: actor.person.id,
+      companyId: null,
+      service: references.service,
+      serviceName: name,
+      executorApp: app.id,
+      references: yield* encodeReferences(references),
+      status: 'ready',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }),
+  )
+  inserted = true
+  return { id, references }
+})
+
+/** Fixture setup calls only the disposable host's public API and validates every answer. */
+const capturedRequest = <A, I>(
+  method: 'POST' | 'DELETE',
+  path: string,
+  body: Schema.Json,
+  schema: Schema.Codec<A, I>,
+) =>
+  Effect.gen(function* () {
+    const url = yield* Config.String('VIVID_EXECUTOR_URL')
+    const organization = yield* Config.String('VIVID_EXECUTOR_ORGANIZATION')
+    const key = yield* Config.Redacted('VIVID_EXECUTOR_KEY')
+    const client = HttpClient.withScope(yield* HttpClient.HttpClient)
+    const request = yield* HttpClientRequest.bodyJson(
+      HttpClientRequest.make(method)(`${url}/api/organizations/${organization}${path}`).pipe(
+        HttpClientRequest.bearerToken(key),
+      ),
+      body,
+    )
+    const response = yield* client.execute(request)
+    expect(response.status).toBeGreaterThanOrEqual(200)
+    expect(response.status).toBeLessThan(300)
+    return yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(schema)))
+  }).pipe(Effect.scoped)
+
+const CapturedApp = Schema.Struct({
+  id: ExecutorAppId,
+  requirements: Schema.Struct({
+    accounts: Schema.Record(Schema.String, Schema.Struct({ provider: Schema.String })),
+  }),
+})
+
+/** The original OAuth definitions are deployed byte-for-byte too. Their provider IDs must
+ * survive the framework change, even though the account call proof uses synthetic credentials. */
+const capturedIdentity = Effect.fn('AdoptionProof.capturedIdentity')(function* (
+  workspace: typeof gmailWorkspace,
+  requirement: string,
+) {
+  const app = yield* Effect.acquireRelease(
+    capturedRequest(
+      'POST',
+      '/apps/deploy',
+      { name: `identity-${crypto.randomUUID()}`, files: workspace.files },
+      CapturedApp,
+    ),
+    (app) =>
+      capturedRequest('DELETE', `/apps/${app.id}`, {}, Schema.Json).pipe(
+        Effect.result,
+        Effect.map((result) => expect(Result.isSuccess(result)).toBe(true)),
+      ),
+  )
+  const before = app.requirements.accounts[requirement]
+  if (before === undefined) return expect.fail('Expected original requirement')
+  const files = yield* adoptionFiles(workspace.files, requirement, 'vividAdopted')
+  const original = workspace.files.find((file) => file.path === 'index.ts')
+  const changed = files.find((file) => file.path === 'index.ts')
+  if (original === undefined || changed === undefined) return expect.fail('Expected captured index')
+  expect(changed.content.match(/https?:\/\/[^"\s]+/gu)).toEqual(
+    original.content.match(/https?:\/\/[^"\s]+/gu),
+  )
+  const revised = yield* capturedRequest(
+    'POST',
+    `/apps/${app.id}/deploy`,
+    { files },
+    Schema.Struct({ app: CapturedApp }),
+  )
+  expect(revised.app.requirements.accounts[requirement]).toEqual(before)
+  expect(revised.app.requirements.accounts['vividAdopted']).toEqual(before)
+})
+
+/** Exercise the real pass from an old-version app/account. Neither adoption nor finalization
+ * may change its tool names, schemas, returned data or provider declaration. */
+const capturedSources = Effect.fn('AdoptionProof.capturedSources')(function* (actor: Actor) {
+  const origin = yield* capturedProvider()
+  const executor = yield* Executor
+  const owner = executor.as(installationCaller)
+  const members = yield* ExecutorMembers
+  const caller = yield* members.caller({ principal: 'member', personId: actor.person.id })
+  for (const entry of [
+    { workspace: gmailWorkspace, name: 'Gmail', key: 'access_token' },
+    { workspace: calendarWorkspace, name: 'Google Calendar', key: 'access_token' },
+    { workspace: calendarWorkspace, name: 'Google Calendar', key: 'access_token' },
+    { workspace: githubWorkspace, name: 'GitHub', key: 'token' },
+  ] as const) {
+    const files = capturedFiles(entry.workspace, entry.name, origin)
+    const { id, references } = yield* capturedCreate(actor, entry.name, files, entry.key)
+    const before = yield* owner.tools(references)
+    expect(before.length).toBeGreaterThan(0)
+    const [tool] = before
+    if (tool === undefined) return expect.fail('Expected captured tool')
+    const result = yield* owner.call({ references, tool: tool.name, input: {} })
+    expect(ExecutorCallOutcome.guards.Completed(result)).toBe(true)
+    const remaining = yield* adoptConnections()
+    expect(remaining).toBe(false)
+    const moved = yield* row(id)
+    expect(moved.executorPrincipal, entry.name).toBe('adopted-account')
+    if (!ExecutorReferences.guards.Authorized(moved.references))
+      return expect.fail('Expected adopted account')
+    expect(moved.references.app).toBe(references.app)
+    expect(moved.references.account).toBe(references.account)
+    const after = yield* executor.as(caller).tools(moved.references)
+    expect(after.map((tool) => tool.name)).toEqual(before.map((tool) => tool.name))
+    expect(after.map((tool) => tool.input)).toEqual(before.map((tool) => tool.input))
+    expect(
+      yield* executor.as(caller).call({ references: moved.references, tool: tool.name, input: {} }),
+    ).toEqual(result)
+    const deployed = yield* (yield* ExecutorAdoption).source(references.app)
+    const originalProvider = files.find((file) => file.path === 'provider.ts')
+    if (originalProvider !== undefined)
+      expect(deployed.find((file) => file.path === 'provider.ts')).toEqual(originalProvider)
+    yield* removeConnection(moved)
+    yield* capturedIdentity(entry.workspace, entry.key === 'token' ? 'service' : 'google')
+  }
+})
+
 describe.skipIf(!enabled || !testDatabaseConfigured)('Executor adoption', () => {
   layer(connectionTestLayer, { excludeTestServices: true, timeout: 240_000 })((it) => {
+    it.effect(
+      'adopts the captured beta.19 GitHub and beta.22 Google workspaces without changing tools or data',
+      () =>
+        Effect.gen(function* () {
+          const actors = yield* fixture()
+          const context = yield* Layer.build(
+            liveLayers(
+              yield* Ref.make<Effect.Effect<void>>(Effect.void),
+              yield* Ref.make<ReadonlyArray<Receipt>>([]),
+            ),
+          )
+          yield* capturedSources(actors.personalActor).pipe(Effect.provide(context))
+        }).pipe(Effect.scoped),
+      { timeout: 240_000 },
+    )
+
     it.effect(
       'recovers adoption, keeps Account Watch/status authority, retires unfinished apps and terminates',
       () =>
