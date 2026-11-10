@@ -54,17 +54,8 @@
         "!scripts/oneoff/**",
       ],
       "ignoreBinaries": ["celld"],
-      // Tooling resolves these through the owning mobile/server package with createRequire. The
-      // verify-vivid scripts, which `ignore` keeps out of this graph, import the contracts and
-      // chord from the root; pnpm 12 no longer hoists them there.
-      "ignoreDependencies": [
-        "@vivid/compiler",
-        "@sentry/cli",
-        "expo",
-        "pg",
-        "@vivid/contracts",
-        "@earendil-works/chord",
-      ],
+      // Tooling resolves these through the owning mobile/server package with createRequire.
+      "ignoreDependencies": ["@vivid/compiler", "@sentry/cli", "expo", "pg"],
       "drizzle": false,
     },
     "apps/server": {

@@ -400,9 +400,6 @@ importers:
       '@alchemy.run/frontend-frameworks':
         specifier: 'catalog:'
         version: 2.0.0-beta.81(@types/node@24.13.6)(@vitejs/plugin-react@6.1.1(@rolldown/plugin-babel@0.2.3(@babel/core@7.29.7(supports-color@8.1.1))(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@babel/runtime@7.29.7)(rolldown@1.2.7)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))(babel-plugin-react-compiler@1.0.0)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))(effect@4.0.2)(hono@4.13.8)(redis@6.2.1(@opentelemetry/api@1.9.0))(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
-      '@earendil-works/chord':
-        specifier: 'catalog:'
-        version: 1.4.0
       '@effect/vitest':
         specifier: 'catalog:'
         version: 4.0.2(effect@4.0.2)(vitest@5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(happy-dom@20.14.6)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))
@@ -427,9 +424,6 @@ importers:
       '@vivid/compiler':
         specifier: workspace:*
         version: link:packages/compiler
-      '@vivid/contracts':
-        specifier: workspace:*
-        version: link:packages/contracts
       alchemy:
         specifier: 'catalog:'
         version: 2.0.0-beta.81(c95604f265f30ed9f77fad2172185d7d)
