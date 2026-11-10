@@ -56,21 +56,18 @@ export function Asked({ request, me }: { request: InputRequest; me: PersonId }) 
  * somebody else, and that an Integration's question ran out before anyone answered it.
  */
 function Ending({ request, me }: { request: InputRequest; me: PersonId }) {
-  return InputRequestState.match(request.state, {
-    Waiting: () =>
-      request.askedOf.id === me ? null : (
-        <Label size="label" tone="ink-2">
-          Waiting on {request.askedOf.name}.
-        </Label>
-      ),
-    Expired: () =>
-      request.integration === null ? null : (
-        <Label size="label" tone="ink-2">
-          {form.expiredQuestion(request)}
-        </Label>
-      ),
-    Answered: () => null,
-    Withdrawn: () => null,
+  const words = InputRequestState.guards.Waiting(request.state)
+    ? Option.some(`Waiting on ${request.askedOf.name}.`).pipe(
+        Option.filter(() => request.askedOf.id !== me),
+      )
+    : form.expiredLine(request)
+  return Option.match(words, {
+    onNone: () => null,
+    onSome: (line) => (
+      <Label size="label" tone="ink-2">
+        {line}
+      </Label>
+    ),
   })
 }
 
@@ -117,24 +114,24 @@ export function Replied({ request, me }: { request: InputRequest; me: PersonId }
     Waiting: () => null,
     Withdrawn: () => null,
     Expired: () => null,
-    Answered: ({ answers, answeredBy }) => (
-      <Animated.View entering={watched ? SAID : undefined}>
-        <Said
-          // An Integration's stored answer is Vivid's account of the ending, so its bubble says
-          // which button answered it (`form.answeredWords`).
-          text={
-            request.integration === null
-              ? asking.repliedWords(answers)
-              : form.answeredWords(request)
-          }
-          pictures={NO_PICTURES}
-          voice={
-            answeredBy.id === me
-              ? Voice.Mine()
-              : Voice.Theirs({ name: Option.some(answeredBy.name) })
-          }
-        />
-      </Animated.View>
-    ),
+    // An Integration's bubble says which button answered it, and nothing once the answer came
+    // too late (`form.repliedOf`).
+    Answered: ({ answers, answeredBy }) =>
+      Option.match(form.repliedOf(request, answers), {
+        onNone: () => null,
+        onSome: (text) => (
+          <Animated.View entering={watched ? SAID : undefined}>
+            <Said
+              text={text}
+              pictures={NO_PICTURES}
+              voice={
+                answeredBy.id === me
+                  ? Voice.Mine()
+                  : Voice.Theirs({ name: Option.some(answeredBy.name) })
+              }
+            />
+          </Animated.View>
+        ),
+      }),
   })
 }

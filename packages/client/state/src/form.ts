@@ -2,12 +2,15 @@ import {
   ActionTarget,
   IntegrationAnswerOutcome,
   IntegrationPause,
+  InputRequestState,
   type Approval,
+  type InputAnswer,
   type InputRequest,
   IntegrationForm as IntegrationFormSchema,
   type IntegrationResponse,
 } from '@vivid/contracts'
 import { Array as Arr, Data, Option } from 'effect'
+import { repliedWords } from './asking.js'
 
 /**
  * An Integration's question to the Person, as the fields every client draws and checks.
@@ -72,13 +75,13 @@ export type Entry = Data.TaggedEnum<{
     readonly format: Option.Option<Format>
     readonly least: Option.Option<number>
     readonly most: Option.Option<number>
-    readonly words: string
+    readonly words: Option.Option<string>
   }
   Number: Base & {
     readonly integer: boolean
     readonly least: Option.Option<number>
     readonly most: Option.Option<number>
-    readonly words: Option.Option<string>
+    readonly words: string
   }
 }>
 export const Entry = Data.taggedEnum<Entry>()
@@ -378,18 +381,64 @@ export const titled = (entries: ReadonlyArray<Entry>): boolean =>
  */
 export const EXPIRED_APPROVAL = 'Expired before you answered. Nothing was sent.'
 
-/** The expired line of an Integration's question, naming the Integration when it is known. */
-export const expiredQuestion = (request: InputRequest): string =>
-  `Expired before you answered. ${Option.getOrElse(integrationName(request), () => 'The Integration')} may already have acted.`
+/**
+ * How an Integration's question ended, as the Thread says it.
+ *
+ * - `Expired`: nobody answered in time, or an answer reached the Integration after its deadline
+ *   (it comes back answered, with an `Expired` outcome: `apps/server/src/inputs/store.ts`).
+ * - `Sent` and `Skipped`: the bubble of the Person who answered. The server keeps Vivid's account
+ *   of the ending as the request's answer, not what the Person typed, so the bubble says only
+ *   which button they pressed.
+ */
+export type Ending = 'Expired' | 'Sent' | 'Skipped'
+
+/** The ending of an Integration's question, once it has one. */
+export const endingOf = (request: InputRequest): Option.Option<Ending> =>
+  InputRequestState.match(request.state, {
+    Waiting: () => Option.none(),
+    Withdrawn: () => Option.none(),
+    Expired: () => Option.some<Ending>('Expired'),
+    Answered: () =>
+      Option.some(
+        Option.match(Option.fromNullOr(request.integrationOutcome), {
+          onNone: (): Ending => 'Sent',
+          onSome: (outcome) =>
+            IntegrationAnswerOutcome.match(outcome, {
+              Expired: (): Ending => 'Expired',
+              Declined: (): Ending => 'Skipped',
+              Cancelled: (): Ending => 'Skipped',
+              Completed: (): Ending => 'Sent',
+              Accepted: (): Ending => 'Sent',
+              Rejected: (): Ending => 'Sent',
+              Waiting: (): Ending => 'Sent',
+              Uncertain: (): Ending => 'Sent',
+            }),
+        }),
+      ),
+  })
 
 /**
- * What an answered Integration question says as the bubble of the Person who answered. The
- * server keeps Vivid's account of the ending as the request's answer, not what the Person typed,
- * so the bubble says only which button they pressed: Skip, or Send.
+ * The quiet line under an Integration's question once it ran out, naming the Integration: it
+ * came mid-call, so the Integration may already have done part of the work.
  */
-export const answeredWords = (request: InputRequest): string =>
-  Option.match(Option.fromNullOr(request.integrationOutcome), {
-    onNone: () => 'Sent',
-    onSome: (outcome) =>
-      IntegrationAnswerOutcome.isAnyOf(['Declined', 'Cancelled'])(outcome) ? 'Skipped' : 'Sent',
-  })
+export const expiredLine = (request: InputRequest): Option.Option<string> =>
+  request.integration === null
+    ? Option.none()
+    : Option.map(
+        Option.filter(endingOf(request), (ending) => ending === 'Expired'),
+        () =>
+          `Expired before you answered. ${Option.getOrElse(integrationName(request), () => 'The Integration')} may already have acted.`,
+      )
+
+/**
+ * The words of the answering Person's bubble for an answered request: the answers for Vivid's own
+ * question (`asking.repliedWords`), which button answered an Integration's, and none once an
+ * Integration's answer arrived too late (its expired line says so instead).
+ */
+export const repliedOf = (
+  request: InputRequest,
+  answers: Arr.NonEmptyReadonlyArray<InputAnswer>,
+): Option.Option<string> =>
+  request.integration === null
+    ? Option.some(repliedWords(answers))
+    : Option.filter(endingOf(request), (ending) => ending !== 'Expired')

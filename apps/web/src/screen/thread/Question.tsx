@@ -1,5 +1,6 @@
 import { InputRequestState, type InputRequest, type PersonId } from '@vivid/contracts'
 import { form } from '@vivid/state'
+import { Option } from 'effect'
 import { Markdown } from '../../ui/Markdown'
 
 /**
@@ -43,16 +44,13 @@ export function Asked({ request, me }: { request: InputRequest; me: PersonId }) 
  * somebody else, and that an Integration's question ran out before anyone answered it.
  */
 function Ending({ request, me }: { request: InputRequest; me: PersonId }) {
-  return InputRequestState.match(request.state, {
-    Waiting: () =>
-      request.askedOf.id === me ? null : (
-        <p className="mt-1 text-label text-ink-3">Waiting on {request.askedOf.name}.</p>
-      ),
-    Expired: () =>
-      request.integration === null ? null : (
-        <p className="mt-1 text-label text-ink-3">{form.expiredQuestion(request)}</p>
-      ),
-    Answered: () => null,
-    Withdrawn: () => null,
+  const words = InputRequestState.guards.Waiting(request.state)
+    ? Option.some(`Waiting on ${request.askedOf.name}.`).pipe(
+        Option.filter(() => request.askedOf.id !== me),
+      )
+    : form.expiredLine(request)
+  return Option.match(words, {
+    onNone: () => null,
+    onSome: (line) => <p className="mt-1 text-label text-ink-3">{line}</p>,
   })
 }
