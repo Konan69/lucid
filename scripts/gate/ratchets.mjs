@@ -237,8 +237,8 @@ export function effectRule(line) {
 
 /** Knip findings and justified uncalled procedures are measured separately from lint output. */
 export const deadCodeRatchets = [
-  { plugin: 'knip', rule: 'files', ceiling: 1 },
-  { plugin: 'knip', rule: 'exports', ceiling: 29 },
+  { plugin: 'knip', rule: 'files', ceiling: 0 },
+  { plugin: 'knip', rule: 'exports', ceiling: 21 },
   { plugin: 'knip', rule: 'types', ceiling: 4 },
   { plugin: 'knip', rule: 'dependencies', ceiling: 6 },
   { plugin: 'knip', rule: 'devDependencies', ceiling: 1 },
