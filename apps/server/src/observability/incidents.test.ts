@@ -122,7 +122,11 @@ it.live('says an Incident as one error issue with its fingerprint, closed tags a
     const [event] = sent
     expect(event?.level).toBe('error')
     expect(event?.message).toBe('AdmissionFailed')
-    expect(event?.fingerprint).toEqual(['AdmissionFailed', 'server.AdmissionRefused', 'cell.SchemaError'])
+    expect(event?.fingerprint).toEqual([
+      'AdmissionFailed',
+      'server.AdmissionRefused',
+      'cell.SchemaError',
+    ])
     expect(event?.tags).toEqual({
       'vivid.incident.kind': 'AdmissionFailed',
       'vivid.incident.personId': refusedSend.personId,

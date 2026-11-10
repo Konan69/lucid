@@ -125,35 +125,38 @@ const personOf = NotificationDelivery.match({
  * fails on its last attempt is left in the queue's failed state and is never tried again, so its
  * notification did not reach the Person: that is said here, once, as an Incident.
  */
-export const takeNotification = Effect.fn('Notifications.take')(function* () {
-  const queue = yield* notificationDelivery
-  const incidents = yield* Incidents
-  return yield* queue.take((job, metadata) =>
-    NotificationDelivery.match<
-      Effect.Effect<
-        void,
-        DatabaseInfrastructureError,
-        Effect.Services<ReturnType<typeof retryRunNotice> | ReturnType<typeof deliverTarget>>
-      >
-    >(job, {
-      OweRun: retryRunNotice,
-      Publish: publishNotice,
-      Push: deliverTarget,
-    }).pipe(
-      Effect.tapCause((cause) =>
-        metadata.attempts >= DELIVERY_ATTEMPTS && !Cause.hasInterruptsOnly(cause)
-          ? incidents.record(
-              Incident.cases.NotificationUndelivered.make({
-                personId: personOf(job),
-                notificationId: job.notificationId,
-                cause: causeOf(hop('server', 'Notifications.take', failureType(cause))),
-              }),
-            )
-          : Effect.void,
+export const takeNotification = Effect.fn('Notifications.take')(
+  function* () {
+    const queue = yield* notificationDelivery
+    const incidents = yield* Incidents
+    return yield* queue.take((job, metadata) =>
+      NotificationDelivery.match<
+        Effect.Effect<
+          void,
+          DatabaseInfrastructureError,
+          Effect.Services<ReturnType<typeof retryRunNotice> | ReturnType<typeof deliverTarget>>
+        >
+      >(job, {
+        OweRun: retryRunNotice,
+        Publish: publishNotice,
+        Push: deliverTarget,
+      }).pipe(
+        Effect.tapCause((cause) =>
+          metadata.attempts >= DELIVERY_ATTEMPTS && !Cause.hasInterruptsOnly(cause)
+            ? incidents.record(
+                Incident.cases.NotificationUndelivered.make({
+                  personId: personOf(job),
+                  notificationId: job.notificationId,
+                  cause: causeOf(hop('server', 'Notifications.take', failureType(cause))),
+                }),
+              )
+            : Effect.void,
+        ),
       ),
-    ),
-  )
-}, Effect.provideService(Incidents, recorder))
+    )
+  },
+  Effect.provideService(Incidents, recorder),
+)
 
 /** SDK finalizers retry each failed item; this scope also restarts a failed SQL consumer. */
 export const notificationDeliveryLayer = Layer.effectDiscard(

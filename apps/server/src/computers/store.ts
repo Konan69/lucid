@@ -1046,7 +1046,8 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
       Effect.andThen(Effect.sync(() => timers.delete(person))),
       Effect.andThen(settle),
       Effect.asVoid,
-      observeFailures('schedule'), Effect.ignore,
+      observeFailures('schedule'),
+      Effect.ignore,
       Effect.forkIn(scope, { startImmediately: false }),
     )
     timers.set(person, timer)
@@ -1097,11 +1098,7 @@ const attached = Effect.fn('ComputerStore.attach')(function* (
   const inactivity = state.rows.inactivity
   yield* inactivity.activity(person)
   yield* prepare(state, person).pipe(
-    Effect.onError(() =>
-      inactivity
-        .arm(person)
-        .pipe(observeFailures('schedule'), Effect.ignore),
-    ),
+    Effect.onError(() => inactivity.arm(person).pipe(observeFailures('schedule'), Effect.ignore)),
   )
   yield* inactivity.watching(person)
   const key = yield* state.lock.withPermit(person, requireReady(state, person))
@@ -1293,10 +1290,13 @@ export const computerStoreLayer = Layer.effect(
         const key = yield* requireReady(state, person)
         return yield* action(key).pipe(
           Effect.ensuring(
-            inactivity.activity(person).pipe(
-              Effect.andThen(inactivity.arm(person)),
-              observeFailures('schedule'), Effect.ignore,
-            ),
+            inactivity
+              .activity(person)
+              .pipe(
+                Effect.andThen(inactivity.arm(person)),
+                observeFailures('schedule'),
+                Effect.ignore,
+              ),
           ),
         )
       },
@@ -1304,13 +1304,14 @@ export const computerStoreLayer = Layer.effect(
     )
     /** Idle cleanup must preserve the original readiness failure even if its database write fails. */
     const recoverIdle = Effect.fn('ComputerStore.recoverIdle')((person: PersonId) =>
-      inactivity
-        .arm(person)
-        .pipe(observeFailures('schedule'), Effect.ignore),
+      inactivity.arm(person).pipe(observeFailures('schedule'), Effect.ignore),
     )
     /** Startup never waits while holding the action permit needed by the boot worker. */
     const execute = Effect.fn('ComputerStore.execute')(
-      function* <A>(person: PersonId, action: (key: MachineKey) => Effect.Effect<A, MachineFailure>) {
+      function* <A>(
+        person: PersonId,
+        action: (key: MachineKey) => Effect.Effect<A, MachineFailure>,
+      ) {
         yield* inactivity.activity(person)
         yield* prepare(state, person).pipe(Effect.onError(() => recoverIdle(person)))
         return yield* executeReady(person, action)

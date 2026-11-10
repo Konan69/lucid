@@ -382,8 +382,14 @@ const standInCause = (cause: Cause.Cause<unknown>): Cause.Cause<unknown> =>
 const primaryType = (cause: Cause.Cause<unknown>): Option.Option<string> => {
   const reasons = firstOf(cause.reasons, MOST_REASONS)
   return Option.firstSomeOf([
-    Option.map(Arr.findFirst(reasons, Cause.isDieReason), ({ defect }) => standIn('defect', defect).name),
-    Option.map(Arr.findFirst(reasons, Cause.isFailReason), ({ error }) => standIn('expected', error).name),
+    Option.map(
+      Arr.findFirst(reasons, Cause.isDieReason),
+      ({ defect }) => standIn('defect', defect).name,
+    ),
+    Option.map(
+      Arr.findFirst(reasons, Cause.isFailReason),
+      ({ error }) => standIn('expected', error).name,
+    ),
   ])
 }
 

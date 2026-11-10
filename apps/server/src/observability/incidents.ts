@@ -166,7 +166,9 @@ const issueItem = new RegExp(
   'u',
 )
 const issueList: Admits = (value) =>
-  Predicate.isString(value) && value.length <= 2_000 && value.split(',').every((item) => issueItem.test(item))
+  Predicate.isString(value) &&
+  value.length <= 2_000 &&
+  value.split(',').every((item) => issueItem.test(item))
 
 /**
  * Every key an Incident is written under, with what its value must be to leave the process. Read
@@ -237,7 +239,9 @@ const attributesOf = (incident: Incident): Record<string, Scalar> => ({
 const rules = new Map(incidentExport)
 
 /** The attributes that may leave on an issue, each as a tag's text. */
-export const incidentTags = (attributes: Readonly<Record<string, unknown>>): Record<string, string> =>
+export const incidentTags = (
+  attributes: Readonly<Record<string, unknown>>,
+): Record<string, string> =>
   Object.fromEntries(
     Object.entries(attributes).flatMap(([key, value]) => {
       const admits = rules.get(key)

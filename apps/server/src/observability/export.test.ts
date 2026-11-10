@@ -1174,7 +1174,13 @@ it.effect('builds no span name from what a request carries, over HTTP or RPC', (
       // The spans those requests made are all here, under names from code.
       const names = spans.map((span) => span.name)
       expect(names).toEqual(
-        expect.arrayContaining(['GET /probe/:who', 'Probe.visit', 'POST /rpc', 'Echo', 'Probe.echo']),
+        expect.arrayContaining([
+          'GET /probe/:who',
+          'Probe.visit',
+          'POST /rpc',
+          'Echo',
+          'Probe.echo',
+        ]),
       )
       expect(names.filter((name) => name.includes('Ada') || name.includes('Lovelace'))).toEqual([])
       // And nowhere else in what left.
@@ -2140,51 +2146,53 @@ const refusedSend = Incident.cases.AdmissionFailed.make({
   ],
 })
 
-it.effect('says an Incident on its span, as an error, and in one error line, by its closed fields', () =>
-  withReceiver(
-    Effect.gen(function* () {
-      // The outcome is a returned value, so the span ends in success; the Incident still fails it.
-      // An interior failure that is recovered from still says what it was on its own span.
-      const inner = Effect.fn('Probe.inner')(function* () {
-        return yield* new ProbeRefused({ message: 'not today' })
-      })
-      const decide = Effect.fn('Probe.decide')(function* () {
-        yield* inner().pipe(Effect.ignore)
-        yield* recorder.record(refusedSend)
-        return 'answered'
-      })
-      const { lines, spans, text } = yield* exported(decide())
+it.effect(
+  'says an Incident on its span, as an error, and in one error line, by its closed fields',
+  () =>
+    withReceiver(
+      Effect.gen(function* () {
+        // The outcome is a returned value, so the span ends in success; the Incident still fails it.
+        // An interior failure that is recovered from still says what it was on its own span.
+        const inner = Effect.fn('Probe.inner')(function* () {
+          return yield* new ProbeRefused({ message: 'not today' })
+        })
+        const decide = Effect.fn('Probe.decide')(function* () {
+          yield* inner().pipe(Effect.ignore)
+          yield* recorder.record(refusedSend)
+          return 'answered'
+        })
+        const { lines, spans, text } = yield* exported(decide())
 
-      const [span] = spanNamed(spans, 'Probe.decide')
-      expect(span === undefined ? -1 : span.status.code).toBe(2)
-      expect(span === undefined ? {} : valuesOf(span.attributes)).toEqual({
-        'vivid.incident.kind': 'AdmissionFailed',
-        'vivid.incident.personId': refusedSend.personId,
-        'vivid.incident.threadId': refusedSend.threadId,
-        'vivid.incident.runId': refusedSend.runId,
-        'vivid.incident.delivery': 'Words',
-        'vivid.incident.cause.0.service': 'server',
-        'vivid.incident.cause.0.operation': 'Runtime.admit',
-        'vivid.incident.cause.0.tag': 'AdmissionRefused',
-        'vivid.incident.cause.0.status': 400,
-        'vivid.incident.cause.1.service': 'cell',
-        'vivid.incident.cause.1.operation': 'Cell.admit',
-        'vivid.incident.cause.1.tag': 'SchemaError',
-        'vivid.incident.cause.1.status': 400,
-        'vivid.incident.cause.1.issues': 'delivery:MissingKey',
-      })
-      const [interior] = spanNamed(spans, 'Probe.inner')
-      expect(interior === undefined ? {} : valuesOf(interior.attributes)).toEqual({
-        'error.type': 'ProbeRefused',
-      })
-      const said = lines.filter((line) => line.body.stringValue === Message.incident)
-      expect(said.map((line) => line.severityText)).toEqual(['Error'])
-      expect(said.map((line) => valuesOf(line.attributes))).toEqual([
-        span === undefined ? {} : valuesOf(span.attributes),
-      ])
-      expect(text).not.toContain('not today')
-    }),
-  ),
+        const [span] = spanNamed(spans, 'Probe.decide')
+        expect(span === undefined ? -1 : span.status.code).toBe(2)
+        expect(span === undefined ? {} : valuesOf(span.attributes)).toEqual({
+          'vivid.incident.kind': 'AdmissionFailed',
+          'vivid.incident.personId': refusedSend.personId,
+          'vivid.incident.threadId': refusedSend.threadId,
+          'vivid.incident.runId': refusedSend.runId,
+          'vivid.incident.delivery': 'Words',
+          'vivid.incident.cause.0.service': 'server',
+          'vivid.incident.cause.0.operation': 'Runtime.admit',
+          'vivid.incident.cause.0.tag': 'AdmissionRefused',
+          'vivid.incident.cause.0.status': 400,
+          'vivid.incident.cause.1.service': 'cell',
+          'vivid.incident.cause.1.operation': 'Cell.admit',
+          'vivid.incident.cause.1.tag': 'SchemaError',
+          'vivid.incident.cause.1.status': 400,
+          'vivid.incident.cause.1.issues': 'delivery:MissingKey',
+        })
+        const [interior] = spanNamed(spans, 'Probe.inner')
+        expect(interior === undefined ? {} : valuesOf(interior.attributes)).toEqual({
+          'error.type': 'ProbeRefused',
+        })
+        const said = lines.filter((line) => line.body.stringValue === Message.incident)
+        expect(said.map((line) => line.severityText)).toEqual(['Error'])
+        expect(said.map((line) => valuesOf(line.attributes))).toEqual([
+          span === undefined ? {} : valuesOf(span.attributes),
+        ])
+        expect(text).not.toContain('not today')
+      }),
+    ),
 )
 
 it.effect('starts a transaction where work arrives from another process, named by its span', () =>

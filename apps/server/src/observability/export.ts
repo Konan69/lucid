@@ -90,7 +90,9 @@ const scalar =
   (admits: (value: string | number) => boolean): Rule =>
   (value) => {
     if (Predicate.isString(value.stringValue))
-      return admits(value.stringValue) ? Option.some({ stringValue: value.stringValue }) : Option.none()
+      return admits(value.stringValue)
+        ? Option.some({ stringValue: value.stringValue })
+        : Option.none()
     if (Predicate.isNumber(value.intValue) && Number.isInteger(value.intValue))
       return admits(value.intValue) ? Option.some({ intValue: value.intValue }) : Option.none()
     return Option.none()
@@ -534,7 +536,8 @@ const allowSpan =
         flags: flagsOf(span, parentSpanId),
         name: Option.match(said('http.route'), {
           onNone: () => spanName(span.name),
-          onSome: (route) => (METHODS.includes(span.name) ? `${span.name} ${route}` : spanName(span.name)),
+          onSome: (route) =>
+            METHODS.includes(span.name) ? `${span.name} ${route}` : spanName(span.name),
         }),
         kind: span.kind,
         startTimeUnixNano: span.startTimeUnixNano,
