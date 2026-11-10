@@ -67,6 +67,9 @@ const origin = 'https://us.sentry.io/api/0/organizations/vivid-7t'
 const token = NodeProcess.env.SENTRY_AUTH_TOKEN
 if (!token) throw new Error('SENTRY_AUTH_TOKEN is required for Sentry alert reconciliation')
 const apply = NodeProcess.argv.includes('--apply')
+const check = NodeProcess.argv.includes('--check')
+if (apply && check) throw new Error('Choose --apply or --check')
+const missing = []
 const plans = []
 
 /** Reconcile through Sentry's current regional API; error responses never include credentials. */
@@ -138,8 +141,8 @@ for (const project of ['4512198452772864', '4512198445760512']) {
   const existing = await api(`/workflows/${matches[0].id}/`, Workflow)
   const body = desired(existing, project)
   plans.push({ project, id: existing.id, body })
-  if (apply) {
-    await api(`/workflows/${existing.id}/`, Workflow, 'PUT', body)
+  if (apply || check) {
+    if (apply) await api(`/workflows/${existing.id}/`, Workflow, 'PUT', body)
     const actual = await api(`/workflows/${existing.id}/`, Workflow)
     if (
       !actual.enabled ||
@@ -184,6 +187,8 @@ const monitors = [
       extrapolationMode: 'unknown',
     },
     threshold: 2000,
+    comparison: 'gt',
+    recovery: 'lte',
   },
   ...['4512198452772864', '4512198445760512'].map((project) => ({
     project,
@@ -201,7 +206,49 @@ const monitors = [
       environment: 'production',
     },
     threshold: 5,
+    comparison: 'gt',
+    recovery: 'lte',
   })),
+  ...[
+    {
+      name: 'Vivid failed work outcomes',
+      query: 'vivid.incident.kind:[AdmissionFailed,RunFailed,RunLost]',
+      threshold: 3,
+    },
+    { name: 'Vivid cell failure', query: 'vivid.incident.kind:CellFailed', threshold: 0 },
+  ].map((incident) => ({
+    project: '4512198452772864',
+    name: incident.name,
+    source: {
+      aggregate: 'count()',
+      dataset: 'events',
+      eventTypes: ['error'],
+      query: incident.query,
+      timeWindow: 900,
+      queryType: 0,
+      environment: 'production',
+    },
+    threshold: incident.threshold,
+    comparison: 'gt',
+    recovery: 'lte',
+  })),
+  {
+    project: '4512198452772864',
+    name: 'Vivid server telemetry freshness',
+    source: {
+      aggregate: 'count(span.duration)',
+      dataset: 'events_analytics_platform',
+      eventTypes: ['trace_item_span'],
+      query: 'service.name:vivid-server',
+      timeWindow: 1800,
+      queryType: 1,
+      environment: 'production',
+      extrapolationMode: 'unknown',
+    },
+    threshold: 1,
+    comparison: 'lt',
+    recovery: 'gte',
+  },
 ]
 const monitorReceipts = []
 for (const monitor of monitors) {
@@ -222,8 +269,8 @@ for (const monitor of monitors) {
       logicType: 'any',
       actions: [],
       conditions: [
-        { type: 'gt', comparison: monitor.threshold, conditionResult: 75 },
-        { type: 'lte', comparison: monitor.threshold, conditionResult: 0 },
+        { type: monitor.comparison, comparison: monitor.threshold, conditionResult: 75 },
+        { type: monitor.recovery, comparison: monitor.threshold, conditionResult: 0 },
       ],
     },
   }
@@ -232,7 +279,10 @@ for (const monitor of monitors) {
     const id = existing.length === 0 ? undefined : existing[0].id
     const path = id === undefined ? `/projects/${monitor.project}/detectors/` : `/detectors/${id}/`
     actual = await api(path, Detector, id === undefined ? 'POST' : 'PUT', body)
-    const readback = await api(`/detectors/${actual.id}/`, Metric)
+  }
+  if (apply || (check && existing.length === 1)) {
+    const id = apply ? actual.id : existing[0].id
+    const readback = await api(`/detectors/${id}/`, Metric)
     if (
       readback.name !== body.name ||
       readback.projectId !== monitor.project ||
@@ -252,13 +302,13 @@ for (const monitor of monitors) {
     if (
       !conditions.some(
         (condition) =>
-          condition.type === 'gt' &&
+          condition.type === monitor.comparison &&
           condition.comparison === monitor.threshold &&
           condition.conditionResult === 75,
       ) ||
       !conditions.some(
         (condition) =>
-          condition.type === 'lte' &&
+          condition.type === monitor.recovery &&
           condition.comparison === monitor.threshold &&
           condition.conditionResult === 0,
       )
@@ -266,6 +316,7 @@ for (const monitor of monitors) {
       throw new Error('Sentry monitor threshold or recovery did not persist')
     actual = readback
   }
+  if (check && existing.length === 0) missing.push(monitor.name)
   monitorReceipts.push({ project: monitor.project, desired: body, actual })
 }
 result.monitors = monitorReceipts
@@ -275,3 +326,8 @@ if (NodeProcess.env.VIVID_SENTRY_ALERT_RECEIPT)
     JSON.stringify(result, null, 2) + '\n',
   )
 console.log(JSON.stringify(result, null, 2))
+
+if (check) {
+  for (const name of missing) console.error(`Sentry monitor missing: ${name}`)
+  NodeProcess.exit(missing.length === 0 ? 0 : 1)
+}
