@@ -28,6 +28,8 @@ export const stages = [
       ['node', 'scripts/owners.mjs'],
       ['node', 'scripts/deadcode.mjs'],
       ['node', 'scripts/rpccallers.mjs'],
+      // Deploy commands are one program each, never a shell chain.
+      ['node', 'scripts/gate/commands.mjs'],
       // Structure: one-word names, no dumping grounds, server layering (docs/00-structure.md).
       ['node', 'scripts/structure.mjs'],
     ],

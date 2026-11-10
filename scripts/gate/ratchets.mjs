@@ -158,6 +158,39 @@ export const ratchets = [
     rule: 'react-no-state-after-wait',
     ceiling: 95,
   },
+  // Added 10 November 2026 with the failure rules, measured at bab8c618d. Each finding is a
+  // failure a Person was owed that an observer could not see or explain; they come down as each
+  // site keeps its cause, records its Incident or declares its Impact.
+  {
+    label: 'failures replaced without their cause',
+    plugin: 'vivid',
+    rule: 'keep-incident-cause',
+    ceiling: 386,
+  },
+  {
+    label: 'failures turned into values unrecorded',
+    plugin: 'vivid',
+    rule: 'no-silent-failure',
+    ceiling: 234,
+  },
+  {
+    label: 'ad hoc failure log lines',
+    plugin: 'vivid',
+    rule: 'no-ad-hoc-failure-log',
+    ceiling: 118,
+  },
+  {
+    label: 'refusals renamed to unavailable',
+    plugin: 'vivid',
+    rule: 'no-refusal-as-unavailable',
+    ceiling: 1,
+  },
+  {
+    label: 'severity chosen by typedness',
+    plugin: 'vivid',
+    rule: 'severity-from-impact',
+    ceiling: 1,
+  },
   { label: 'design-system raw colors', plugin: 'shadcn', rule: 'no-raw-colors', ceiling: 0 },
   {
     label: 'design-system arbitrary values',
@@ -235,7 +268,10 @@ export function effectRule(line) {
   return named === null ? code[1] : named[1]
 }
 
-/** Knip findings and justified uncalled procedures are measured separately from lint output. */
+/**
+ * Knip findings, justified uncalled procedures and deploy commands that are shell chains
+ * (`scripts/gate/commands.mjs`) are measured separately from lint output.
+ */
 export const deadCodeRatchets = [
   { plugin: 'knip', rule: 'files', ceiling: 0 },
   { plugin: 'knip', rule: 'exports', ceiling: 21 },
@@ -252,4 +288,6 @@ export const deadCodeRatchets = [
   { plugin: 'knip', rule: 'namespaceMembers', ceiling: 0 },
   { plugin: 'knip', rule: 'optionalPeerDependencies', ceiling: 0 },
   { plugin: 'rpc', rule: 'uncalled', ceiling: 1 },
+  // Added 10 November 2026 at the server's pre-deploy chain in `infra/railway.ts`.
+  { plugin: 'deploy', rule: 'shell-chain', ceiling: 1 },
 ]

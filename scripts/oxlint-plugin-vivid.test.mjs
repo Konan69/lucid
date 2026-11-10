@@ -8,6 +8,7 @@ import * as NodeTest from 'node:test'
 import * as NodeURL from 'node:url'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
+import { scanDefinition, scanDockerfile } from './gate/commands.mjs'
 
 const assert = NodeAssert
 const { execFileSync } = NodeChildProcess
@@ -598,4 +599,265 @@ void test('the root config makes a switch name every union member, default or no
   assert.deepEqual(exhaustiveFindings(['error', { considerDefaultExhaustiveForUnions: true }]), [
     'missing.ts: Switch is not exhaustive. Cases not matched: "done"',
   ])
+})
+
+/**
+ * The failure rules, each against the code that hid the send outage of 8-10 November 2026, cut
+ * from the commit it ran at (bab8c618d), and against the shape that fixes it.
+ */
+const incidentCases = [
+  {
+    rule: 'keep-incident-cause',
+    mistake: 'threads/delivery.ts Conversation.admitRuntime renames a refusal to unavailable',
+    invalid: `const admitRuntime = Effect.fn('Conversation.admitRuntime')((runtime, input) =>
+  runtime.admit(input).pipe(
+    Effect.catchTag(['AdmissionRefused', 'AdmissionUncertain'], () =>
+      Effect.fail(RuntimeUnavailable.make({ message: 'Vivid could not be reached' })),
+    ),
+  ),
+)`,
+    valid: `const admitRuntime = Effect.fn('Conversation.admitRuntime')((runtime, input) =>
+  runtime.admit(input).pipe(
+    Effect.catchTag(['AdmissionRefused', 'AdmissionUncertain'], (error) =>
+      Effect.fail(AdmissionFailed.make({ cause: [{ service: 'server', operation: 'Conversation.admitRuntime', tag: error._tag }, ...error.cause] })),
+    ),
+  ),
+)`,
+    findings: 1,
+    fix: /`RuntimeUnavailable` replaces the caught failure without its cause\. Give `RuntimeUnavailable` a `cause: IncidentCause` field/u,
+  },
+  {
+    rule: 'keep-incident-cause',
+    mistake: 'runtime/client.ts Runtime.admit reduces an unreadable refusal to a reason word',
+    invalid: `const refusal = yield* HttpClientResponse.schemaBodyJson(RuntimeRefusal)(response).pipe(
+  Effect.mapError(() => AdmissionUncertain.make({ ...attempt, reason: 'Status' })),
+)`,
+    valid: `const refusal = yield* HttpClientResponse.schemaBodyJson(RuntimeRefusal)(response).pipe(
+  Effect.mapError((error) => AdmissionUncertain.make({ ...attempt, reason: 'Status', cause: hop('Runtime.admit', error) })),
+)`,
+    findings: 1,
+    fix: /`AdmissionUncertain` replaces the caught failure without its cause/u,
+  },
+  {
+    rule: 'keep-incident-cause',
+    mistake: 'packages/agent/runtime/src/app.ts answered: every refusal drops what failed',
+    invalid: `handler.pipe(
+  Effect.catchTags({
+    SchemaError: () => refuse('InvalidRequest', 400),
+    HttpServerError: () => refuse('InvalidRequest', 400),
+    PiRejected: () => unavailable('PiRejected'),
+  }),
+)`,
+    valid: `handler.pipe(
+  Effect.catchTags({
+    SchemaError: (error) => refuse('InvalidRequest', 400, cellHop('Runtime.answer', error)),
+    HttpServerError: (error) => refuse('InvalidRequest', 400, cellHop('Runtime.answer', error)),
+    PiRejected: (error) => unavailable(cellHop('Runtime.answer', error)),
+  }),
+)`,
+    findings: 3,
+    fix: /never reads the failure it caught.*`cause: IncidentCause`/u,
+  },
+  {
+    rule: 'keep-incident-cause',
+    mistake: 'recovery to a value and a re-failed original are not replacements',
+    invalid: `program.pipe(Effect.catchTag('Conflict', () => new Busy({})))`,
+    valid: `program.pipe(
+  Effect.catchTag('NoSuchElementError', () => Effect.succeed(Option.none())),
+  Effect.catchTag('Conflict', (error) => Effect.fail(error)),
+)`,
+    findings: 1,
+    fix: /`Busy` replaces the caught failure/u,
+  },
+  {
+    rule: 'no-refusal-as-unavailable',
+    mistake:
+      'threads/delivery.ts Conversation.admitRuntime: the cell refused, the Person read an outage',
+    invalid: `runtime.admit(input).pipe(
+  Effect.catchTag(['AdmissionRefused', 'AdmissionUncertain'], () =>
+    Effect.fail(RuntimeUnavailable.make({ message: 'Vivid could not be reached' })),
+  ),
+)`,
+    valid: `runtime.admit(input).pipe(
+  Effect.catchTag('AdmissionUncertain', (error) =>
+    Effect.fail(RuntimeUnavailable.make({ message: 'Vivid could not be reached', cause: hop(error) })),
+  ),
+)`,
+    findings: 1,
+    fix: /`AdmissionRefused` is a refusal and `RuntimeUnavailable` says Vivid could not be reached\. A refusal is never renamed to unavailable/u,
+  },
+  {
+    rule: 'no-silent-failure',
+    mistake: 'runtime/settlement.ts: a Run whose ending nobody knows becomes Unknown, unrecorded',
+    invalid: `const observeRun = Effect.fn('Durable.observe')(function* (read) {
+  return yield* read.pipe(
+    Effect.retry({ schedule: Schedule.spaced('1 second'), while: transient }),
+    Effect.orElseSucceed(() => Settlement.cases.Unknown.make({})),
+  )
+})`,
+    valid: `const observeRun = Effect.fn('Durable.observe')(function* (read) {
+  return yield* read.pipe(
+    Effect.retry({ schedule: Schedule.spaced('1 second'), while: transient }),
+    Effect.tapError((error) => incidents.record(Incident.cases.RunLost.make({ ...run, cause: hop(error) }))),
+    Effect.orElseSucceed(() => Settlement.cases.Unknown.make({})),
+  )
+})`,
+    findings: 1,
+    fix: /`Effect\.orElseSucceed` turns a failure into a value.*`Incidents\.record\(\.\.\.\)`.*`\/\/ Impact: Recovered, <why>`/u,
+  },
+  {
+    rule: 'no-silent-failure',
+    mistake: 'push/delivery.ts Push.attempt: a rejected push becomes a Failed receipt, unrecorded',
+    invalid: `services.adapter.send(destination, payload).pipe(
+  Effect.catchTags({
+    PushRejected: () => Effect.succeed(PushReceipt.cases.Failed.make({ reason: 'Rejected' })),
+  }),
+)`,
+    valid: `services.adapter.send(destination, payload).pipe(
+  Effect.catchTags({
+    PushRejected: (error) =>
+      incidents.record(undelivered(error)).pipe(Effect.as(PushReceipt.cases.Failed.make({ reason: 'Rejected' }))),
+  }),
+)`,
+    findings: 1,
+    fix: /This `Effect\.catchTags` answers success/u,
+  },
+  {
+    rule: 'no-silent-failure',
+    mistake: 'computers/store.ts: a Computer that did not start is a Result and a warning',
+    invalid: `const started = yield* machine.ensure(before.machine).pipe(
+  Effect.timeoutOrElse({ duration: START_DEADLINE, orElse: () => Effect.fail(new ComputerWakeTimedOut({ person })) }),
+  Effect.result,
+)`,
+    valid: `const started = yield* machine.ensure(before.machine).pipe(
+  Effect.timeoutOrElse({ duration: START_DEADLINE, orElse: () => Effect.fail(new ComputerWakeTimedOut({ person })) }),
+  Effect.tapError((error) => incidents.record(computerFailed(person, 'Start', error))),
+  Effect.result,
+)`,
+    findings: 1,
+    fix: /`Effect\.result` turns a failure into a value/u,
+  },
+  {
+    rule: 'no-silent-failure',
+    mistake: 'a declared Impact needs its reason; a bare label does not count',
+    invalid: `// Impact: Routine
+const shown = program.pipe(Effect.catchTag('NoDeviceConnected', () => Effect.succeedSome(NotConnected.make({}))))`,
+    valid: `// Impact: Routine, no device connected is the Person's own state, shown as NotConnected.
+const shown = program.pipe(Effect.catchTag('NoDeviceConnected', () => Effect.succeedSome(NotConnected.make({}))))`,
+    findings: 1,
+    fix: /This `Effect\.catchTag` answers success/u,
+  },
+  {
+    rule: 'no-ad-hoc-failure-log',
+    mistake: 'computers/store.ts: the Computer start failure, exported as [omitted]',
+    invalid: `yield* Result.match(started, {
+  onFailure: (failure) => Effect.logWarning('Computer start failed', { failure: failure._tag, tookMillis }),
+  onSuccess: () => Effect.logInfo('Computer started', { tookMillis }),
+})`,
+    valid: `yield* Result.match(started, {
+  onFailure: () => Effect.logWarning(Message.computerStartFailed),
+  onSuccess: () => Effect.logInfo('Computer started', { tookMillis }),
+})`,
+    findings: 1,
+    fix: /`Effect\.logWarning` with a message that is not a `Message` constant reaches the backend as `\[omitted\]`/u,
+  },
+  {
+    rule: 'no-ad-hoc-failure-log',
+    mistake: 'watches/lifecycle.ts: the renewal failure logged with the error as its payload',
+    invalid: `watching.renew().pipe(Effect.tapError(Effect.logError))`,
+    valid: `watching.renew().pipe(Effect.tapError(() => Effect.logError(Message.watchRenewalFailed)))`,
+    findings: 1,
+    fix: /given the failure itself as its payload/u,
+  },
+  {
+    rule: 'severity-from-impact',
+    mistake: 'observability/failure.ts line: every typed failure a warning, every defect an error',
+    invalid: `const line = (failure) =>
+  FailureOutcome.$match(failure, {
+    Expected: () => Effect.logWarning(Message.failure),
+    Defect: () => Effect.logError(Message.defect),
+  })`,
+    valid: `const line = (failure) =>
+  Effect.logWithLevel(impactSignal[impactOfFailure(failure)].level)(Message.failure)
+const kindOf = FailureOutcome.$match({ Expected: () => 'expected', Defect: () => 'defect' })`,
+    findings: 1,
+    fix: /`impactSignal\[impactOfFailure\(failure\)\]`/u,
+  },
+  {
+    rule: 'severity-from-impact',
+    mistake: 'the same choice written as a conditional',
+    invalid: `const log = kind === 'expected' ? Effect.logWarning(Message.failure) : Effect.logError(Message.defect)`,
+    valid: `const log = Effect.logWithLevel(impactSignal[impact].level)(Message.failure)`,
+    findings: 1,
+    fix: /chosen here by whether the failure was declared/u,
+  },
+]
+
+for (const { rule: ruleName, mistake, invalid, valid, findings, fix } of incidentCases) {
+  void test(`${ruleName} fails on ${mistake} and names the fix`, () => {
+    const reported = ruleDiagnostics(ruleName, lint(ruleName, invalid))
+    assert.equal(reported.length, findings)
+    reported.forEach((finding) => assert.match(finding.message, fix))
+    assert.deepEqual(ruleDiagnostics(ruleName, lint(ruleName, valid)), [])
+  })
+}
+
+void test('deploy commands: the pre-deploy chain whose publish half never ran fails, one program passes', () => {
+  const chain = `const server = Railway.Service('Server', {
+  startCommand: 'env -u SENTRY_AUTH_TOKEN pnpm --filter @vivid/server start',
+  preDeploy: {
+    command:
+      'node scripts/migrate.mjs server && node scripts/sentry-upload.mjs vivid-mobile apps/mobile/updates && node apps/cells/scripts/build.mjs deploy',
+  },
+})`
+  const [finding, ...rest] = scanDefinition('infra/railway.ts', chain)
+  assert.deepEqual(rest, [])
+  assert.match(
+    finding,
+    /^infra\/railway\.ts:5: `command` is a shell chain \(`&&`\)\. Make the step one program/u,
+  )
+  assert.deepEqual(
+    scanDefinition(
+      'infra/railway.ts',
+      `const server = { preDeploy: { command: 'node scripts/predeploy.mjs' }, startCommand: 'pnpm --filter @vivid/cells exec node ../../infra/cli.mjs dev' }`,
+    ),
+    [],
+  )
+  for (const shell of [
+    "'exec node main.mjs'",
+    '\'sh -c "node a.mjs"\'',
+    "'node a.mjs; node b.mjs'",
+    '`node a.mjs | tee ${log}`',
+  ])
+    assert.equal(
+      scanDefinition('alchemy.run.ts', `Command.Exec('step', { command: ${shell} })`).length,
+      1,
+      shell,
+    )
+})
+
+void test('deploy commands: a Dockerfile CMD runs one program, never a shell', () => {
+  assert.match(
+    scanDockerfile(
+      'apps/server/Dockerfile',
+      'FROM node\nCMD pnpm --filter @vivid/server start\n',
+    ).join(''),
+    /^apps\/server\/Dockerfile:2: `CMD` runs a shell \(`shell form`\)/u,
+  )
+  assert.equal(
+    scanDockerfile('Dockerfile', 'ENTRYPOINT ["sh", "-c", "node a && node b"]').length,
+    1,
+  )
+  assert.deepEqual(
+    scanDockerfile(
+      'apps/server/Dockerfile',
+      [
+        'RUN corepack enable && corepack install',
+        'HEALTHCHECK --interval=30s \\',
+        '  CMD node -e "fetch(1).then(() => 0)"',
+        'CMD ["env", "-u", "SENTRY_AUTH_TOKEN", "pnpm", "--filter", "@vivid/server", "start"]',
+      ].join('\n'),
+    ),
+    [],
+  )
 })
