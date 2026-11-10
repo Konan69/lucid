@@ -16,8 +16,11 @@ import { PiRejected } from './threads.ts'
 import { openPerson, Person } from './person.ts'
 import { decisionLayer, settingsLayer } from './settings.ts'
 import { BuiltinSkills, skillsExtension } from './skills.ts'
+import { CellReports, type CellReportsService } from './telemetry.ts'
 
 export { isAuthorized } from './app.ts'
+export { CellFailure, cellHop, makeCellReports, parentOf, thrownTag } from './telemetry.ts'
+export type { CellReportsService, TelemetryBindings } from './telemetry.ts'
 export { parseSkill } from './frontmatter.ts'
 export type { SkillFile } from './frontmatter.ts'
 
@@ -30,6 +33,8 @@ export interface CellInput {
   readonly memory: Memory['Service']
   readonly skills: ReadonlyArray<LoadedSkill>
   readonly environment: object
+  /** The Worker's reporter (`makeCellReports`), which Pi's reports go through. */
+  readonly reports: CellReportsService
 }
 
 /**
@@ -46,6 +51,7 @@ export const openCell = (input: CellInput) => {
     productLayer.pipe(Layer.provide(FetchHttpClient.layer)),
     Layer.succeed(Memory, input.memory),
     Layer.succeed(BuiltinSkills, skillsExtension(input.skills)),
+    Layer.succeed(CellReports, input.reports),
   ).pipe(Layer.provideMerge(foundation))
   const person = Layer.effect(
     Person,
