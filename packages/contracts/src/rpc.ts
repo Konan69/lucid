@@ -339,7 +339,7 @@ import {
  * runtime state, which the server proxies at `/api/vivid/*`.
  */
 
-export { DeliveryRefused, InvalidRequest, RuntimeUnavailable } from './failures.js'
+export { InvalidRequest, RuntimeUnavailable } from './failures.js'
 
 /** Every failure a product call can return. Clients branch on `_tag`, never on a message. */
 export const RpcFailure = Schema.Union([

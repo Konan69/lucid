@@ -35,10 +35,13 @@ export type CellContractReading = typeof CellContractReading.Type
  * pre-deploy step published the Worker from the same commit (`infra/railway.ts`), so the only
  * honest answer for a pair built from different schemas is "not this deployment".
  */
-export class CellContract extends Context.Service<
-  CellContract,
-  { readonly read: Effect.Effect<CellContractReading> }
->()('vivid/CellContract') {}
+export interface CellContractService {
+  readonly read: Effect.Effect<CellContractReading>
+}
+
+export class CellContract extends Context.Service<CellContract, CellContractService>()(
+  'vivid/CellContract',
+) {}
 
 /**
  * Asks the cells on each read until they once match, then answers `Matched` without asking: this
@@ -75,7 +78,7 @@ export const cellContractLayer = Layer.effect(
               }),
       })
     }, Effect.scoped)
-    const read = Effect.gen(function* () {
+    const read = Effect.fn('Runtime.contractReading')(function* () {
       if (yield* Ref.get(matched)) return CellContractReading.cases.Matched.make({})
       const reading = yield* ask().pipe(
         Effect.catchTag('HttpClientError', (error) =>
@@ -90,6 +93,6 @@ export const cellContractLayer = Layer.effect(
       else yield* Effect.logError('The cells do not read this server’s wire contract', reading)
       return reading
     })
-    return CellContract.of({ read })
+    return CellContract.of({ read: read() })
   }),
 )

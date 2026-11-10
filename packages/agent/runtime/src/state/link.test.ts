@@ -413,11 +413,21 @@ describe('the state link', () => {
           `${threadPath(ada, 'thread-1')}/attachments/nonsense`,
         ])
           expect(yield* runtime.send(path, { method: 'GET' })).toEqual(
-            refusal('NotFound', 404, 'Runtime.attachment', 'AttachmentMissing', []),
+            refusal('NotFound', 404, {
+              operation: 'Runtime.attachment',
+              tag: 'AttachmentMissing',
+              issues: [],
+            }),
           )
         expect(
           yield* runtime.send(`${threadPath(grace, 'thread-1')}/${file.url}`, { method: 'GET' }),
-        ).toEqual(refusal('UnknownThread', 404, 'Runtime.attachment', 'UnknownThread', []))
+        ).toEqual(
+          refusal('UnknownThread', 404, {
+            operation: 'Runtime.attachment',
+            tag: 'UnknownThread',
+            issues: [],
+          }),
+        )
         return yield* Effect.void
       }),
     ),
@@ -431,7 +441,13 @@ describe('the state link', () => {
             method: 'GET',
             token: 'wrong',
           }),
-        ).toEqual(refusal('Unauthorized', 401, 'Runtime.state', 'Unauthorized', []))
+        ).toEqual(
+          refusal('Unauthorized', 401, {
+            operation: 'Runtime.state',
+            tag: 'Unauthorized',
+            issues: [],
+          }),
+        )
       }),
     ),
   )

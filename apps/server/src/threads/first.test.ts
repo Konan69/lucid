@@ -129,7 +129,12 @@ const harness = Effect.fn('FirstThread.test.harness')(function* () {
             JSON.stringify({
               error: 'InvalidRequest',
               cause: [
-                { service: 'cell', operation: 'Runtime.admission', tag: 'SchemaError', status: 400 },
+                {
+                  service: 'cell',
+                  operation: 'Runtime.admission',
+                  tag: 'SchemaError',
+                  status: 400,
+                },
               ],
               contract: contractFingerprint,
             }),
@@ -234,9 +239,7 @@ layer(stores)((it) => {
         const test = yield* harness()
         yield* Ref.set(test.refuseAdmission, true)
         const outcome = yield* test.open(test.actor.workspace).pipe(Effect.result)
-        expect(Result.isFailure(outcome) ? outcome.failure._tag : 'opened').toBe(
-          'DeliveryRefused',
-        )
+        expect(Result.isFailure(outcome) ? outcome.failure._tag : 'opened').toBe('DeliveryRefused')
         const [thread] = yield* recorded(test.actor.person.id)
         if (thread === undefined) expect.fail('A recorded Run must protect its Thread')
         const [run] = yield* (yield* RunStore).list(thread.id)

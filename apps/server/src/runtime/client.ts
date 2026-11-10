@@ -3,7 +3,7 @@ import { Context, Effect, Layer, Match, Option, Predicate, Redacted, Schema, Str
 import * as Schedule from 'effect/Schedule'
 import type * as Scope from 'effect/Scope'
 import * as HttpClient from 'effect/http/HttpClient'
-import type * as HttpBody from 'effect/http/HttpBody'
+import * as HttpBody from 'effect/http/HttpBody'
 import * as HttpClientError from 'effect/http/HttpClientError'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
@@ -69,7 +69,7 @@ import {
   type Settlement,
   type SettlementLost,
 } from './settlement.ts'
-export { Settlement, SettlementLost } from './settlement.ts'
+export { Settlement } from './settlement.ts'
 
 /** The runtime receipt also names the product reservation known before admission. */
 export const Admission = Schema.Struct({ ...Admitted.fields, repeated: Schema.Boolean })
@@ -169,10 +169,13 @@ const causeOf = (
   if (error instanceof RuntimeRejected) return causeAfter(hop(error._tag, []), error.refusal.cause)
   if (error instanceof HttpClientError.HttpClientError) return [hop(error.reason._tag, [])]
   if (error instanceof Schema.SchemaError) return [hop(error._tag, issuesOf(error.issue))]
-  if (error._tag === 'HttpBodyError')
-    return error.reason._tag === 'SchemaError'
-      ? [hop(error.reason._tag, issuesOf(error.reason.issue))]
-      : [hop(error.reason._tag, [])]
+  if (error instanceof HttpBody.HttpBodyError)
+    return Match.value(error.reason).pipe(
+      Match.tagsExhaustive({
+        SchemaError: (reason) => [hop(reason._tag, issuesOf(reason.issue))],
+        JsonError: (reason) => [hop(reason._tag, [])],
+      }),
+    )
   return [hop(error._tag, [])]
 }
 

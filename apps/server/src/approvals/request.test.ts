@@ -221,7 +221,12 @@ layer(testDatabaseLayer)((it) => {
           ).toEqual(Option.some({ request: ['Send it'], earlier: Option.none() }))
           expect(
             yield* personRequest(
-              { read: () => Effect.fail(RuntimeUnavailable.make({ message: 'down', cause: unreachableCause })) },
+              {
+                read: () =>
+                  Effect.fail(
+                    RuntimeUnavailable.make({ message: 'down', cause: unreachableCause }),
+                  ),
+              },
               test.vivid,
             ),
           ).toEqual(Option.none())

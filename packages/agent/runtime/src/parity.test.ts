@@ -177,7 +177,10 @@ describe('main runtime parity on Pi', () => {
         const valid = delivery(THREAD, 'valid')
         // Each refusal names the declared field that failed and how, never the value sent.
         for (const [body, issue] of [
-          [{ ...valid, turn: 0 }, { path: [CodeName.make('turn')], kind: 'InvalidValue' }],
+          [
+            { ...valid, turn: 0 },
+            { path: [CodeName.make('turn')], kind: 'InvalidValue' },
+          ],
           [
             { ...valid, scope: {} },
             { path: [CodeName.make('scope'), CodeName.make('acting')], kind: 'MissingKey' },
@@ -188,7 +191,11 @@ describe('main runtime parity on Pi', () => {
           ],
         ] as const) {
           expect(yield* runtime.send(path, { method: 'POST', body })).toEqual(
-            refusal('InvalidRequest', 400, 'Runtime.admission', 'SchemaError', [issue]),
+            refusal('InvalidRequest', 400, {
+              operation: 'Runtime.admission',
+              tag: 'SchemaError',
+              issues: [issue],
+            }),
           )
         }
         expect(given.faux.state.callCount).toBe(0)

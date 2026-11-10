@@ -506,7 +506,9 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             const observed = yield* Observation
             yield* Ref.set(
               observed.deliveryFailure,
-              Option.some(new RuntimeUnavailable({ message: 'Unavailable', cause: unreachableCause })),
+              Option.some(
+                new RuntimeUnavailable({ message: 'Unavailable', cause: unreachableCause }),
+              ),
             )
             const approval = yield* store.raise(
               test.companyVivid,

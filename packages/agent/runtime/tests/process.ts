@@ -230,6 +230,15 @@ type Cell = {
   readonly memory: Effect.Success<ReturnType<typeof openMemory>>
 }
 
+/** One request to the runtime under test, as the server would send it. */
+interface SendInput {
+  readonly method: 'GET' | 'POST'
+  readonly body?: unknown
+  readonly token?: string
+  /** Headers the server sent beside these, such as another contract fingerprint. */
+  readonly headers?: Readonly<Record<string, string>>
+}
+
 /**
  * Tests host each Person on Pi's first-party file-backed SQLite adapter. This fixture emulates
  * cell activation only; celld ownership and alarms require the parent's real host proof.
@@ -322,16 +331,7 @@ export const start = Effect.fn('RuntimeFixture.start')(function* (given: World) 
     )
   }
 
-  const send = Effect.fn('RuntimeFixture.send')(function* (
-    path: string,
-    input: {
-      readonly method: 'GET' | 'POST'
-      readonly body?: unknown
-      readonly token?: string
-      /** Headers the server sent beside these, such as its contract fingerprint. */
-      readonly headers?: Readonly<Record<string, string>>
-    },
-  ) {
+  const send = Effect.fn('RuntimeFixture.send')(function* (path: string, input: SendInput) {
     // A sender of this build, as the server is, says its contract unless the test says another.
     const headers = {
       [CONTRACT_HEADER]: contractFingerprint,
@@ -396,14 +396,12 @@ export const held = Effect.fn('RuntimeFixture.held')(function* (answer: string |
 export const refusal = (
   error: RuntimeRefusal['error'],
   status: number,
-  operation: string,
-  tag: string,
-  issues: ReadonlyArray<Issue>,
+  hop: { readonly operation: string; readonly tag: string; readonly issues: ReadonlyArray<Issue> },
 ) => ({
   status,
   body: {
     error,
-    cause: [incidentHop({ service: 'cell', operation, tag, status: Option.some(status), issues })],
+    cause: [incidentHop({ service: 'cell', ...hop, status: Option.some(status) })],
     contract: contractFingerprint,
   },
 })

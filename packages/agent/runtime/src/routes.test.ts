@@ -519,16 +519,29 @@ describe('the runtime over HTTP', () => {
             `${threadPath(grace, 'ada-thread')}/submissions/${hers.submissionId}`,
             { method: 'GET' },
           ),
-        ).toEqual(refusal('UnknownThread', 404, 'Runtime.settled', 'UnknownThread', []))
+        ).toEqual(
+          refusal('UnknownThread', 404, {
+            operation: 'Runtime.settled',
+            tag: 'UnknownThread',
+            issues: [],
+          }),
+        )
         expect(
           yield* runtime.send(threadPath(grace, 'ada-thread'), {
             method: 'POST',
             body: delivery('ada-thread', 'key-x'),
           }),
         ).toEqual(
-          refusal('WrongThread', 400, 'Runtime.admission', 'WrongThread', [
-            { path: [CodeName.make('initialData'), CodeName.make('creator')], kind: 'InvalidValue' },
-          ]),
+          refusal('WrongThread', 400, {
+            operation: 'Runtime.admission',
+            tag: 'WrongThread',
+            issues: [
+              {
+                path: [CodeName.make('initialData'), CodeName.make('creator')],
+                kind: 'InvalidValue',
+              },
+            ],
+          }),
         )
         expect(
           yield* runtime.send(threadPath(PersonId.make('not.a.name'), 'ada-thread'), {
@@ -824,7 +837,13 @@ describe('the runtime over HTTP', () => {
             body: delivery('thread-1', 'key-1'),
             token: 'wrong',
           }),
-        ).toEqual(refusal('Unauthorized', 401, 'Runtime.admission', 'Unauthorized', []))
+        ).toEqual(
+          refusal('Unauthorized', 401, {
+            operation: 'Runtime.admission',
+            tag: 'Unauthorized',
+            issues: [],
+          }),
+        )
         expect(yield* runtime.send('/health', { method: 'GET', token: 'wrong' })).toEqual({
           status: 200,
           body: { model: 'fixture/text', service: 'vivid-agent-runtime', status: 'ok' },

@@ -94,6 +94,56 @@ interface Followed {
   readonly person: Person
 }
 
+/** How a Run ended, and why observation gave up when it did (`lost`). */
+interface Observed {
+  readonly settlement: Settlement
+  readonly lost: Option.Option<IncidentCause>
+}
+
+/**
+ * The Run's settlement. Observation that gave up is stored as `Unknown`, which keeps no cause
+ * (`runtime/settlement.ts` `SettlementLost`), so the cause is kept beside it for `RunLost`.
+ */
+const observedSettlement = (runtime: Runtime['Service'], run: Followed) =>
+  runtime.settled(run.threadId, run.id).pipe(
+    Effect.map((settlement): Observed => ({ settlement, lost: Option.none() })),
+    Effect.catchTag('SettlementLost', ({ cause }) =>
+      Effect.succeed<Observed>({
+        settlement: Settlement.cases.Unknown.make({}),
+        lost: Option.some(cause),
+      }),
+    ),
+  )
+
+/**
+ * Says how a Run ended when that hurt the Person: `RunFailed` with what its settlement carries, or
+ * `RunLost` when observation gave up. Called only when the conditional ending changed the Run.
+ */
+const recordEnding = Effect.fn('Conversation.recordEnding')(function* (
+  incidents: Incidents['Service'],
+  run: Followed,
+  { settlement, lost }: Observed,
+) {
+  const affected = { personId: run.person.id, threadId: run.threadId, runId: run.id }
+  if (Settlement.guards.Failed(settlement)) {
+    yield* recordRunFailure({
+      threadId: run.threadId,
+      runId: run.id,
+      reason: settlement.reason,
+      status: Option.fromUndefinedOr(settlement.providerStatus),
+    })
+    yield* incidents.record(
+      Incident.cases.RunFailed.make({
+        ...affected,
+        reason: settlement.reason,
+        cause: failedCause(settlement),
+      }),
+    )
+  }
+  if (Option.isSome(lost))
+    yield* incidents.record(Incident.cases.RunLost.make({ ...affected, cause: lost.value }))
+})
+
 /**
  * Builds the observer of one Run: it waits for the Run to end and writes down how. It runs for as
  * long as the Run does, outside the request that started it, and acts only if it is the one that
@@ -187,42 +237,14 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
     yield* activities
       .refresh(run.person.id)
       .pipe(Effect.catch(() => Effect.logWarning('Live Activity refresh failed')))
-    // Observation that gave up is stored as `Unknown`; why it gave up goes to the `RunLost` Incident.
-    const observed = yield* runtime.settled(run.threadId, run.id).pipe(
-      Effect.map((settlement) => ({ settlement, lost: Option.none<IncidentCause>() })),
-      Effect.catchTag('SettlementLost', ({ cause }) =>
-        Effect.succeed({
-          settlement: Settlement.cases.Unknown.make({}),
-          lost: Option.some(cause),
-        }),
-      ),
-    )
+    const observed = yield* observedSettlement(runtime, run)
     const { settlement } = observed
     const changed = yield* database.transaction(() => end(run, settlement))
     yield* activities
       .refresh(run.person.id)
       .pipe(Effect.catch(() => Effect.logWarning('Live Activity refresh failed')))
     // The conditional write owns reporting too: replay and restart observers cannot count twice.
-    const affected = { personId: run.person.id, threadId: run.threadId, runId: run.id }
-    if (changed && Settlement.guards.Failed(settlement)) {
-      yield* recordRunFailure({
-        threadId: run.threadId,
-        runId: run.id,
-        reason: settlement.reason,
-        status: Option.fromUndefinedOr(settlement.providerStatus),
-      })
-      yield* incidents.record(
-        Incident.cases.RunFailed.make({
-          ...affected,
-          reason: settlement.reason,
-          cause: failedCause(settlement),
-        }),
-      )
-    }
-    if (changed && Option.isSome(observed.lost))
-      yield* incidents.record(
-        Incident.cases.RunLost.make({ ...affected, cause: observed.lost.value }),
-      )
+    if (changed) yield* recordEnding(incidents, run, observed)
     yield* devices.ended(run.id)
     if (!changed) return
     // Naming lives in the server scope as its own fiber; even a stalled model cannot hold settlement open.
@@ -313,6 +335,26 @@ const admissionCause = (error: { readonly _tag: string }): IncidentCause =>
           issues: [],
         }),
       ]
+
+/**
+ * Ends the Run whose admission failed and, when that write ended it, says so as `AdmissionFailed`
+ * with the failure's cause. The Run's ending decides the outcome, so a replay that finds the Run
+ * already ended says nothing.
+ */
+const admissionFailed = Effect.fn('Conversation.admissionFailed')(function* (
+  services: { readonly runs: RunStore['Service']; readonly incidents: Incidents['Service'] },
+  failed: Omit<Extract<Incident, { readonly _tag: 'AdmissionFailed' }>, '_tag' | 'cause'>,
+  error: { readonly _tag: string },
+) {
+  const changed = yield* services.runs.end(
+    failed.runId,
+    RunEnding.cases.Failed.make({ reason: 'Delivery' }),
+  )
+  if (changed)
+    yield* services.incidents.record(
+      Incident.cases.AdmissionFailed.make({ ...failed, cause: admissionCause(error) }),
+    )
+})
 
 /** Producers keep durable receipts and retry on their own schedule; Busy never waits in-process. */
 const makeDeliver = (admit: ConversationService['admit'], runs: RunStore['Service']) =>
@@ -438,6 +480,12 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
         },
       )
       if (!Predicate.isNumber(turn)) return turn
+      const failed = {
+        personId: speaker.id,
+        threadId: thread.id,
+        runId: id,
+        delivery: deliveryKind(delivery.message),
+      }
       const admission = yield* Effect.gen(function* () {
         const deliveryScope = yield* runs.scope({ threadId: thread.id, turn })
         return yield* admitRuntime(runtime, {
@@ -450,24 +498,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
           scope: deliveryScope,
         })
       }).pipe(
-        // The Run's ending decides the outcome, so the Incident is said only when it changed it.
-        Effect.tapError((error) =>
-          runs.end(id, RunEnding.cases.Failed.make({ reason: 'Delivery' })).pipe(
-            Effect.flatMap((changed) =>
-              changed
-                ? incidents.record(
-                    Incident.cases.AdmissionFailed.make({
-                      personId: speaker.id,
-                      threadId: thread.id,
-                      runId: id,
-                      delivery: deliveryKind(delivery.message),
-                      cause: admissionCause(error),
-                    }),
-                  )
-                : Effect.void,
-            ),
-          ),
-        ),
+        Effect.tapError((error) => admissionFailed({ runs, incidents }, failed, error)),
         Effect.onInterrupt(() => runs.end(id, RunEnding.cases.Failed.make({ reason: 'Delivery' }))),
       )
       // Replays returned above. Only a newly reserved ordinary message accepted by the runtime

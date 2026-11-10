@@ -1227,7 +1227,12 @@ layer(
       {
         name: 'uncertain',
         make: (threadId: ThreadId, runId: RunId) =>
-          AdmissionUncertain.make({ threadId, runId, reason: 'Transport', cause: unreachableCause }),
+          AdmissionUncertain.make({
+            threadId,
+            runId,
+            reason: 'Transport',
+            cause: unreachableCause,
+          }),
         /** Still uncertain after its retries: unavailable, with why it could not be told. */
         answer: (_runId: RunId) =>
           RuntimeUnavailable.make({

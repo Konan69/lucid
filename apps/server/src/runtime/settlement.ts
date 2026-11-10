@@ -36,9 +36,7 @@ export class SettlementLost extends Schema.TaggedError<SettlementLost>()(
 /** A settlement lost in the server's own `operation`, before any cell answered: `tag` says why. */
 export const lostHere = (operation: string, tag: string) =>
   SettlementLost.make({
-    cause: [
-      incidentHop({ service: 'server', operation, tag, status: Option.none(), issues: [] }),
-    ],
+    cause: [incidentHop({ service: 'server', operation, tag, status: Option.none(), issues: [] })],
   })
 
 /**

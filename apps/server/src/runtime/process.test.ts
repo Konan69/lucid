@@ -33,6 +33,7 @@ import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import {
   CodeName,
   CONTRACT_HEADER,
+  ContractFingerprint,
   ConversationFrame,
   DeliveryRefused,
   Incident,
@@ -42,6 +43,7 @@ import {
   Person,
   PersonId,
   RunId,
+  RunState,
   SessionId,
   Workspace,
 } from '@vivid/contracts'
@@ -69,7 +71,7 @@ import { threadHandlers } from '../threads/handlers.ts'
 import { ChildRuns } from '../runs/store.ts'
 import { Runtime, runtimeLayer } from './client.ts'
 import { incidentsTestLayer, productFixture, productLayer, RecordedIncidents } from './testing.ts'
-import { CellContract, cellContractLayer } from './contract.ts'
+import { CellContract, cellContractLayer, CellContractReading } from './contract.ts'
 import { healthRoute } from '../http/router.ts'
 import { deliveryRunId, messageKey } from '../threads/key.ts'
 import { contractFingerprint } from '@vivid/contracts/fingerprint'
@@ -162,20 +164,14 @@ const transport = (
           : { [CONTRACT_HEADER]: receipt === 'OtherContract' ? '0badc0de' : sent }
       if (receipt === 'AbortLostOnce' && !lost && url.pathname.endsWith('/abort')) {
         lost = true
-        return HttpClientResponse.fromWeb(
-          request,
-          new Response(lostAnswer, { status: 503 }),
-        )
+        return HttpClientResponse.fromWeb(request, new Response(lostAnswer, { status: 503 }))
       }
       if (receipt === 'AbortNotTaken' && url.pathname.endsWith('/abort'))
         return HttpClientResponse.fromWeb(request, new Response('{"aborted":false}'))
       const response = yield* process.send(path, { method: request.method, body, headers })
       if (receipt === 'LostOnce' && !lost && request.method === 'POST' && response.status === 202) {
         lost = true
-        return HttpClientResponse.fromWeb(
-          request,
-          new Response(lostAnswer, { status: 503 }),
-        )
+        return HttpClientResponse.fromWeb(request, new Response(lostAnswer, { status: 503 }))
       }
       return HttpClientResponse.fromWeb(
         request,
@@ -325,7 +321,8 @@ const fixture = Effect.fn('PiServer.test.fixture')(function* (
         ),
       )
       const web = HttpServerResponse.toWeb(response)
-      return { status: web.status, body: yield* Effect.promise(() => web.json()) }
+      const body = yield* Effect.promise(() => web.text()).pipe(Effect.flatMap(decodeBody))
+      return { status: web.status, body }
     }),
     store: {
       ...store,
@@ -439,28 +436,28 @@ layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)), { excludeTestServi
       }).pipe(Effect.scoped),
     )
 
-    it.effect('a body the cell cannot read is refused, and the refusal keeps why to the Person', () =>
-      Effect.gen(function* () {
-        const test = yield* fixture('Unreadable')
-        const failure = yield* Effect.flip(test.send('unreadable'))
-        const runId = deliveryRunId(test.threadId, messageKey(test.personId, 'unreadable'))
-        // The server's hops, then the cell's own: the route, its failure and the field it lacked.
-        const cause = admissionChain('SchemaError', 400)
-        expect(failure).toEqual(DeliveryRefused.make({ runId, cause }))
-        expect(yield* test.incidents).toEqual([
-          Incident.cases.AdmissionFailed.make({
-            personId: test.personId,
-            threadId: test.threadId,
-            runId,
-            delivery: 'Words',
-            cause,
-          }),
-        ])
-        expect((yield* test.store.get(runId)).state).toMatchObject({
-          _tag: 'Failed',
-          reason: 'Delivery',
-        })
-      }).pipe(Effect.scoped),
+    it.effect(
+      'a body the cell cannot read is refused, and the refusal keeps why to the Person',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* fixture('Unreadable')
+          const failure = yield* Effect.flip(test.send('unreadable'))
+          const runId = deliveryRunId(test.threadId, messageKey(test.personId, 'unreadable'))
+          // The server's hops, then the cell's own: the route, its failure and the field it lacked.
+          const cause = admissionChain('SchemaError', 400)
+          expect(failure).toEqual(DeliveryRefused.make({ runId, cause }))
+          expect(yield* test.incidents).toEqual([
+            Incident.cases.AdmissionFailed.make({
+              personId: test.personId,
+              threadId: test.threadId,
+              runId,
+              delivery: 'Words',
+              cause,
+            }),
+          ])
+          const { state } = yield* test.store.get(runId)
+          expect(RunState.guards.Failed(state) && state.reason).toBe('Delivery')
+        }).pipe(Effect.scoped),
     )
 
     it.effect('a body from a sender of other wire schemas is refused as a contract mismatch', () =>
@@ -484,14 +481,21 @@ layer(productLayer.pipe(Layer.provideMerge(testConfigLayer)), { excludeTestServi
           body: {
             ok: false,
             service: 'vivid',
-            contract: { _tag: 'Mismatched', server: contractFingerprint, cells: '0badc0de' },
+            contract: CellContractReading.cases.Mismatched.make({
+              server: contractFingerprint,
+              cells: ContractFingerprint.make('0badc0de'),
+            }),
           },
         })
         // Production's Worker of 30 October has no `/contract` and answers it as a bad request.
         const stale = yield* fixture('StaleCells')
         expect(yield* stale.health).toEqual({
           status: 503,
-          body: { ok: false, service: 'vivid', contract: { _tag: 'Unanswered', status: 400 } },
+          body: {
+            ok: false,
+            service: 'vivid',
+            contract: CellContractReading.cases.Unanswered.make({ status: 400 }),
+          },
         })
       }).pipe(Effect.scoped),
     )

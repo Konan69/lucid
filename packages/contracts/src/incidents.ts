@@ -1,4 +1,6 @@
+import * as Match from 'effect/Match'
 import * as Option from 'effect/Option'
+import * as Predicate from 'effect/Predicate'
 import * as Schema from 'effect/Schema'
 import * as SchemaAST from 'effect/SchemaAST'
 import type * as SchemaIssue from 'effect/SchemaIssue'
@@ -137,11 +139,10 @@ const isCodeName = Schema.is(CodeName)
 const declaredStep = (parent: Option.Option<SchemaAST.AST>, key: PropertyKey) =>
   Option.flatMap(parent, (ast): Option.Option<IssueStep> => {
     if (SchemaAST.isArrays(ast))
-      return typeof key === 'number' && Number.isInteger(key) && key >= 0
+      return Predicate.isNumber(key) && Number.isInteger(key) && key >= 0
         ? Option.some(key)
         : Option.none()
-    if (!SchemaAST.isObjects(ast) || typeof key !== 'string' || !isCodeName(key))
-      return Option.none()
+    if (!SchemaAST.isObjects(ast) || !isCodeName(key)) return Option.none()
     return ast.propertySignatures.some((property) => property.name === key)
       ? Option.some(key)
       : Option.none()
@@ -160,28 +161,37 @@ const walkIssue = (
   open: boolean,
   parent: Option.Option<SchemaAST.AST>,
 ): ReadonlyArray<Issue> => {
-  switch (issue._tag) {
-    case 'Pointer': {
-      const [key, ...more] = issue.path
-      const step =
-        open && key !== undefined && more.length === 0 && path.length < LONGEST_ISSUE_PATH
-          ? declaredStep(parent, key)
-          : Option.none<IssueStep>()
-      return Option.match(step, {
-        onNone: () => walkIssue(issue.issue, path, false, Option.none()),
-        onSome: (kept) => walkIssue(issue.issue, [...path, kept], true, Option.none()),
-      })
-    }
-    case 'Composite':
-      return issue.issues.flatMap((inner) => walkIssue(inner, path, open, Option.some(issue.ast)))
-    case 'Filter':
-    case 'Encoding':
-      return walkIssue(issue.issue, path, open, parent)
-    case 'AnyOf':
-      return [{ path, kind: 'AnyOf' }]
-    default:
-      return [{ path, kind: issue._tag }]
-  }
+  const leaf = ({ _tag }: SchemaIssue.Leaf | SchemaIssue.AnyOf): ReadonlyArray<Issue> => [
+    { path, kind: _tag },
+  ]
+  return Match.value(issue).pipe(
+    Match.tagsExhaustive({
+      Pointer: (pointer) => {
+        const [key, ...more] = pointer.path
+        const step =
+          open && key !== undefined && more.length === 0 && path.length < LONGEST_ISSUE_PATH
+            ? declaredStep(parent, key)
+            : Option.none<IssueStep>()
+        return Option.match(step, {
+          onNone: () => walkIssue(pointer.issue, path, false, Option.none()),
+          onSome: (kept) => walkIssue(pointer.issue, [...path, kept], true, Option.none()),
+        })
+      },
+      Composite: (composite) =>
+        composite.issues.flatMap((inner) =>
+          walkIssue(inner, path, open, Option.some(composite.ast)),
+        ),
+      Filter: (filter) => walkIssue(filter.issue, path, open, parent),
+      Encoding: (encoding) => walkIssue(encoding.issue, path, open, parent),
+      AnyOf: leaf,
+      InvalidType: leaf,
+      InvalidValue: leaf,
+      MissingKey: leaf,
+      UnexpectedKey: leaf,
+      Forbidden: leaf,
+      OneOf: leaf,
+    }),
+  )
 }
 
 /**

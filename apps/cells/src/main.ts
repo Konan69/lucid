@@ -491,7 +491,9 @@ export default {
       return refusal('Unauthorized', 401, 'Unauthorized')
     // The server's readiness reads which contract this published Worker was built with.
     if (url.pathname === '/contract')
-      return Response.json({ contract: contractFingerprint } satisfies typeof RuntimeContract.Encoded)
+      return Response.json({
+        contract: contractFingerprint,
+      } satisfies typeof RuntimeContract.Encoded)
     const match = /^\/persons\/([^/]+)\/(?:threads\/|history$|search$|memory(?:$|\/))/u.exec(
       url.pathname,
     )

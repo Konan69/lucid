@@ -77,9 +77,12 @@ class WrongThread extends Schema.TaggedError<WrongThread>()(
   { path: Issue.fields.path },
   { title: 'Delivery names another Thread or Person' },
 ) {}
-const wrongThread = (...path: ReadonlyArray<string | number>) =>
+/** `WrongThread` naming the declared field whose check failed; history names the Thread's index. */
+const wrongThread = (...names: ReadonlyArray<string>) =>
+  WrongThread.make({ path: names.map((name) => CodeName.make(name)) })
+const wrongHistory = (index: number) =>
   WrongThread.make({
-    path: path.map((step) => (typeof step === 'number' ? step : CodeName.make(step))),
+    path: [CodeName.make('threads'), index, CodeName.make('origin'), CodeName.make('creator')],
   })
 
 /**
@@ -188,7 +191,9 @@ const answered = <R>(
         refuse('InvalidRequest', 400, [cellHop(operation, _tag, 400, issuesOf(issue))]),
       HttpServerError: ({ reason }) => refused(operation, 'InvalidRequest', 400, reason._tag),
       WrongThread: ({ _tag, path }) =>
-        refuse('WrongThread', 400, [cellHop(operation, _tag, 400, [{ path, kind: 'InvalidValue' }])]),
+        refuse('WrongThread', 400, [
+          cellHop(operation, _tag, 400, [{ path, kind: 'InvalidValue' }]),
+        ]),
       ContractMismatch: ({ _tag, issues }) =>
         refuse('ContractMismatch', 409, [cellHop(operation, _tag, 409, issues)]),
       UnknownThread: ({ _tag }) => refused(operation, 'UnknownThread', 404, _tag),
@@ -425,7 +430,7 @@ const history = Effect.fn('Runtime.history')(function* () {
   const body = yield* HttpServerRequest.schemaBodyJson(RuntimeHistoryBody)
   if (person.personId !== path.personId) return yield* wrongThread('personId')
   const foreign = body.threads.findIndex((thread) => thread.origin.creator !== path.personId)
-  if (foreign !== -1) return yield* wrongThread('threads', foreign, 'origin', 'creator')
+  if (foreign !== -1) return yield* wrongHistory(foreign)
   const result = yield* loadHistory(person, body)
   return yield* HttpServerResponse.schemaJson(RuntimeHistoryAnswer)(result)
 })
@@ -475,29 +480,25 @@ const memoryList = Effect.fn('Runtime.memoryList')(function* () {
 const memoryRead = Effect.fn('Runtime.memoryRead')(function* () {
   const person = yield* owner()
   const address = yield* HttpServerRequest.schemaBodyJson(MemoryAddress)
-  return yield* person.sources.memory
-    .read(person.personId, address)
-    .pipe(
-      Effect.flatMap(HttpServerResponse.schemaJson(SavedMemory)),
-      Effect.catchTags({
-        MemoryMissing: missingMemory('Runtime.memoryRead'),
-        MemoryUnavailable: unavailableMemory('Runtime.memoryRead'),
-      }),
-    )
+  return yield* person.sources.memory.read(person.personId, address).pipe(
+    Effect.flatMap(HttpServerResponse.schemaJson(SavedMemory)),
+    Effect.catchTags({
+      MemoryMissing: missingMemory('Runtime.memoryRead'),
+      MemoryUnavailable: unavailableMemory('Runtime.memoryRead'),
+    }),
+  )
 })
 
 const memoryWrite = Effect.fn('Runtime.memoryWrite')(function* () {
   const person = yield* owner()
   const write = yield* HttpServerRequest.schemaBodyJson(MemoryWrite)
-  return yield* person.sources.memory
-    .write(person.personId, write)
-    .pipe(
-      Effect.flatMap(HttpServerResponse.schemaJson(SavedMemory)),
-      Effect.catchTags({
-        MemoryConflict: conflictedMemory,
-        MemoryUnavailable: unavailableMemory('Runtime.memoryWrite'),
-      }),
-    )
+  return yield* person.sources.memory.write(person.personId, write).pipe(
+    Effect.flatMap(HttpServerResponse.schemaJson(SavedMemory)),
+    Effect.catchTags({
+      MemoryConflict: conflictedMemory,
+      MemoryUnavailable: unavailableMemory('Runtime.memoryWrite'),
+    }),
+  )
 })
 
 const memoryDelete = Effect.fn('Runtime.memoryDelete')(function* () {

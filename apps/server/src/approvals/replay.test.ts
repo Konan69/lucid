@@ -188,7 +188,9 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
           const approval = yield* store.raise(test.vivid, desktopAction, unbound)
           yield* Ref.set(
             observed.deliveryFailure,
-            Option.some(new RuntimeUnavailable({ message: 'Unavailable', cause: unreachableCause })),
+            Option.some(
+              new RuntimeUnavailable({ message: 'Unavailable', cause: unreachableCause }),
+            ),
           )
           yield* store.decide(test.personal, {
             id: approval.id,

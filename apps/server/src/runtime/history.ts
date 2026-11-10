@@ -7,7 +7,7 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
-import { Effect, Option } from 'effect'
+import { Effect, Match, Option } from 'effect'
 import { Database, decodeStored } from '../database/client.ts'
 import { Admitted } from '../threads/conversation.ts'
 import { runs } from '../threads/tables.ts'
@@ -44,9 +44,13 @@ export const readThreadHistory = Effect.fn('Runtime.history')(function* (
           incidentHop({
             service: 'server',
             operation: 'Runtime.history',
-            tag: error._tag === 'SchemaError' ? error._tag : error.reason._tag,
+            ...Match.value(error).pipe(
+              Match.tagsExhaustive({
+                SchemaError: ({ _tag, issue }) => ({ tag: _tag, issues: issuesOf(issue) }),
+                HttpClientError: ({ reason }) => ({ tag: reason._tag, issues: [] }),
+              }),
+            ),
             status: Option.some(response.status),
-            issues: error._tag === 'SchemaError' ? issuesOf(error.issue) : [],
           }),
         ],
       }),
