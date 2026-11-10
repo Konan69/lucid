@@ -168,12 +168,16 @@ export async function pacing(state, id, directory) {
         ),
     )
     const urgentNotices = await notices(state, urgent.thread, directory, 'urgent-outside-notices')
-    NodeAssert.equal(urgentNotices.length, 1)
-    NodeAssert.equal(urgentNotices[0].kind, 'needs-you')
+    NodeAssert.deepEqual(
+      urgentNotices.map((notice) => notice.kind),
+      ['needs-you'],
+    )
     await pass(state, ten + 3_600_000, directory, 'inside')
     const ordinaryNotices = await notices(state, ordinary.thread, directory, 'inside-notices')
-    NodeAssert.equal(ordinaryNotices.length, 1)
-    NodeAssert.equal(ordinaryNotices[0].kind, 'posted')
+    NodeAssert.deepEqual(
+      ordinaryNotices.map((notice) => notice.kind),
+      ['posted'],
+    )
     await pass(state, ten + 3_600_000, directory, 'repeat')
     NodeAssert.equal((await notices(state, ordinary.thread, directory, 'repeat-notices')).length, 1)
     await json(directory + '/scope.json', {
