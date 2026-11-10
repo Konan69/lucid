@@ -432,41 +432,44 @@ const askIntegration = Effect.fn('Inputs.askIntegration')(function* (
 })
 
 /** Claim before resuming. A duplicate answer never resends the continuation, even after response loss. */
-const answerIntegration = Effect.fn('Inputs.answerIntegration')(
-  function* (actor: Actor, request: AnswerIntegrationInputRequest) {
-    const database = yield* Database
-    const rows = yield* database.run(
-      database
-        .select({ request: inputRequests })
-        .from(inputRequests)
-        .innerJoin(threads, eq(threads.id, inputRequests.threadId))
-        .where(and(eq(inputRequests.id, request.id), inWorkspace(threads, actor)))
-        .limit(1),
-    )
-    const value = rows[0]
-    if (value === undefined) return yield* new NotFound({ message: 'Input request not found' })
-    const row = yield* decodeRow(value.request)
-    yield* requireThread(row.threadId, actor.person.id)
-    if (row.personId !== actor.person.id || row.integration === null)
-      return yield* new NotFound({ message: 'Integration input request not found' })
-    const claimed = yield* database.run(
-      database
-        .update(inputRequests)
-        .set({
-          status: 'answering',
-          integrationOutcome: yield* encodeStored(
-            IntegrationAnswerOutcome,
-            'Integration answer',
-          )(IntegrationAnswerOutcome.cases.Uncertain.make({})),
-        })
-        .where(and(eq(inputRequests.id, request.id), eq(inputRequests.status, 'waiting')))
-        .returning(),
-    )
-    if (claimed.length === 0)
-      return yield* new Conflict({
-        message: 'Integration question already answered or being answered.',
+const answerIntegration = Effect.fn('Inputs.answerIntegration')(function* (
+  actor: Actor,
+  request: AnswerIntegrationInputRequest,
+) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .select({ request: inputRequests })
+      .from(inputRequests)
+      .innerJoin(threads, eq(threads.id, inputRequests.threadId))
+      .where(and(eq(inputRequests.id, request.id), inWorkspace(threads, actor)))
+      .limit(1),
+  )
+  const value = rows[0]
+  if (value === undefined) return yield* new NotFound({ message: 'Input request not found' })
+  const row = yield* decodeRow(value.request)
+  yield* requireThread(row.threadId, actor.person.id)
+  if (row.personId !== actor.person.id || row.integration === null)
+    return yield* new NotFound({ message: 'Integration input request not found' })
+  const claimed = yield* database.run(
+    database
+      .update(inputRequests)
+      .set({
+        status: 'answering',
+        integrationOutcome: yield* encodeStored(
+          IntegrationAnswerOutcome,
+          'Integration answer',
+        )(IntegrationAnswerOutcome.cases.Uncertain.make({})),
       })
-    const action = row.integration
+      .where(and(eq(inputRequests.id, request.id), eq(inputRequests.status, 'waiting')))
+      .returning(),
+  )
+  if (claimed.length === 0)
+    return yield* new Conflict({
+      message: 'Integration question already answered or being answered.',
+    })
+  const action = row.integration
+  return yield* Effect.gen(function* () {
     const held = yield* decodeRow(yield* returned(claimed, 'Claimed Input request'))
     const addressed: Actor = { ...actor, by: 'vivid', threadId: Option.some(row.threadId) }
     const ending = yield* Effect.gen(function* () {
@@ -490,15 +493,12 @@ const answerIntegration = Effect.fn('Inputs.answerIntegration')(
       ),
     )
     return ending
-  },
-  (effect, _actor, request) =>
-    effect.pipe(
-      Effect.onExit((exit) =>
-        Exit.isFailure(exit) ? recoverIntegrationInput(request.id) : Effect.void,
-      ),
-      Effect.uninterruptible,
+  }).pipe(
+    Effect.onExit((exit) =>
+      Exit.isFailure(exit) ? recoverIntegrationInput(request.id) : Effect.void,
     ),
-)
+  )
+}, Effect.uninterruptible)
 
 /** A defect or interrupted owner has the same once-only uncertain ending as an expected failure. */
 const recoverIntegrationInput = Effect.fn('Inputs.recoverIntegration')(function* (
