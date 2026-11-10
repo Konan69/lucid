@@ -19,7 +19,7 @@ import {
   type Run,
   type ThreadAttention,
 } from '@vivid/contracts'
-import { Context, Effect, type Layer, Match, Option, Result, Schema } from 'effect'
+import { Context, Effect, type Layer, Match, Option, Predicate, Result, Schema } from 'effect'
 import { AsyncResult, Atom, type AtomRegistry } from 'effect/reactivity'
 import type { Live } from './live.js'
 
@@ -190,13 +190,15 @@ const unarrivalOf = Match.type<SendFailure>().pipe(
 /**
  * What a failed call cost, as a client says it. The failures the server owns (`isRemoteIncident`:
  * its stores, and the runtime's refusal or unavailability, which it records as `AdmissionFailed`)
- * are the server's to record, so the client says nothing more: one outcome is one Incident. Every
- * other failure originated here and is said by `impactOfFailure`.
+ * are the server's to record, so the client says nothing more: one outcome is one Incident. A
+ * transport failure (`RpcClientError`: offline, the socket closed) is `Recovered`: the words are
+ * kept as not sent for the Person to send again, and it opens no issue. Every other failure
+ * originated here and is said by `impactOfFailure`.
  */
 const clientImpact = (failure: { readonly _tag: string }): Option.Option<Impact> =>
   isRemoteIncident(failure)
     ? Option.none()
-    : Option.some(impactOfFailure(failure))
+    : Option.some(Predicate.isTagged(failure, 'RpcClientError') ? 'Recovered' : impactOfFailure(failure))
 
 /** The operation a failed send's first hop names: the span `delivering`'s `send` runs in. */
 const SEND = CodeName.make('Sending.send')
