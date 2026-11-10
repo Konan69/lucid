@@ -46,6 +46,12 @@ only a real-model journey proves that provider works.
 
 ## Drive the touched feature
 
+Default to one Launch and worthy Doctor for all touched journeys on an unchanged checkout, then
+one Cleanup after the last journey. Reuse that stack for both `feature` and `browser` commands.
+Launch keeps the inspector's pinned package bytes in `.cache/verify-pnpm`; product stores and
+inspector modules stay disposable. The `asks` expiry recipe restarts its owned Executor instead of waiting
+15 minutes for expiry.
+
 For private Mail and Calendar model measurements, read [behaviour](features/behaviour.md). Set `VIVID_VERIFY_WORLD` to an outside-checkout private directory before Launch, then run `verify behaviour <run> --trials 1` after Doctor and Cleanup afterwards. The scenario file stays private. This command records provenance, OpenUI parsing and wiring, tools, persisted effects and Connect ordering from real chat history. Its evidence never copies world files. Rehearsal is refused. It needs no browser recipe and makes no visual or native-client claim.
 
 ```sh
