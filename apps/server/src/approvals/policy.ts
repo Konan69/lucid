@@ -74,6 +74,25 @@ export const unwatchedOutcome = (review: Review): ReviewOutcome =>
   })
 
 /**
+ * The 4 October 2026 fallback decision and its accepted risk remain in force.
+ * Unreviewed: a `write` runs and a `destructive` action asks. DECIDED BY KONAN, 4 Oct 2026:
+ *   "an unreviewd always asked is bad"; decisions can be switched off (`VIVID_DECISIONS`,
+ *   `decisions/model.ts`) and Vivid must then still do what it is told without an Approval for
+ *   every write. The risk was stated to him and accepted: the `write` label does not prove an
+ *   action can be undone (a tool whose source declares nothing defaults to `write`, and
+ *   `connections/effects.ts` files a send under `write`), so with no review an unasked send on a
+ *   Person's own Integration runs. Do not change this back to "always ask" without his say-so.
+ *   The Person's own signed-in browser follows the same table as their own Integrations.
+ *   DECIDED BY KONAN, 4 Oct 2026: "I don't need approval for writing my browser". A write there
+ *   is reviewed when decisions are on and runs when no review was made; an unreviewed destructive action,
+ *   a Never or Ask rule, and a personal target in a shared Thread still ask or refuse.
+ *   Rules and a personal Integration used in a shared Thread are decided in `gate.ts` before
+ *   any review. With decisions switched off no rule can be judged, so a Person who has a Never
+ *   rule conservatively refuses every action that is not a read; an Ask rule asks. A Person
+ *   with no rule, or only Allow rules, is not asked.
+ */
+
+/**
  * Konan, 10 November 2026: "just because a tool is destructive does not mean it's a bad thing."
  * Jev's measurements decide reviewed actions, regardless of their effect label. An action the
  * Person asked for runs inside that request; an action Vivid chose runs when Jev rates it contained.
