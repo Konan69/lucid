@@ -1,7 +1,7 @@
 ---
 name: put-work-in-the-calendar
 description: |-
-  Use before checking availability or writing a calendar event when the Person asks to put work or a to-do in their calendar, book a block, block time, plan their day or week, or schedule their own task. Includes "put renewing my passport in my calendar for Thursday morning" and "propose a one-hour block for that to-do". Load this procedure before using calendar tools, and follow it again when they confirm the proposed time.
+  Use before checking availability or writing a calendar event when the Person asks to put work or a to-do in their calendar, book a block, block time, plan their day or week, or schedule their own task. Includes "put renewing my passport in my calendar for Thursday morning" and "propose a one-hour block for that to-do". Call activate_skill again in the reply where they confirm a proposed block, even if you loaded this procedure earlier.
 metadata:
   provenance: |-
     Adapted from Grok Bot's scheduling skill (skills/scheduling.md), read in full: its request
@@ -17,7 +17,7 @@ This is the Person's own time for their own work. Each block is a private hold o
 
 Follow these steps in order. When the Person confirms a proposal in a later message, resume at step 5.
 
-1. Gather the work. If they ask to add a to-do, call `add_todo` first. Then call `list_todos` and read the open to-do and its date before planning its block. Read a named Project with `read_project` and take its next step. A completed Project or one with no goal has no next step to place. Use the work the Person named or those records hold.
+1. Gather the work. If they ask to add a to-do, call `add_todo` first and use its confirmed open record and date. For an existing to-do, call `list_todos` and read its current record before planning the block. Read a named Project with `read_project` and take its next step. A completed Project or one with no goal has no next step to place. Use the work the Person named or those records hold.
 2. Ground preferences with `search_memory`: working hours, timezone, work calendar and focus length. These do not establish availability. Discover the calendar tools with `find_tools`. If none is connected, offer `connect` and keep the blocks as a draft.
 3. Read free/busy for the requested window and the full block length in the Person's timezone. Every `use_tool` call must include `account`, `tool`, `input`, `summary` and `rationale`. Set `account` and `tool` to the exact names discovery returned; include the `tool` field on availability reads too. Send `input` as the object its signature requires. For a private block, set an offered attendees array to `[]`, never `null`; if the tool has no attendees field, omit it.
 4. Propose the work, weekday and date, exact local start and end, and why that slot. Place dated to-dos before their dates, then the Project's next step. Ask with `ask_person` only for meaning-changing gaps such as which calendar or day, and to confirm the proposed blocks before writing. Choose preferences and say them: 60 minutes unless the work or memory says otherwise, a title naming the work, the calendar's reminders and no video link.
