@@ -1,5 +1,16 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { Context, Deferred, Effect, Redacted, Ref, Layer, Fiber, Option, Tracer } from 'effect'
+import {
+  Context,
+  Deferred,
+  Effect,
+  Redacted,
+  Ref,
+  Layer,
+  Fiber,
+  Option,
+  Tracer,
+  Schema,
+} from 'effect'
 import {
   AuditEvent,
   ConnectionStep,
@@ -35,6 +46,70 @@ import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './test
 
 describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
   layer(connectionTestLayer)((it) => {
+    /** Production has only completed adoption ownership. Decode its stored JSON alongside
+     * retired rows through the same SQL reader the product uses, without re-running adoption. */
+    it.effect('reads completed adopted account, public and reconnect rows', () =>
+      Effect.gen(function* () {
+        const { personalActor } = yield* fixture()
+        const database = yield* Database
+        const storedJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json))
+        yield* database.run(
+          database.insert(connections).values([
+            {
+              id: crypto.randomUUID(),
+              personId: personalActor.person.id,
+              service: serviceId,
+              serviceName: 'Stored account',
+              executorPrincipal: 'adopted-account',
+              executorApp: 'stored-account-app',
+              references: storedJson(
+                `{"service":"${serviceId}","owner":"stored-owner","_tag":"Authorized","app":"stored-account-app","account":"stored-account","binding":{"_tag":"Account","scope":"app","requirement":"adopted"},"appOwnership":{"_tag":"Adopted","group":"stored-group","source":{"_tag":"Account","original":"original","adopted":"adopted","account":"stored-account"},"finalization":{"_tag":"Completed"}}}`,
+              ),
+              status: 'needs-authorization',
+              createdAt: 1,
+              updatedAt: 1,
+            },
+            {
+              id: crypto.randomUUID(),
+              personId: personalActor.person.id,
+              service: serviceId,
+              serviceName: 'Stored public',
+              executorPrincipal: 'adopted-public',
+              executorApp: 'stored-public-app',
+              references: storedJson(
+                `{"service":"${serviceId}","owner":"stored-owner","_tag":"Public","app":"stored-public-app","binding":{"_tag":"Public"},"appOwnership":{"_tag":"Adopted","group":"stored-group","source":{"_tag":"Public"},"finalization":{"_tag":"Completed"}}}`,
+              ),
+              status: 'ready',
+              createdAt: 2,
+              updatedAt: 2,
+            },
+            {
+              id: crypto.randomUUID(),
+              personId: personalActor.person.id,
+              service: serviceId,
+              serviceName: 'Stored reconnect',
+              executorPrincipal: 'member',
+              executorApp: null,
+              references: storedJson(
+                `{"service":"${serviceId}","owner":"stored-owner","_tag":"ReconnectRequired","reason":"UnresolvedMigration","retired":{"original":"retired-app","ownership":"Dedicated","account":null,"copies":[],"authorization":null}}`,
+              ),
+              status: 'failed',
+              createdAt: 3,
+              updatedAt: 3,
+            },
+          ]),
+        )
+        const rows = yield* (yield* ConnectionStore).records(personalActor)
+        expect(rows.map((row) => [row.executorPrincipal, row.references._tag, row.status])).toEqual(
+          [
+            ['member', 'ReconnectRequired', 'failed'],
+            ['adopted-public', 'Public', 'ready'],
+            ['adopted-account', 'Authorized', 'needs-authorization'],
+          ],
+        )
+      }),
+    )
+
     /** Build the real store in an ended construction span, then read under a fresh caller.
      * Tracer.NativeSpan records actual Effect.fn parenting without replacing store or SQL work.
      */

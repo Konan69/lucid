@@ -154,7 +154,7 @@ const referenceFields = {
 }
 
 /** Exact resources survive refusal until the store can prove exclusive reclamation. */
-export const ExecutorRetired = Schema.Struct({
+const ExecutorRetired = Schema.Struct({
   original: ExecutorAppId,
   ownership: Schema.Literals(['Dedicated', 'Unproven']),
   account: Schema.OptionFromNullOr(ExecutorAccountId),
