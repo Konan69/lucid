@@ -1,12 +1,86 @@
 import { Effect, Schema } from 'effect'
 import type { MadeFile } from '@vivid/contracts'
+import { appsVersion } from './framework.ts'
 
-/** Source outside the three generated user-account factory shapes is left working and untouched. */
+/** Unsupported declarations remain working under their existing installation authority. */
 export class AdoptionSourceUnsupported extends Schema.TaggedError<AdoptionSourceUnsupported>()(
   'AdoptionSourceUnsupported',
-  { reason: Schema.Literals(['Requirement', 'Factory', 'AccountRead', 'Index']) },
+  { reason: Schema.Literals(['Requirement', 'Factory', 'AccountRead', 'Index', 'Manifest']) },
   { title: 'Integration adoption source unsupported' },
 ) {}
+
+const decodeManifest = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
+)
+const decodeDependencies = Schema.decodeUnknownEffect(Schema.Record(Schema.String, Schema.String))
+
+/** The captured Google and GitHub workspaces pin pre-scope frameworks. Upgrade only apps;
+ * package identity, other dependencies and every provider declaration stay unchanged. */
+const pinAdoptionFramework = Effect.fn('Connections.pinAdoptionFramework')(function* (
+  files: ReadonlyArray<MadeFile>,
+) {
+  const file = files.find((entry) => entry.path === 'package.json')
+  if (file === undefined) return yield* new AdoptionSourceUnsupported({ reason: 'Manifest' })
+  const manifest = yield* decodeManifest(file.content).pipe(
+    Effect.mapError(() => new AdoptionSourceUnsupported({ reason: 'Manifest' })),
+  )
+  const dependencies = yield* decodeDependencies(manifest['dependencies']).pipe(
+    Effect.mapError(() => new AdoptionSourceUnsupported({ reason: 'Manifest' })),
+  )
+  const previous = dependencies['apps']
+  if (previous === undefined || !['0.0.1-beta.19', '0.0.1-beta.22'].includes(previous))
+    return yield* new AdoptionSourceUnsupported({ reason: 'Manifest' })
+  const content = JSON.stringify({
+    ...manifest,
+    dependencies: { ...dependencies, apps: appsVersion },
+  })
+  return files.map((entry) =>
+    entry.path === 'package.json' ? { path: entry.path, content } : entry,
+  )
+})
+
+/** Exact deployed snapshots use a plain account, including GitHub's shorthand `{ service }`.
+ * Bridge it through many() so the member can evaluate without a user link, then project the
+ * one bound account back into the original factory. Its router, names, schemas and data stay
+ * intact. Exact Google beta.22 and GitHub beta.19 workspaces are captured in adoption.live.test.ts. */
+const adoptSingleFiles = Effect.fn('Connections.adoptSingleFiles')(function* (
+  files: ReadonlyArray<MadeFile>,
+  original: string,
+  adopted: string,
+  index: MadeFile,
+) {
+  const escaped = original.replaceAll('$', '\\$')
+  const requirement = new RegExp(
+    `accounts:\\s*\\{\\s*${escaped}(?:\\s*:\\s*([\\w$]+))?\\s*\\}`,
+    'u',
+  )
+  const declaration = requirement.exec(index.content)
+  if (declaration === null) return yield* new AdoptionSourceUnsupported({ reason: 'Requirement' })
+  if (!/async\s*\(\{\s*accounts\b/u.test(index.content))
+    return yield* new AdoptionSourceUnsupported({ reason: 'Factory' })
+  const provider = declaration[1] === undefined ? original : declaration[1]
+  const read = new RegExp(`(?<![\\w$./])accounts\\.${escaped}\\b`, 'gu')
+  if (!read.test(index.content))
+    return yield* new AdoptionSourceUnsupported({ reason: 'AccountRead' })
+  const selected = `((user?.accounts.${original}?.length ?? 0) > 0 ? user.accounts.${original}[0] : app.accounts.${adopted}[0])`
+  const content =
+    `/* vivid-adoption:${original}:${adopted} */\n` +
+    index.content
+      .replace(
+        requirement,
+        `user: { accounts: { ${original}: ${provider}.many() } }, app: { accounts: { ${adopted}: ${provider}.many() } }`,
+      )
+      .replace(/async\s*\(\{\s*accounts\b/u, 'async ({ user, app')
+      // beta.92 mcpCatalog requires the selected account for credential-bearing metadata.
+      .replace(
+        new RegExp(`accountId:\\s*accounts\\.${escaped}\\.id`, 'u'),
+        `account: accounts.${original}`,
+      )
+      .replace(read, selected)
+  return yield* pinAdoptionFramework(
+    files.map((file) => (file.path === 'index.ts' ? { path: file.path, content } : file)),
+  )
+})
 
 /** Keep the original user requirement until the member principal commits. Both requirements use
  * the very same provider declaration, so linking reuses the existing account and its OAuth grant.
@@ -32,7 +106,8 @@ export const adoptionFiles = Effect.fn('Connections.adoptionFiles')(function* (
     'u',
   )
   const declaration = requirement.exec(index.content)
-  if (declaration === null || declaration[1] === undefined)
+  if (declaration === null) return yield* adoptSingleFiles(files, original, adopted, index)
+  if (declaration[1] === undefined)
     return yield* new AdoptionSourceUnsupported({ reason: 'Requirement' })
   if (!/async\s*\(\{\s*user\b/u.test(index.content))
     return yield* new AdoptionSourceUnsupported({ reason: 'Factory' })
