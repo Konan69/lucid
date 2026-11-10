@@ -96,7 +96,8 @@ export const world = Effect.fn('RuntimeFixture.world')(function* (
       selected: { provider: PROVIDER, modelId: MODEL },
       name: `${PROVIDER}/${MODEL}`,
       // A retried model call backs off on Pi's own clock; here it does not wait.
-      settings: { retry: { baseDelayMs: 0 } },
+      // Scripted responses are dialogue turns; a background summary must not consume one.
+      settings: { retry: { baseDelayMs: 0 }, compaction: { enabled: false } },
     }),
   } satisfies World
 })
