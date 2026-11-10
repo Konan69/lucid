@@ -161,9 +161,6 @@ export interface KeptQuery<Value> extends LiveQuery<Value> {
   readonly origin: Atom.Atom<Origin>
 }
 
-/** What `useLive` returns for a query, for code that names that type. */
-type LiveStateOf<Query> = Query extends LiveQuery<infer Value> ? LiveState<Value> : never
-
 /** Every live query of one kind, one per argument. */
 export interface LiveFamily<Argument, Value> {
   readonly get: (argument: Argument) => LiveQuery<Value>

@@ -58,10 +58,6 @@ export const fileKind = (file: ArtifactFile): string => {
     : 'File'
 }
 
-/** What a shelf row or a card says the thing is. A document is Vivid's own Markdown text. */
-const holdsKind = (holds: ArtifactHolds): string =>
-  ArtifactHolds.match(holds, { Document: () => 'Document', File: ({ output }) => fileKind(output) })
-
 /** What an opened version's holds is, as a shelf row knows it. */
 export const holdsOf = (content: ArtifactContent): ArtifactHolds =>
   ArtifactContent.match<ArtifactHolds>(content, {

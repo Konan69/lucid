@@ -3,7 +3,6 @@ import {
   LibraryUploadResponse,
   RuntimeErrorResponse,
   Workspace,
-  type LibraryFolder,
   type LibraryFolderId,
   type LibraryItem,
   type LibraryItemId,

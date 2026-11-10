@@ -476,29 +476,6 @@ const standing = (state: Option.Option<SendingState>): Standing =>
       ),
   })
 
-/** A held payload is the only evidence that words without an admission are still being sent. */
-const deliveryOf = (state: Option.Option<SendingState>, key: string): Option.Option<Delivery> => {
-  const held = standing(state)
-  return Option.fromUndefinedOr(
-    [
-      ...held.flying,
-      ...held.unsent.map((one) => one.delivery),
-      ...held.taken.map((one) => one.delivery),
-    ].find((delivery) => delivery.key === key),
-  )
-}
-
-/** Canonical ownership remains after payload release; an admission alone has no message id. */
-const recognisedOf = (state: Option.Option<SendingState>, key: string): Option.Option<string> =>
-  Option.flatMap(
-    Option.fromUndefinedOr(standing(state).own.find((proof) => proof.key === key)),
-    (proof) =>
-      Ownership.match(proof, {
-        Admitted: () => Option.none(),
-        Placed: ({ message }) => Option.some(message),
-      }),
-  )
-
 /**
  * Whether a delivery is with the server and unanswered: nothing more is sent from a composer
  * that takes one delivery at a time (the phone's) until it has been.

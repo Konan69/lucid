@@ -317,4 +317,3 @@ export const LONGEST_SECONDS = 5 * 60
 /** Creates the session's dictation machine in the app registry with the surface's microphone. */
 export const makeDictating = (services: Layer.Layer<Dictation>) =>
   AtomMachine.bind(Atom.runtime(services)).make(DictatingMachine)
-type DictatingAtoms = ReturnType<typeof makeDictating>
