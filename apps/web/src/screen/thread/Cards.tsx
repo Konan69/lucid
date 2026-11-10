@@ -272,7 +272,16 @@ function ApprovalOutcome({ approval }: { approval: Approval }) {
  * effect, Vivid's reason, every field of the action in a box inside the card and three buttons.
  * The owner rejected it as a developer's tool: too many boxes in boxes and too many words.
  */
-export function AskedFirst({ approval, me }: { approval: Approval; me: PersonId }) {
+export function AskedFirst({
+  approval,
+  requests,
+  me,
+}: {
+  approval: Approval
+  /** The Thread's questions: an Integration may ask one mid-call after this was allowed. */
+  requests: ReadonlyArray<InputRequest>
+  me: PersonId
+}) {
   const pending = ApprovalState.guards.Pending(approval.state)
   return (
     <div className="mt-3">
@@ -290,6 +299,11 @@ export function AskedFirst({ approval, me }: { approval: Approval; me: PersonId 
           <ApprovalOutcome approval={approval} />
         </p>
       )}
+      {form.followingExpired(approval, requests).map((line) => (
+        <p key={line} className="mt-1 text-label text-ink-3">
+          {line}
+        </p>
+      ))}
     </div>
   )
 }

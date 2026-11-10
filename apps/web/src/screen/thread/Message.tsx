@@ -553,7 +553,12 @@ function drawn(wanted: CardRequest, key: string, context: ThreadContext, live: b
     case 'approval': {
       const approval = approvalById(context.approvals, wanted.id)
       return Option.isNone(approval) ? null : (
-        <AskedFirst key={key} approval={approval.value} me={context.me} />
+        <AskedFirst
+          key={key}
+          approval={approval.value}
+          requests={context.requests}
+          me={context.me}
+        />
       )
     }
     case 'input': {

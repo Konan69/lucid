@@ -443,6 +443,28 @@ export const expiredLine = (request: InputRequest): Option.Option<string> =>
       )
 
 /**
+ * The expired lines of the questions an Integration asked mid-call after this Approval was
+ * allowed. The server raises such a question itself, so no message of Vivid's names it; it shares
+ * the paused call's journal operation with the Approval, whose "Asked first" record is where the
+ * conversation says how it ended.
+ */
+export const followingExpired = (
+  approval: Approval,
+  requests: ReadonlyArray<InputRequest>,
+): ReadonlyArray<string> => {
+  const continuation = approval.action.continuation
+  if (continuation === null) return []
+  return requests
+    .filter(
+      (request) =>
+        request.integration !== null &&
+        request.integration.continuation !== null &&
+        request.integration.continuation.operation === continuation.operation,
+    )
+    .flatMap((request) => Option.toArray(expiredLine(request)))
+}
+
+/**
  * The words of the answering Person's bubble for an answered request: the answers for Vivid's own
  * question (`asking.repliedWords`), which button answered an Integration's, and none once an
  * Integration's answer arrived too late (its expired line says so instead).

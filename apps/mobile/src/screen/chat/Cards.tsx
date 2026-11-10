@@ -2,6 +2,7 @@ import {
   ApprovalState,
   Tool,
   type Approval,
+  type InputRequest,
   type PersonId,
   type ThreadDetail,
   type ThreadId,
@@ -120,7 +121,13 @@ function Drawn({
     Approval: ({ id }) =>
       Option.match(approvalOf(detail, id), {
         onNone: () => null,
-        onSome: (approval) => <AskedFirst approval={approval} me={me} />,
+        onSome: (approval) => (
+          <AskedFirst
+            approval={approval}
+            requests={Option.match(detail, { onNone: () => [], onSome: (held) => held.requests })}
+            me={me}
+          />
+        ),
       }),
     Input: ({ id }) =>
       Option.match(requestOf(detail, id), {
@@ -216,7 +223,16 @@ function ApprovalOutcome({ approval }: { approval: Approval }) {
  * nesting, too much unnecessary text"): the conversation reads as a conversation, and what must
  * be pressed is where the thumb already is.
  */
-function AskedFirst({ approval, me }: { approval: Approval; me: PersonId }) {
+function AskedFirst({
+  approval,
+  requests,
+  me,
+}: {
+  approval: Approval
+  /** The Thread's questions: an Integration may ask one mid-call after this was allowed. */
+  requests: ReadonlyArray<InputRequest>
+  me: PersonId
+}) {
   const theirs = ApprovalState.guards.Pending(approval.state) && approval.askedOf.id !== me
   return (
     // A little apart from whatever Vivid said before asking.
@@ -226,6 +242,11 @@ function AskedFirst({ approval, me }: { approval: Approval; me: PersonId }) {
       </Label>
       <Words text={approval.action.summary} />
       <ApprovalOutcome approval={approval} />
+      {form.followingExpired(approval, requests).map((line) => (
+        <Label key={line} size="label" tone="ink-2">
+          {line}
+        </Label>
+      ))}
       {theirs && (
         <Label size="label" tone="ink-2">
           Waiting on {approval.askedOf.name}.
