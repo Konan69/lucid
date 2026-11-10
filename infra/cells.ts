@@ -21,6 +21,16 @@ export const cellVariables = (environment: InfrastructureEnvironment, serverUrl:
         onNone: () => ({}),
         onSome: (value) => ({ VIVID_DECISIONS: value }),
       }),
+      // The cell reports its own failures to the server's Sentry project, under the same
+      // environment name the server reports with (`observabilityAccess` in `railway.ts`); Railway
+      // resolves the reference inside this value when it deploys the server.
+      ...Option.match(environment.observability, {
+        onNone: () => ({}),
+        onSome: ({ dsn }) => ({
+          SENTRY_DSN: dsn,
+          VIVID_ENVIRONMENT: '${{RAILWAY_ENVIRONMENT_NAME}}',
+        }),
+      }),
     }),
   )
 
