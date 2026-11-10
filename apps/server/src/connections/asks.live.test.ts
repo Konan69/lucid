@@ -237,6 +237,7 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
               })
               const operation = operationOf.program()
               yield* claim({
+                personId: test.personal.person.id,
                 id: operation,
                 threadId: test.personalId,
                 runId: null,
@@ -629,6 +630,7 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
               input: { marker: crypto.randomUUID() },
             })
             yield* claim({
+              personId: test.personal.person.id,
               id: failedOperation,
               threadId: test.personalId,
               runId: null,

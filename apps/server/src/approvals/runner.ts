@@ -1,3 +1,4 @@
+import { ActionLookup } from '../actions/journal.ts'
 import { Context } from 'effect'
 import { IntegrationAnswers } from '../connections/answers.ts'
 import * as Effect from 'effect/Effect'
@@ -29,6 +30,7 @@ export const actionRunnerLayer = Layer.effect(
   Effect.gen(function* () {
     const services = Context.omit(IntegrationAnswers)(
       yield* Effect.context<
+        | ActionLookup
         | Database
         | ConnectionStore
         | Executor

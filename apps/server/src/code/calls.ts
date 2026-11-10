@@ -1,3 +1,4 @@
+import { ActionLookup } from '../actions/journal.ts'
 import { IntegrationAnswers } from '../connections/answers.ts'
 import {
   ActionApplied,
@@ -350,6 +351,7 @@ export const codeCallsLayer = Layer.effect(
     // A derived capture silently absorbs new scoped dependencies. Pick only these authorities so
     // future dispatch requirements fail typecheck and the Run's Scope and parent span stay local.
     const context = Context.pick(
+      ActionLookup,
       CodeAuthority,
       IntegrationAnswers,
       Gate,
@@ -364,6 +366,7 @@ export const codeCallsLayer = Layer.effect(
       PageReader,
     )(
       yield* Effect.context<
+        | ActionLookup
         | CodeAuthority
         | IntegrationAnswers
         | Gate

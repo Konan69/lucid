@@ -26,7 +26,13 @@ import {
   type ToolCallId,
 } from '@vivid/contracts'
 import { canonical } from '../approvals/action.ts'
-import { Database, decodeStored, encodeStored, returned } from '../database/client.ts'
+import {
+  Database,
+  decodeStored,
+  encodeStored,
+  returned,
+  type DatabaseInfrastructureError,
+} from '../database/client.ts'
 import { requireThread } from '../threads/access.ts'
 import { actions } from './tables.ts'
 import { approvals } from '../approvals/tables.ts'
@@ -144,7 +150,7 @@ const unresolved = and(
  * What a send of `target` under `id` must answer instead of sending, if anything.
  *
  * - The same operation again (a retried call): its own receipt, or `Unknown` while it has none.
- * - An unresolved operation of the same fingerprint in this Thread: refused until reconciled.
+ * - An unresolved operation of the same fingerprint in this Thread: requests reconciliation.
  * - The newest same-fingerprint operation reconciled `Applied`: its receipt; it already happened.
  *
  * `retryOf` is the newest same-fingerprint operation proven `NotApplied`, which a fresh send names.
@@ -196,18 +202,22 @@ const lockAct = (tx: Transaction, threadId: ThreadId, fingerprint: string) =>
   )
 
 /**
- * Asks before the Gate whether this send must be answered without sending, so an unresolved act is
- * refused before an Approval is raised for it too. Read-only; `claim` decides again under the lock.
+ * Checks before the Gate and reconciles an unresolved act before raising another Approval.
+ * No dispatch is claimed here; `claim` decides again under the act lock.
  */
 export const answerBefore = Effect.fn('Actions.answerBefore')(function* (input: {
+  readonly personId: PersonId
   readonly id: ActionOperationId
   readonly threadId: ThreadId
   readonly target: ActionTarget
 }) {
   const database = yield* Database
   const fingerprint = yield* fingerprintOf(input.target)
-  const found = yield* database.transaction((tx) =>
-    answerFor(tx, { id: input.id, threadId: input.threadId, fingerprint }),
+  const found = yield* afterReconciliation(
+    input.personId,
+    database.transaction((tx) =>
+      answerFor(tx, { id: input.id, threadId: input.threadId, fingerprint }),
+    ),
   )
   return found.answer
 })
@@ -225,6 +235,7 @@ export type Claim = typeof Claim.Type
  * crash after this leaves the row `Dispatching`, which every later reader takes as uncertain.
  */
 export const claim = Effect.fn('Actions.claim')(function* (input: {
+  readonly personId: PersonId
   readonly id: ActionOperationId
   readonly threadId: ThreadId
   readonly runId: RunId | null
@@ -236,26 +247,29 @@ export const claim = Effect.fn('Actions.claim')(function* (input: {
   const target = yield* encodeTarget(input.target)
   const unchecked = yield* encodeReconciliation(ActionReconciliation.cases.Unchecked.make({}))
   const now = yield* Clock.currentTimeMillis
-  return yield* database.transaction((tx) =>
-    Effect.gen(function* () {
-      yield* lockAct(tx, input.threadId, fingerprint)
-      const found = yield* answerFor(tx, { id: input.id, threadId: input.threadId, fingerprint })
-      if (Option.isSome(found.answer))
-        return Claim.cases.Answered.make({ receipt: found.answer.value })
-      yield* tx.insert(actions).values({
-        id: input.id,
-        threadId: input.threadId,
-        runId: input.runId,
-        approvalId: input.approvalId,
-        target,
-        fingerprint,
-        retryOf: Option.getOrNull(found.retryOf),
-        claimedAt: now,
-        receipt: null,
-        reconciliation: unchecked,
-      })
-      return Claim.cases.Fresh.make({})
-    }),
+  return yield* afterReconciliation(
+    input.personId,
+    database.transaction((tx) =>
+      Effect.gen(function* () {
+        yield* lockAct(tx, input.threadId, fingerprint)
+        const found = yield* answerFor(tx, { id: input.id, threadId: input.threadId, fingerprint })
+        if (Option.isSome(found.answer))
+          return Claim.cases.Answered.make({ receipt: found.answer.value })
+        yield* tx.insert(actions).values({
+          id: input.id,
+          threadId: input.threadId,
+          runId: input.runId,
+          approvalId: input.approvalId,
+          target,
+          fingerprint,
+          retryOf: Option.getOrNull(found.retryOf),
+          claimedAt: now,
+          receipt: null,
+          reconciliation: unchecked,
+        })
+        return Claim.cases.Fresh.make({})
+      }),
+    ),
   )
 })
 
@@ -434,3 +448,23 @@ export const reconcile = Effect.fn('Actions.reconcile')(function* (
     reconciliation: yield* decodeReconciliation(current.reconciliation),
   } satisfies ReconcileActionResponse
 })
+
+/**
+ * Release the transaction before asking the Integration, then rerun the original check. The claim
+ * reacquires its act lock, so a concurrent retry cannot bypass the journal. Inconclusive evidence
+ * keeps the original refusal; a new unresolved claim encountered on recheck is refused too.
+ */
+const afterReconciliation = <A, R>(
+  personId: PersonId,
+  attempt: Effect.Effect<A, DatabaseInfrastructureError | ActionReconciliationRequired, R>,
+) =>
+  attempt.pipe(
+    Effect.catchTag('ActionReconciliationRequired', (error) =>
+      Effect.gen(function* () {
+        const checked = yield* reconcile(personId, error.operationId)
+        if (!ActionReconciliation.isAnyOf(['Applied', 'NotApplied'])(checked.reconciliation))
+          return yield* error
+        return yield* attempt
+      }),
+    ),
+  )

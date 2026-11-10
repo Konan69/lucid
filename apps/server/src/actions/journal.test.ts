@@ -1,8 +1,10 @@
 import { describe, expect, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
-import { Effect, Option, Ref } from 'effect'
+import { Effect, Option, Ref, Result } from 'effect'
 import {
   ActionReceipt,
+  ActionTarget,
+  ServiceId,
   ActionReconciliation,
   ActionReconciliationRequired,
   ToolCallId,
@@ -16,7 +18,18 @@ import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from '../con
 import { useTool } from '../connections/tools.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
-import { ActionLookup, Lookup, reconcile } from './journal.ts'
+import {
+  ActionLookup,
+  Claim,
+  Lookup,
+  answerBefore,
+  claim,
+  operationOf,
+  reconcile,
+  settle,
+} from './journal.ts'
+import { prepareReconciliation } from '../connections/reconcile.ts'
+import { connections } from '../connections/tables.ts'
 import { actions } from './tables.ts'
 
 /** A Vivid write in the fixture's Thread through one private Integration the owner made. */
@@ -37,7 +50,7 @@ const writer = Effect.fn('Actions.test.writer')(function* () {
     summary: 'Write the record',
     rationale: 'The Person asked for it',
   })
-  return { actor, owner: ownerActor.person.id, write }
+  return { actor, owner: ownerActor.person.id, threadId, write }
 })
 
 /** A provider lookup that answers for the test; the journal's rules around it are production. */
@@ -58,6 +71,102 @@ describe.skipIf(!testDatabaseConfigured)('Action journal', () => {
         const { outcome: again } = yield* useTool(actor, request)
         expect(again).toEqual(ToolOutcome.cases.Repeated.make({ receipt: first.receipt }))
         expect(yield* Ref.get(probe.calls)).toBe(sent + 1)
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('reconciles unresolved Calendar attempts before the Gate and the locked claim', () =>
+      Effect.gen(function* () {
+        const database = yield* Database
+        const probe = yield* ConnectionProbe
+        const cases = ['before', 'claim'].flatMap((entry) =>
+          [false, true].flatMap((dispatching) =>
+            ['found', 'absent', 'inconclusive'].map((result) => ({ entry, dispatching, result })),
+          ),
+        )
+        for (const { entry, dispatching, result } of cases) {
+          const { actor, owner, threadId, write } = yield* writer()
+          const request = write({ record: 9 })
+          yield* database.run(
+            database
+              .update(connections)
+              .set({ service: ServiceId.make('google/calendar') })
+              .where(eq(connections.id, request.connectionId)),
+          )
+          const target = ActionTarget.cases.Connection.make({
+            connectionId: request.connectionId,
+            account: 'Calendar',
+            tool: 'calendarApi.calendarEventsInsert',
+            input: { path: { calendarId: 'primary' }, body: { summary: 'Retry proof' } },
+          })
+          const original = {
+            personId: owner,
+            id: operationOf.program(),
+            threadId,
+            runId: null,
+            approvalId: null,
+            target,
+          }
+          expect(Claim.guards.Fresh(yield* claim(original))).toBe(true)
+          yield* prepareReconciliation(
+            yield* (yield* ConnectionStore).get(actor, request.connectionId),
+            target,
+            original.id,
+          )
+          if (!dispatching)
+            yield* settle(
+              ActionReceipt.cases.Unknown.make({ operationId: original.id, observedAt: 0 }),
+            )
+          yield* Ref.set(
+            probe.outcome,
+            result === 'inconclusive'
+              ? ExecutorCallOutcome.cases.OutcomeUnknown.make({})
+              : ExecutorCallOutcome.cases.Completed.make({
+                  value: { items: result === 'found' ? [{ id: 'event' }] : [] },
+                }),
+          )
+          const calls = yield* Ref.get(probe.calls)
+          const attempt = { ...original, id: operationOf.program() }
+          const checked =
+            entry === 'before'
+              ? answerBefore(attempt).pipe(
+                  Effect.map((answer) =>
+                    Option.isSome(answer)
+                      ? Claim.cases.Answered.make({ receipt: answer.value })
+                      : Claim.cases.Fresh.make({}),
+                  ),
+                )
+              : claim(attempt)
+          const outcome = yield* checked.pipe(Effect.result)
+          expect(yield* Ref.get(probe.calls)).toBe(calls + 1)
+          const inputs = yield* Ref.get(probe.inputs)
+          expect(inputs.slice(-1).map(({ tool }) => tool)).toEqual([
+            'calendarApi.calendarEventsList',
+          ])
+          if (result === 'inconclusive' || (dispatching && result === 'absent')) {
+            expect(outcome).toEqual(
+              Result.fail(new ActionReconciliationRequired({ operationId: original.id })),
+            )
+            continue
+          }
+          const answer = Result.getOrThrow(outcome)
+          if (result === 'found') {
+            if (!Claim.guards.Answered(answer))
+              return expect.fail('Applied action must return its receipt')
+            expect(ActionReceipt.guards.Completed(answer.receipt)).toBe(true)
+            expect(answer.receipt.operationId).toBe(original.id)
+          } else {
+            expect(Claim.guards.Fresh(answer)).toBe(true)
+            if (entry === 'claim') {
+              const rows = yield* database.run(
+                database
+                  .select({ retryOf: actions.retryOf })
+                  .from(actions)
+                  .where(eq(actions.id, attempt.id)),
+              )
+              expect(rows).toEqual([{ retryOf: original.id }])
+            }
+          }
+        }
       }).pipe(Effect.scoped),
     )
 

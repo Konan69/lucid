@@ -1,3 +1,4 @@
+import { ActionLookup, Lookup } from '../actions/journal.ts'
 import { IntegrationAnswers } from '../connections/answers.ts'
 import * as NodeCrypto from 'node:crypto'
 import { RuntimeSubmissionId } from '@vivid/contracts'
@@ -219,6 +220,9 @@ const conversation = conversationLayer.pipe(
 )
 const trust = Layer.mergeAll(inputStoreLayer, approvalStoreLayer).pipe(
   Layer.provideMerge(ruleStoreLayer),
+  Layer.provideMerge(
+    Layer.succeed(ActionLookup, { look: () => Effect.succeed(Lookup.cases.Unsupported.make({})) }),
+  ),
   Layer.provide(
     Layer.succeed(ActionRunner, {
       inspect: () => Effect.succeed([]),

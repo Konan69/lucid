@@ -2,13 +2,7 @@ import * as NodeProcess from 'node:process'
 import * as NodeBuffer from 'node:buffer'
 import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
-import {
-  ActionReconciliation,
-  ActionReconciliationRequired,
-  ServiceId,
-  ToolCallId,
-  ToolOutcome,
-} from '@vivid/contracts'
+import { ActionReconciliation, ServiceId, ToolCallId, ToolOutcome } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
 import { ConfigProvider, Context, Effect, Layer, Option, Redacted, Schema } from 'effect'
 import type { Actor } from '../auth/access.ts'
@@ -157,11 +151,6 @@ const scenario = Effect.fn('ReconciliationProof.scenario')(function* (input: {
   if (!ToolOutcome.guards.OutcomeUnknown(result.outcome) || result.outcome.receipt === null)
     return expect.fail('Expected real Executor dispatch to lose its response')
   const operationId = result.outcome.receipt.operationId
-  const blocked = yield* useTool(actor, {
-    ...send,
-    toolCallId: ToolCallId.make(crypto.randomUUID()),
-  }).pipe(Effect.flip)
-  expect(blocked).toEqual(new ActionReconciliationRequired({ operationId }))
   const operations = yield* operationsOf(row)
   const before = yield* operations.call({ references: row.references, tool: 'attempts', input: {} })
   const checked = yield* reconcile(actor.person.id, operationId)
@@ -178,6 +167,36 @@ const scenario = Effect.fn('ReconciliationProof.scenario')(function* (input: {
   if (ActionReconciliation.guards.Inconclusive(checked.reconciliation))
     expect(again.reconciliation._tag).toBe('Inconclusive')
   else expect(again).toEqual(checked)
+})
+
+/** A lost Calendar response is recovered on the next attempt without creating a second event. */
+const retryCalendar = Effect.fn('ReconciliationProof.retryCalendar')(function* (
+  actor: Actor,
+  row: Effect.Success<ReturnType<typeof connect>>,
+) {
+  const send = {
+    connectionId: row.id,
+    tool: 'calendarApi.calendarEventsInsert',
+    input: { path: { calendarId: 'primary' }, body: { summary: 'automatic retry' } },
+    summary: 'Create retry proof',
+    rationale: 'Reconciliation retry proof',
+  }
+  const first = yield* useTool(actor, { ...send, toolCallId: ToolCallId.make(crypto.randomUUID()) })
+  if (!ToolOutcome.guards.OutcomeUnknown(first.outcome) || first.outcome.receipt === null)
+    return expect.fail('Expected Calendar to create the event and lose its response')
+  const operations = yield* operationsOf(row)
+  const before = yield* operations.call({ references: row.references, tool: 'attempts', input: {} })
+  const retried = yield* useTool(actor, {
+    ...send,
+    toolCallId: ToolCallId.make(crypto.randomUUID()),
+  })
+  if (!ToolOutcome.guards.Repeated(retried.outcome))
+    return expect.fail('The next attempt must return the recovered receipt')
+  expect(retried.outcome.receipt.operationId).toBe(first.outcome.receipt.operationId)
+  expect(retried.outcome.receipt._tag).toBe('Completed')
+  expect(
+    yield* operations.call({ references: row.references, tool: 'attempts', input: {} }),
+  ).toEqual(before)
 })
 
 describe.skipIf(NodeProcess.env['VIVID_LIVE_RECONCILE'] !== '1' || !testDatabaseConfigured)(
@@ -205,6 +224,7 @@ describe.skipIf(NodeProcess.env['VIVID_LIVE_RECONCILE'] !== '1' || !testDatabase
                 const row = yield* connect(actors.personalActor, service)
                 yield* scenario({ actor, row, present: true })
                 yield* scenario({ actor, row, present: false })
+                if (service === 'google/calendar') yield* retryCalendar(actor, row)
               }
             }).pipe(Effect.provide(services), Effect.provide(lookup))
           }).pipe(Effect.scoped),
