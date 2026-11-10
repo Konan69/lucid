@@ -25,8 +25,10 @@ async function standingNow(run) {
 
 /** Type one message into the composer, press Send and wait for its Run to settle. */
 async function send(state, id, run, prompt, runs, directory) {
-  await run(['find', 'label', 'Message Vivid', 'fill', prompt])
-  await run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
+  // A model question replaces the ordinary composer; the Person's progress answers it there.
+  const message = JSON.parse(await run(['eval', 'Boolean(document.querySelector(\'[aria-label="Message Vivid"]\'))']))
+  await run(['find', 'label', message ? 'Message Vivid' : 'Reply', 'fill', prompt])
+  await run(['find', 'role', 'button', 'click', '--name', message ? 'Send' : 'Submit answer', '--exact'])
   const detail = await settled(state, id, runs, 'Completed', directory)
   return detail.runs[runs - 1].submissionId
 }
