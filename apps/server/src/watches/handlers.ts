@@ -15,6 +15,9 @@ import {
   ReviseWatchRequest,
   type FindAppEventsRequest,
   StopWatchRequest,
+  WatchIntent,
+  CheckinFocus,
+  WatchCondition,
 } from '@vivid/contracts'
 import { requireActor, type Actor } from '../auth/access.ts'
 import type { DatabaseInfrastructureError } from '../database/client.ts'
@@ -146,6 +149,16 @@ export const watchHandlers = {
   /** A Watch is the acting Person's, in their current workspace. */
   CreateWatch: Effect.fn('Rpc.CreateWatch')(function* (request: CreateWatchRequest) {
     const actor = yield* requireActor()
+    // A Project owns its completion; finishing one visit must not abandon the active goal.
+    if (
+      WatchIntent.guards.Checkin(request.purpose) &&
+      CheckinFocus.guards.Project(request.purpose.focus) &&
+      WatchCondition.guards.Until(request.condition)
+    )
+      return yield* new InvalidRequest({
+        message:
+          'A Project check-in ends when the Project completes. Leave its separate ending condition empty so it keeps following the active Project.',
+      })
     const watch = yield* resolved(actor, (yield* Watches).create(actor, request))
     return WatchResponse.make({ watch })
   }),
