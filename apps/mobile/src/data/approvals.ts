@@ -2,6 +2,7 @@ import { useAtomValue } from '@effect/atom-react'
 import { ApprovalDecision, type DecideApprovalRequest } from '@vivid/contracts'
 import { allowing, responding, type makeLive } from '@vivid/state'
 import { Effect, Layer, Option, Result } from 'effect'
+import { makeChecking } from './checking'
 import { makeDeviceDecisions } from './devices'
 import { confirm, warn } from './haptics'
 import { useLiveData, useLiveValue, type LiveData } from './live'
@@ -29,10 +30,15 @@ export const makeApprovalDecisions = (engine: ReturnType<typeof makeLive>) => {
   return { ...decisions, inbox: engine.query((client) => client.WatchInbox()) }
 }
 
-/** The session's decision machines: a computer's access, and an Approval away from its Thread. */
+/**
+ * The session's machines for what the Person settles away from Vivid's own work: a computer's
+ * access, an Approval away from its Thread, and whether an action Vivid never heard back about
+ * went through (`checking.ts`).
+ */
 export const makeDecisions = (engine: ReturnType<typeof makeLive>) => ({
   devices: makeDeviceDecisions(engine),
   approvals: makeApprovalDecisions(engine),
+  checking: makeChecking(engine),
 })
 
 /** The Feed and Notifications read the same attempt, and its refusal, wherever it was pressed. */
