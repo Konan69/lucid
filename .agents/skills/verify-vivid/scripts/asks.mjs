@@ -307,18 +307,14 @@ async function expired(state, id, directory, client) {
   // that follow reach it too late: the server says Expired at once instead of in 15 minutes.
   await restartExecutor(state)
   await allow(state, unanswered, directory, client, 'left-approval')
-  if (client) {
-    await client.run(['wait', 'section[aria-label="Vivid\'s question"]'])
-    await client.run(['find', 'role', 'button', 'click', '--name', 'No', '--exact'])
-    await client.run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
-  } else
-    await rpc(
-      state,
-      'AnswerIntegrationInput',
-      { id: asked.id, response: { action: 'accept', content: SENT } },
-      directory,
-      'late-answer',
-    )
+  // The form's own Send is proved in step 2; this late answer only has to reach Executor.
+  await rpc(
+    state,
+    'AnswerIntegrationInput',
+    { id: asked.id, response: { action: 'accept', content: SENT } },
+    directory,
+    'late-answer',
+  )
   const ran = await until(
     state,
     id,
