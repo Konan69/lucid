@@ -1,10 +1,11 @@
-import { and, eq, sql, type SQL } from 'drizzle-orm'
+import { and, eq, isNull, sql, type SQL } from 'drizzle-orm'
 import * as Array from 'effect/Array'
 import * as Clock from 'effect/Clock'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import {
+  ActionReceipt,
   ApprovalId,
   ApprovalInvalidation,
   CompanyId,
@@ -19,6 +20,7 @@ import { decodeStored, encodeStored, type Database } from '../database/client.ts
 import { announceFeed } from '../feed/changes.ts'
 import { announce, Topic } from '../live/changes.ts'
 import { approvals } from './tables.ts'
+import { actions } from '../actions/tables.ts'
 import { Conclusion, encodeSignal, owed, wakesVivid } from './signal.ts'
 
 type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
@@ -81,6 +83,23 @@ export const invalidatePending = Effect.fn('Approvals.invalidatePending')(functi
         .update(approvals)
         .set({ status: 'invalidated', finishedAt: now, invalidation, ...signal })
         .where(eq(approvals.id, row.id))
+      // An invalidated held pause ends like an expired pause: retain uncertainty for reconciliation.
+      const continuation = row.action.continuation
+      if (continuation !== null)
+        yield* tx
+          .update(actions)
+          .set({
+            receipt: yield* encodeStored(
+              ActionReceipt,
+              'Invalidated action receipt',
+            )(
+              ActionReceipt.cases.Unknown.make({
+                operationId: continuation.operation,
+                observedAt: now,
+              }),
+            ),
+          })
+          .where(and(eq(actions.id, continuation.operation), isNull(actions.receipt)))
     }),
     { discard: true },
   )

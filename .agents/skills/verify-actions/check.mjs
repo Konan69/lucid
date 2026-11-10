@@ -62,7 +62,7 @@ const RUNS = [
     model: 'journal',
     name: 'journal, Calendar lookup, Executor keeps running after Vivid stops waiting',
     constants: { Lookup: '"calendar"', ExecutorContinues: 'TRUE' },
-    expect: { finding: 'F1', violated: 'NotAppliedIsTrue' },
+    expect: { holds: true },
   },
 ]
 

@@ -230,7 +230,9 @@
       "symbol": "reconcile",
       "snippets": [
         "if (ActionReconciliation.isAnyOf(['Applied', 'NotApplied'])(recorded))",
-        "sql`${actions.reconciliation}->>'_tag' not in ('Applied', 'NotApplied')`,"
+        "sql`${actions.reconciliation}->>'_tag' not in ('Applied', 'NotApplied')`,",
+        "const decidableAt = row.claimedAt + LANDING_WINDOW_MS",
+        "checkedAt < decidableAt || stored.held ? PendingAbsence.make({ checkedAt, decidableAt })"
       ]
     },
     {
@@ -248,7 +250,7 @@
       "symbol": "look",
       "snippets": [
         "if (parsed.items.length > 0) return Lookup.cases.Found.make({",
-        "return Search.guards.Calendar(query.value) && parsed.nextPageToken === undefined && !ActionPhase.guards.Dispatching(operation.phase) ? Lookup.cases.Absent.make({}) : Lookup.cases.Unsupported.make({})"
+        "return Search.guards.Calendar(query.value) && parsed.nextPageToken === undefined ? Lookup.cases.Absent.make({}) : Lookup.cases.Unsupported.make({})"
       ]
     },
     {
@@ -285,6 +287,16 @@
       "file": "apps/server/src/approvals/store.ts",
       "symbol": "recover",
       "snippets": ["{ status: 'unknown', finishedAt: now, outcome: null }"]
+    },
+    {
+      "model": "journal.tla PauseInvalidates",
+      "file": "apps/server/src/approvals/stale.ts",
+      "symbol": "invalidatePending",
+      "snippets": [
+        "if (continuation !== null)",
+        "ActionReceipt.cases.Unknown.make({ operationId: continuation.operation, observedAt: now, })",
+        ".where(and(eq(actions.id, continuation.operation), isNull(actions.receipt)))"
+      ]
     }
   ]
 }

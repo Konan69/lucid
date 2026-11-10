@@ -1,7 +1,12 @@
 import { describe, expect, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
-import { Effect, Option, Ref, Result } from 'effect'
+import { Clock, Effect, Option, Ref, Result, Schema } from 'effect'
 import {
+  ApprovalId,
+  ApprovalInvalidation,
+  ProposedAction,
+  IntegrationPause,
+  IntegrationRequestId,
   ActionReceipt,
   ActionTarget,
   ServiceId,
@@ -12,6 +17,7 @@ import {
   ToolOutcome,
   type ConnectionId,
 } from '@vivid/contracts'
+import * as TestClock from 'effect/testing/TestClock'
 import type { Actor } from '../auth/access.ts'
 import { ExecutorCallOutcome } from '../connections/executor.ts'
 import { ConnectionStore } from '../connections/store.ts'
@@ -34,6 +40,7 @@ import { approvals } from '../approvals/tables.ts'
 import { prepareReconciliation } from '../connections/reconcile.ts'
 import { connections } from '../connections/tables.ts'
 import { actions } from './tables.ts'
+import { invalidatePending } from '../approvals/stale.ts'
 
 /** A Vivid write in the fixture's Thread through one private Integration the owner made. */
 const writer = Effect.fn('Actions.test.writer')(function* () {
@@ -95,12 +102,162 @@ describe.skipIf(!testDatabaseConfigured)('Action journal', () => {
         )
         // The Integration paused the call and its Approval waits on the Person: not unheard.
         expect((yield* unresolvedOf([runId])).has(runId)).toBe(false)
+        yield* TestClock.adjust('10 minutes')
+        const held = yield* reconcile(owner, id).pipe(
+          Effect.provideService(ActionLookup, lookingUp(Lookup.cases.Absent.make({}))),
+        )
+        expect(held.reconciliation._tag).toBe('Inconclusive')
         yield* database.run(
           database.update(approvals).set({ status: 'expired' }).where(eq(approvals.id, approvalId)),
         )
         // Once the ask is settled, what the journal holds for the call applies again.
         expect((yield* unresolvedOf([runId])).get(runId)).toMatchObject({ operationId: id })
       }).pipe(Effect.scoped),
+    )
+
+    it.effect(
+      'absence holds a timed-out or dispatching attempt until its landing window closes',
+      () =>
+        Effect.gen(function* () {
+          const database = yield* Database
+          for (const dispatching of [false, true]) {
+            const { owner, threadId, write } = yield* writer()
+            const target = ActionTarget.cases.Connection.make({
+              connectionId: write({ record: 10 }).connectionId,
+              account: 'Calendar',
+              tool: 'calendarApi.calendarEventsInsert',
+              input: {},
+            })
+            const original = {
+              personId: owner,
+              id: operationOf.program(),
+              threadId,
+              runId: null,
+              approvalId: null,
+              target,
+            }
+            yield* claim(original)
+            const claimedAt = yield* Clock.currentTimeMillis
+            if (!dispatching)
+              yield* settle(
+                ActionReceipt.cases.Unknown.make({
+                  operationId: original.id,
+                  observedAt: claimedAt,
+                }),
+              )
+            const lookup = lookingUp(Lookup.cases.Absent.make({}))
+            yield* TestClock.adjust(599_999)
+            const early = yield* reconcile(owner, original.id).pipe(
+              Effect.provideService(ActionLookup, lookup),
+            )
+            expect(early.reconciliation._tag).toBe('Inconclusive')
+            const [stored] = yield* database.run(
+              database
+                .select({ reconciliation: actions.reconciliation })
+                .from(actions)
+                .where(eq(actions.id, original.id)),
+            )
+            expect(stored?.reconciliation).toMatchObject({
+              decidableAt: claimedAt + 600_000,
+            })
+            const retry = { ...original, id: operationOf.program() }
+            expect(
+              yield* claim(retry).pipe(Effect.provideService(ActionLookup, lookup), Effect.flip),
+            ).toEqual(new ActionReconciliationRequired({ operationId: original.id }))
+            yield* TestClock.adjust(1)
+            expect(
+              Claim.guards.Fresh(
+                yield* claim(retry).pipe(Effect.provideService(ActionLookup, lookup)),
+              ),
+            ).toBe(true)
+          }
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect(
+      'invalidating a held pause settles its journal so reconciliation permits a fresh attempt',
+      () =>
+        Effect.gen(function* () {
+          const database = yield* Database
+          const { owner, threadId, write } = yield* writer()
+          const now = yield* Clock.currentTimeMillis
+          const target = ActionTarget.cases.Connection.make({
+            connectionId: write({ record: 11 }).connectionId,
+            account: 'Calendar',
+            tool: 'calendarApi.calendarEventsInsert',
+            input: {},
+          })
+          const original = {
+            personId: owner,
+            id: operationOf.program(),
+            threadId,
+            runId: null,
+            approvalId: null,
+            target,
+          }
+          yield* claim(original)
+          const id = ApprovalId.make(crypto.randomUUID())
+          const pause = IntegrationPause.cases.Approval.make({
+            requestId: IntegrationRequestId.make('held'),
+            expiresAt: now + 600_000,
+            form: {
+              mode: 'form',
+              message: 'Allow?',
+              requestedSchema: { type: 'object', properties: {} },
+            },
+            savedCall: {
+              app: 'calendar',
+              owner: 'person',
+              version: 'v1',
+              tool: target.tool,
+              input: {},
+              accounts: { app: {} },
+            },
+          })
+          const action = ProposedAction.make({
+            summary: 'Create event',
+            rationale: 'Asked',
+            effect: 'write',
+            target,
+            continuation: { pause, operation: original.id },
+          })
+          yield* database.run(
+            database.insert(approvals).values({
+              id,
+              threadId,
+              personId: owner,
+              action: Schema.encodeSync(ProposedAction)(action),
+              digest: 'held',
+              status: 'pending',
+              expiresAt: pause.expiresAt,
+              createdAt: now,
+            }),
+          )
+          yield* TestClock.adjust('10 minutes')
+          yield* database.transaction((tx) =>
+            invalidatePending(
+              tx,
+              eq(approvals.id, id),
+              ApprovalInvalidation.cases.RunStopped.make({ runId: RunId.make('stopped') }),
+            ),
+          )
+          const [stored] = yield* database.run(
+            database
+              .select({ receipt: actions.receipt })
+              .from(actions)
+              .where(eq(actions.id, original.id)),
+          )
+          expect(stored?.receipt).toEqual(
+            ActionReceipt.cases.Unknown.make({
+              operationId: original.id,
+              observedAt: now + 600_000,
+            }),
+          )
+          const retry = yield* claim({ ...original, id: operationOf.program() }).pipe(
+            Effect.provideService(ActionLookup, lookingUp(Lookup.cases.Absent.make({}))),
+          )
+          expect(Claim.guards.Fresh(retry)).toBe(true)
+        }).pipe(Effect.scoped),
     )
 
     it.effect('answers a retried call with its first receipt and sends it once', () =>
@@ -169,6 +326,7 @@ describe.skipIf(!testDatabaseConfigured)('Action journal', () => {
                   value: { items: result === 'found' ? [{ id: 'event' }] : [] },
                 }),
           )
+          if (result === 'absent') yield* TestClock.adjust('10 minutes')
           const calls = yield* Ref.get(probe.calls)
           const attempt = { ...original, id: operationOf.program() }
           const checked =
@@ -187,7 +345,7 @@ describe.skipIf(!testDatabaseConfigured)('Action journal', () => {
           expect(inputs.slice(-1).map(({ tool }) => tool)).toEqual([
             'calendarApi.calendarEventsList',
           ])
-          if (result === 'inconclusive' || (dispatching && result === 'absent')) {
+          if (result === 'inconclusive') {
             expect(outcome).toEqual(
               Result.fail(new ActionReconciliationRequired({ operationId: original.id })),
             )
@@ -253,6 +411,11 @@ describe.skipIf(!testDatabaseConfigured)('Action journal', () => {
           expect(ActionReconciliation.guards.Inconclusive(unsure.reconciliation)).toBe(true)
           const stillRefused = yield* useTool(actor, write({ record: 7 })).pipe(Effect.flip)
           expect(stillRefused).toEqual(new ActionReconciliationRequired({ operationId }))
+          const earlyAbsent = yield* reconcile(owner, operationId).pipe(
+            Effect.provideService(ActionLookup, lookingUp(Lookup.cases.Absent.make({}))),
+          )
+          expect(earlyAbsent.reconciliation._tag).toBe('Inconclusive')
+          yield* TestClock.adjust('10 minutes')
           // The provider's own lookup finds no such operation: a fresh send is allowed and names it.
           const absent = yield* reconcile(owner, operationId).pipe(
             Effect.provideService(ActionLookup, lookingUp(Lookup.cases.Absent.make({}))),
