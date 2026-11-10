@@ -7,7 +7,10 @@ const decodeText = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Strin
 
 /** Reads one string from the page, through the owned browser. */
 async function text(run, expression) {
-  return Result.getOrThrow(decodeText(await run(['eval', 'JSON.stringify(' + expression + ')'])))
+  const serialized = Result.getOrThrow(
+    decodeText(await run(['eval', 'JSON.stringify(' + expression + ')'])),
+  )
+  return Result.getOrThrow(decodeText(serialized))
 }
 
 /** What the Access panel says for a grant (`grantedOf` in packages/client/state/src/access.ts). */

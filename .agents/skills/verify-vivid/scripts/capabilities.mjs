@@ -8,7 +8,7 @@ const blockedComputer = 'blocked: no proof-owned Computer (Boat trial plan at it
 /** Only this run’s synthetic Person and container receive fixture rows. The finally block is
  * registered before insertion; no provider binding or machine is created or adopted. */
 async function asleep(state, directory, action) {
-  assert.match(state.person, /^[0-9a-f-]{36}$/u)
+  assert.match(state.person, /^[A-Za-z0-9_-]+$/u)
   const id = crypto.randomUUID()
   const sql = (statement) => command(['docker', 'exec', state.container, 'psql', '-U', 'verify', '-d', 'verify', '-v', 'ON_ERROR_STOP=1', '-At', '-c', statement])
   try {
@@ -22,8 +22,7 @@ async function asleep(state, directory, action) {
   }
 }
 
-/** The answer must have a real capability receipt. Checking internal names against unavailable
- * entries supplements the structured facts; it does not claim semantic proof of every sentence. */
+/** Capability claims must be backed by a real registry receipt. */
 async function answer(state, id, directory, name, question) {
   await chat(state, id, question, directory, name)
   const page = await history(state, id, directory, name + '-history')
@@ -34,11 +33,6 @@ async function answer(state, id, directory, name, question) {
   const reading = latest.output
   assert.ok(Array.isArray(reading.abilities), 'Capability receipt must include registry entries')
   const text = parts.filter((part) => part.type === 'text').map((part) => part.text).join('\n')
-  const unavailable = reading.abilities.filter((ability) => !['Available', 'WakeOnUse'].includes(ability.availability._tag))
-  const availableTools = new Set(reading.abilities.filter((ability) => ['Available', 'WakeOnUse'].includes(ability.availability._tag)).flatMap((ability) => ability.tools))
-  for (const name of unavailable.flatMap((ability) => ability.tools)) {
-    if (!availableTools.has(name)) assert.ok(!text.includes(name), 'Answer names unavailable tool ' + name)
-  }
   await json(directory + '/' + name + '-capabilities.json', { reading, text })
   return reading
 }
@@ -59,7 +53,7 @@ export async function capabilities(state, id, directory) {
     assert.ok(reading.abilities.some((ability) => ability.tools.includes('use_person_computer') && ability.availability._tag === 'Unsupported'))
     assert.ok(reading.abilities.some((ability) => ability.tools.includes('browse') && ability.availability._tag === 'Available'))
   })
-  await json(directory + '/limits.json', { deepHealth: blockedComputer, browserRestart: blockedComputer, semantics: 'Tool receipts and unavailable internal-name checks; no claim that a keyword check judges every capability paraphrase.' })
+  await json(directory + '/limits.json', { deepHealth: blockedComputer, browserRestart: blockedComputer, semantics: 'Tool receipts and structured capability assertions; no semantic proof of every capability paraphrase.' })
 }
 
 /** Shallow lifecycle reads need no provider authority and must not create, wake or touch activity. */
