@@ -1,11 +1,10 @@
 import { Activities } from '../activity/service.ts'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
-import type { ApprovalId, DecideApprovalRequest } from '@vivid/contracts'
+import type { DecideApprovalRequest } from '@vivid/contracts'
 import { requireActor, requirePerson, type Actor } from '../auth/access.ts'
 import { InputStore } from '../inputs/store.ts'
 import { handoffsWaiting } from '../inputs/handoff.ts'
-import { changed, Topic } from '../live/changes.ts'
 import { live } from '../live/query.ts'
 import { ApprovalStore } from './store.ts'
 
@@ -18,7 +17,7 @@ const loadInbox = Effect.fn('Inbox.load')(function* (actor: Actor) {
   }
 })
 
-/** A Run cannot answer or withdraw its own request for authorization. */
+/** A Run cannot answer its own request for authorization. */
 const decidingPerson = Effect.fn('Approvals.person')(function* () {
   const auth = yield* requirePerson()
   return {
@@ -43,15 +42,5 @@ export const approvalHandlers = {
       .refresh(actor.person.id)
       .pipe(Effect.catch(() => Effect.logWarning('Live Activity refresh failed')))
     return { approval }
-  }),
-  /** Withdrawal publishes the settled Thread and addressed Person without executing anything. */
-  WithdrawApproval: Effect.fn('Rpc.WithdrawApproval')(function* ({
-    id,
-  }: {
-    readonly id: ApprovalId
-  }) {
-    const actor = yield* decidingPerson()
-    const threadId = yield* (yield* ApprovalStore).withdraw(actor, id)
-    yield* changed(actor, Topic.thread(threadId))
   }),
 }

@@ -26,8 +26,8 @@ keys: { p256dh, auth } } })`. Use the subscription's unpadded base64url keys. Su
   `RegisterPushTarget({ destination: { _tag: "Phone", token } })`. Basic Expo sends need no secret;
   the adapter follows the [Expo v2 API](https://docs.expo.dev/push-notifications/sending-notifications/).
 - Registration returns `{ target: { id, destination, createdAt } }` (milliseconds).
-  `ListPushTargets()` / `WatchPushTargets()` return `{ targets }` across that Person's live sessions.
-  `RemovePushTarget({ id })` removes one. Supply no Person, Company or session identifier.
+  `ListPushTargets()` returns `{ targets }` across that Person's live sessions; a target lives as
+  long as the session that registered it. `RemovePushTarget({ id })` removes one. Supply no Person, Company or session identifier.
 - A browser worker receives `{ notificationId, title, body, threadId }`; Expo delivers the same
   object in `data`, with `title` and `body` also at the notification level. Display the notification,
   then open `threadId` on a tap (or the notification list when null), checking current app access.

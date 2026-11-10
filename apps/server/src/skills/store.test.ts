@@ -145,7 +145,7 @@ describe.skipIf(!testDatabaseConfigured)('Skills', () => {
     )
 
     it.effect(
-      'lists shipped procedures beside same-name saved ones in scope and refuses built-in mutations',
+      'lists shipped procedures beside same-name saved ones in scope',
       () =>
         Effect.gen(function* () {
           const { personal, other, admin, member } = yield* fixture()
@@ -183,16 +183,6 @@ describe.skipIf(!testDatabaseConfigured)('Skills', () => {
             })),
           )
           expect(saved.useWhen).toBe(request.useWhen)
-          const patch = yield* skillHandlers
-            .PatchSkill({ id: builtin.id, patch: { name: 'Changed' } })
-            .pipe(Effect.provideService(AuthContext, auth(personal)), Effect.flip)
-          expect(patch._tag).toBe('SkillReadOnly')
-          const remove = yield* skillHandlers
-            .DeleteSkill({ id: builtin.id })
-            .pipe(Effect.provideService(AuthContext, auth(admin)), Effect.flip)
-          expect(remove._tag).toBe('SkillReadOnly')
-          // Refused mutations leave the shipped record and the saved twin untouched.
-          expect(yield* store.list(personal)).toEqual([saved, ...builtins])
         }),
     )
 
@@ -214,14 +204,6 @@ describe.skipIf(!testDatabaseConfigured)('Skills', () => {
         expect(Result.isFailure(failure)).toBe(true)
         if (Result.isFailure(failure)) expect(failure.failure._tag).toBe('NotFound')
         expect(skill.about).toBe(request.about)
-        const updated = yield* store.patch(personal, skill.id, {
-          about: 'Prepares your weekly review.',
-        })
-        expect((yield* store.read(personal, updated.id)).about).toBe('Prepares your weekly review.')
-        expect((yield* store.list(personal)).find((item) => item.id === updated.id)).toHaveProperty(
-          'about',
-          'Prepares your weekly review.',
-        )
         expect(SkillScope.guards.Personal(skill.scope)).toBe(true)
       }),
     )
@@ -245,38 +227,6 @@ describe.skipIf(!testDatabaseConfigured)('Skills', () => {
           expect((yield* store.read(member, skill.id)).name).toBe(request.name)
           expect(yield* store.list(other)).toEqual(builtins)
         }),
-    )
-
-    it.effect('allows an owner or Company admin to edit and delete, but not a Member', () =>
-      Effect.gen(function* () {
-        const { admin, member, otherAdmin } = yield* fixture()
-        const { skill } = yield* skillHandlers
-          .SaveSkill({ ...request, forCompany: true })
-          .pipe(Effect.provideService(AuthContext, auth(admin)))
-        const refused = yield* Effect.result(
-          skillHandlers
-            .PatchSkill({ id: skill.id, patch: { name: 'Renamed' } })
-            .pipe(Effect.provideService(AuthContext, auth(member))),
-        )
-        expect(Result.isFailure(refused)).toBe(true)
-        if (Result.isFailure(refused)) expect(refused.failure._tag).toBe('Forbidden')
-        const patched = yield* skillHandlers
-          .PatchSkill({ id: skill.id, patch: { name: 'Renamed' } })
-          .pipe(Effect.provideService(AuthContext, auth(otherAdmin)))
-        expect(patched.skill.name).toBe('Renamed')
-        expect(patched.skill.instructions).toBe(request.instructions)
-        const deletion = yield* Effect.result(
-          skillHandlers
-            .DeleteSkill({ id: skill.id })
-            .pipe(Effect.provideService(AuthContext, auth(member))),
-        )
-        expect(Result.isFailure(deletion)).toBe(true)
-        if (Result.isFailure(deletion)) expect(deletion.failure._tag).toBe('Forbidden')
-        yield* skillHandlers
-          .DeleteSkill({ id: skill.id })
-          .pipe(Effect.provideService(AuthContext, auth(otherAdmin)))
-        expect(yield* (yield* SkillStore).list(admin)).toEqual(builtins)
-      }),
     )
 
     it.effect('lets Vivid save for its Person while keeping Company administration required', () =>
@@ -321,28 +271,19 @@ describe.skipIf(!testDatabaseConfigured)('Skills', () => {
       }),
     )
 
-    it.effect('permits equal names in different scopes but rejects a colliding rename', () =>
+    it.effect('permits equal names in different scopes', () =>
       Effect.gen(function* () {
         const { personal, admin } = yield* fixture()
         const store = yield* SkillStore
         const first = yield* store.save(personal, request)
         yield* store.save(admin, { ...request, forCompany: true })
         const second = yield* store.save(personal, { ...request, name: 'Another procedure' })
-        const renamed = yield* Effect.result(
-          skillHandlers
-            .PatchSkill({ id: second.id, patch: { name: first.name } })
-            .pipe(Effect.provideService(AuthContext, auth(personal))),
-        )
-        expect(Result.isFailure(renamed)).toBe(true)
-        if (Result.isFailure(renamed)) expect(renamed.failure._tag).toBe('Conflict')
-        yield* store.patch(personal, first.id, { instructions: 'Updated steps' })
-        expect((yield* store.read(personal, first.id)).instructions).toBe('Updated steps')
-        yield* store.remove(personal, first.id)
         expect(
           (yield* store.list(personal))
             .filter((skill) => !SkillOrigin.guards.BuiltIn(skill.origin))
-            .map((skill) => skill.id),
-        ).toEqual([second.id])
+            .map((skill) => skill.id)
+            .toSorted(),
+        ).toEqual([first.id, second.id].toSorted())
       }),
     )
   })

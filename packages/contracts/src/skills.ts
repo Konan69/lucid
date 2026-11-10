@@ -16,13 +16,6 @@ export const SkillOrigin = Schema.TaggedUnion({
 })
 export type SkillOrigin = typeof SkillOrigin.Type
 
-/** API mutations cannot change shipped instructions; save a scoped override instead. */
-export class SkillReadOnly extends Schema.TaggedError<SkillReadOnly>()(
-  'SkillReadOnly',
-  { id: SkillId },
-  { title: 'Built-in procedure is read-only' },
-) {}
-
 /**
  * A saved procedure: how to do a piece of work the way this Person or Company does it. Storing one
  * does not arrange future work.
@@ -59,14 +52,6 @@ export const SaveSkillRequest = Schema.Struct({
   forCompany: Schema.Boolean,
 })
 export interface SaveSkillRequest extends Schema.Schema.Type<typeof SaveSkillRequest> {}
-
-export const PatchSkillRequest = Schema.Struct({
-  about: Schema.optionalKey(SaveSkillRequest.fields.about),
-  name: Schema.optionalKey(SaveSkillRequest.fields.name),
-  useWhen: Schema.optionalKey(SaveSkillRequest.fields.useWhen),
-  instructions: Schema.optionalKey(SaveSkillRequest.fields.instructions),
-})
-export interface PatchSkillRequest extends Schema.Schema.Type<typeof PatchSkillRequest> {}
 
 /** What Vivid sees of each skill before choosing one: enough to pick, not the whole text. */
 export const SkillSummary = Schema.Struct({
