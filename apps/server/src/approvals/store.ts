@@ -71,6 +71,7 @@ import {
 import { actionDigest, auditAction, canonical, editedAction } from './action.ts'
 import {
   Claim,
+  ActionLookup,
   claim as claimOperation,
   operationOf,
   requireNotDeclined,
@@ -711,10 +712,12 @@ const finish = Effect.fn('Approvals.finish')(function* (
  */
 const runJournaled = Effect.fn('Approvals.runJournaled')(function* <E, R>(
   row: typeof Row.Type,
+  personId: PersonId,
   run: Effect.Effect<ActionOutcome, E, R>,
 ) {
   const operationId = operationOf.approval(row.id)
   const claimed = yield* claimOperation({
+    personId,
     id: operationId,
     threadId: row.threadId,
     runId: row.runId,
@@ -904,6 +907,7 @@ const decide = Effect.fn('Approvals.decide')(function* (
   }
   const outcome = yield* runJournaled(
     row,
+    actor.person.id,
     (yield* ActionRunner).run({
       operation: Option.some(operationOf.approval(row.id)),
       person: actor.person,
@@ -1143,14 +1147,29 @@ export const approvalStoreLayer = Layer.effect(
     const database = yield* Database
     const context = Context.omit(IntegrationAnswers)(
       yield* Effect.context<
-        Database | Changes | Notifier | Audit | RuleStore | ActionRunner | Conversation
+        | Database
+        | Changes
+        | Notifier
+        | Audit
+        | RuleStore
+        | ActionRunner
+        | Conversation
+        | ActionLookup
       >(),
     )
     const run = <A, E, R>(
       effect: Effect.Effect<
         A,
         E,
-        R | Database | Changes | Notifier | Audit | RuleStore | ActionRunner | Conversation
+        | R
+        | Database
+        | Changes
+        | Notifier
+        | Audit
+        | RuleStore
+        | ActionRunner
+        | Conversation
+        | ActionLookup
       >,
     ) => Effect.provide(effect, context)
     return ApprovalStore.of({
