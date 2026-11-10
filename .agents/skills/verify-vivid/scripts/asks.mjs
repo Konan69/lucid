@@ -104,7 +104,7 @@ async function allow(state, approval, directory, client, stage) {
 
 /** The Feed's Needs you, with the Thread's ask on it, then back to the Thread. */
 async function feed(state, id, client, words, stage) {
-  await client.run(['open', state.web + '/'])
+  await client.run(['open', state.web + '/feed'])
   await client.run(['wait', '--text', words])
   await client.capture(stage)
   const card = await read(
