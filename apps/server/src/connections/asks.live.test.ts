@@ -515,6 +515,15 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
 
             const query = yield* start('question', crypto.randomUUID())
             expect(query.outcome._tag).toBe('InputRequired')
+            const drawBefore = (yield* Ref.get(sent)).length
+            const displayDraw = yield* useDisplayTool(test.personal, {
+              name: `question@${account.account}`,
+              kind: 'Query',
+              input: { marker: 'display-draw' },
+            })
+            expect(displayDraw.outcome._tag).toBe('Rejected')
+            expect((yield* Ref.get(sent)).slice(drawBefore)).toEqual(['call'])
+            const queryDrawBefore = (yield* Ref.get(sent)).length
             const drawn = yield* useQueryTool(test.vivid, {
               connectionId: row.id,
               tool: 'question',
@@ -523,6 +532,7 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration continuations'
               rationale: 'Draws cannot ask for information',
             })
             expect(drawn.outcome._tag).toBe('Rejected')
+            expect((yield* Ref.get(sent)).slice(queryDrawBefore)).toEqual(['call'])
             const lost = yield* start('input', crypto.randomUUID())
             if (!ToolOutcome.guards.InputRequired(lost.outcome))
               return expect.fail('Expected saved input')

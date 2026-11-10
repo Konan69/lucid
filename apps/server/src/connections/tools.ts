@@ -651,6 +651,7 @@ const resolveApproval = Effect.fn('Connections.resolveApproval')(function* (
     readonly effect: ActionEffect
     readonly operation: Option.Option<ActionOperationId>
     readonly summary: string
+    readonly policy: DisplayCallPolicy
     readonly basis: GateBasis
     readonly outcome: typeof ExecutorCallOutcome.Type
   },
@@ -661,6 +662,14 @@ const resolveApproval = Effect.fn('Connections.resolveApproval')(function* (
     !IntegrationPause.guards.Approval(outcome.pause)
   )
     return Result.succeed(outcome)
+  if (DisplayCallPolicy.guards.Draw(call.policy))
+    return Result.fail(
+      yield* notRead(
+        ToolOutcome.cases.Rejected.make({
+          message: 'This Integration needs the Person before it can continue. Ask in the Thread.',
+        }),
+      ),
+    )
   const prior = yield* claimPausedRead(actor, target, call)
   if (Option.isSome(prior)) return Result.fail(yield* notRead(answeredOutcome(prior.value)))
   const pause = outcome.pause
