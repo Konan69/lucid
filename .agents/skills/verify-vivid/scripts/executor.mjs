@@ -70,6 +70,9 @@ async function authority(state) {
   })
   return {
     VIVID_EXECUTOR_URL: origin,
+    // Member sign-in goes to the address Executor trusts for its auth routes: the container's own
+    // `BETTER_AUTH_URL`, which for this loopback container is the same origin (`members.ts`).
+    VIVID_EXECUTOR_PUBLIC_URL: origin,
     VIVID_EXECUTOR_ORGANIZATION: organization,
     VIVID_EXECUTOR_KEY: key,
     // Each Person's own Integrations are made as their own member, invited by this owner.
