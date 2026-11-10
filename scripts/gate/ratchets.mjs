@@ -165,31 +165,31 @@ export const ratchets = [
     label: 'failures replaced without their cause',
     plugin: 'vivid',
     rule: 'keep-incident-cause',
-    ceiling: 386,
+    ceiling: 373,
   },
   {
     label: 'failures turned into values unrecorded',
     plugin: 'vivid',
     rule: 'no-silent-failure',
-    ceiling: 234,
+    ceiling: 230,
   },
   {
     label: 'ad hoc failure log lines',
     plugin: 'vivid',
     rule: 'no-ad-hoc-failure-log',
-    ceiling: 118,
+    ceiling: 99,
   },
   {
     label: 'refusals renamed to unavailable',
     plugin: 'vivid',
     rule: 'no-refusal-as-unavailable',
-    ceiling: 1,
+    ceiling: 0,
   },
   {
     label: 'severity chosen by typedness',
     plugin: 'vivid',
     rule: 'severity-from-impact',
-    ceiling: 1,
+    ceiling: 0,
   },
   { label: 'design-system raw colors', plugin: 'shadcn', rule: 'no-raw-colors', ceiling: 0 },
   {
@@ -290,7 +290,7 @@ export const deadCodeRatchets = [
   { plugin: 'rpc', rule: 'uncalled', ceiling: 1 },
   // Added 10 November 2026 at the server's pre-deploy chain in `infra/railway.ts`.
   { plugin: 'deploy', rule: 'shell-chain', ceiling: 1 },
-  // Added 10 November 2026: the server <-> cell schemas outside the contract fingerprint at
-  // bab8c618d, where no registry existed; the admission body that drifted in production is one.
-  { plugin: 'wire', rule: 'unregistered', ceiling: 120 },
+  // Added 10 November 2026: every server <-> cell schema is in the contract fingerprint
+  // (`wireSchemas`); the admission body that drifted in production was outside it at bab8c618d.
+  { plugin: 'wire', rule: 'unregistered', ceiling: 0 },
 ]
