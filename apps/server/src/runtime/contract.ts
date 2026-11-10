@@ -26,9 +26,9 @@ export type CellContractReading = typeof CellContractReading.Type
 
 /**
  * Whether the cells this server sends to read the same wire. The server's `/health` answers
- * not-ready on anything but `Matched`, so Railway keeps the previous deployment serving and marks
- * this one FAILED instead of letting it fail every send, as it did from 8 November 2026 when the
- * Worker publish never ran and nothing checked.
+ * not-ready on `Mismatched` and `Unanswered` (`http/router.ts` `healthRoute`), so Railway keeps
+ * the previous deployment serving and marks this one FAILED instead of letting it fail every send,
+ * as it did from 8 November 2026 when the Worker publish never ran and nothing checked.
  *
  * Strict equality, unlike the cell's own decode-first rule (`packages/agent/runtime/src/app.ts`
  * `admissionBody`): this check runs while the new server is not yet taking traffic, after the
