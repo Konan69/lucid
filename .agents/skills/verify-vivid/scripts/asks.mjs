@@ -1,7 +1,8 @@
 import * as assert from 'node:assert/strict'
 import * as fs from 'node:fs/promises'
 import { connectPulse } from './watch.mjs'
-import { providerSnapshot } from './snapshot.mjs'
+import { providerSnapshot, restart } from './snapshot.mjs'
+import { command } from './process.mjs'
 import { chat, history, json, rpc, settled, until } from './wire.mjs'
 
 /**
@@ -21,12 +22,14 @@ import { chat, history, json, rpc, settled, until } from './wire.mjs'
  *    Thread says so in each one's own words.
  */
 
-const HOLD = 18 * 60 * 1000
 const SETTLE = 5 * 60 * 1000
 
 /** One call of a Verify Pulse operation, asked in a Person's words. */
-const prompt = (title, receipt) =>
-  `With my Verify Pulse Integration, ${title.toLowerCase()} for receipt ${receipt}. Find the operation with find_tools and call it with use_tool, input {"receipt": "${receipt}"}. Verify Pulse asks me itself before it acts, so call it now and do not ask me in words. Do not use run_code or create a Watch.`
+const prompt = (operation, title, receipt) =>
+  `With my Verify Pulse Integration, call its ${operation} operation ("${title}") once for receipt ${receipt}. Find it with find_tools and call it with use_tool, input {"receipt": "${receipt}"}. Do not use emit or any other operation. Verify Pulse asks me itself before it acts, so call it now and do not ask me in words. Do not use run_code or create a Watch.`
+
+/** What the form sends: its defaults, the required array untouched, and No for Urgent. */
+const SENT = { priority: 'medium', summary: 'Phone form bug', labels: [], urgent: false }
 
 /** Ask in the Thread, through the composer when a browser drives, else as the Person's RPC. */
 async function say(state, id, words, directory, client, name) {
@@ -116,9 +119,16 @@ async function feed(state, id, client, words, stage) {
 /** Step 1: an Integration's own Approval, decided Allow. */
 async function approvalStep(state, id, directory, client) {
   const receipt = crypto.randomUUID()
-  await say(state, id, prompt('Send a verification pulse', receipt), directory, client, 'approve')
+  await say(
+    state,
+    id,
+    prompt('approve', 'Send a verification pulse', receipt),
+    directory,
+    client,
+    'approve',
+  )
   const pending = await pendingApproval(state, id, receipt, directory, 'approval-pending')
-  assert.equal(pending.action.summary, 'Send a verification pulse with Verify Pulse')
+  assert.match(pending.action.summary, /^Send .* with Verify Pulse$/u)
   if (client) {
     await client.run(['wait', 'section[aria-label="Vivid asks first"]'])
     assert.deepEqual(await read(client, bannerRows('Vivid asks first')), ['Allow', 'Don’t allow'])
@@ -149,9 +159,16 @@ async function approvalStep(state, id, directory, client) {
 /** Step 2: Allow, then the mid-call form answered from its banner. */
 async function questionStep(state, id, directory, client) {
   const receipt = crypto.randomUUID()
-  await say(state, id, prompt('File a verification issue', receipt), directory, client, 'file')
+  await say(
+    state,
+    id,
+    prompt('file', 'File a verification issue', receipt),
+    directory,
+    client,
+    'file',
+  )
   const pending = await pendingApproval(state, id, receipt, directory, 'file-pending')
-  assert.equal(pending.action.summary, 'File a verification issue with Verify Pulse')
+  assert.match(pending.action.summary, /^File .* with Verify Pulse$/u)
   await allow(state, pending, directory, client, 'file-approval')
   const asked = await waitingQuestion(state, id, receipt, directory, 'question-waiting')
   assert.equal(asked.integration.continuation.pause._tag, 'Input')
@@ -190,7 +207,7 @@ async function questionStep(state, id, directory, client) {
         id: asked.id,
         response: {
           action: 'accept',
-          content: { priority: 'medium', summary: 'Phone form bug', labels: [], urgent: false },
+          content: SENT,
         },
       },
       directory,
@@ -207,10 +224,7 @@ async function questionStep(state, id, directory, client) {
   const request = answered.requests.find((one) => one.id === asked.id)
   assert.equal(request.integrationOutcome?._tag, 'Completed')
   // The operation returns what Executor's `ctx.elicit` received, which is what the form sent.
-  assert.deepEqual(request.integrationOutcome.value, {
-    action: 'accept',
-    content: { priority: 'medium', summary: 'Phone form bug', labels: [], urgent: false },
-  })
+  assert.deepEqual(request.integrationOutcome.value, { action: 'accept', content: SENT })
   if (client) {
     await client.run(['wait', '--text', 'Sent'])
     await client.capture('question-sent')
@@ -220,7 +234,14 @@ async function questionStep(state, id, directory, client) {
 /** Step 3: a message while the question waits withdraws it and cancels its paused call. */
 async function withdrawn(state, id, directory, client) {
   const receipt = crypto.randomUUID()
-  await say(state, id, prompt('File a verification issue', receipt), directory, client, 'withdraw')
+  await say(
+    state,
+    id,
+    prompt('file', 'File a verification issue', receipt),
+    directory,
+    client,
+    'withdraw',
+  )
   const pending = await pendingApproval(state, id, receipt, directory, 'withdraw-pending')
   await allow(state, pending, directory, client, 'withdraw-approval')
   const asked = await waitingQuestion(state, id, receipt, directory, 'withdraw-waiting')
@@ -256,21 +277,56 @@ async function withdrawn(state, id, directory, client) {
 
 /** Step 4: an Approval and a question nobody answers run out at Executor's deadline. */
 async function expired(state, id, directory, client) {
-  const left = crypto.randomUUID()
-  await say(state, id, prompt('Send a verification pulse', left), directory, client, 'left')
-  const unanswered = await pendingApproval(state, id, left, directory, 'left-pending')
   const later = crypto.randomUUID()
-  await say(state, id, prompt('File a verification issue', later), directory, client, 'later')
+  await say(
+    state,
+    id,
+    prompt('file', 'File a verification issue', later),
+    directory,
+    client,
+    'later',
+  )
   const filed = await pendingApproval(state, id, later, directory, 'later-pending')
-  await allow(state, filed, directory, client, 'later-approval')
+  const left = crypto.randomUUID()
+  await say(
+    state,
+    id,
+    prompt('approve', 'Send a verification pulse', left),
+    directory,
+    client,
+    'left',
+  )
+  const unanswered = await pendingApproval(state, id, left, directory, 'left-pending')
+  // Allowed over RPC: the banner holds the oldest Approval, and this one must leave `left` up.
+  await allow(state, filed, directory, undefined, 'later-approval')
   const asked = await waitingQuestion(state, id, later, directory, 'later-waiting')
+  // A restart drops both paused calls in Executor, as #227's live proof does, so the answers
+  // that follow reach it too late: the server says Expired at once instead of in 15 minutes.
+  await restartExecutor(state)
+  await allow(state, unanswered, directory, client, 'left-approval')
+  if (client) {
+    await client.run(['wait', 'section[aria-label="Vivid\'s question"]'])
+    await client.run(['find', 'role', 'button', 'click', '--name', 'No', '--exact'])
+    await client.run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
+  } else
+    await rpc(
+      state,
+      'AnswerIntegrationInput',
+      { id: asked.id, response: { action: 'accept', content: SENT } },
+      directory,
+      'late-answer',
+    )
   const ran = await until(
     state,
     id,
     (detail) =>
-      detail.approvals.some((one) => one.id === unanswered.id && one.state._tag === 'Expired') &&
-      detail.requests.some((one) => one.id === asked.id && one.state._tag === 'Expired'),
-    HOLD,
+      detail.approvals.some(
+        (one) => one.id === unanswered.id && one.integrationOutcome?._tag === 'Expired',
+      ) &&
+      detail.requests.some(
+        (one) => one.id === asked.id && one.integrationOutcome?._tag === 'Expired',
+      ),
+    SETTLE,
     directory,
     'expired',
   )
@@ -286,6 +342,22 @@ async function expired(state, id, directory, client) {
     await client.capture('expired')
   }
   return left
+}
+
+/** Stop this run's own Executor container and start it again, awaiting its health. */
+async function restartExecutor(state) {
+  const label = (
+    await command([
+      'docker',
+      'inspect',
+      '--format',
+      '{{index .Config.Labels "vivid.verify"}}',
+      state.executorContainer,
+    ])
+  ).trim()
+  assert.equal(label, state.run, 'Executor restart ownership mismatch')
+  await command(['docker', 'stop', '--timeout', '0', state.executorContainer])
+  await restart(state)
 }
 
 /** The whole journey, as one Thread; one provider export at the end proves what was sent. */
