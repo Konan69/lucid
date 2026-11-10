@@ -3,8 +3,9 @@ import * as NodeEvents from 'node:events'
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeProcess from 'node:process'
 import * as NodeURL from 'node:url'
-import { Result, Schema } from 'effect'
-import { readPointer, storageFromEnvironment } from './pointer.mjs'
+import { Effect, Option, Redacted, Result, Schema } from 'effect'
+import * as FetchHttpClient from 'effect/http/FetchHttpClient'
+import { readPointer } from './pointer.ts'
 
 /**
  * The server's pre-deploy step, as one program with no shell (`preDeploy.command` in
@@ -47,6 +48,38 @@ async function run(args, environment = NodeProcess.env) {
 }
 
 /** The version celld wrote to its receipt for the last `infra/cli.mjs build` or `deploy`. */
+/** The fleet storage as celld reads it from this process's environment (`FleetStorage`). */
+function storageFromEnvironment() {
+  const names = [
+    'CELLD_BUCKET',
+    'S3_ENDPOINT',
+    'AWS_REGION',
+    'AWS_ACCESS_KEY_ID',
+    'AWS_SECRET_ACCESS_KEY',
+  ]
+  const missing = names.filter((name) => !NodeProcess.env[name])
+  if (missing.length > 0) throw new Error(`fleet storage settings missing: ${missing.join(', ')}`)
+  return {
+    bucket: NodeProcess.env.CELLD_BUCKET,
+    endpoint: NodeProcess.env.S3_ENDPOINT,
+    region: NodeProcess.env.AWS_REGION,
+    accessKeyId: Redacted.make(NodeProcess.env.AWS_ACCESS_KEY_ID),
+    secretAccessKey: Redacted.make(NodeProcess.env.AWS_SECRET_ACCESS_KEY),
+  }
+}
+
+/** The version the fleet selects, or null; the program's edge, so the Effect runs here. */
+async function selected(storage) {
+  // oxlint-disable-next-line vivid/no-runpromise-in-library
+  const pointer = await Effect.runPromise(
+    readPointer(storage).pipe(
+      Effect.provide(FetchHttpClient.layer),
+      Effect.mapError((error) => new Error(`the fleet pointer is unreadable: ${error.reason}`)),
+    ),
+  )
+  return Option.getOrNull(pointer)
+}
+
 async function receiptVersion() {
   const decoded = decodeReceipt(await NodeFSP.readFile(receipt, 'utf8'))
   if (Result.isFailure(decoded)) throw new Error('the cell receipt is not a celld receipt')
@@ -68,20 +101,20 @@ const maps = async () => {
 const worker = async () => {
   const expected = NodeProcess.env.VIVID_CELL_WORKER_VERSION
   if (!expected) throw new Error('VIVID_CELL_WORKER_VERSION is not set by the stack')
-  const storage = storageFromEnvironment(NodeProcess.env)
+  const storage = storageFromEnvironment()
   await run(['infra/cli.mjs', 'build'])
   const built = await receiptVersion()
   if (built !== expected)
     throw new Error(
       `this image bundles Worker ${built}, the stack expected ${expected}: the bundle or its vars differ between the deploying machine and the image`,
     )
-  if ((await readPointer(storage)) === expected) return `${expected} already selected by the fleet`
+  if ((await selected(storage)) === expected) return `${expected} already selected by the fleet`
   await run(['infra/cli.mjs', 'deploy'])
   const published = await receiptVersion()
-  const selected = await readPointer(storage)
-  if (published !== expected || selected !== expected)
+  const current = await selected(storage)
+  if (published !== expected || current !== expected)
     throw new Error(
-      `published ${published}, the fleet pointer selects ${selected ?? 'nothing'}, expected ${expected}`,
+      `published ${published}, the fleet pointer selects ${current ?? 'nothing'}, expected ${expected}`,
     )
   return `${expected} published and selected by the fleet`
 }

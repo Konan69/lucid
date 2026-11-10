@@ -90,7 +90,7 @@ COPY --chown=node:node scripts/sentry-upload.mjs scripts/sentry-upload.mjs
 COPY --chown=node:node infra/cli.mjs infra/cli.mjs
 # The pre-deploy program (`preDeploy.command` in `infra/railway.ts`) and the fleet pointer reader.
 COPY --chown=node:node infra/predeploy.mjs infra/predeploy.mjs
-COPY --chown=node:node infra/pointer.mjs infra/pointer.mjs
+COPY --chown=node:node infra/pointer.ts infra/pointer.ts
 # The server names the same commit as the page it serves (`apps/server/src/config.ts` `BUILD`),
 # under a name the host does not set at run time, so the image's own value is the one read.
 ARG RAILWAY_GIT_COMMIT_SHA=""
