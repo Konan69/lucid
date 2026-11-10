@@ -1937,13 +1937,7 @@ function Tail({
 }
 
 /** What a Run's ending says, and "Try again" when asking again can help. */
-function EndedLine({
-  words,
-  onAgain,
-}: {
-  words: string
-  onAgain: Option.Option<() => void>
-}) {
+function EndedLine({ words, onAgain }: { words: string; onAgain: Option.Option<() => void> }) {
   return (
     <View style={{ gap: 8 }}>
       <Label size="label" tone="ink-2">

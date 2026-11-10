@@ -36,7 +36,6 @@ import { followThemeAtom, themeAtom } from './appearance'
 import { makeDecisions } from './approvals'
 import { makeHandoffCalls } from './handing'
 import { makeArtifacts } from './artifact'
-import { makeChecking } from './checking'
 import { makeNaming } from './name'
 import { makeGoal } from './goal'
 import { makeNotifying } from './notifying'
@@ -471,14 +470,13 @@ function makeLiveData(session: SignedIn) {
     ...makeSearches(engine),
     /** Connecting an Integration: the session's one machine (`data/connecting.ts`). */
     connecting,
-    ...makeDecisions(engine), // A computer's access, and an Approval away from its Thread.
+    ...makeDecisions(engine), // A computer's access, an Approval, an action never heard back about.
     /** A step's calls, like a device decision, outlive the banner that pressed them. */
     handing: makeHandoffCalls(engine),
     ...makeForms(engine, live),
     helpers: makeHelpers(engine), // Stopping, following up and reading a helper (`data/children.ts`).
     /** What Vivid made: its live queries, the editor and the share sheet (`data/artifact.ts`). */
     artifacts: makeArtifacts(engine, session),
-    checking: makeChecking(engine), // Whether an action Vivid never heard back about went through.
     /**
      * What Vivid remembers about the Person, read from their cell. There is no watch on it: the
      * Memory screen begins a new reading each time it is opened (`screen/settings/Memory.tsx`).

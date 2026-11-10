@@ -134,7 +134,7 @@ function Press({
     <button
       onClick={onPress}
       disabled={disabled}
-      className="shrink-0 cursor-pointer rounded-xs text-ink-2 underline decoration-line-4 underline-offset-4 transition-colors duration-(--dur-fast) hover:text-ink hover:decoration-ink-3 focus-visible:text-ink disabled:cursor-default disabled:text-ink-3 disabled:hover:text-ink-3 disabled:hover:decoration-line-4"
+      className="shrink-0 cursor-pointer rounded-xs text-ink-2 underline decoration-line-4 underline-offset-4 transition-colors duration-(--dur-fast) hover:text-ink hover:decoration-ink-3 focus-visible:text-ink disabled:cursor-default disabled:text-ink-3 hover:disabled:text-ink-3 hover:disabled:decoration-line-4"
     >
       {children}
     </button>
