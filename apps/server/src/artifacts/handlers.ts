@@ -1,3 +1,4 @@
+import { Message } from '../observability/messages.ts'
 import {
   ArtifactListResponse,
   ArtifactShelfResponse,
@@ -79,7 +80,12 @@ export const artifactHandlers = {
     })
   }),
   RemoveArtifact: Effect.fn('Rpc.RemoveArtifact')(function* ({ id }: { readonly id: ArtifactId }) {
-    return yield* (yield* ArtifactStore).remove((yield* requirePerson()).person.id, id)
+    yield* Effect.annotateCurrentSpan('vivid.artifact.id', id)
+    const removed = yield* (yield* ArtifactStore).remove((yield* requirePerson()).person.id, id)
+    yield* Effect.logInfo(Message.artifactRemoved).pipe(
+      Effect.annotateLogs('vivid.artifact.id', id),
+    )
+    return removed
   }),
   WriteDocument: Effect.fn('Rpc.WriteDocument')(function* (request: WriteDocumentRequest) {
     const auth = yield* requireVivid()

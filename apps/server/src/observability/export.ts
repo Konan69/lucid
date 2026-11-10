@@ -229,6 +229,74 @@ const rulesOf = (): Rules => {
     [FailureAttribute.root, typeNames],
     [FailureAttribute.databaseCode, sqlState(admitting(MOST_DATABASE_CODES))],
     [FailureAttribute.table, oneOf(TABLES)],
+    // Vivid generates row ids with randomUUID. No arbitrary branded string can pass this rule.
+    ...['connection', 'approval', 'input', 'artifact'].map(
+      (kind) =>
+        [
+          `vivid.${kind}.id`,
+          text((value) =>
+            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value),
+          ),
+        ] as const,
+    ),
+    // Program and Approval operations contain only Vivid-generated UUIDs. Runtime call ids and
+    // Executor request ids have open vocabularies, so those identifiers stay on local spans.
+    // The same applies to vivid.person.id, vivid.executor.app and vivid.executor.group: their
+    // branded strings impose no shape, and no name, address or credential may leave as an id.
+    [
+      'vivid.operation.id',
+      text((value) =>
+        /^(program|approval)-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
+          value,
+        ),
+      ),
+    ],
+    [
+      'vivid.executor.principal',
+      oneOf(['installation', 'member', 'adopted-account', 'adopted-public']),
+    ],
+    ['vivid.executor.notready', oneOf(['Unavailable', 'ReconnectRequired'])],
+    ['vivid.executor.method', oneOf(['call', 'resume'])],
+    [
+      'vivid.executor.status',
+      oneOf([
+        'approval-required',
+        'input-required',
+        'unavailable',
+        'busy',
+        'capacity-exceeded',
+        'completed',
+      ]),
+    ],
+    [
+      'vivid.executor.outcome',
+      oneOf([
+        'Completed',
+        'Accepted',
+        'Paused',
+        'Expired',
+        'UncertainPause',
+        'OutcomeUnknown',
+        'NotReady',
+        'Rejected',
+      ]),
+    ],
+    ['vivid.integration.pause', oneOf(['Approval', 'Input'])],
+    [
+      'vivid.integration.outcome',
+      oneOf([
+        'Accepted',
+        'Completed',
+        'Rejected',
+        'Waiting',
+        'Expired',
+        'Uncertain',
+        'Declined',
+        'Cancelled',
+      ]),
+    ],
+    ['vivid.reconciliation.outcome', oneOf(['Applied', 'NotApplied', 'Inconclusive', 'Unchecked'])],
+    ['vivid.reconciliation.retry', oneOf(['Unblocked', 'Blocked'])],
     ...refusalExport.map(([key, members]) => [key, oneOf(members)] as const),
     [DROPPED_COUNT, integer(0, Number.MAX_SAFE_INTEGER)],
     [PAUSED_SIGNAL, oneOf(Signals)],

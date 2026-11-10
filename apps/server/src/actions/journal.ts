@@ -1,3 +1,4 @@
+import { Message } from '../observability/messages.ts'
 import * as NodeCrypto from 'node:crypto'
 import { and, eq, inArray, isNull, not, or, sql } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
@@ -402,63 +403,77 @@ const appliedReceipt = (phase: ActionPhase) =>
  * stands; otherwise the provider's lookup is asked, read-only. Nothing is sent again here, and an
  * operation the lookup cannot place stays blocked from retry.
  */
-export const reconcile = Effect.fn('Actions.reconcile')(function* (
-  personId: PersonId,
-  operationId: ActionOperationId,
-) {
-  const database = yield* Database
-  const [row] = yield* database.run(
-    database.select().from(actions).where(eq(actions.id, operationId)),
-  )
-  if (row === undefined) return yield* new NotFound({ message: 'Action not found' })
-  yield* requireThread(row.threadId, personId)
-  const action = yield* viewOf(row)
-  const recorded = yield* decodeReconciliation(row.reconciliation)
-  const settled = appliedReceipt(action.phase)
-  if (Option.isSome(settled))
+export const reconcile = Effect.fn('Actions.reconcile')(
+  function* (personId: PersonId, operationId: ActionOperationId) {
+    yield* Effect.annotateCurrentSpan('vivid.operation.id', operationId)
+    const database = yield* Database
+    const [row] = yield* database.run(
+      database.select().from(actions).where(eq(actions.id, operationId)),
+    )
+    if (row === undefined) return yield* new NotFound({ message: 'Action not found' })
+    yield* requireThread(row.threadId, personId)
+    const action = yield* viewOf(row)
+    const recorded = yield* decodeReconciliation(row.reconciliation)
+    const settled = appliedReceipt(action.phase)
+    if (Option.isSome(settled))
+      return {
+        action,
+        reconciliation: ActionReconciliation.cases.Applied.make({ receipt: settled.value }),
+      }
+    if (ActionReconciliation.isAnyOf(['Applied', 'NotApplied'])(recorded))
+      return { action, reconciliation: recorded }
+    const checkedAt = yield* Clock.currentTimeMillis
+    const found = yield* (yield* ActionLookup).look(action)
+    const reconciliation = Lookup.match<ActionReconciliation>(found, {
+      Found: ({ receipt }) => ActionReconciliation.cases.Applied.make({ receipt }),
+      Absent: () =>
+        ActionReconciliation.cases.NotApplied.make({
+          checkedAt,
+          evidence: ActionAbsence.cases.ProviderLookup.make({}),
+        }),
+      Unsupported: () => ActionReconciliation.cases.Inconclusive.make({ checkedAt }),
+    })
+    const [written] = yield* database.run(
+      database
+        .update(actions)
+        .set({ reconciliation: yield* encodeReconciliation(reconciliation) })
+        .where(
+          and(
+            eq(actions.id, operationId),
+            sql`${actions.reconciliation}->>'_tag' not in ('Applied', 'NotApplied')`,
+          ),
+        )
+        .returning({ id: actions.id }),
+    )
+    if (written !== undefined) return { action, reconciliation } satisfies ReconcileActionResponse
+    // A concurrent check reached a definite answer first; that stored answer stands.
+    const [current] = yield* database.run(
+      database
+        .select({ reconciliation: actions.reconciliation })
+        .from(actions)
+        .where(eq(actions.id, operationId)),
+    )
+    if (current === undefined) return yield* new NotFound({ message: 'Action not found' })
     return {
       action,
-      reconciliation: ActionReconciliation.cases.Applied.make({ receipt: settled.value }),
-    }
-  if (ActionReconciliation.isAnyOf(['Applied', 'NotApplied'])(recorded))
-    return { action, reconciliation: recorded }
-  const checkedAt = yield* Clock.currentTimeMillis
-  const found = yield* (yield* ActionLookup).look(action)
-  const reconciliation = Lookup.match<ActionReconciliation>(found, {
-    Found: ({ receipt }) => ActionReconciliation.cases.Applied.make({ receipt }),
-    Absent: () =>
-      ActionReconciliation.cases.NotApplied.make({
-        checkedAt,
-        evidence: ActionAbsence.cases.ProviderLookup.make({}),
-      }),
-    Unsupported: () => ActionReconciliation.cases.Inconclusive.make({ checkedAt }),
-  })
-  const [written] = yield* database.run(
-    database
-      .update(actions)
-      .set({ reconciliation: yield* encodeReconciliation(reconciliation) })
-      .where(
-        and(
-          eq(actions.id, operationId),
-          sql`${actions.reconciliation}->>'_tag' not in ('Applied', 'NotApplied')`,
-        ),
-      )
-      .returning({ id: actions.id }),
-  )
-  if (written !== undefined) return { action, reconciliation } satisfies ReconcileActionResponse
-  // A concurrent check reached a definite answer first; that stored answer stands.
-  const [current] = yield* database.run(
-    database
-      .select({ reconciliation: actions.reconciliation })
-      .from(actions)
-      .where(eq(actions.id, operationId)),
-  )
-  if (current === undefined) return yield* new NotFound({ message: 'Action not found' })
-  return {
-    action,
-    reconciliation: yield* decodeReconciliation(current.reconciliation),
-  } satisfies ReconcileActionResponse
-})
+      reconciliation: yield* decodeReconciliation(current.reconciliation),
+    } satisfies ReconcileActionResponse
+  },
+  (effect) =>
+    effect.pipe(
+      Effect.tap(({ action, reconciliation }) =>
+        Effect.gen(function* () {
+          yield* Effect.annotateCurrentSpan('vivid.reconciliation.outcome', reconciliation._tag)
+          yield* Effect.logInfo(Message.reconciliation).pipe(
+            Effect.annotateLogs({
+              'vivid.operation.id': action.id,
+              'vivid.reconciliation.outcome': reconciliation._tag,
+            }),
+          )
+        }),
+      ),
+    ),
+)
 
 /**
  * Release the transaction before asking the Integration, then rerun the original check. The claim
@@ -473,9 +488,21 @@ const afterReconciliation = <A, R>(
     Effect.catchTag('ActionReconciliationRequired', (error) =>
       Effect.gen(function* () {
         const checked = yield* reconcile(personId, error.operationId)
+        yield* Effect.annotateCurrentSpan('vivid.operation.id', error.operationId)
+        yield* Effect.logInfo(Message.reconciliationRetry).pipe(
+          Effect.annotateLogs({
+            'vivid.operation.id': error.operationId,
+            'vivid.reconciliation.outcome': checked.reconciliation._tag,
+            'vivid.reconciliation.retry': ActionReconciliation.isAnyOf(['Applied', 'NotApplied'])(
+              checked.reconciliation,
+            )
+              ? 'Unblocked'
+              : 'Blocked',
+          }),
+        )
         if (!ActionReconciliation.isAnyOf(['Applied', 'NotApplied'])(checked.reconciliation))
           return yield* error
         return yield* attempt
-      }),
+      }).pipe(Effect.withSpan('Actions.retryAfterReconciliation')),
     ),
   )

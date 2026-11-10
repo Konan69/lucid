@@ -79,6 +79,7 @@ function removeAdopted(transport: Transport) {
   /** Adopted apps have an owner-created personal account. Unlink both known requirements
    * without user-link listing, which the owner cannot read after its use grant is removed. */
   return Effect.fn('Adopter.remove')(function* (references: ExecutorActiveReferences) {
+    yield* Effect.annotateCurrentSpan('vivid.executor.app', references.app)
     const ownership = references.appOwnership
     if (!ExecutorAppOwnership.guards.Adopted(ownership))
       return yield* ExecutorAccessDenied.make(context)
@@ -123,6 +124,7 @@ const makeAdopter = Effect.fn('Adopter.make')(function* () {
     remove: removeAdopted(transport),
     /** Retrying removal after a lost reply finds no group and completes without another write. */
     removeGroup: Effect.fn('Adopter.removeGroup')(function* (id: typeof AdoptionGroupId.Type) {
+      yield* Effect.annotateCurrentSpan('vivid.executor.group', id)
       const found = (yield* groups()).groups.find((entry) => entry.id === id)
       if (found !== undefined)
         yield* transport.exchange(Schema.Json)('DELETE', `/groups/${encodeURIComponent(id)}`, {

@@ -1,3 +1,4 @@
+import { observeFailures } from '../observability/failure.ts'
 import * as SchemaRepresentation from 'effect/SchemaRepresentation'
 import {
   IntegrationForm,
@@ -105,6 +106,7 @@ const decodeCallResult = Schema.decodeUnknownEffect(callResult)
 export function mcpCalls(client: HttpClient.HttpClient) {
   return Effect.fn('Executor.mcp')(
     function* (name: 'call' | 'resume', input: Schema.JsonObject, tool: string | null) {
+      yield* Effect.annotateCurrentSpan('vivid.executor.method', name)
       const request = HttpClientRequest.post('/mcp').pipe(
         HttpClientRequest.setHeaders({
           Accept: 'application/json, text/event-stream',
@@ -196,8 +198,10 @@ const project = Effect.fn('Executor.mcpOutcome')(function* (
   value: typeof result.Type,
   tool: string | null,
 ): Effect.fn.Return<McpCallOutcome, ExecutorFailure> {
+  yield* Effect.annotateCurrentSpan('vivid.executor.status', value.status)
   switch (value.status) {
     case 'approval-required':
+      yield* Effect.annotateCurrentSpan('vivid.executor.request', value.requestId)
       return McpCallOutcome.cases.Paused.make({
         pause: IntegrationPause.cases.Approval.make({
           requestId: value.requestId,
@@ -207,6 +211,7 @@ const project = Effect.fn('Executor.mcpOutcome')(function* (
         }),
       })
     case 'input-required':
+      yield* Effect.annotateCurrentSpan('vivid.executor.request', value.requestId)
       const readable = yield* Effect.try({
         try: () =>
           SchemaRepresentation.fromJsonSchemaDocument({
@@ -215,7 +220,7 @@ const project = Effect.fn('Executor.mcpOutcome')(function* (
             definitions: {},
           }),
         catch: () => ExecutorResponseInvalid.make({ service: 'connections', tool }),
-      }).pipe(Effect.result)
+      }).pipe(observeFailures('http'), Effect.result)
       if (Result.isFailure(readable))
         return McpCallOutcome.cases.Uncertain.make({ reason: 'InvalidForm' })
       return McpCallOutcome.cases.Paused.make({
