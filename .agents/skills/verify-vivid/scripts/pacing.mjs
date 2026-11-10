@@ -63,10 +63,8 @@ const localHour = (zone, at) =>
     }).format(at),
   )
 
-/** One spoken preference, then real-model background posts through the disposable Integration.
- * Choose a real IANA zone currently before eleven, so the actual urgent post also happens outside
- * the window. Future clock passes check ten/eleven after every foreground Run is quiet. */
-export async function pacing(state, id, directory) {
+/** Save a plain spoken correction through the real model, then read its persisted receipt. */
+async function spokenHours(state, id, directory) {
   NodeAssert.equal(state.modelKind, 'real', 'Spoken pacing requires a real model')
   const now = Date.now()
   const zone = Intl.supportedValuesOf('timeZone').find(
@@ -97,6 +95,14 @@ export async function pacing(state, id, directory) {
       ),
     'The real model did not save contact hours',
   )
+  return { now, zone, hours: saved.wakingHours }
+}
+
+/** One spoken preference, then real-model background posts through the disposable Integration.
+ * Choose a real IANA zone currently before eleven, so the actual urgent post also happens outside
+ * the window. Future clock passes check ten/eleven after every foreground Run is quiet. */
+export async function pacing(state, id, directory) {
+  const { now, zone, hours } = await spokenHours(state, id, directory)
   const integration = await connectPulse(state, directory)
   const marker = 'Pacing ' + crypto.randomUUID().slice(0, 8)
   await chat(
@@ -182,7 +188,7 @@ export async function pacing(state, id, directory) {
     NodeAssert.equal((await notices(state, ordinary.thread, directory, 'repeat-notices')).length, 1)
     await json(directory + '/scope.json', {
       zone,
-      saved: saved.wakingHours,
+      saved: hours,
       ordinary: ordinary.thread,
       urgent: urgent.thread,
       scope:
