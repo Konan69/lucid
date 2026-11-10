@@ -158,7 +158,10 @@ const liveLayers = (
             ...seen,
             { method: request.method, path: new URL(request.url).pathname, principal },
           ])
-          if (request.method === 'PUT' && request.url.includes('/accounts/app/'))
+          if (
+            request.url.includes('/accounts/app/') &&
+            (request.method === 'PUT' || (request.method === 'GET' && principal === 'member'))
+          )
             yield* Ref.getAndSet(crash, Effect.void).pipe(Effect.flatMap((hook) => hook))
           return yield* response
         }),
@@ -983,8 +986,258 @@ const capturedSources = Effect.fn('AdoptionProof.capturedSources')(function* (ac
   }
 })
 
+/** Remove the real bridge link immediately before the member reads it. An ordinary link
+ * mismatch must still defer adoption even when reconnect-required failures are accepted. */
+const unavailableAdoption = Effect.fn('AdoptionProof.unavailableAdoption')(function* (
+  actor: Actor,
+  crash: Ref.Ref<Effect.Effect<void>>,
+) {
+  const id = yield* legacy(actor, credential('Google'), 'Complete')
+  const original = yield* row(id)
+  if (!ExecutorReferences.guards.Authorized(original.references))
+    return expect.fail('Expected account')
+  yield* Ref.set(
+    crash,
+    Ref.set(
+      crash,
+      capturedRequest(
+        'DELETE',
+        `/apps/${original.references.app}/accounts/app/vividAdopted/${original.references.account}`,
+        {},
+        Schema.Json,
+      ).pipe(Effect.asVoid),
+    ),
+  )
+  expect(yield* adoptConnections()).toBe(true)
+  const deferred = yield* row(id)
+  expect(deferred.executorPrincipal).toBe('installation')
+  expect(ExecutorReferences.guards.Adopting(deferred.references)).toBe(true)
+  yield* removeConnection(deferred)
+})
+
+/** A real token endpoint ends only the first grant. Executor must turn its invalid_grant
+ * renewal response into OAuthReconnectRequired; no Executor responses are fabricated. */
+const lapsedProvider = Effect.fn('AdoptionProof.lapsedProvider')(function* () {
+  const exchanges = yield* Ref.make(0)
+  const renewals = yield* Ref.make(0)
+  const server = yield* NodeHttpServer.make(() => NodeHttp.createServer(), {
+    host: '127.0.0.1',
+    port: 0,
+  })
+  yield* server.serve(
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest
+      if (request.url === '/token') {
+        const body = new URLSearchParams(yield* request.text)
+        if (body.get('grant_type') === 'refresh_token') {
+          yield* Ref.update(renewals, (count) => count + 1)
+          return yield* HttpServerResponse.json({ error: 'invalid_grant' }, { status: 400 })
+        }
+        const count = yield* Ref.updateAndGet(exchanges, (count) => count + 1)
+        return yield* HttpServerResponse.json({
+          access_token: count === 1 ? 'expired-proof' : 'renewed-proof',
+          refresh_token: 'proof-refresh',
+          token_type: 'Bearer',
+          expires_in: count === 1 ? 1 : 3600,
+          scope: 'read',
+        })
+      }
+      if (request.headers['authorization'] !== 'Bearer renewed-proof')
+        return HttpServerResponse.empty({ status: 401 })
+      return yield* HttpServerResponse.json({ marker: 'renewed-account' })
+    }),
+  )
+  if (!NetAddress.isInetAddress(server.address)) return expect.fail('Expected OAuth listener')
+  return {
+    origin: (yield* Effect.fromResult(NetAddress.toUrl(server.address))).origin,
+    exchanges,
+    renewals,
+  }
+})
+
+/** The provider's sign-in return preserves Executor's real state and redirect URI. */
+function lapsedCallback(address: string) {
+  const authorization = new URL(address)
+  const redirect = authorization.searchParams.get('redirect_uri')
+  const state = authorization.searchParams.get('state')
+  if (redirect === null || state === null) return expect.fail('Expected OAuth redirect and state')
+  const callback = new URL(redirect)
+  callback.searchParams.set('state', state)
+  callback.searchParams.set('code', 'disposable-code')
+  return callback.href
+}
+
+/** Public deploy/connect APIs seed the installation-era account, including its actual expired grant.
+ * Cleanup is registered before deployment and uses only this fixture's captured resources. */
+const lapsedLegacy = Effect.fn('AdoptionProof.lapsedLegacy')(function* (
+  actor: Actor,
+  origin: string,
+) {
+  const database = yield* Database
+  const id = ConnectionId.make(crypto.randomUUID())
+  let held = Option.none<typeof ExecutorAppId.Type>()
+  yield* Effect.addFinalizer(() =>
+    Effect.gen(function* () {
+      const [stored] = yield* database.run(
+        database.select().from(connections).where(eq(connections.id, id)),
+      )
+      if (stored !== undefined) return yield* removeConnection(yield* decodeRow(stored))
+      if (Option.isSome(held))
+        yield* capturedRequest('DELETE', `/apps/${held.value}`, {}, Schema.Json)
+    }),
+  )
+  const request = credential('Google')
+  const files = madeFiles({
+    name: 'Lapsed OAuth proof',
+    files: request.files.map((file) => ({
+      ...file,
+      content: file.content
+        .replace('secrets,', 'oauth2,')
+        .replace('async ({ user, signal, cache })', 'async ({ user, signal, cache, fetch })')
+        .replace(
+          'secrets({ label: "Key", fields: object({ token: string() }) })',
+          `oauth2({ authorizationUrl: ${JSON.stringify(origin + '/authorize')}, tokenUrl: ${JSON.stringify(origin + '/token')}, scopes: ["read"] })`,
+        )
+        .replace(
+          '({ marker: account.fields.token })',
+          `await (await fetch(${JSON.stringify(origin + '/data')}, { headers: { Authorization: "Bearer " + account.fields.access_token } })).json()`,
+        )
+        .replace(
+          'name: "Adopt proof",',
+          `name: "Adopt proof", hosts: [${JSON.stringify(new URL(origin).host)}],`,
+        ),
+    })),
+  })
+  const app = yield* capturedRequest(
+    'POST',
+    '/apps/deploy',
+    { name: `lapsed-${id}`, files },
+    Schema.Struct({ id: ExecutorAppId }),
+  )
+  held = Option.some(app.id)
+  const connection = yield* capturedRequest(
+    'POST',
+    `/apps/${app.id}/accounts/user/google/connections`,
+    {},
+    Schema.Struct({ id: ExecutorAuthorizationId }),
+  )
+  const client = yield* Effect.acquireRelease(
+    capturedRequest(
+      'POST',
+      '/oauth-clients',
+      {
+        issuer: origin + '/token',
+        clientId: 'proof-client',
+        clientSecret: 'proof-secret',
+      },
+      Schema.Struct({ client: Schema.Struct({ id: Schema.String }) }),
+    ),
+    (saved) => capturedRequest('DELETE', `/oauth-clients/${saved.client.id}`, {}, Schema.Json),
+  )
+  const signIn = yield* capturedRequest(
+    'POST',
+    `/connections/${connection.id}/oauth/start`,
+    { method: 'key', client: { id: client.client.id } },
+    Schema.Struct({ authorizationUrl: Schema.String }),
+  )
+  const account = yield* capturedRequest(
+    'POST',
+    `/connections/${connection.id}/oauth/complete`,
+    { callbackUrl: lapsedCallback(signIn.authorizationUrl) },
+    Schema.Struct({ id: ExecutorAccountId }),
+  )
+  const references = ExecutorReferences.cases.Authorized.make({
+    service: ServiceId.make('made:lapsed-oauth-proof'),
+    app: app.id,
+    owner: ExecutorOwnerId.make(`p-${actor.person.id}`),
+    binding: ExecutorBinding.cases.Account.make({ scope: 'user', requirement: 'google' }),
+    appOwnership: ExecutorAppOwnership.cases.Dedicated.make({}),
+    account: account.id,
+  })
+  yield* database.run(
+    database.insert(connections).values({
+      id,
+      personId: actor.person.id,
+      companyId: null,
+      service: references.service,
+      serviceName: 'Lapsed OAuth proof',
+      executorApp: app.id,
+      references: yield* encodeReferences(references),
+      status: 'needs-authorization',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }),
+  )
+  return { id, references }
+})
+
+/** Resume is exercised only after finalization removes the old user requirement. It must
+ * reconnect the owner-created account in place, then dispatch tools with the member key. */
+const lapsed = Effect.fn('AdoptionProof.lapsed')(function* (
+  actor: Actor,
+  receipts: Ref.Ref<ReadonlyArray<Receipt>>,
+) {
+  const remote = yield* lapsedProvider()
+  const legacy = yield* lapsedLegacy(actor, remote.origin)
+  expect(yield* adoptConnections()).toBe(false)
+  const moved = yield* row(legacy.id)
+  expect(moved.executorPrincipal).toBe('adopted-account')
+  expect(moved.status).toBe('needs-authorization')
+  if (!ExecutorReferences.guards.Authorized(moved.references))
+    return expect.fail('Expected account')
+  expect(moved.references.account).toBe(legacy.references.account)
+  const ownership = moved.references.appOwnership
+  if (!ExecutorAppOwnership.guards.Adopted(ownership)) return expect.fail('Expected adoption')
+  expect(AdoptionFinalization.guards.Completed(ownership.finalization)).toBe(true)
+  expect(yield* Ref.get(remote.renewals)).toBeGreaterThan(0)
+  const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+  const store = yield* ConnectionStore.pipe(Effect.provide(context))
+  const step = yield* store.resume(actor, legacy.id, 'Web')
+  if (!ConnectionStep.guards.OpenSignIn(step)) return expect.fail('Expected reconnect sign-in')
+  yield* store.callback(actor, legacy.id, Redacted.make(lapsedCallback(step.address)))
+  const ready = yield* row(legacy.id)
+  expect(ready.status).toBe('ready')
+  if (!ExecutorReferences.guards.Authorized(ready.references))
+    return expect.fail('Expected account')
+  expect(ready.references.account).toBe(legacy.references.account)
+  expect(ready.references.binding).toEqual({
+    _tag: 'Account',
+    scope: 'app',
+    requirement: 'vividAdopted',
+  })
+  const offset = (yield* Ref.get(receipts)).length
+  expect(
+    yield* (yield* operationsOf(ready)).call({
+      references: ready.references,
+      tool: 'read',
+      input: {},
+    }),
+  ).toEqual(ExecutorCallOutcome.cases.Completed.make({ value: { marker: 'renewed-account' } }))
+  const called = (yield* Ref.get(receipts))
+    .slice(offset)
+    .filter((receipt) => receipt.method === 'POST')
+  expect(called.length).toBeGreaterThan(0)
+  expect(called.every((receipt) => receipt.principal === 'member')).toBe(true)
+  expect(yield* Ref.get(remote.exchanges)).toBe(2)
+  expect(yield* adoptConnections()).toBe(false)
+})
+
 describe.skipIf(!enabled || !testDatabaseConfigured)('Executor adoption', () => {
   layer(connectionTestLayer, { excludeTestServices: true, timeout: 240_000 })((it) => {
+    it.effect(
+      'adopts a lapsed OAuth grant and reconnects its finalized account in place',
+      () =>
+        Effect.gen(function* () {
+          const actors = yield* fixture()
+          const receipts = yield* Ref.make<ReadonlyArray<Receipt>>([])
+          const crash = yield* Ref.make<Effect.Effect<void>>(Effect.void)
+          const context = yield* Layer.build(liveLayers(crash, receipts))
+          yield* lapsed(actors.personalActor, receipts).pipe(Effect.provide(context))
+          yield* unavailableAdoption(actors.personalActor, crash).pipe(Effect.provide(context))
+        }).pipe(Effect.scoped),
+      { timeout: 240_000 },
+    )
+
     it.effect(
       'adopts the captured beta.19 GitHub and beta.22 Google workspaces without changing tools or data',
       () =>
