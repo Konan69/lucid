@@ -107,9 +107,11 @@ async function feed(state, id, client, words, stage) {
   await client.run(['open', state.web + '/feed'])
   await client.run(['wait', '--text', words])
   await client.capture(stage)
+  // The card is the element holding the ask's words with the most buttons, the smallest such:
+  // never the page around it, which also holds the composer.
   const card = await read(
     client,
-    `(() => { const found = Array.from(document.querySelectorAll('article, li, section')).find((node) => node.innerText.includes(${JSON.stringify(words)}) && node.querySelector('button')); return found ? { buttons: Array.from(found.querySelectorAll('button')).map((b) => b.innerText.trim()).filter(Boolean), fields: found.querySelectorAll('textarea, input').length } : null })()`,
+    `(() => { const found = Array.from(document.querySelectorAll('div, article, li, section')).filter((node) => node.innerText.includes(${JSON.stringify(words)}) && !node.querySelector('[aria-label="Message Vivid"]')).sort((a, b) => b.querySelectorAll('button').length - a.querySelectorAll('button').length || a.innerText.length - b.innerText.length)[0]; return found ? { buttons: Array.from(found.querySelectorAll('button')).map((b) => b.innerText.trim()).filter(Boolean), fields: found.querySelectorAll('textarea, input').length } : null })()`,
   )
   await client.run(['open', state.web + '/t/' + id])
   await client.run(['wait', '[aria-label="Message Vivid"]'])
