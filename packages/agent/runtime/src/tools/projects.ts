@@ -13,7 +13,7 @@ import { InvalidRequest } from '@vivid/contracts/rpc'
 import { Effect, Match, Result, Schema } from 'effect'
 import * as v from 'valibot'
 import { summary, text } from './inputs.ts'
-import { named } from './names.ts'
+import { NameAmbiguous, named } from './names.ts'
 import { modelText } from './views.ts'
 import { Scope, type RunTool } from './scope.ts'
 
@@ -160,15 +160,13 @@ export function projectTools(runTool: RunTool) {
             if (
               Result.match(existing, {
                 onSuccess: () => true,
-                onFailure: (error) => error._tag === 'NameAmbiguous',
+                onFailure: Schema.is(NameAmbiguous),
               })
             )
-              return yield* Effect.fail(
-                new InvalidRequest({
-                  message:
-                    'A Project with that name already exists in this placement. Use read_project and update_project to continue its work.',
-                }),
-              )
+              return yield* new InvalidRequest({
+                message:
+                  'A Project with that name already exists in this placement. Use read_project and update_project to continue its work.',
+              })
             const project = yield* client.CreateProject(request)
             const parent = Match.value(data.location).pipe(
               Match.discriminatorsExhaustive('kind')({
