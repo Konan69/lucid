@@ -200,6 +200,7 @@ const releaseServer = Effect.fn('releaseServer')(function* (
   })
   const source = releaseSource(serverInputs)
   yield* Release('ServerRelease', {
+    projectId: project.projectId,
     serviceId: server.serviceId,
     environmentId: server.environmentId,
     url: server.url,

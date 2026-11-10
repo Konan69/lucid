@@ -56,6 +56,7 @@ export const releaseSource = (patterns: ReadonlyArray<string>) => {
  * - `storage` is the fleet bucket, for reading the pointer back.
  */
 export interface ReleaseProps {
+  readonly projectId: string
   readonly serviceId: string
   readonly environmentId: string
   readonly url?: string
@@ -83,6 +84,7 @@ export interface ReleaseAttributes {
   readonly preDeployCommand: ReadonlyArray<string> | null
   readonly startCommand: string | null
   readonly healthcheckPath: string | null
+  readonly variables: Readonly<Record<string, string>>
 }
 
 export type Release = Resource<'Infra.Release', ReleaseProps, ReleaseAttributes>
@@ -195,6 +197,7 @@ const answers = {
     }),
   ),
   deployment: answer(Schema.Struct({ deployment: Deployment })),
+  variables: answer(Schema.Struct({ variables: Schema.Record(Schema.String, Schema.String) })),
   deploy: answer(Schema.Struct({ serviceInstanceDeployV2: Schema.String })),
   cancel: answer(Schema.Struct({ deploymentCancel: Schema.Boolean })),
   buildLogs: answer(Schema.Struct({ buildLogs: LogLines })),
@@ -262,6 +265,24 @@ const deployment = (id: string) =>
     answers.deployment,
   ).pipe(Effect.map((data) => data.deployment))
 
+/**
+ * Read stored references rather than rendered values, just as Railway.Service.syncEnv does.
+ * Only variable names and SHA-256 digests leave this boundary; plaintext never enters attributes.
+ */
+const variableDigests = Effect.fn('Infra.Release.variables')(function* (props: ReleaseProps) {
+  const { variables } = yield* railway(
+    'variables',
+    'query($projectId: String!, $environmentId: String!, $serviceId: String!) { variables(projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId, unrendered: true) }',
+    { projectId: props.projectId, environmentId: props.environmentId, serviceId: props.serviceId },
+    answers.variables,
+  )
+  return Object.fromEntries(
+    Object.entries(variables)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, value]) => [name, NodeCrypto.createHash('sha256').update(value).digest('hex')]),
+  )
+})
+
 /** The last lines a failed deployment wrote, build and deploy, for the deploy log. */
 const failureLogs = Effect.fn('Infra.Release.logs')(function* (deploymentId: string) {
   const build = yield* railway(
@@ -297,7 +318,9 @@ const attributes = (
   live: Deployment,
   inputs: string,
   worker: Option.Option<string>,
+  variables: ReleaseAttributes['variables'],
 ): ReleaseAttributes => ({
+  variables,
   deploymentId: live.id,
   status: live.status,
   commit: Option.getOrNull(live.meta.commitHash),
@@ -367,7 +390,7 @@ const deploy = Effect.fn('Infra.Release.deploy')(function* (props: ReleaseProps)
       check: 'worker',
       message: `the fleet selects ${Option.getOrElse(worker, () => 'no Worker')}, the release carries ${props.cellWorkerVersion}`,
     })
-  return attributes(live, props.inputs, worker)
+  return attributes(live, props.inputs, worker, yield* variableDigests(props))
 })
 
 /** Provider of `Infra.Release`; it needs the Railway credential and HTTP client the Railway providers carry. */
@@ -391,7 +414,7 @@ export const ReleaseProvider = Provider.succeed(Release, {
     const live = yield* latestDeployment(olds.serviceId, olds.environmentId)
     if (live === null) return undefined
     const worker = yield* readPointer(yield* fleetStorage(olds.storage))
-    return attributes(live, output.inputs, worker)
+    return attributes(live, output.inputs, worker, yield* variableDigests(olds))
   }),
   /** A release is history: removing the declaration leaves the server as it is. */
   delete: () => Effect.void,
