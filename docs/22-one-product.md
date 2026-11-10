@@ -143,8 +143,8 @@ The runtime proposes; the server decides. Nothing consequential runs from model 
    action, not a new proposal, so the preview and the action cannot drift.
 8. The outcome returns to the Thread as a signal and Vivid continues. A write whose result is
    uncertain is recorded as **outcome unknown** and is never retried silently.
-9. Every allowed, blocked, approved and denied action writes an **AuditEntry**. The reviewer's
-   measurements are logged as numbers only; putting them in the AuditEntry is not built yet.
+9. Every allowed, blocked, approved and denied action writes an **AuditEntry**. Review status, fallback reasons and retry decisions are traced as tags; the reviewer's
+   measurements are not part of the AuditEntry.
 
 The mechanism is Grok Bot's Auto-review (0.30 `source/host/extensions/auto-review/`,
 `source/packages/agent/smart-mode-classifier-context.ts`, and the approval card in

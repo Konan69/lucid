@@ -1,3 +1,4 @@
+import { Message } from '../observability/messages.ts'
 import * as NodeCrypto from 'node:crypto'
 import {
   ActionEffect,
@@ -2835,10 +2836,22 @@ const continueApproved = Effect.fn('Executor.continueApproved')(function* (
   while (McpCallOutcome.guards.Paused(outcome) && IntegrationPause.guards.Approval(outcome.pause)) {
     answered = true
     const pause = outcome.pause
+    const attributes = {
+      'vivid.executor.request_id': pause.requestId,
+      'vivid.executor.approval': 'Accepted',
+    }
+    yield* Effect.annotateCurrentSpan(attributes)
     if (pause.expiresAt <= (yield* Clock.currentTimeMillis)) {
       outcome = McpCallOutcome.cases.Expired.make({})
+      yield* Effect.logWarning(Message.executorContinuationFailed).pipe(
+        Effect.annotateLogs({
+          'vivid.executor.request_id': pause.requestId,
+          'vivid.executor.outcome': 'Expired',
+        }),
+      )
       break
     }
+    yield* Effect.logInfo(Message.executorApproval).pipe(Effect.annotateLogs(attributes))
     const resumed = yield* mcp(
       'resume',
       {
@@ -2848,6 +2861,12 @@ const continueApproved = Effect.fn('Executor.continueApproved')(function* (
       null,
     ).pipe(Effect.result)
     if (Result.isFailure(resumed)) {
+      yield* Effect.logWarning(Message.executorContinuationFailed).pipe(
+        Effect.annotateLogs({
+          'vivid.executor.request_id': pause.requestId,
+          'vivid.executor.failure': resumed.failure._tag,
+        }),
+      )
       const result =
         resumed.failure instanceof ExecutorRejected
           ? ExecutorCallOutcome.cases.Rejected.make({ message: resumed.failure.message })
@@ -2867,6 +2886,7 @@ function makeResume(mcp: ReturnType<typeof mcpCalls>) {
     response,
     effect,
   }: Parameters<ExecutorConnectionOperations['resume']>[0]) {
+    yield* Effect.annotateCurrentSpan('vivid.executor.request_id', pause.requestId)
     if (pause.expiresAt <= (yield* Clock.currentTimeMillis))
       return ExecutorCallOutcome.cases.Expired.make({})
     const encoded = yield* encodeIntegrationResponse(response).pipe(

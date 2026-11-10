@@ -1,3 +1,4 @@
+import { Message } from '../observability/messages.ts'
 import { IntegrationAnswers } from './answers.ts'
 import { Audit } from '../audit/record.ts'
 import { Array as Arr, Clock, Duration, Effect, Option, Order, Result, Schema } from 'effect'
@@ -605,6 +606,10 @@ const auditApproval = Effect.fn('Connections.auditApproval')(
       readonly operation: Option.Option<ActionOperationId>
     },
   ) {
+    yield* Effect.annotateCurrentSpan(
+      'vivid.approval.authority',
+      actor.by === 'person' ? 'PersonPress' : 'Gate',
+    )
     const addressed =
       Option.isNone(actor.threadId) && Option.isSome(call.operation)
         ? { ...actor, threadId: Option.some((yield* originOf(call.operation.value)).threadId) }
@@ -636,6 +641,9 @@ const runConnection = Effect.fn('Connections.run')(
     },
   ) {
     const { effect, operation } = call
+    yield* Effect.annotateCurrentSpan({
+      'vivid.action.operation_id': Option.getOrNull(operation),
+    })
     const refusal = yield* permissionRefusal(row)
     if (Option.isSome(refusal)) return yield* notRead(refusal.value)
     const sending =
@@ -660,6 +668,12 @@ const runConnection = Effect.fn('Connections.run')(
     if (outcome.approvalAnswered) {
       const audited = yield* auditApproval(actor, target, { effect, operation })
       if (Result.isFailure(audited)) {
+        yield* Effect.logError(Message.approvalAuditFailed).pipe(
+          Effect.annotateLogs({
+            'vivid.action.operation_id': Option.getOrNull(operation),
+            'vivid.executor.failure': audited.failure._tag,
+          }),
+        )
         const observedAt = yield* Clock.currentTimeMillis
         return yield* notRead(
           ToolOutcome.cases.OutcomeUnknown.make({
@@ -965,22 +979,24 @@ const runOf = (threadId: ThreadId, personId: PersonId) =>
   )
 
 /** Provider evidence settles both outward writes and reads whose approval paused. */
-const settleCall = (outcome: ToolOutcome, operation: ActionOperationId) =>
-  ToolOutcome.match(outcome, {
-    Accepted: ({ receipt }) => (receipt === null ? Effect.void : settle(receipt)),
-    Completed: ({ receipt }) => (receipt === null ? Effect.void : settle(receipt)),
-    OutcomeUnknown: ({ receipt }) => (receipt === null ? Effect.void : settle(receipt)),
-    Rejected: () => release(operation),
-    ConnectionNotReady: () => release(operation),
-    // Permission refusals are decided before dispatch: nothing outward happened.
-    ScopeRequired: () => release(operation),
-    PermissionDeclined: () => release(operation),
-    Unsupported: () => release(operation),
-    Repeated: () => Effect.void,
-    ApprovalRequired: () => Effect.void,
-    InputRequired: () => Effect.void,
-    Blocked: () => Effect.void,
-  })
+const settleCall = Effect.fn('Connections.settleCall')(
+  (outcome: ToolOutcome, operation: ActionOperationId) =>
+    ToolOutcome.match(outcome, {
+      Accepted: ({ receipt }) => (receipt === null ? Effect.void : settle(receipt)),
+      Completed: ({ receipt }) => (receipt === null ? Effect.void : settle(receipt)),
+      OutcomeUnknown: ({ receipt }) => (receipt === null ? Effect.void : settle(receipt)),
+      Rejected: () => release(operation),
+      ConnectionNotReady: () => release(operation),
+      // Permission refusals are decided before dispatch: nothing outward happened.
+      ScopeRequired: () => release(operation),
+      PermissionDeclined: () => release(operation),
+      Unsupported: () => release(operation),
+      Repeated: () => Effect.void,
+      ApprovalRequired: () => Effect.void,
+      InputRequired: () => Effect.void,
+      Blocked: () => Effect.void,
+    }),
+)
 
 /**
  * Sends one outward write under the journal: claim first, then send, then record the receipt the
@@ -1089,6 +1105,10 @@ const useToolAs = Effect.fn('Connections.useTool')(function* (
     const answer = yield* answerBefore({ ...prospective.value, personId: actor.person.id, target })
     if (Option.isSome(answer)) return yield* notRead(answeredOutcome(answer.value))
   }
+  yield* Effect.annotateCurrentSpan(
+    'vivid.action.operation_id',
+    Option.getOrNull(Option.map(prospective, (entry) => entry.id)),
+  )
   const decision = yield* (yield* Gate).check(
     actor,
     action,

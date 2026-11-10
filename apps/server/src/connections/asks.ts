@@ -84,6 +84,10 @@ const answer = Effect.fn('IntegrationAsks.answer')(function* (
     return yield* new InvalidRequest({ message: 'Integration question has no saved call.' })
   const row = yield* (yield* ConnectionStore).get(actor, action.target.connectionId)
   const saved = action.continuation
+  yield* Effect.annotateCurrentSpan({
+    'vivid.action.operation_id': saved.operation,
+    'vivid.executor.request_id': saved.pause.requestId,
+  })
   const resumed = yield* operationsOf(row).pipe(
     Effect.flatMap((operation) =>
       operation.resume({ pause: saved.pause, response, effect: action.effect }),

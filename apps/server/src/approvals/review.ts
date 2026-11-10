@@ -1,11 +1,12 @@
+import { Message } from '../observability/messages.ts'
 import { Clock, Context, Duration, Effect, Layer, Option, Schema } from 'effect'
 import { Decision, DecisionModel } from 'effect/ai'
 import { ActionTarget, BrowseTarget, type ProposedAction } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
-import { decideWithin, decisionWouldAttempt, isDecisionNonEvent } from '../decisions/model.ts'
+import { decideWithin, decisionUnavailability } from '../decisions/model.ts'
 import { Runtime } from '../runtime/client.ts'
 import { Database } from '../database/client.ts'
-import { Review } from './policy.ts'
+import { Review, UnreviewedReason } from './policy.ts'
 import { personRequest, type PersonRequest } from './request.ts'
 
 /**
@@ -131,6 +132,16 @@ export interface ReviewerService {
 /** The trust loop's reviewer. The gate asks it only about actions that would otherwise need a Person. */
 export class Reviewer extends Context.Service<Reviewer, ReviewerService>()('vivid/Reviewer') {}
 
+/** Missing judgments carry a closed reason into the Gate and its exported decision trace. */
+const unreviewed = Effect.fn('Reviewer.unreviewed')(function* (
+  reason: typeof UnreviewedReason.Type,
+) {
+  const attributes = { 'vivid.review.state': 'Unreviewed', 'vivid.review.reason': reason }
+  yield* Effect.annotateCurrentSpan(attributes)
+  yield* Effect.logWarning(Message.reviewFallback).pipe(Effect.annotateLogs(attributes))
+  return Review.cases.Unreviewed.make({ reason })
+})
+
 export const reviewerLayer = Layer.effect(
   Reviewer,
   Effect.gen(function* () {
@@ -142,32 +153,21 @@ export const reviewerLayer = Layer.effect(
         function* (actor, action) {
           // Switched off, unconfigured or known to be down are states, not events: no history
           // read, no provider call and no log line.
-          const attempt = yield* decisionWouldAttempt.pipe(
+          const unavailable = yield* decisionUnavailability().pipe(
             Effect.provideService(DecisionModel.DecisionModel, model),
           )
-          if (!attempt) {
-            yield* Effect.logWarning('Action unreviewed', { reason: 'Unavailable' })
-            return Review.cases.Unreviewed.make({})
-          }
+          if (Option.isSome(unavailable)) return yield* unreviewed(unavailable.value)
           // Arguments too long to show whole are not judged on a part of them.
-          if (shown(action).input.length > INPUT_CHARACTERS) {
-            yield* Effect.logWarning('Action unreviewed', { reason: 'ArgumentsTooLong' })
-            return Review.cases.Unreviewed.make({})
-          }
+          if (shown(action).input.length > INPUT_CHARACTERS)
+            return yield* unreviewed('ArgumentsTooLong')
           const startedAt = yield* Clock.currentTimeMillis
           const said = yield* personRequest(runtime, actor).pipe(
             Effect.provideService(Database, database),
             Effect.timeoutOption(REVIEW_BUDGET),
           )
-          if (Option.isNone(said)) {
-            yield* Effect.logWarning('Action unreviewed', { reason: 'HistoryDeadline' })
-            return Review.cases.Unreviewed.make({})
-          }
+          if (Option.isNone(said)) return yield* unreviewed('HistoryDeadline')
           // Without the Person's words `asked` would be judged from Vivid's own account alone.
-          if (Option.isNone(said.value)) {
-            yield* Effect.logWarning('Action unreviewed', { reason: 'NoRequest' })
-            return Review.cases.Unreviewed.make({})
-          }
+          if (Option.isNone(said.value)) return yield* unreviewed('NoRequest')
           // History remains inside the first attempt's original three seconds. Retrying
           // uses this same bounded remainder, so no attempt or history read raises that limit.
           const remaining = Duration.millis(
@@ -182,30 +182,16 @@ export const reviewerLayer = Layer.effect(
             remaining,
             1,
           ).pipe(Effect.provideService(DecisionModel.DecisionModel, model))
-          // Numbers only: the action, the request and provider detail never reach the log.
-          yield* Effect.logInfo('Action reviewed', {
-            asked: answers.asked.probability,
-            beyond: answers.beyond.probability,
-            contained: answers.consequence.probabilities.contained,
-            effect: action.effect,
-          })
+          const attributes = { 'vivid.review.state': 'Reviewed' }
+          yield* Effect.annotateCurrentSpan(attributes)
+          yield* Effect.logInfo(Message.reviewed).pipe(Effect.annotateLogs(attributes))
           return Review.cases.Reviewed.make({
             asked: answers.asked.probability,
             beyond: answers.beyond.probability,
             contained: answers.consequence.probabilities.contained,
           })
         },
-        (effect) =>
-          effect.pipe(
-            // A failed decision is worth one line. Decisions switched off, or already known to
-            // be down, are states the Decision Layer announces itself, not one event per action.
-            Effect.catch((error) =>
-              (isDecisionNonEvent(error)
-                ? Effect.void
-                : Effect.logWarning('Action unreviewed', { reason: error.reason })
-              ).pipe(Effect.as(Review.cases.Unreviewed.make({}))),
-            ),
-          ),
+        (effect) => effect.pipe(Effect.catch((error) => unreviewed(error.reason))),
       ),
     })
   }),

@@ -77,7 +77,11 @@ layer(testDatabaseLayer)((it) => {
               expect(pending.pollUnsafe()).toBeUndefined()
               yield* TestClock.adjust('1 millis')
             }
-            expect(yield* Fiber.join(pending)).toEqual(Review.cases.Unreviewed.make({}))
+            expect(yield* Fiber.join(pending)).toEqual(
+              Review.cases.Unreviewed.make({
+                reason: phase === 'history' ? 'HistoryDeadline' : 'TimedOut',
+              }),
+            )
           }
         }).pipe(Effect.scoped, Effect.provide(context))
       }),

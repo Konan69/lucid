@@ -9,6 +9,18 @@
  * its message here and writes that constant, never a template string.
  */
 export const Message = {
+  /** The Gate's final policy decision and the review measurements' policy outcome. */
+  gateDecision: 'Gate decided',
+  reviewDecision: 'Gate review decided',
+  /** A review succeeded, could not be made, or took its one transient retry. */
+  reviewed: 'Action reviewed',
+  reviewFallback: 'Unreviewed fallback applied',
+  reviewRetry: 'Jev retry taken',
+  /** Provider approval is answered underneath the product's already-made decision. */
+  executorApproval: 'Executor pause auto-accepted',
+  executorContinuationFailed: 'Executor continuation failed',
+  approvalAuditFailed: 'Integration approval audit failed',
+
   /** `failure.ts`: a typed failure was answered at a boundary. */
   failure: 'Failure reached a boundary',
   /** `failure.ts`: a defect was answered at a boundary. */

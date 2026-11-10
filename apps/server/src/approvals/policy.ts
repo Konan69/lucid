@@ -1,5 +1,15 @@
-import { Schema } from 'effect'
+import { Effect, Schema } from 'effect'
+import { DecisionUnavailable } from '../decisions/model.ts'
 import type { ActionEffect } from '@vivid/contracts'
+
+/** Closed fallback reasons combine the provider's typed failures with review preparation failures. */
+export const UnreviewedReason = Schema.Literals([
+  ...DecisionUnavailable.fields.reason.literals,
+  'Unavailable',
+  'ArgumentsTooLong',
+  'HistoryDeadline',
+  'NoRequest',
+])
 
 /**
  * The reviewer's answer about one proposed action. `Unreviewed` is the honest remainder: there
@@ -20,7 +30,9 @@ export const Review = Schema.TaggedUnion({
      */
     contained: Schema.Finite,
   },
-  Unreviewed: {},
+  Unreviewed: {
+    reason: UnreviewedReason.pipe(Schema.withConstructorDefault(Effect.succeed('Unavailable'))),
+  },
 })
 export type Review = typeof Review.Type
 

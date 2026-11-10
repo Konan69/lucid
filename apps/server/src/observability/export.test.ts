@@ -337,6 +337,38 @@ const withReceiver = <A, E, R>(program: Effect.Effect<A, E, R>) =>
     return yield* program.pipe(Effect.provide(context))
   }).pipe(Effect.scoped)
 
+it.effect('exports approval correlation and closed review reasons without provider content', () =>
+  withReceiver(
+    Effect.gen(function* () {
+      const attributes = {
+        'vivid.action.operation_id': 'program-472d9c04-4341-433e-aa5f-00ce5487a241',
+        'vivid.executor.request_id': 'apr_472d9c04-4341-433e-aa5f-00ce5487a241',
+        'vivid.gate.decision': 'ApprovalRequired',
+        'vivid.review.state': 'Unreviewed',
+        'vivid.review.reason': 'TimedOut',
+        'vivid.review.outcome': 'Ask',
+        'vivid.review.retry': 'Taken',
+      }
+      const probe = Effect.fn('Probe.approvalTrace')(function* () {
+        yield* Effect.annotateCurrentSpan({
+          ...attributes,
+          'vivid.executor.input': 'private provider content',
+        })
+        yield* Effect.logWarning(Message.reviewFallback).pipe(Effect.annotateLogs(attributes))
+      })
+      const { spans, lines, text } = yield* exported(probe())
+      const [span] = spanNamed(spans, 'Probe.approvalTrace')
+      expect(span === undefined ? {} : valuesOf(span.attributes)).toEqual(attributes)
+      expect(
+        lines
+          .filter((line) => line.body.stringValue === Message.reviewFallback)
+          .map((line) => valuesOf(line.attributes)),
+      ).toEqual([attributes])
+      expect(text).not.toContain('private provider content')
+    }),
+  ),
+)
+
 it.effect(
   'exports failed model settlements as typed runtime failures with only closed diagnostics',
   () =>
