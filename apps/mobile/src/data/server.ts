@@ -69,12 +69,3 @@ export const libraryAddress = (server: ServerAddress, path: string): string =>
 /** The link an invited Person opens to see who invited them, and to what, before accepting. */
 export const invitationAddress = (server: ServerAddress, id: InvitationId): string =>
   `${server}/invite/${encodeURIComponent(id)}`
-
-/** Settings → Connections in the web app, where a service is authorized in a browser. */
-const connectionsAddress = (server: ServerAddress): string => `${server}/?settings=connections`
-
-/** Settings → Rules in the web app, where what Vivid must ask about first is written. */
-const rulesAddress = (server: ServerAddress): string => `${server}/?settings=rules`
-
-/** Settings → Record in the web app: what Vivid did, and for whom. */
-const recordAddress = (server: ServerAddress): string => `${server}/?settings=record`

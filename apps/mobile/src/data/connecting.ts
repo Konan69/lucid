@@ -413,5 +413,3 @@ export function makeConnecting(session: Session) {
     },
   }
 }
-
-type Connecting = ReturnType<typeof makeConnecting>

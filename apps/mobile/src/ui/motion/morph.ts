@@ -32,7 +32,7 @@ export const MORPH = LinearTransition.duration(200)
   .reduceMotion(ReduceMotion.System)
 
 /** A row or group that makes room for something appearing inside it. */
-const ROW_MORPH = LinearTransition.duration(250).reduceMotion(ReduceMotion.System)
+export const ROW_MORPH = LinearTransition.duration(250).reduceMotion(ReduceMotion.System)
 
 /** What arrives inside a control that has changed shape. */
 export const APPEAR = FadeIn.duration(200).reduceMotion(ReduceMotion.System)
@@ -41,7 +41,7 @@ export const APPEAR = FadeIn.duration(200).reduceMotion(ReduceMotion.System)
 export const LEAVE = FadeOut.duration(150).reduceMotion(ReduceMotion.System)
 
 /** A menu or popover: it is asked for, so it is there almost at once. */
-const MENU_APPEAR = FadeIn.duration(120).reduceMotion(ReduceMotion.System)
+export const MENU_APPEAR = FadeIn.duration(120).reduceMotion(ReduceMotion.System)
 
 /**
  * A message the Person has just sent: it fades in while rising into its place from the composer
