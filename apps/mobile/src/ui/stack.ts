@@ -82,30 +82,26 @@ export const GLASS_HEADER = {
 } satisfies NativeStackNavigationOptions
 
 /**
- * How one screen replaces another: it fades in where it stands, and nothing travels.
+ * How one screen replaces another: the platform's own push. On iOS that is UIKit's navigation
+ * push, the new screen sliding in from the trailing edge over the old one, which slips back under
+ * a dim, and the edge swipe that drags it back 1:1; on Android it is the platform's default.
+ * react-native-screens leaves `default` to the system (`RNSScreen.mm`, `setStackAnimation`).
  *
- * Screens used to be pushed (`simple_push` on iOS, the platform's default on Android), so every
- * change of screen slid one over another. The owner asked for no slide anywhere (5 Oct 2026); a
- * cross-fade is what the stack already used for reduced motion, so that is now the one way. It is
- * short: a change of screen happens many times a day, and a long fade would be felt as waiting.
- * The system's back swipe is still the Person's finger moving the screen, which is theirs to do.
- *
- * `animationDuration` is honoured on iOS only (react-native-screens, `fade` among the kinds it
- * applies to); Android fades at the platform's own short length.
+ * From 5 October to 11 November 2026 every screen cross-faded in 150 ms instead, recorded here as
+ * the owner asking for "no slide anywhere". The owner never asked for that (11 November 2026: "i
+ * didnt say no slide anywhere rm that rule"), and a page change with no direction read as a
+ * snap, so the push is back.
  */
 export const SCREEN_CHANGE = {
-  animation: 'fade',
-  animationDuration: 150,
+  animation: 'default',
 } satisfies NativeStackNavigationOptions
 
 /**
- * The front door's stack still asks for its animation by this name, with whether motion is
- * reduced (`screen/Door.tsx`, which another piece of work is rewriting). The answer no longer
- * depends on that: the door fades as every other screen does. It goes when the door reads
- * `SCREEN_CHANGE` itself.
+ * The front door's stack: the push, or a cross-fade when the Person asked for reduced motion
+ * (`screen/Door.tsx`).
  */
-export const pushAnimation = (_still: boolean): NativeStackNavigationOptions['animation'] =>
-  SCREEN_CHANGE.animation
+export const pushAnimation = (still: boolean): NativeStackNavigationOptions['animation'] =>
+  still ? 'fade' : SCREEN_CHANGE.animation
 
 /**
  * How round the top of a fitted sheet is on Android, in points. The library's own value there is
@@ -130,7 +126,7 @@ const SHEET_CORNERS = 28
  * - `headerShown: false`. An Android form sheet cannot host the stack's bar, and a sheet this
  *   small has no room for one: its title is the first line of its own content
  *   (`FittedSheet`, `ui/Sheet.tsx`).
- * - `animation: 'default'`, in place of the stack's cross-fade (`SCREEN_CHANGE`). Read in
+ * - `animation: 'default'`, whatever the stack's own is (`SCREEN_CHANGE`). Read in
  *   react-native-screens 4.26.2: on iOS `fade` sets the presented controller's
  *   `modalTransitionStyle` to a cross-dissolve (`RNSScreen.mm`, `setStackAnimation`), so the
  *   sheet would fade in where it rests instead of rising, while `default` touches nothing and

@@ -414,8 +414,8 @@ const drawerPage = (stands: boolean, own: boolean): NativeStackNavigationOptions
  *
  * The first screen is Home, and a Thread is shown in Home's own place (`data/front.ts`), so the
  * commonest change in the app, from the greeting to a conversation or from one Thread to another,
- * changes no screen at all. The other places are screens over Home; one replaces another by a
- * short cross-fade and nothing slides (`SCREEN_CHANGE`).
+ * changes no screen at all. The other places are screens over Home, pushed and popped the
+ * platform's way (`SCREEN_CHANGE`).
  *
  * The bar is the platform's (`GLASS_HEADER`): its way back and its buttons are the system's,
  * liquid glass on iOS 26, with each screen's content scrolling under it. A screen that has
