@@ -158,26 +158,27 @@ export const ratchets = [
     rule: 'react-no-state-after-wait',
     ceiling: 95,
   },
-  // Added 10 November 2026 with the failure rules, measured at bab8c618d. Each finding is a
+  // Added 10 November 2026; remeasured after resolving local bindings and widening client/cell
+  // coverage on feat/incidents-fd (11 November). Each finding is a
   // failure a Person was owed that an observer could not see or explain; they come down as each
   // site keeps its cause, records its Incident or declares its Impact.
   {
     label: 'failures replaced without their cause',
     plugin: 'vivid',
     rule: 'keep-incident-cause',
-    ceiling: 373,
+    ceiling: 447,
   },
   {
     label: 'failures turned into values unrecorded',
     plugin: 'vivid',
     rule: 'no-silent-failure',
-    ceiling: 230,
+    ceiling: 343,
   },
   {
     label: 'ad hoc failure log lines',
     plugin: 'vivid',
     rule: 'no-ad-hoc-failure-log',
-    ceiling: 99,
+    ceiling: 115,
   },
   {
     label: 'refusals renamed to unavailable',

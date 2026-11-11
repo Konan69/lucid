@@ -271,7 +271,10 @@
         "apps/server/src/**/*.ts",
         "apps/cells/src/**/*.ts",
         "packages/agent/runtime/src/**/*.ts",
-        "packages/client/state/src/**/*.{ts,tsx}"
+        "packages/client/state/src/**/*.{ts,tsx}",
+        "apps/mobile/src/**/*.{ts,tsx}",
+        "apps/web/src/**/*.{ts,tsx}",
+        "apps/desktop/src/**/*.{ts,tsx}"
       ],
       "excludeFiles": ["**/*.test.{ts,tsx}", "**/tests/**", "apps/server/src/observability/**"],
       "rules": {
@@ -279,7 +282,11 @@
       }
     },
     {
-      "files": ["apps/server/src/**/*.ts"],
+      "files": [
+        "apps/server/src/**/*.ts",
+        "packages/agent/runtime/src/**/*.ts",
+        "apps/cells/src/**/*.ts"
+      ],
       "excludeFiles": ["**/*.test.ts", "**/tests/**", "apps/server/src/observability/**"],
       "rules": {
         "vivid/no-ad-hoc-failure-log": "warn"

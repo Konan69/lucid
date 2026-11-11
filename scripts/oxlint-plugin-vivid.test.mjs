@@ -609,6 +609,88 @@ void test('the root config makes a switch name every union member, default or no
  */
 const incidentCases = [
   {
+    rule: 'no-silent-failure',
+    mistake: 'client recorders and cell telemetry account for recovered Effect failures',
+    invalid: `program.pipe(Effect.catch((error) => Effect.void))
+program.pipe(Effect.catch((error) => Effect.void))
+program.pipe(Effect.catch((error) => Effect.void))
+program.pipe(Effect.catch((error) => Effect.void))`,
+    valid: `program.pipe(Effect.tapError((error) => recordFailure(recording, SEND, error)), Effect.ignore)
+program.pipe(Effect.tapError((error) => recording.record(clientFailure(error))), Effect.ignore)
+program.pipe(Effect.tapError((error) => record(Incident.cases.ClientFailed.make({ cause: hop(error) }))), Effect.ignore)
+program.pipe(Effect.tapError((error) => reports.record(CellFailure.cases.CellFailed.make({ personId, cause: hop(error) }), parent)), Effect.ignore)`,
+    findings: 4,
+    fix: /recordFailure.*CellReports\.record/u,
+  },
+  {
+    rule: 'no-ad-hoc-failure-log',
+    mistake: 'runtime/app.ts unavailable logs the tag as an ad hoc payload',
+    invalid: `const unavailable = (tag) =>
+  Effect.logError('Runtime request failed', tag).pipe(Effect.andThen(refuse('Unavailable', 503)))`,
+    valid: `const unavailable = (tag) =>
+  reports.record(CellFailure.cases.CellFailed.make({ personId, cause: [cellHop(ANSWER, tag)] }), parent).pipe(Effect.andThen(refuse('Unavailable', 503)))`,
+    findings: 1,
+    fix: /CellReports\.record.*telemetry\.ts/u,
+  },
+  {
+    rule: 'no-silent-failure',
+    mistake: 'computers/store.ts MachineNotRunning passes its local handle by name',
+    invalid: `const handle = (failure) => Effect.succeed(answer(failure))
+program.pipe(Effect.catchTags({ MachineNotRunning: handle }))`,
+    valid: `const handle = (failure) => incidents.record(computerFailed(failure)).pipe(Effect.as(answer(failure)))
+program.pipe(Effect.catchTags({ MachineNotRunning: handle }))`,
+    findings: 1,
+    fix: /This `Effect\.catchTags` answers success/u,
+  },
+  {
+    rule: 'keep-incident-cause',
+    mistake: 'computers/store.ts named handler replaces the failure in a declaration',
+    invalid: `function handle(failure) { return Effect.fail(ComputerStartFailed.make({ person })) }
+program.pipe(Effect.catchTags({ MachineNotRunning: handle }))`,
+    valid: `function handle(failure) { return Effect.fail(ComputerStartFailed.make({ person, cause: hop(failure) })) }
+program.pipe(Effect.catchTags({ MachineNotRunning: handle }))`,
+    findings: 1,
+    fix: /ComputerStartFailed.*without its cause/u,
+  },
+  {
+    rule: 'keep-incident-cause',
+    mistake: 'runtime/client.ts attempt spread only preserves a cause it actually owns',
+    invalid: `const attempt = { threadId, runId: deliveryRunId(threadId, input.idempotencyKey) }
+const refusal = yield* HttpClientResponse.schemaBodyJson(RuntimeRefusal)(response).pipe(
+  Effect.mapError(() => AdmissionUncertain.make({ ...attempt, reason: 'Status' })),
+)`,
+    valid: `const refusal = yield* HttpClientResponse.schemaBodyJson(RuntimeRefusal)(response).pipe(
+  Effect.mapError((error) => {
+    const attempt = { threadId, runId: deliveryRunId(threadId, input.idempotencyKey), cause: hop(error) }
+    return AdmissionUncertain.make({ ...attempt, reason: 'Status' })
+  }),
+)`,
+    findings: 1,
+    fix: /AdmissionUncertain.*without its cause/u,
+  },
+  {
+    rule: 'keep-incident-cause',
+    mistake: 'runtime/client.ts Runtime.admit replaces a decoded refusal outside a combinator',
+    invalid: `const admit = Effect.fn('Runtime.admit')(function* () {
+const refusal = yield* HttpClientResponse.schemaBodyJson(RuntimeRefusal)(response).pipe(
+  Effect.mapError((error) => AdmissionUncertain.make({ ...attempt, reason: 'Status', cause: hop(error) })),
+)
+if (refusal.error === 'Unavailable')
+  return yield* AdmissionUncertain.make({ ...attempt, reason: 'Transport' })
+return yield* AdmissionRefused.make({ ...attempt, reason: 'Rejected' })
+})`,
+    valid: `const admit = Effect.fn('Runtime.admit')(function* () {
+const refusal = yield* HttpClientResponse.schemaBodyJson(RuntimeRefusal)(response).pipe(
+  Effect.mapError((error) => AdmissionUncertain.make({ ...attempt, reason: 'Status', cause: hop(error) })),
+)
+if (refusal.error === 'Unavailable')
+  return yield* AdmissionUncertain.make({ ...attempt, reason: 'Transport', cause: hop(refusal) })
+return yield* AdmissionRefused.make({ ...attempt, reason: 'Rejected', cause: hop(refusal) })
+})`,
+    findings: 2,
+    fix: /Admission(?:Uncertain|Refused).*without its cause/u,
+  },
+  {
     rule: 'keep-incident-cause',
     mistake: 'threads/delivery.ts Conversation.admitRuntime renames a refusal to unavailable',
     invalid: `const admitRuntime = Effect.fn('Conversation.admitRuntime')((runtime, input) =>
@@ -949,4 +1031,40 @@ void test('readback: the old pre-deploy chain and unobservable resources fail', 
     ),
     [],
   )
+})
+
+/** The policy CLI must reject infra's historical summary field and either missing loader field. */
+void NodeTest.test('skills require name and description in frontmatter', (context) => {
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-instructions-'))
+  context.after(() => NodeFS.rmSync(root, { recursive: true, force: true }))
+  const file = '.agents/skills/infra/SKILL.md'
+  const historical = NodeChildProcess.execFileSync('git', ['show', `bab8c618d:${file}`], {
+    encoding: 'utf8',
+  })
+  const fixed = historical.replace('\nsummary:', '\ndescription:')
+  NodeFS.mkdirSync(NodePath.join(root, '.agents/skills/infra'), { recursive: true })
+  NodeFS.writeFileSync(NodePath.join(root, file), historical)
+  NodeChildProcess.execFileSync('git', ['init', '-q', root])
+  NodeChildProcess.execFileSync('git', ['add', '--', file], { cwd: root })
+  for (const [body, field] of [
+    [historical, 'description'],
+    [fixed.replace('name: infra\n', ''), 'name'],
+  ]) {
+    NodeFS.writeFileSync(NodePath.join(root, file), body)
+    const result = NodeChildProcess.spawnSync(
+      process.execPath,
+      ['scripts/instructions.mjs', root],
+      {
+        encoding: 'utf8',
+      },
+    )
+    NodeAssert.equal(result.status, 1)
+    NodeAssert.ok(result.stderr.includes(`${file}: add ${field}: <value>`), result.stderr)
+  }
+  NodeFS.writeFileSync(NodePath.join(root, file), fixed)
+  const result = NodeChildProcess.spawnSync(process.execPath, ['scripts/instructions.mjs', root], {
+    encoding: 'utf8',
+  })
+  NodeAssert.equal(result.status, 0, result.stderr)
+  NodeAssert.equal(result.stdout, 'instruction files passed\n')
 })

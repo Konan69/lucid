@@ -1,6 +1,6 @@
 ---
 name: infra
-summary: Operate and verify Vivid's local-first Alchemy infrastructure without touching AWS.
+description: Operate and verify Vivid's local-first Alchemy infrastructure without touching AWS.
 ---
 
 # Vivid infrastructure
