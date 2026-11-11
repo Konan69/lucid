@@ -829,7 +829,6 @@ function Pinned({
   return (
     <Posted
       key={feed.revisionOf(item)}
-      data={data}
       item={item}
       now={posted.now}
       bottom={dock.value + POSTED_GAP}

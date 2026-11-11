@@ -1,10 +1,8 @@
-import type { FeedAction } from '@vivid/contracts'
+import { FeedPost, type FeedAction } from '@vivid/contracts'
 import { feed } from '@vivid/state'
-import { Option } from 'effect'
+import { Array, Option } from 'effect'
 import { View } from 'react-native'
 import Animated, { Easing, Keyframe, ReduceMotion } from 'react-native-reanimated'
-import { putAway } from '../../data/feed'
-import type { LiveData } from '../../data/live'
 import { Card, sidesOf } from '../Feed'
 import { Swipe } from '../feed/Swipe'
 
@@ -14,13 +12,13 @@ import { Swipe } from '../feed/Swipe'
  * 11 November 2026 motion study, `feed-openui-cards/thread-card.html`).
  *
  * Once the Person acts on it, it is gone from here: it keeps no sending or failed state of its own.
- * An answer is the chat's own message (`onSpeak`), which says if it did not arrive as any message
- * does; putting it away tells Vivid (`putAway`), which takes a turn and answers in the chat. The
+ * Every way of acting on it is the Person's own message in the chat (`onSpeak`), which Vivid
+ * answers and which says if it did not arrive, as any message does: an answer says its button,
+ * and putting it away says the card's way out ("Not now", or a said card's first button). The
  * card leaves on the frame of the press or the throw, and the conversation's foot settles on the
  * same clock (`Conversation`, `room`).
  */
 export function Posted({
-  data,
   item,
   now,
   bottom,
@@ -29,7 +27,6 @@ export function Posted({
   onGone,
   onHeight,
 }: {
-  data: LiveData
   item: feed.Waiting
   now: number
   /** How far above the screen's foot the card stands: the composer's dock and a gap. */
@@ -44,17 +41,18 @@ export function Posted({
   onHeight: (height: number) => void
 }) {
   const post = Option.fromNullOr(item.post)
-  const title = Option.match(post, { onNone: () => item.from, onSome: (made) => made.title })
+  // The words that put the card away: a said card's own way out, its first button.
+  const wayOut = Option.getOrElse(
+    Option.flatMap(Option.filter(post, FeedPost.guards.Said), ({ actions }) => Array.head(actions)),
+    () => 'Not now',
+  )
   // Leaving is decided here and nowhere else: the card goes at once, whatever the call does.
   const answer = (words: FeedAction) => {
     onGone()
     onSpeak(words)
     onSettle()
   }
-  const away = () => {
-    onGone()
-    putAway(data, item, title)
-  }
+  const away = () => answer(wayOut)
   const reply = {
     held: false,
     onSay: answer,
