@@ -1,5 +1,6 @@
 import { Schema } from 'effect'
 import { ArtifactId, PersonSummary, RunId, ThreadId } from './identity.js'
+import { IncidentCause } from './incidents.js'
 
 /**
  * An Artifact: a durable, versioned thing made in a Thread, linked to that Thread and to the Run
@@ -239,7 +240,7 @@ export class ArtifactRenderUnsupported extends Schema.TaggedError<ArtifactRender
 ) {}
 export class ArtifactRenderFailed extends Schema.TaggedError<ArtifactRenderFailed>()(
   'ArtifactRenderFailed',
-  { message: Schema.String },
+  { message: Schema.String, cause: IncidentCause },
   { title: 'The captured file could not be rendered' },
 ) {}
 export class ArtifactInspectionStale extends Schema.TaggedError<ArtifactInspectionStale>()(

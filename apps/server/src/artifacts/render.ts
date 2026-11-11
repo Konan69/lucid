@@ -13,11 +13,13 @@ import {
   ArtifactSource,
   ArtifactSourcePath,
   ArtifactWorkbookInspection,
+  incidentHop,
+  issuesOf,
   type ArtifactFileRole,
   type InspectArtifactFileRequest,
   type PersonId,
 } from '@vivid/contracts'
-import { Effect, Predicate, Schema } from 'effect'
+import { Effect, Option, Predicate, Schema } from 'effect'
 import { ComputerStore } from '../computers/store.ts'
 import { workbookInspection } from './xlsx.ts'
 
@@ -86,11 +88,37 @@ const capture = Effect.fn('Artifacts.capture')(function* (
 })
 
 const decodeWorkbook = Schema.decodeUnknownEffect(Schema.fromJsonString(ArtifactWorkbookInspection))
-const inspectionFailure = () =>
-  new ArtifactRenderFailed({ message: 'Workbook inspection could not be read.' })
+/** A decode failure keeps its declared issue paths without retaining workbook cell values. */
+const inspectionFailure = (failure: Effect.Error<ReturnType<typeof decodeWorkbook>>) =>
+  new ArtifactRenderFailed({
+    message: 'Workbook inspection could not be read.',
+    cause: [
+      incidentHop({
+        service: 'server',
+        operation: 'Artifacts.render',
+        tag: failure._tag,
+        status: Option.none(),
+        issues: issuesOf(failure.issue),
+      }),
+    ],
+  })
 
-const placementFailure = () =>
-  new ArtifactRenderFailed({ message: 'The captured copy could not be placed on the Computer.' })
+/** ComputerStore's root failures carry their tag and, for a provider refusal, its HTTP status. */
+const placementFailure = (failure: Effect.Error<ReturnType<ComputerStore['Service']['put']>>) =>
+  new ArtifactRenderFailed({
+    message: 'The captured copy could not be placed on the Computer.',
+    cause: [
+      incidentHop({
+        service: 'server',
+        operation: 'Artifacts.render',
+        tag: failure._tag,
+        status: Predicate.isTagged(failure, 'MachineRequestRejected')
+          ? Option.some(failure.status)
+          : Option.none(),
+        issues: [],
+      }),
+    ],
+  })
 
 /** The random workspace contains only captured bytes. No renderer ever opens the mutable input path.
  * DOCX is exported by the Computer's LibreOffice and the first PDF page becomes a bounded PNG.
@@ -106,8 +134,21 @@ const render = Effect.fn('Artifacts.render')(function* (
   const execute = (command: string) =>
     computer.run(personId, { command, directory: '.', timeoutSeconds: 120 }).pipe(
       Effect.mapError(
-        () =>
-          new ArtifactRenderFailed({ message: 'The Computer could not render the captured file.' }),
+        (failure) =>
+          new ArtifactRenderFailed({
+            message: 'The Computer could not render the captured file.',
+            cause: [
+              incidentHop({
+                service: 'server',
+                operation: 'Artifacts.render',
+                tag: failure._tag,
+                status: Predicate.isTagged(failure, 'MachineRequestRejected')
+                  ? Option.some(failure.status)
+                  : Option.none(),
+                issues: [],
+              }),
+            ],
+          }),
       ),
       Effect.flatMap((result) =>
         result.exitCode === 0 && !result.timedOut
@@ -116,6 +157,15 @@ const render = Effect.fn('Artifacts.render')(function* (
               new ArtifactRenderFailed({
                 message:
                   'The captured file could not be rendered. Check the format and Computer tools.',
+                cause: [
+                  incidentHop({
+                    service: 'server',
+                    operation: 'Artifacts.render',
+                    tag: result.timedOut ? 'CommandTimedOut' : 'CommandExited',
+                    status: Option.none(),
+                    issues: [],
+                  }),
+                ],
               }),
             ),
       ),
