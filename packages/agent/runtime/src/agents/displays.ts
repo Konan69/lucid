@@ -63,10 +63,9 @@ root = Col([head, lines, acts], 3)
 head = Row([Col([Caption("Lumen Studios · Invoice 0142"), Title("₦420,000", "2xl")], 0), Spacer(), Badge("Due Friday", "warning")], 3, "end")
 lines = Table(["Item", "Amount"], [["Brand film, final cut", "₦350,000"], ["Two revision rounds", "₦70,000"]])
 acts = Row([Button("Not now", @ToAssistant("Do not pay Lumen Studios yet"), "ghost"), Button("Pay it", @ToAssistant("Pay Lumen Studios invoice 0142"))], 2, null, "end")`,
-  `A drawn Feed card about something someone owes the Person: who, what, since when, and the Buttons. Nothing else:
+  `A drawn Feed card about something someone owes the Person: the thing in a few words, who and since when once, and the Buttons. The lateness is said by "asked 7 Nov" alone, so no Badge, no "still" and no "not delivered":
 
-root = Col([head, acts], 3)
-head = Row([Col([Caption("Ada Obi · asked on 7 Nov"), Title("The September report", "lg")], 0), Spacer(), Badge("No reply", "warning")], 3, "end")
+root = Col([Title("September report", "lg"), Caption("Ada Obi · asked 7 Nov"), acts], 2)
 acts = Row([Button("Leave it", @ToAssistant("Leave Ada's report for now"), "ghost"), Button("Nudge Ada", @ToAssistant("Send Ada a nudge about the September report"))], 2, null, "end")`,
   `A drawn Feed card about the week: the strip of days with the day it is about marked, the one line it needs, the Buttons:
 
@@ -154,7 +153,9 @@ export const DISPLAYS = generateSystemPrompt({
       ...LIVE_DATA,
       'Lead with the picture or the thing, then at most one short line of words per block: a Caption under a picture, a Text for the one thing a picture cannot say. A display is a card, not an essay; a paragraph inside one is a mistake.',
       'Draw each kind of thing in its own shape, from the example closest to it; never borrow another kind’s shape. A Table holds two rows or more; one fact is a Title or a Caption, not a one-row Table.',
-      'Say each fact once. When a Title, a Badge, a Table or a picture shows an amount, a time, a name or a date, no Text or Caption says it again, and no Button label repeats it ("Pay it", not "Pay ₦420,000").',
+      'Say each fact once in the whole card. Every line must add something no other line, Badge, Button or the Feed’s own heading says. When a Title, a Badge, a Table or a picture shows an amount, a time, a name or a date, no Text or Caption says it again, and no Button label repeats it ("Pay it", not "Pay ₦420,000"). A state (late, overdue, unpaid, waiting, no reply) is said once, by one Badge or one Caption or a date that already shows it, never by two of them.',
+      'A Title names the thing in five words or fewer: a noun phrase, never a sentence, a dash clause, a status or an identifier from a record (no hashes, ids or reference codes). A Caption is one line of a few words. A Badge only for a state nothing else in the display says.',
+      'Before you send a display, read each line of it and delete any that repeats another. Fewer lines is better; a Feed card is a Title or the picture, at most one Caption, and its Buttons, unless the thing itself is a table, chart, map, week or letter.',
       'The surface already draws the display on a card of its own. Never wrap the whole display in a Card; Card groups one block inside a larger display.',
       'Every page read_page returns lists its pictures, the page’s own lead picture first. Use those addresses for Image and for a Page’s picture, and the page’s own address for a Page. An address must come from a page or tool result you read or from the Person; never make one up. When you have no address for a picture, leave the picture out rather than describe it.',
       'A MapMarker needs the place’s real latitude and longitude, from a tool or a place you know for certain. Never guess coordinates; without them, draw the place’s Page or Image instead.',
