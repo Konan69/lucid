@@ -379,6 +379,8 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
      * One program, no shell: migrations, source maps, then the Worker with its pointer read back
      * (`infra/predeploy.mjs`). Railway runs it in the freshly built image before the new server
      * takes traffic; a failure keeps the previous deployment serving and fails the release.
+     * Railway runs a Dockerfile service's command without a shell (#250 found it), which is why
+     * the old `migrate && publish` chain never published from 30 October to 10 November 2026.
      */
     preDeploy: { command: 'node infra/predeploy.mjs' },
     env: {

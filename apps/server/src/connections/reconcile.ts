@@ -3,7 +3,6 @@ import * as NodeBuffer from 'node:buffer'
 import * as NodeCrypto from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import {
-  ActionPhase,
   ActionReceipt,
   ActionTarget,
   type ActionOperation,
@@ -262,14 +261,12 @@ const look = Effect.fn('Connections.lookupAction')(function* (operation: ActionO
         resultDigest: resultDigest(outcome.value),
       }),
     })
-  // A still-dispatching request may not have arrived yet. Positive evidence is safe; absence is not.
+  // The journal applies the landing window to absence, including still-dispatching attempts.
   // Gmail never proves absence: its search index lags a send, and whether Gmail keeps the
   // Message-ID Vivid wrote has not been proven against a real account, so an empty search could
   // turn a sent message into a retry and a second email. Calendar's private property is stored
   // with the event and listed directly, so an empty, complete listing is evidence.
-  return Search.guards.Calendar(query.value) &&
-    parsed.nextPageToken === undefined &&
-    !ActionPhase.guards.Dispatching(operation.phase)
+  return Search.guards.Calendar(query.value) && parsed.nextPageToken === undefined
     ? Lookup.cases.Absent.make({})
     : Lookup.cases.Unsupported.make({})
 })

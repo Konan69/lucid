@@ -46,7 +46,19 @@ const encodeTarget = encodeStored(ActionTarget, 'Action target')
 const decodeTarget = decodeStored(ActionTarget, 'Action target')
 const encodeReceipt = encodeStored(ActionReceipt, 'Action receipt')
 const decodeReceipt = decodeStored(ActionReceipt, 'Action receipt')
-const encodeReconciliation = encodeStored(ActionReconciliation, 'Action reconciliation')
+/** The retry deadline is private journal metadata; public reconciliation keeps its existing shape. */
+const PendingAbsence = ActionReconciliation.cases.Inconclusive.pipe(
+  Schema.fieldsAssign({ decidableAt: Schema.Finite }),
+)
+const StoredReconciliation = Schema.Union([PendingAbsence, ActionReconciliation])
+const encodeReconciliation = encodeStored(StoredReconciliation, 'Action reconciliation')
+
+/**
+ * Executor's hosted call has no deadline of its own. The provider APIs Vivid calls end their
+ * requests within minutes, so a write not visible ten minutes after its claim will not land.
+ * This is the product's landing-window assumption, not an Executor cancellation guarantee.
+ */
+const LANDING_WINDOW_MS = 10 * 60 * 1000
 const decodeReconciliation = decodeStored(ActionReconciliation, 'Action reconciliation')
 const isApplied = Schema.is(ActionApplied)
 
@@ -304,15 +316,21 @@ export const originOf = Effect.fn('Actions.originOf')(function* (id: ActionOpera
   return yield* returned(rows, 'Integration operation')
 })
 
+/** Keep the one-receipt guard inside an owning write, including an Approval invalidation transaction. */
+export const settleIn = Effect.fn('Actions.settleIn')(function* (
+  tx: Pick<Transaction, 'update'>,
+  receipt: ActionReceipt,
+) {
+  yield* tx
+    .update(actions)
+    .set({ receipt: yield* encodeReceipt(receipt) })
+    .where(and(eq(actions.id, receipt.operationId), isNull(actions.receipt)))
+})
+
 /** Writes the one receipt of a claimed operation; a second settlement changes nothing. */
 export const settle = Effect.fn('Actions.settle')(function* (receipt: ActionReceipt) {
   const database = yield* Database
-  yield* database.run(
-    database
-      .update(actions)
-      .set({ receipt: yield* encodeReceipt(receipt) })
-      .where(and(eq(actions.id, receipt.operationId), isNull(actions.receipt))),
-  )
+  yield* database.run(settleIn(database, receipt))
 })
 
 /**
@@ -407,10 +425,14 @@ export const reconcile = Effect.fn('Actions.reconcile')(
   function* (personId: PersonId, operationId: ActionOperationId) {
     yield* Effect.annotateCurrentSpan('vivid.operation.id', operationId)
     const database = yield* Database
-    const [row] = yield* database.run(
-      database.select().from(actions).where(eq(actions.id, operationId)),
+    const [stored] = yield* database.run(
+      database
+        .select({ operation: actions, held: sql<boolean>`${heldByAsk}` })
+        .from(actions)
+        .where(eq(actions.id, operationId)),
     )
-    if (row === undefined) return yield* new NotFound({ message: 'Action not found' })
+    if (stored === undefined) return yield* new NotFound({ message: 'Action not found' })
+    const row = stored.operation
     yield* requireThread(row.threadId, personId)
     const action = yield* viewOf(row)
     const recorded = yield* decodeReconciliation(row.reconciliation)
@@ -423,14 +445,18 @@ export const reconcile = Effect.fn('Actions.reconcile')(
     if (ActionReconciliation.isAnyOf(['Applied', 'NotApplied'])(recorded))
       return { action, reconciliation: recorded }
     const checkedAt = yield* Clock.currentTimeMillis
+    const decidableAt = row.claimedAt + LANDING_WINDOW_MS
     const found = yield* (yield* ActionLookup).look(action)
-    const reconciliation = Lookup.match<ActionReconciliation>(found, {
+    // A live ask can resume later, so its age alone never proves absence.
+    const reconciliation = Lookup.match<typeof StoredReconciliation.Type>(found, {
       Found: ({ receipt }) => ActionReconciliation.cases.Applied.make({ receipt }),
       Absent: () =>
-        ActionReconciliation.cases.NotApplied.make({
-          checkedAt,
-          evidence: ActionAbsence.cases.ProviderLookup.make({}),
-        }),
+        checkedAt < decidableAt || stored.held
+          ? PendingAbsence.make({ checkedAt, decidableAt })
+          : ActionReconciliation.cases.NotApplied.make({
+              checkedAt,
+              evidence: ActionAbsence.cases.ProviderLookup.make({}),
+            }),
       Unsupported: () => ActionReconciliation.cases.Inconclusive.make({ checkedAt }),
     })
     const [written] = yield* database.run(
