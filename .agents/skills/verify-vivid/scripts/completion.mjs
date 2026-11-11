@@ -75,7 +75,7 @@ export async function completion(state, _id, directory, browser) {
       await browser.run([
         'wait',
         '--fn',
-        `Array.from(document.querySelectorAll('[aria-label="Notifications"] li')).filter(row => row.innerText.includes(${JSON.stringify(title)})).length === 1`,
+        `Array.from(document.querySelectorAll('[aria-label="Notifications"] li')).filter(row => row.innerText.includes(${JSON.stringify(detail.thread.title)})).length === 1`,
       ])
       await browser.capture('notice-' + count)
       await browser.run(['press', 'Escape'])

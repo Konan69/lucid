@@ -91,11 +91,7 @@ export async function pages(state, id, directory, browser) {
       )
     }
     if (browser) {
-      await browser.run([
-        'wait',
-        '--fn',
-        `document.body.innerText.includes(${JSON.stringify(index === 0 ? 'Notion' : 'Example')})`,
-      ])
+      await browser.exactReply(words, 'page-' + index)
       await browser.capture('page-' + index)
     }
     await json(directory + '/step-' + index + '.json', { verdict: 'proved', url, words })
