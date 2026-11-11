@@ -486,7 +486,7 @@ function makeLiveData(session: SignedIn) {
      * Sending in a Thread: one machine for each Thread of the session (`data/sending.ts`), made
      * here for the reason `connecting` is: a delivery on its way outlives the screen that sent it.
      */
-    sending: makeSending(engine),
+    sending: makeSending(engine, { me: live.me.answers }),
     notifying: makeNotifying(engine), // Notifications while the app is closed.
     gone,
     seenThread,

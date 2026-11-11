@@ -62,6 +62,7 @@ import { threadTitlesLayer } from './threads/generation.ts'
 import { notificationDeliveryLayer } from './notifications/delivery.ts'
 import { notifierLayer } from './notifications/notifier.ts'
 import { observabilityLayer } from './observability/export.ts'
+import { incidentsLayer } from './observability/incidents.ts'
 import { issuesLayer } from './observability/issues.ts'
 import { notificationStoreLayer } from './notifications/store.ts'
 import { projectStoreLayer } from './projects/store.ts'
@@ -90,6 +91,7 @@ import { executorEventsLayer } from './watches/events.ts'
 import { watchesLayer, watchRenewalLayer } from './watches/lifecycle.ts'
 import { feedPacingLayer } from './feed/pace.ts'
 import { watchStoreLayer } from './watches/store.ts'
+import { cellContractLayer } from './runtime/contract.ts'
 
 /** The process entry point only selects implementations and owns their scoped lifetime. */
 const serverProgram = Effect.gen(function* () {
@@ -119,6 +121,7 @@ const serverProgram = Effect.gen(function* () {
     tallyLayer,
     channelProviderLayer,
     runtimeLayer,
+    cellContractLayer,
     cellMemoryLayer,
     companyStoreLayer,
     settingsStoreLayer,
@@ -215,8 +218,9 @@ const serverProgram = Effect.gen(function* () {
 
 NodeRuntime.runMain(
   Layer.launch(
+    // The Incident recorder sends through the client `issuesLayer` initialises (`incidents.ts`).
     Layer.effectDiscard(serverProgram.pipe(Effect.withErrorReporting)).pipe(
-      Layer.provide(issuesLayer),
+      Layer.provide(Layer.mergeAll(issuesLayer, incidentsLayer)),
     ),
   ),
 )

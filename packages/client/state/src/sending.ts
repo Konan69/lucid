@@ -2,19 +2,39 @@ import { Machine } from '@typeonce/effect-machine'
 import { AtomMachine } from '@typeonce/effect-machine/reactivity'
 import { VividRpcClient } from '@vivid/client-runtime'
 import {
+  CodeName,
   CreateThreadRequest,
+  Incident,
+  impactOfFailure,
+  isRemoteIncident,
   MessageAttachment,
   RunId,
   RunState,
   ThreadId,
   type ConversationMessage,
+  type Impact,
+  type IncidentHop,
+  type IncidentSource,
+  type MeResponse,
   type ConversationState,
   type Run,
   type ThreadAttention,
 } from '@vivid/contracts'
-import { Context, Effect, type Layer, Option, Predicate, Result, Schema } from 'effect'
+import {
+  Context,
+  Effect,
+  type Layer,
+  Match,
+  Option,
+  Predicate,
+  Record,
+  Result,
+  Schema,
+} from 'effect'
 import { AsyncResult, Atom, type AtomRegistry } from 'effect/reactivity'
-import type { Live } from './live.js'
+import { draftPlace } from './drafts.js'
+import type { Live, LiveResult } from './live.js'
+import { workspaceKey } from './threads.js'
 
 /** One sending machine for every client. Words draw immediately, then keep their identity
  * when conversation state confirms them. `Sending` owns the server call, so a late answer
@@ -50,19 +70,194 @@ const Taken = Schema.Struct({
 })
 interface Taken extends Schema.Schema.Type<typeof Taken> {}
 
+/**
+ * Why words are kept as not sent, which decides who tells the Person, so one send is said once.
+ *
+ * - `Unstarted`: the server reserved this delivery's Run and the runtime did not take it. The
+ *   server ended that Run `Failed` with reason `Delivery` before it answered
+ *   (`apps/server/src/threads/delivery.ts`, the admission's `tapError`), so the Run's ending says
+ *   what happened and a screen says nothing of its own for these words. Sent again under the same
+ *   key it is that same Run reserved again (`makeStart`, `apps/server/src/threads/runs.ts`: a
+ *   reservation the runtime never admitted keeps its id and turn and is admitted anew), never a
+ *   second Run beside a failed one.
+ * - `Refused`: the server refused it before any Run, in a sentence meant for the Person.
+ * - `Unconfirmed`: nothing more is known than that the words are not known to have arrived. No
+ *   answer came back, the server refused it without words for the Person, the call was called
+ *   off, or the words waited behind a delivery that failed. No Run for them is known, so the
+ *   client is the one to say so.
+ */
+export const Unarrival = Schema.TaggedUnion({
+  Unstarted: {},
+  Refused: { words: Schema.String },
+  Unconfirmed: {},
+})
+export type Unarrival = typeof Unarrival.Type
+
 /** Unanswered or refused words retained for an explicit same-key retry. */
 export const Unsent = Schema.Struct({
   delivery: Delivery,
-  why: Schema.Option(Schema.String),
+  why: Unarrival,
 })
 export interface Unsent extends Schema.Schema.Type<typeof Unsent> {}
+
+/**
+ * Every Thread's unsent words as a client keeps them between runs of the app. Until this was kept
+ * they lived only in the machine, so an app closed under words that did not arrive lost them, and
+ * the "Try again" under the Run they never started said the message before them. Each app keeps
+ * it where it keeps drafts (the phone's files, the browser's storage).
+ *
+ * The key is the place a Thread's words are kept for a Person in a workspace (`draftPlace`), as
+ * drafts are, so words are handed back only to the Person who wrote them, where they wrote them:
+ * a second Person signed in on the same device never gets them, a shared Thread included.
+ */
+export const Kept = Schema.Record(Schema.String, Schema.Array(Unsent))
+export type Kept = typeof Kept.Type
+
+const decodeKept = Schema.decodeUnknownOption(Schema.fromJsonString(Kept))
+
+/** What a store kept, read back. Text that does not decode, or none, keeps nothing. */
+export const readKept = (stored: Option.Option<string>): Kept =>
+  Option.getOrElse(Option.flatMap(stored, decodeKept), () => ({}))
+
+/** The kept words as text to store; none when they will not encode, as with drafts. */
+export const writeKept = Schema.encodeOption(Schema.fromJsonString(Kept))
 
 /** The send was refused or its receipt was lost. Placement remains uncertain. */
 class Undelivered extends Schema.TaggedError<Undelivered>()(
   'Undelivered',
-  { why: Schema.Option(Schema.String) },
+  { why: Unarrival },
   { title: 'Undelivered' },
 ) {}
+
+/**
+ * How a client says a failure its Person saw (`Incident` `ClientFailed`): which client it is, the
+ * first hop of every cause it records, and its error tracker. Each app gives its own
+ * (`data/telemetry.ts` on the phone and the web).
+ */
+export interface Recording {
+  readonly source: Extract<IncidentSource, 'phone' | 'web' | 'desktop'>
+  readonly record: (incident: typeof Incident.cases.ClientFailed.Type) => Effect.Effect<void>
+}
+
+/**
+ * What a client's error tracker is given for a `ClientFailed`, so the phone and the web say it the
+ * same way the server says an Incident (`apps/server/src/observability/incidents.ts`): one group
+ * per path of failure (`fingerprint`: the case, then `<service>.<tag>` of every hop), and the
+ * closed fields as `vivid.incident.*` tags. `vivid.operation` is the first hop's operation, the tag
+ * the clients' reports already keep.
+ */
+export const reportOf = (incident: typeof Incident.cases.ClientFailed.Type) => ({
+  fingerprint: [incident._tag, ...incident.cause.map((hop) => `${hop.service}.${hop.tag}`)],
+  tags: Object.fromEntries([
+    ...incident.cause.slice(0, 1).map((hop): Tag => ['vivid.operation', hop.operation]),
+    ['vivid.incident.kind', incident._tag] satisfies Tag,
+    ...incident.cause.flatMap(hopTags),
+  ]),
+})
+
+/** A tag of a report: its key, then its value. */
+type Tag = readonly [string, string]
+
+/** One hop's tags, under the hop's place in the cause. */
+const hopTags = (hop: IncidentHop, n: number): ReadonlyArray<Tag> => [
+  [`vivid.incident.cause.${n}.service`, hop.service],
+  [`vivid.incident.cause.${n}.operation`, hop.operation],
+  [`vivid.incident.cause.${n}.tag`, hop.tag],
+  ...Option.toArray(
+    Option.map(Option.fromUndefinedOr(hop.status), (status): Tag => [
+      `vivid.incident.cause.${n}.status`,
+      String(status),
+    ]),
+  ),
+]
+
+/** One send of a delivery, as the server is asked it. */
+const asking = (delivery: Delivery) =>
+  Effect.gen(function* () {
+    const client = yield* VividRpcClient
+    return yield* client.SendToThread({
+      threadId: delivery.thread,
+      text: delivery.words,
+      pictures: delivery.pictures,
+      key: delivery.key,
+    })
+  })
+
+/** Every way one send can fail: `SendToThread`'s refusals and its transport's. */
+type SendFailure = Effect.Error<ReturnType<typeof asking>>
+
+/**
+ * Who says a failed send, by every tag it can fail with. A tag added to `SendToThread` does not
+ * compile until it is named here.
+ *
+ * `DeliveryRefused` (the runtime answered and refused) and `RuntimeUnavailable` (the runtime's
+ * answer is still unknown after the server's retries) are `Unstarted`: in a send both are raised
+ * only by the admission, after the reservation, and the server ends the reserved Run before
+ * answering (`admitRuntime` and its `tapError`, `apps/server/src/threads/delivery.ts`). A refusal
+ * is never said as unavailability, but to the Person both are the same Run that never started,
+ * and its ending is what is said. `Conflict` is the server's own sentence
+ * (another Person's reply in progress, a key reused for other words). Everything else names no Run
+ * and no sentence for the Person.
+ */
+const unarrivalOf = Match.type<SendFailure>().pipe(
+  Match.tagsExhaustive({
+    RuntimeUnavailable: () => Unarrival.cases.Unstarted.make({}),
+    DeliveryRefused: () => Unarrival.cases.Unstarted.make({}),
+    Conflict: ({ message }) => Unarrival.cases.Refused.make({ words: message }),
+    ConversationTooLarge: () => Unarrival.cases.Unconfirmed.make({}),
+    Unauthenticated: () => Unarrival.cases.Unconfirmed.make({}),
+    Forbidden: () => Unarrival.cases.Unconfirmed.make({}),
+    NotFound: () => Unarrival.cases.Unconfirmed.make({}),
+    InvalidRequest: () => Unarrival.cases.Unconfirmed.make({}),
+    ServiceUnavailable: () => Unarrival.cases.Unconfirmed.make({}),
+    DatabaseConstraintViolation: () => Unarrival.cases.Unconfirmed.make({}),
+    DatabaseUnavailable: () => Unarrival.cases.Unconfirmed.make({}),
+    DatabaseFailure: () => Unarrival.cases.Unconfirmed.make({}),
+    UnsupportedAttachment: () => Unarrival.cases.Unconfirmed.make({}),
+    InvalidAttachment: () => Unarrival.cases.Unconfirmed.make({}),
+    AttachmentTooLarge: () => Unarrival.cases.Unconfirmed.make({}),
+    TooManyAttachments: () => Unarrival.cases.Unconfirmed.make({}),
+    PicturesRequirePrivateThread: () => Unarrival.cases.Unconfirmed.make({}),
+    RpcClientError: () => Unarrival.cases.Unconfirmed.make({}),
+  }),
+)
+
+/**
+ * What a failed call cost, as a client says it. The failures the server owns (`isRemoteIncident`:
+ * its stores, and the runtime's refusal or unavailability, which it records as `AdmissionFailed`)
+ * are the server's to record, so the client says nothing more: one outcome is one Incident. A
+ * transport failure (`RpcClientError`: offline, the socket closed) is `Recovered`: the words are
+ * kept as not sent for the Person to send again, and it opens no issue. Every other failure
+ * originated here and is said by `impactOfFailure`.
+ */
+const clientImpact = (failure: { readonly _tag: string }): Option.Option<Impact> =>
+  isRemoteIncident(failure)
+    ? Option.none()
+    : Option.some(
+        Predicate.isTagged(failure, 'RpcClientError') ? 'Recovered' : impactOfFailure(failure),
+      )
+
+/**
+ * Records a failed call the Person saw (`ClientFailed`) where it is decided, when it originated on
+ * this client (`clientImpact`), so a Thread's first words and its later words are said the same
+ * way. `operation` is the span the failure is decided in, the cause's one hop.
+ */
+export const recordFailure = (
+  recording: Recording,
+  operation: CodeName,
+  failure: { readonly _tag: string },
+): Effect.Effect<void> =>
+  Option.contains(clientImpact(failure), 'Incident')
+    ? recording.record(
+        Incident.cases.ClientFailed.make({
+          cause: [{ service: recording.source, operation, tag: CodeName.make(failure._tag) }],
+        }),
+      )
+    : Effect.void
+
+/** The operations a failed send's or create's first hop names: the spans `delivering` runs them in. */
+const SEND = CodeName.make('Sending.send')
+const CREATE = CodeName.make('Sending.create')
 
 /** How the server is asked; see `Delivering`. */
 export interface DeliveringService {
@@ -78,42 +273,39 @@ export class Delivering extends Context.Service<Delivering, DeliveringService>()
 /**
  * Admission is acceptance even when a terminal Run lacks its runtime receipt. The runtime may
  * have placed the submission before the server failed to store that receipt.
+ *
+ * A send that fails for good is a failure the Person sees, so it is recorded (`Recording`) where
+ * it is decided, in the send's own span: the span's trace is the one the RPC carried to the
+ * server (`RpcClient` puts the current span's trace and span id on each request), so the record
+ * opens the server's trace of the same send. Only a failure that originated on the client and cost
+ * the Person their words is recorded (`clientImpact`).
  */
-export const delivering = (run: Live['run']): DeliveringService => ({
+export const delivering = (run: Live['run'], recording: Recording): DeliveringService => ({
   create: Effect.fn('Sending.create')(function* (request: CreateThreadRequest) {
     const answered = yield* run(VividRpcClient.use((client) => client.CreateThread(request)))
-    if (Result.isFailure(answered))
-      return yield* new Undelivered({ why: Option.some(answered.failure.message) })
+    if (Result.isFailure(answered)) {
+      yield* recordFailure(recording, CREATE, answered.failure)
+      return yield* new Undelivered({ why: Unarrival.cases.Unconfirmed.make({}) })
+    }
     return yield* Effect.void
   }),
-  send: (delivery) =>
-    Effect.gen(function* () {
-      const asked = run(
-        Effect.gen(function* () {
-          const client = yield* VividRpcClient
-          return yield* client.SendToThread({
-            threadId: delivery.thread,
-            text: delivery.words,
-            pictures: delivery.pictures,
-            key: delivery.key,
-          })
-        }),
-      )
-      // A failed send is not proof the words did not arrive: on 26 October 2026 a phone's send
-      // failed after the server had taken it. The same key and payload are the same delivery, so
-      // it is asked once more, and only a second failure keeps the words as not sent.
-      const once = yield* asked
-      const answered = Result.isFailure(once) ? yield* asked : once
-      if (Result.isFailure(answered)) {
-        const refused = answered.failure
-        return yield* new Undelivered({
-          why: Predicate.isTagged(refused, 'Conflict')
-            ? Option.some(refused.message)
-            : Option.none(),
-        })
-      }
-      return answered.success.run
-    }),
+  send: Effect.fn('Sending.send')(function* (delivery: Delivery) {
+    const asked = run(asking(delivery))
+    // A failed send is not proof the words did not arrive: on 26 October 2026 a phone's send
+    // failed after the server had taken it. The same key and payload are the same delivery, so
+    // it is asked once more, and only a second failure keeps the words as not sent. A
+    // `DeliveryRefused` is the runtime's final answer and the server has already ended its Run,
+    // so asking again would only be refused again and end the Run a second time.
+    const once = yield* asked
+    const answered =
+      Result.isFailure(once) && !Predicate.isTagged(once.failure, 'DeliveryRefused')
+        ? yield* asked
+        : once
+    if (Result.isSuccess(answered)) return answered.success.run
+    const refused = answered.failure
+    yield* recordFailure(recording, SEND, refused)
+    return yield* new Undelivered({ why: unarrivalOf(refused) })
+  }),
 })
 
 /** Ownership survives payload release as an exact canonical identity, never a raw shared key. */
@@ -157,7 +349,7 @@ export const SendingStates = Machine.state({
         creation: CreateThreadRequest,
         delivery: Delivery,
         behind: Schema.Array(Delivery),
-        why: Schema.Option(Schema.String),
+        why: Unarrival,
       },
     },
     /**
@@ -189,6 +381,12 @@ const SendingEvents = Machine.events({
   Send: { delivery: Delivery, seen: Seen },
   /** Retry every unanswered delivery in order, retaining its original key and payload. */
   Again: { seen: Seen },
+  /**
+   * Words this client kept as not sent when the app last closed (`Kept`), handed back at launch.
+   * Only a machine at rest takes them: one that is already sending has the Person's newer words,
+   * and saying new words is letting go of what did not arrive before them (`Send`).
+   */
+  Restore: { unsent: Schema.Array(Unsent) },
   /**
    * The Person stopped Vivid. Nothing more leaves this client: what was waiting its turn is
    * kept as not sent, and so is the delivery the server had not answered, whose call is called
@@ -238,7 +436,10 @@ const reconciled = (held: Held, seen: Seen): Held => {
 }
 
 /** A delivery retained for an explicit retry with the same identity and payload. */
-const kept = (delivery: Delivery): Unsent => ({ delivery, why: Option.none() })
+const kept = (delivery: Delivery): Unsent => ({
+  delivery,
+  why: Unarrival.cases.Unconfirmed.make({}),
+})
 
 /** The fields of `Held` in a state's value, without what else the state holds. */
 const heldIn = (state: Held): Held => ({
@@ -303,6 +504,21 @@ const Sending = Machine.make({
               : select.going({ data: { ...held, unsent, delivery: first, behind } })
           },
         },
+        Restore: {
+          target: 'Idle',
+          // Kept words are older than any this run has held, so they come first; a key already
+          // held is the same delivery and is held once.
+          data: ({ event, state }) => {
+            const held = new Set(state.unsent.map((one) => one.delivery.key))
+            return {
+              ...heldIn(state),
+              unsent: [
+                ...event.unsent.filter((one) => !held.has(one.delivery.key)),
+                ...state.unsent,
+              ],
+            }
+          },
+        },
         // Nothing is on its way, so there is nothing of this client's to hold back.
         Stop: { none: true },
       },
@@ -345,7 +561,7 @@ const Sending = Machine.make({
             creation: state.creation,
             delivery: state.delivery,
             behind: state.behind,
-            why: Option.none(),
+            why: Unarrival.cases.Unconfirmed.make({}),
           }),
         },
       },
@@ -742,22 +958,160 @@ export const isWorking = (at: {
  * departure, conversation eviction and idle expiry cannot discard queued words or ownership
  * proof. The session's registry disposal or explicit `forget` ends these owners.
  */
-export const makeSending = (services: Layer.Layer<Delivering>) => {
+export const makeSending = (services: Layer.Layer<Delivering>, keeping: Keeping) => {
   const make = AtomMachine.bind(Atom.runtime(services)).factory(Sending)
   const machines = new Map<ThreadId, ReturnType<typeof make>>()
+  const watching: Array<() => void> = []
   const inThread = (thread: ThreadId) => {
     const known = machines.get(thread)
     if (known !== undefined) return known
     const made = make()
     machines.set(thread, made)
+    watching.push(watched(keeping, thread, made))
     return made
   }
+  // Declared before this, because a store that answers at once restores while it is called.
+  watching.push(
+    restoring(keeping, (thread, unsent) =>
+      tell(keeping.registry, inThread(thread), SendingEvents.Restore({ unsent })),
+    ),
+  )
   return Object.assign(inThread, {
     /** Session departure, unlike screen departure, ends every machine and its invoked work. */
     forget: (registry: AtomRegistry.AtomRegistry): void => {
+      for (const stop of watching.splice(0)) stop()
       for (const machine of machines.values()) registry.set(machine.stop, undefined)
       machines.clear()
     },
+  })
+}
+
+/** Who is signed in and the workspace they are in, as the server has said them. */
+export interface Whereabouts {
+  readonly person: string
+  readonly workspace: string
+}
+
+/**
+ * Whereabouts from a session's own `WatchMe` answer, never what a device kept of it: none until
+ * the server has answered.
+ */
+export const whereaboutsOf = (
+  me: Atom.Atom<LiveResult<MeResponse>>,
+): Atom.Atom<Option.Option<Whereabouts>> =>
+  Atom.make((get) => {
+    const who = get(me)
+    return AsyncResult.isSuccess(who)
+      ? Option.some({ person: who.value.person.id, workspace: workspaceKey(who.value.workspace) })
+      : Option.none()
+  })
+
+/** Where an app keeps its Threads' unsent words (`Kept`), and what its machines run in. */
+export interface Keeping {
+  readonly registry: AtomRegistry.AtomRegistry
+  readonly whereabouts: Atom.Atom<Option.Option<Whereabouts>>
+  /**
+   * One change to the store, one at a time: `revise` is given what the store holds when the
+   * change's turn comes, and answers what it should hold. A store that refuses has not kept it.
+   */
+  readonly change: (revise: (kept: Kept) => Kept) => Effect.Effect<Kept>
+  /** Runs a change, which goes on without whatever asked for it. */
+  readonly launch: (program: Effect.Effect<void>) => void
+}
+
+/** The place one Thread's words are kept for the Person where they are (`Kept`). */
+const placeOf = (where: Whereabouts, thread: ThreadId): string =>
+  draftPlace(where.person, { workspace: where.workspace, thread: Option.some(thread) })
+
+/** What is kept, with one place's words as they now stand; none left removes the place. */
+const placed = (kept: Kept, place: string, unsent: ReadonlyArray<Unsent>): Kept =>
+  unsent.length > 0 ? Record.set(kept, place, unsent) : Record.remove(kept, place)
+
+/** The kept words of the Person where they are, by the Thread the words were sent to. */
+const keptHere = (kept: Kept, where: Whereabouts) =>
+  Record.toEntries(kept).flatMap(([place, unsent]) =>
+    Option.match(Option.fromUndefinedOr(unsent[0]), {
+      onNone: () => [],
+      onSome: ({ delivery }) =>
+        place === placeOf(where, delivery.thread) ? [[delivery.thread, unsent] as const] : [],
+    }),
+  )
+
+/**
+ * Hands the Person's kept words to their Threads' machines (`SendingEvents.Restore`) once the
+ * server has said who and where they are, and again for each workspace they move to.
+ *
+ * Nothing is dropped by the Thread list: it is capped (500) and leaves out Background Threads
+ * (`apps/server/src/threads/store.ts` `makeList`), so pruning by it lost words a Person still had.
+ * Words of a Thread that is gone stay keyed to it and are never restored anywhere else.
+ */
+const restoring = (
+  keeping: Keeping,
+  restore: (thread: ThreadId, unsent: ReadonlyArray<Unsent>) => void,
+): (() => void) => {
+  const done = new Set<string>()
+  return keeping.registry.subscribe(
+    keeping.whereabouts,
+    (now) => {
+      if (Option.isNone(now)) return
+      const where = now.value
+      const scope = `${where.person}\n${where.workspace}`
+      if (done.has(scope)) return
+      done.add(scope)
+      keeping.launch(
+        keeping
+          .change((kept) => kept)
+          .pipe(
+            Effect.flatMap((kept) =>
+              Effect.sync(() => {
+                for (const [thread, unsent] of keptHere(kept, where)) restore(thread, unsent)
+              }),
+            ),
+          ),
+      )
+    },
+    { immediate: true },
+  )
+}
+
+/**
+ * The unsent words a state holds as its own. An uncreated Thread's queue is not among them: that
+ * Thread may not exist, so after a restart there would be nowhere to send it.
+ */
+const heldUnsent = (state: SendingState): ReadonlyArray<Unsent> =>
+  Option.getOrElse(
+    Option.map(SendingStates.get(state, 'Uncreated'), (uncreated) => uncreated.unsent),
+    () => standing(Option.some(state)).unsent,
+  )
+
+/** What a held list says about its words, so only a real change is written down. */
+const signatureOf = (unsent: ReadonlyArray<Unsent>): string =>
+  unsent.map((one) => `${one.delivery.key}:${one.why._tag}`).join('\n')
+
+/**
+ * Keeps a Thread's unsent words each time they change, for as long as its machine lives. A
+ * machine starts with none, which is not a change: the store keeps what it had until the machine
+ * holds something else, so starting a machine before the kept words were read never erases them.
+ *
+ * The words are kept under the Person and workspace the Thread was used in, read the first time
+ * its machine moves (a send starts there), and never again: a workspace switch while a send is
+ * on its way must not file its words, or their later removal, under the new workspace.
+ */
+const watched = (keeping: Keeping, thread: ThreadId, machine: SendingAtoms): (() => void) => {
+  let last = ''
+  let owner = Option.none<string>()
+  return keeping.registry.subscribe(stateOf(machine), (state) => {
+    if (Option.isNone(owner))
+      owner = Option.map(keeping.registry.get(keeping.whereabouts), (where) =>
+        placeOf(where, thread),
+      )
+    if (Option.isNone(state) || Option.isNone(owner)) return
+    const unsent = heldUnsent(state.value)
+    const now = signatureOf(unsent)
+    if (now === last) return
+    last = now
+    const place = owner.value
+    keeping.launch(Effect.asVoid(keeping.change((kept) => placed(kept, place, unsent))))
   })
 }
 export type SendingAtoms = ReturnType<ReturnType<typeof makeSending>>
@@ -791,6 +1145,7 @@ type Said =
   | ReturnType<typeof SendingEvents.Send>
   | ReturnType<typeof SendingEvents.Again>
   | ReturnType<typeof SendingEvents.Stop>
+  | ReturnType<typeof SendingEvents.Restore>
 
 /**
  * Says something to a Thread's machine, once it is there to hear it.
@@ -861,7 +1216,7 @@ export const isCreating = (state: Option.Option<SendingState>): boolean =>
 const Admission = Schema.TaggedUnion({
   Accepted: { submission: Schema.Option(Schema.String) },
   Unanswered: {},
-  Uncreated: { why: Schema.Option(Schema.String) },
+  Uncreated: { why: Unarrival },
 })
 type Admission = typeof Admission.Type
 

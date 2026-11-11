@@ -356,6 +356,10 @@ const displayFailure = Match.type<DisplayToolFailure>().pipe(
     ConversationTooLarge: () => 'This conversation is too large to open. Start a new Thread.',
     InvalidRequest: () => 'This display sent a request Vivid could not accept.',
     RuntimeUnavailable: () => 'Vivid is unavailable. Try again shortly.',
+    // The runtime answered and refused what it could not read; the same message is refused again
+    // until Vivid is fixed (`FINAL`, `live.ts`), so "shortly" would promise too much.
+    DeliveryRefused: () =>
+      'Vivid could not read this message, so it was not sent. Try again later.',
     ServiceUnavailable: ({ service }) =>
       ({
         computer: 'Your Computer is unavailable. Open it and try again.',

@@ -43,6 +43,7 @@ import { watchesLayer } from './lifecycle.ts'
 import { testMembersLayer, unansweredOperations } from '../connections/testing.ts'
 import { owedStoreLayer } from '../owed/store.ts'
 import { watchStoreLayer } from './store.ts'
+import { incidentsTestLayer } from '../runtime/testing.ts'
 
 /**
  * Watch test seams. PostgreSQL, the Watch store and the Thread store are always the real ones;
@@ -123,6 +124,7 @@ const conversationLayer = Layer.effectContext(
             Layer.mock(ThreadTitles, { afterRun: () => Effect.void }),
             Layer.mock(Presence, { watching: () => Effect.succeed(false) }),
             Layer.mock(Notifier, { notify: () => Effect.void }),
+            incidentsTestLayer,
           ),
         ),
       ),

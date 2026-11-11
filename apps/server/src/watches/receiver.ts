@@ -282,8 +282,11 @@ const status = (code: number) => Effect.succeed(HttpServerResponse.empty({ statu
 
 /**
  * Typed failures map at the boundary. Anything that should be tried again (the database, the
- * runtime, a Thread busy with another Run) answers 5xx or 409, which Executor retries; only a
- * stopped or deleted Watch answers 410, which ends that delivery.
+ * runtime, a Thread busy with another Run) answers 5xx or 409, which Executor retries. A stopped
+ * or deleted Watch, and a delivery the runtime refused (`DeliveryRefused`, final: asking again is
+ * refused again), answer 410, which ends that delivery. Executor retries every other status and
+ * treats only 410 and 413 as final, keeping the subscription (`packages/sdk/src/implementation/
+ * events.ts` in the Executor reference), so a 422 would be retried.
  */
 export const watchRoutes = HttpRouter.add(
   'POST',
@@ -300,6 +303,7 @@ export const watchRoutes = HttpRouter.add(
       HttpServerError: () => status(400),
       Conflict: () => status(409),
       RuntimeUnavailable: () => status(503),
+      DeliveryRefused: () => status(410),
       NotFound: () => status(500),
       DatabaseFailure: () => status(500),
       DatabaseUnavailable: () => status(503),

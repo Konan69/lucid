@@ -1,6 +1,14 @@
 import { expect, it } from '@effect/vitest'
 import { NodeHttpClient, NodeHttpServer } from '@effect/platform-node'
-import { cutFault, RunId, ServiceId, ThreadId } from '@vivid/contracts'
+import {
+  CodeName,
+  cutFault,
+  Incident,
+  PersonId,
+  RunId,
+  ServiceId,
+  ThreadId,
+} from '@vivid/contracts'
 import { getTableName } from 'drizzle-orm'
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core/errors'
 import {
@@ -35,6 +43,7 @@ import * as RpcClient from 'effect/rpc/RpcClient'
 import * as RpcGroup from 'effect/rpc/RpcGroup'
 import * as RpcSerialization from 'effect/rpc/RpcSerialization'
 import * as RpcServer from 'effect/rpc/RpcServer'
+import { requestProtocolLayer } from '../rpc/requests.ts'
 import { ObservabilityConfiguration } from '../config.ts'
 import { faultRoutes } from '../http/faults.ts'
 import { threads } from '../threads/tables.ts'
@@ -49,6 +58,7 @@ import {
 import { observeFailures } from './failure.ts'
 import { LiveTally, makeTally, report } from '../live/tally.ts'
 import { Message, OMITTED } from './messages.ts'
+import { recorder } from './incidents.ts'
 import { recordRefusal, Refusal } from './refusal.ts'
 import { recordRunFailure } from '../runtime/failure.ts'
 
@@ -72,7 +82,9 @@ const Traces = Schema.Struct({
           spans: Schema.Array(
             Schema.Struct({
               traceId: Schema.String,
+              spanId: Schema.String,
               parentSpanId: Schema.optional(Schema.String),
+              flags: Schema.optional(Schema.Finite),
               name: Schema.String,
               attributes: Schema.Array(Pair),
               links: Schema.Array(Schema.Struct({ traceId: Schema.String })),
@@ -466,7 +478,8 @@ it.effect('exports a typed failure with its tag, as expected, at its boundary', 
         'vivid.boundary': 'rpc',
       })
       const line = lines.find((entry) => entry.body.stringValue === Message.failure)
-      expect(line === undefined ? '' : line.severityText).toBe('Warn')
+      // A typed failure that is not a refusal the Person can correct is an Incident (`impactSignal`).
+      expect(line === undefined ? '' : line.severityText).toBe('Error')
       expect(line === undefined ? {} : valuesOf(line.attributes)).toEqual({
         'error.type': 'ProbeRefused',
         'vivid.failure.kind': 'expected',
@@ -727,7 +740,7 @@ it.effect('records every reason of a combined cause and classifies the span by t
       expect(
         recorded.map((line) => [line.severityText, valuesOf(line.attributes)['error.type']]),
       ).toEqual([
-        ['Warn', 'ProbeRefused'],
+        ['Error', 'ProbeRefused'],
         ['Error', 'RangeError'],
       ])
     }),
@@ -904,7 +917,7 @@ it.effect("exports no part of a client's fault report", () =>
       expect(
         span === undefined ? [] : span.events.map((event) => [event.name, event.attributes]),
       ).toEqual([[Message.fault, []]])
-      expect(spanNamed(spans, 'POST')).toHaveLength(1)
+      expect(spanNamed(spans, 'POST /api/faults')).toHaveLength(1)
       for (const secret of ['Skia', 'dami@example.com', 'Composer', 'ios 0.1.0', 'mobile'])
         expect(text).not.toContain(secret)
     }),
@@ -941,9 +954,10 @@ it.effect("exports no query, path or header of a provider's sign-in return", () 
       )
 
       expect(statuses).toEqual([200])
-      const [server] = spanNamed(spans, 'GET')
+      const [server] = spanNamed(spans, 'GET /api/connections/return')
       expect(server === undefined ? {} : valuesOf(server.attributes)).toEqual({
         'http.request.method': 'GET',
+        'http.route': '/api/connections/return',
         'http.response.status_code': 200,
         'url.scheme': 'http',
       })
@@ -952,7 +966,8 @@ it.effect("exports no query, path or header of a provider's sign-in return", () 
         'secret-code',
         'opaque-state',
         'code=',
-        '/api/connections',
+        // The route's template is code's and is the span's name; the address as requested is not.
+        '/api/connections/return?',
         'private-session',
         'PrivateBrowser',
         '127.0.0.1',
@@ -1009,7 +1024,7 @@ it.effect(
         expect(statuses).toEqual([204, 204, 204, 204, 204, 204])
         // The second and last requests' spans are exported, the server span as a root; the spans of
         // every other request are gone.
-        const servers = spanNamed(spans, 'GET')
+        const servers = spanNamed(spans, 'GET /probe')
         expect(servers.map((span) => [span.traceId, span.parentSpanId])).toEqual([
           [trace, undefined],
           [rooted, undefined],
@@ -1069,7 +1084,7 @@ it.effect('files a 64-bit B3 trace under its 128-bit form, on spans, links and l
 
       expect(statuses).toEqual([204])
       // The server span is the caller's child, and everything beneath it is in the same trace.
-      const servers = spanNamed(spans, 'GET')
+      const servers = spanNamed(spans, 'GET /probe')
       expect(servers.map((span) => [span.traceId, span.parentSpanId])).toEqual([[wide, caller]])
       const [server] = servers
       const [handler] = spanNamed(spans, 'Probe.inbound')
@@ -1160,7 +1175,13 @@ it.effect('builds no span name from what a request carries, over HTTP or RPC', (
       // The spans those requests made are all here, under names from code.
       const names = spans.map((span) => span.name)
       expect(names).toEqual(
-        expect.arrayContaining(['GET', 'Probe.visit', 'POST', 'Echo', 'Probe.echo']),
+        expect.arrayContaining([
+          'GET /probe/:who',
+          'Probe.visit',
+          'POST /rpc',
+          'Echo',
+          'Probe.echo',
+        ]),
       )
       expect(names.filter((name) => name.includes('Ada') || name.includes('Lovelace'))).toEqual([])
       // And nowhere else in what left.
@@ -2101,4 +2122,161 @@ it.effect(
         expect(text).not.toContain(CREDENTIAL)
       }),
     ),
+)
+
+/** A send the cell refused for a field that did not decode, with ids of their generators' shapes. */
+const refusedSend = Incident.cases.AdmissionFailed.make({
+  personId: PersonId.make('a'.repeat(16) + 'B'.repeat(16)),
+  threadId: ThreadId.make('5f0c7b1e-8d2a-4c3b-9e4f-0a1b2c3d4e5f'),
+  runId: RunId.make(`run_${'c'.repeat(64)}`),
+  delivery: 'Words',
+  cause: [
+    {
+      service: 'server',
+      operation: CodeName.make('Runtime.admit'),
+      tag: CodeName.make('AdmissionRefused'),
+      status: 400,
+    },
+    {
+      service: 'cell',
+      operation: CodeName.make('Cell.admit'),
+      tag: CodeName.make('SchemaError'),
+      status: 400,
+      issues: [{ path: [CodeName.make('delivery')], kind: 'MissingKey' }],
+    },
+  ],
+})
+
+it.effect(
+  'says an Incident on its span, as an error, and in one error line, by its closed fields',
+  () =>
+    withReceiver(
+      Effect.gen(function* () {
+        // The outcome is a returned value, so the span ends in success; the Incident still fails it.
+        // An interior failure that is recovered from still says what it was on its own span.
+        const inner = Effect.fn('Probe.inner')(function* () {
+          return yield* new ProbeRefused({ message: 'not today' })
+        })
+        const decide = Effect.fn('Probe.decide')(function* () {
+          yield* inner().pipe(Effect.ignore)
+          yield* recorder.record(refusedSend)
+          return 'answered'
+        })
+        const { lines, spans, text } = yield* exported(decide())
+
+        const [span] = spanNamed(spans, 'Probe.decide')
+        expect(span === undefined ? -1 : span.status.code).toBe(2)
+        expect(span === undefined ? {} : valuesOf(span.attributes)).toEqual({
+          'vivid.incident.kind': 'AdmissionFailed',
+          'vivid.incident.personId': refusedSend.personId,
+          'vivid.incident.threadId': refusedSend.threadId,
+          'vivid.incident.runId': refusedSend.runId,
+          'vivid.incident.delivery': 'Words',
+          'vivid.incident.cause.0.service': 'server',
+          'vivid.incident.cause.0.operation': 'Runtime.admit',
+          'vivid.incident.cause.0.tag': 'AdmissionRefused',
+          'vivid.incident.cause.0.status': 400,
+          'vivid.incident.cause.1.service': 'cell',
+          'vivid.incident.cause.1.operation': 'Cell.admit',
+          'vivid.incident.cause.1.tag': 'SchemaError',
+          'vivid.incident.cause.1.status': 400,
+          'vivid.incident.cause.1.issues': 'delivery:MissingKey',
+        })
+        const [interior] = spanNamed(spans, 'Probe.inner')
+        expect(interior === undefined ? {} : valuesOf(interior.attributes)).toEqual({
+          'error.type': 'ProbeRefused',
+        })
+        const said = lines.filter((line) => line.body.stringValue === Message.incident)
+        expect(said.map((line) => line.severityText)).toEqual(['Error'])
+        expect(said.map((line) => valuesOf(line.attributes))).toEqual([
+          span === undefined ? {} : valuesOf(span.attributes),
+        ])
+        expect(text).not.toContain('not today')
+      }),
+    ),
+)
+
+it.effect('starts a transaction where work arrives from another process, named by its span', () =>
+  withReceiver(
+    Effect.gen(function* () {
+      const child = Effect.fn('Probe.child')(function* () {
+        return yield* Effect.void
+      })
+      const arrived = Effect.fn('Probe.arrived')(function* () {
+        return yield* child()
+      })
+      // A trace of its own, as the server's request spans and scheduled passes begin.
+      const alone = Effect.void.pipe(Effect.withSpan('Probe.alone', { root: true }))
+      // The parent Effect 4.0.2 `RpcServer.ts` gives a call from a client's payload, and
+      // `HttpMiddleware` from a `traceparent`: a span of another process, held as `ExternalSpan`.
+      const client = Tracer.externalSpan({
+        traceId: '4bf92f3577b34da6a3ce929d0e0e4736',
+        spanId: '00f067aa0ba902b7',
+        sampled: true,
+      })
+      const { spans } = yield* exported(
+        Effect.andThen(arrived().pipe(Effect.withParentSpan(client)), alone),
+      )
+
+      // Sentry makes a span a segment, and names a transaction by it, when it has no parent or
+      // its parent is flagged remote (Relay `relay-spans/src/otel_to_sentry_v2.rs`, `is_segment`).
+      const flagsOf = (name: string) => spanNamed(spans, name).map((span) => span.flags)
+      expect(flagsOf('Probe.arrived')).toEqual([0x300])
+      expect(flagsOf('Probe.child')).toEqual([0x100])
+      expect(flagsOf('Probe.alone')).toEqual([0])
+    }),
+  ),
+)
+
+it.effect('exports the HTTP RPC call as a segment under the payload client span', () =>
+  withReceiver(
+    Effect.gen(function* () {
+      const routes = RpcServer.layer(probes).pipe(
+        Layer.provide(requestProtocolLayer),
+        Layer.provide(probes.toLayer({ Echo: ({ note }) => Effect.succeed(note) })),
+        Layer.provide(RpcSerialization.layerNdjson),
+      )
+      const { collect, flush } = yield* observed({
+        ...plain,
+        routes: Layer.mergeAll(routes, HttpRouter.add('GET', '/plain', HttpServerResponse.empty())),
+      })
+      const client = yield* HttpClient.HttpClient
+      const traceId = '4bf92f3577b34da6a3ce929d0e0e4736'
+      const parent = '00f067aa0ba902b7'
+      const response = yield* client
+        .execute(
+          HttpClientRequest.post('/api/rpc').pipe(
+            HttpClientRequest.setHeader(
+              'traceparent',
+              '00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01',
+            ),
+            HttpClientRequest.bodyText(
+              JSON.stringify({
+                // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- Effect 4.0.2 exposes RequestEncoded as an interface; its private binary schema cannot construct a JSON request.
+                _tag: 'Request',
+                id: '1',
+                tag: 'Echo',
+                payload: { note: 'hello' },
+                headers: [],
+                traceId,
+                spanId: parent,
+                sampled: true,
+              }) + '\n',
+              'application/ndjson',
+            ),
+          ),
+        )
+        .pipe(Effect.provideService(HttpClient.TracerPropagationEnabled, false))
+      expect(yield* response.text).toContain('hello')
+      yield* client
+        .get('/plain')
+        .pipe(Effect.provideService(HttpClient.TracerPropagationEnabled, false))
+      yield* flush
+      const { spans } = yield* collect()
+      const calls = spanNamed(spans, 'Echo')
+      expect(calls).toHaveLength(1)
+      expect(calls[0]).toMatchObject({ traceId, parentSpanId: parent, flags: 0x300, name: 'Echo' })
+      expect(spanNamed(spans, 'GET /plain')).toHaveLength(1)
+    }),
+  ),
 )

@@ -12,6 +12,7 @@ import {
   type Run,
   RunId,
   RuntimeSubmissionId,
+  type DeliveryRefused,
   type RuntimeUnavailable,
   type ThreadId,
   WatchId,
@@ -160,13 +161,16 @@ export interface ConversationService {
    */
   readonly deliver: (
     delivery: ServerDelivery,
-  ) => Effect.Effect<Run, Conflict | RuntimeUnavailable | NotFound | DatabaseInfrastructureError>
+  ) => Effect.Effect<
+    Run,
+    Conflict | DeliveryRefused | RuntimeUnavailable | NotFound | DatabaseInfrastructureError
+  >
   /** Immediate admission: another Person's working Run returns a client-displayable Conflict. */
   readonly admit: (
     delivery: Delivery,
   ) => Effect.Effect<
     Admitted,
-    Conflict | RuntimeUnavailable | NotFound | DatabaseInfrastructureError
+    Conflict | DeliveryRefused | RuntimeUnavailable | NotFound | DatabaseInfrastructureError
   >
 }
 

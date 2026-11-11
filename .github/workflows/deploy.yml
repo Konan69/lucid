@@ -1,0 +1,101 @@
+name: Deploy
+
+# One command converges production: `pnpm deploy:production` runs `alchemy deploy` (Railway
+# settings, the cell Worker's identity, the server release of this exact commit, Sentry's alert
+# rules) and then `infra/drift.mjs`, and any failed step fails this run on the commit. Railway no
+# longer deploys a push by itself (`autoUpdates: false` in `infra/railway.ts`).
+#
+# Only `run:` steps: the repository's Actions policy refuses actions from outside its owner, so
+# checkout, Node and celld come from git, nodejs.org (checksum-verified) and celld's image pinned by
+# digest. The deploy does not depend on this file: the same command runs from any machine that
+# holds the credentials below (`docs/19-infrastructure.md`).
+#
+# Secrets: VIVID_ENV_PRODUCTION (the whole production dotenv), RAILWAY_API_TOKEN (an account or
+# workspace token), ALCHEMY_STATE_URL and ALCHEMY_STATE_TOKEN (the hosted state store),
+# SENTRY_MANAGEMENT_TOKEN, and VIVID_DEPLOY_GITHUB_TOKEN (contents write on this repository, for the
+# Computer binaries' release).
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  # Hourly, drift only: production is read against what `main` declares and the run fails on a
+  # difference, so a change made by hand in Railway or Sentry does not wait for the next deploy.
+  schedule:
+    - cron: '17 * * * *'
+
+# One deploy or drift read at a time, never cancelled midway: the state store holds no lock.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  production:
+    name: ${{ github.event_name == 'schedule' && 'Drift' || 'Deploy' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ALCHEMY_TELEMETRY_DISABLED: '1'
+      NODE_VERSION: v24.14.1
+      NODE_SHA256: 84d38715d449447117d05c3e71acd78daa49d5b1bfa8aacf610303920c3322be
+      CELLD_IMAGE: ghcr.io/denoland/celld:v0.6.2@sha256:b85983dcf410bcf710bbc30f400d8654123cb2b541ca4d84d7e299009a6ee97a
+    steps:
+      - name: Check out this commit
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          git init --quiet .
+          git remote add origin "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --quiet --depth=1 origin "$GITHUB_SHA"
+          git checkout --quiet --detach FETCH_HEAD
+
+      - name: Install Node, pnpm and celld
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/node.tar.xz" "https://nodejs.org/dist/$NODE_VERSION/node-$NODE_VERSION-linux-x64.tar.xz"
+          echo "$NODE_SHA256  $RUNNER_TEMP/node.tar.xz" | sha256sum --check --strict
+          tar -xJf "$RUNNER_TEMP/node.tar.xz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/node-$NODE_VERSION-linux-x64/bin" >> "$GITHUB_PATH"
+          docker create --name celld "$CELLD_IMAGE" >/dev/null
+          docker cp celld:/usr/local/bin/celld "$RUNNER_TEMP/bin/celld"
+          docker rm celld >/dev/null
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Install dependencies
+        run: |
+          corepack enable
+          corepack install
+          celld --version
+          ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --frozen-lockfile
+
+      - name: Write the production settings
+        env:
+          VIVID_ENV_PRODUCTION: ${{ secrets.VIVID_ENV_PRODUCTION }}
+        run: |
+          umask 077
+          printf '%s\n' "$VIVID_ENV_PRODUCTION" > .env.production
+          test -s .env.production
+
+      - name: Deploy and check drift
+        if: github.event_name != 'schedule'
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+          ALCHEMY_STATE_URL: ${{ secrets.ALCHEMY_STATE_URL }}
+          ALCHEMY_STATE_TOKEN: ${{ secrets.ALCHEMY_STATE_TOKEN }}
+          SENTRY_MANAGEMENT_TOKEN: ${{ secrets.SENTRY_MANAGEMENT_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.VIVID_DEPLOY_GITHUB_TOKEN }}
+        run: pnpm deploy:production
+
+      - name: Check drift
+        if: github.event_name == 'schedule'
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+          ALCHEMY_STATE_URL: ${{ secrets.ALCHEMY_STATE_URL }}
+          ALCHEMY_STATE_TOKEN: ${{ secrets.ALCHEMY_STATE_TOKEN }}
+          SENTRY_MANAGEMENT_TOKEN: ${{ secrets.SENTRY_MANAGEMENT_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.VIVID_DEPLOY_GITHUB_TOKEN }}
+        run: pnpm infra:drift

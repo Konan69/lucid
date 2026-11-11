@@ -46,6 +46,7 @@ import { ActionOutcome } from './gate.ts'
 import { ApprovalStore } from './store.ts'
 import { approvals } from './tables.ts'
 import { desktopAction, fixture, Observation, trustTestServices } from './testing.ts'
+import { unreachableCause } from '../runtime/testing.ts'
 
 const once = ApprovalDecision.cases.AllowOnce.make({})
 /** A click on the Person's own signed-in page. */
@@ -505,7 +506,9 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             const observed = yield* Observation
             yield* Ref.set(
               observed.deliveryFailure,
-              Option.some(new RuntimeUnavailable({ message: 'Unavailable' })),
+              Option.some(
+                new RuntimeUnavailable({ message: 'Unavailable', cause: unreachableCause }),
+              ),
             )
             const approval = yield* store.raise(
               test.companyVivid,

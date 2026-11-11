@@ -1,6 +1,13 @@
-import { ConversationState, RunId, RuntimeUnavailable, type ThreadId } from '@vivid/contracts'
+import {
+  ConversationState,
+  incidentHop,
+  issuesOf,
+  RunId,
+  RuntimeUnavailable,
+  type ThreadId,
+} from '@vivid/contracts'
 import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
-import { Effect } from 'effect'
+import { Effect, Match, Option } from 'effect'
 import { Database, decodeStored } from '../database/client.ts'
 import { Admitted } from '../threads/conversation.ts'
 import { runs } from '../threads/tables.ts'
@@ -17,9 +24,37 @@ export const readThreadHistory = Effect.fn('Runtime.history')(function* (
     suffix: '',
   })
   if (response.status < 200 || response.status >= 300)
-    return yield* RuntimeUnavailable.make({ message: 'Conversation history could not be read' })
+    return yield* RuntimeUnavailable.make({
+      message: 'Conversation history could not be read',
+      cause: [
+        incidentHop({
+          service: 'server',
+          operation: 'Runtime.history',
+          tag: 'UnexpectedStatus',
+          status: Option.some(response.status),
+          issues: [],
+        }),
+      ],
+    })
   const state = yield* HttpClientResponse.schemaBodyJson(ConversationState)(response).pipe(
-    Effect.mapError(() => RuntimeUnavailable.make({ message: 'Conversation history is invalid' })),
+    Effect.mapError((error) =>
+      RuntimeUnavailable.make({
+        message: 'Conversation history is invalid',
+        cause: [
+          incidentHop({
+            service: 'server',
+            operation: 'Runtime.history',
+            ...Match.value(error).pipe(
+              Match.tagsExhaustive({
+                SchemaError: ({ _tag, issue }) => ({ tag: _tag, issues: issuesOf(issue) }),
+                HttpClientError: ({ reason }) => ({ tag: reason._tag, issues: [] }),
+              }),
+            ),
+            status: Option.some(response.status),
+          }),
+        ],
+      }),
+    ),
   )
   return state
 })

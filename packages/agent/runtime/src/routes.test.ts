@@ -8,6 +8,7 @@ import {
 import { getCurrentSystemPrompt, getCurrentTools } from '@earendil-works/pi-ai/utils/transcript'
 import { describe, expect, it } from '@effect/vitest'
 import {
+  CodeName,
   ConversationFrame,
   ConversationState,
   PersonId,
@@ -16,7 +17,7 @@ import {
   SignalCue,
 } from '@vivid/contracts'
 import { Array as Arr, Deferred, Effect, Exit, Option, Schema, Scope } from 'effect'
-import { held, start, world } from '../tests/process.ts'
+import { held, refusal, start, world } from '../tests/process.ts'
 import {
   ada,
   admit,
@@ -518,13 +519,30 @@ describe('the runtime over HTTP', () => {
             `${threadPath(grace, 'ada-thread')}/submissions/${hers.submissionId}`,
             { method: 'GET' },
           ),
-        ).toEqual({ status: 404, body: { error: 'UnknownThread' } })
+        ).toEqual(
+          refusal('UnknownThread', 404, {
+            operation: 'Runtime.settled',
+            tag: 'UnknownThread',
+            issues: [],
+          }),
+        )
         expect(
           yield* runtime.send(threadPath(grace, 'ada-thread'), {
             method: 'POST',
             body: delivery('ada-thread', 'key-x'),
           }),
-        ).toEqual({ status: 400, body: { error: 'WrongThread' } })
+        ).toEqual(
+          refusal('WrongThread', 400, {
+            operation: 'Runtime.admission',
+            tag: 'WrongThread',
+            issues: [
+              {
+                path: [CodeName.make('initialData'), CodeName.make('creator')],
+                kind: 'InvalidValue',
+              },
+            ],
+          }),
+        )
         expect(
           yield* runtime.send(threadPath(PersonId.make('not.a.name'), 'ada-thread'), {
             method: 'POST',
@@ -553,7 +571,23 @@ describe('the runtime over HTTP', () => {
           )
           yield* failing.release
           expect(yield* settled(runtime, ada, 'thread-1', first.submissionId)).toEqual(
-            RuntimeSettlement.cases.Failed.make({ failure: 'ModelUnavailable', status: 401 }),
+            RuntimeSettlement.cases.Failed.make({
+              failure: 'ModelUnavailable',
+              status: 401,
+              cause: [
+                {
+                  service: 'cell',
+                  operation: CodeName.make('Response.unanswered'),
+                  tag: CodeName.make('model_error'),
+                },
+                {
+                  service: 'model',
+                  operation: CodeName.make('Harness.generate'),
+                  tag: CodeName.make('ModelUnavailable'),
+                  status: 401,
+                },
+              ],
+            }),
           )
           // Nothing else is sent to the Thread: the waiting delivery gets a response of its own.
           expect(yield* settled(runtime, ada, 'thread-1', second.submissionId)).toEqual(
@@ -768,7 +802,23 @@ describe('the runtime over HTTP', () => {
           { method: 'GET' },
         )
         expect(yield* decodeSettlement(response.body)).toEqual(
-          RuntimeSettlement.cases.Failed.make({ failure: 'ModelUnavailable', status: 403 }),
+          RuntimeSettlement.cases.Failed.make({
+            failure: 'ModelUnavailable',
+            status: 403,
+            cause: [
+              {
+                service: 'cell',
+                operation: CodeName.make('Response.unanswered'),
+                tag: CodeName.make('model_error'),
+              },
+              {
+                service: 'model',
+                operation: CodeName.make('Harness.generate'),
+                tag: CodeName.make('ModelUnavailable'),
+                status: 403,
+              },
+            ],
+          }),
         )
         expect(JSON.stringify(response.body)).not.toContain('SECRET')
       }),
@@ -819,7 +869,13 @@ describe('the runtime over HTTP', () => {
             body: delivery('thread-1', 'key-1'),
             token: 'wrong',
           }),
-        ).toEqual({ status: 401, body: { error: 'Unauthorized' } })
+        ).toEqual(
+          refusal('Unauthorized', 401, {
+            operation: 'Runtime.admission',
+            tag: 'Unauthorized',
+            issues: [],
+          }),
+        )
         expect(yield* runtime.send('/health', { method: 'GET', token: 'wrong' })).toEqual({
           status: 200,
           body: { model: 'fixture/text', service: 'vivid-agent-runtime', status: 'ok' },

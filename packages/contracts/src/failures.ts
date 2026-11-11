@@ -1,5 +1,6 @@
-import { Schema } from 'effect'
-import { InvitationId, PersonId } from './identity.js'
+import { ErrorReporter, Schema } from 'effect'
+import { InvitationId, PersonId, RunId } from './identity.js'
+import { IncidentCause } from './incidents.js'
 
 export class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
   'Unauthenticated',
@@ -80,11 +81,35 @@ export class InvalidRequest extends Schema.TaggedError<InvalidRequest>()(
   { title: 'Invalid request' },
 ) {}
 
+/**
+ * The conversation runtime could not be reached, or could not answer, so whether the work
+ * happened is not known and asking again later may succeed. It is never a refusal renamed: a
+ * runtime that answered "no" is `DeliveryRefused`. `cause` is why, outermost hop first.
+ */
 export class RuntimeUnavailable extends Schema.TaggedError<RuntimeUnavailable>()(
   'RuntimeUnavailable',
-  { message: Schema.String },
+  { message: Schema.String, cause: IncidentCause },
   { title: 'Runtime unavailable' },
 ) {}
+
+/**
+ * Admission failed on the server or was refused by the runtime, so the Run `runId` never started
+ * and has ended Failed. `cause` names the server's hop and, for a runtime refusal, the
+ * cell's (a field that did not decode, a contract mismatch), so a client that reports it, and
+ * the Incident recorded for it, say why without the request's words.
+ */
+export class DeliveryRefused extends Schema.TaggedError<DeliveryRefused>()(
+  'DeliveryRefused',
+  { runId: RunId, cause: IncidentCause },
+  { title: 'Delivery refused' },
+) {
+  /**
+   * The outcome is already said: the server raises this only after `Conversation.admissionFailed`
+   * recorded `AdmissionFailed` for the same Run, with this cause. A boundary reporter that also
+   * captured it would open a second, differently grouped issue for one failed send.
+   */
+  readonly [ErrorReporter.ignore] = true
+}
 
 /**
  * A part of the installation the request needs is not reachable: the Connection layer, the memory

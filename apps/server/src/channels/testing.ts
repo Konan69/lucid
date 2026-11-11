@@ -50,6 +50,7 @@ import {
 import { ChannelReplies, channelRepliesLayer, type ChannelEnding } from './replies.ts'
 import { channelStoreLayer } from './store.ts'
 import { channelMessages } from './tables.ts'
+import { incidentsTestLayer } from '../runtime/testing.ts'
 
 type RuntimeInput = Parameters<Runtime['Service']['admit']>[0]
 type Send = Parameters<ChannelProvider['Service']['send']>[0]
@@ -216,6 +217,7 @@ const observedReplies = Layer.effect(
 ).pipe(Layer.provideMerge(replies))
 const conversation = conversationLayer.pipe(
   Layer.provide(Layer.mock(ThreadTitles, { afterRun: () => Effect.void })),
+  Layer.provide(incidentsTestLayer),
   Layer.provideMerge(observedReplies),
 )
 const trust = Layer.mergeAll(inputStoreLayer, approvalStoreLayer).pipe(

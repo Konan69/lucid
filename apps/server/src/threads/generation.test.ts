@@ -53,6 +53,7 @@ import { RunStore, runStoreLayer } from './runs.ts'
 import { ThreadStore, threadStoreLayer } from './store.ts'
 import type { TitleSource } from './title.ts'
 import { threads } from './tables.ts'
+import { incidentsTestLayer } from '../runtime/testing.ts'
 
 const databaseLayer = Layer.mergeAll(runStoreLayer, threadStoreLayer).pipe(
   Layer.provideMerge(testDatabaseLayer),
@@ -206,6 +207,7 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* (
       Layer.provide(silentChannelRepliesLayer),
       Layer.provide(services),
       Layer.provide(Layer.succeed(ThreadTitles, observed)),
+      Layer.provide(incidentsTestLayer),
     ),
   )
   const conversation = yield* Conversation.pipe(Effect.provideContext(conversationContext))

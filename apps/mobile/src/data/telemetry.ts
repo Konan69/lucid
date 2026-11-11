@@ -10,7 +10,9 @@ import {
 // export it from its entry, and `guarded` needs it to wrap: `init` uses this same function when
 // it is given none (`makeNativeTransportFactory` in the SDK's `sdk.js`).
 import { makeNativeTransport } from '@sentry/react-native/dist/js/transports/native'
-import { Option, Schema } from 'effect'
+import { impactSignal } from '@vivid/contracts'
+import { sending } from '@vivid/state'
+import { Effect, Option, Schema } from 'effect'
 import * as Updates from 'expo-updates'
 import type { ComponentType } from 'react'
 import { Platform } from 'react-native'
@@ -175,3 +177,36 @@ export const captureSignInLoss = (loss: string, form?: string): void => {
   lost.name = name
   captureException(lost)
 }
+
+/** Sentry's word for each log level an impact is said at (`impactSignal`). */
+const SEVERITY = { Error: 'error', Warn: 'warning', Info: 'info' } as const
+
+/**
+ * Records a failure the Person saw on this phone (`Incident` `ClientFailed`, `sending.Recording`).
+ *
+ * An Incident is an outcome, not something thrown, so the report's type is the case's tag and it
+ * carries no message: `scrub` keeps the type and drops every message. It is said at the level
+ * `impactSignal` gives an Incident, grouped and tagged by `sending.reportOf`, and joined to the
+ * trace of the span it is recorded in: the send's own, whose ids the RPC carried to the server.
+ */
+const recordIncident: sending.Recording['record'] = Effect.fnUntraced(function* (incident) {
+  const span = yield* Effect.option(Effect.currentSpan)
+  const failed = new Error(incident._tag)
+  failed.name = incident._tag
+  const report = sending.reportOf(incident)
+  captureException(failed, {
+    captureContext: {
+      level: SEVERITY[impactSignal.Incident.level],
+      fingerprint: report.fingerprint,
+      tags: report.tags,
+      contexts: {
+        trace: Option.getOrUndefined(
+          Option.map(span, (at) => ({ trace_id: at.traceId, span_id: at.spanId })),
+        ),
+      },
+    },
+  })
+})
+
+/** This phone's way of recording what its Person saw fail. */
+export const recording: sending.Recording = { source: 'phone', record: recordIncident }

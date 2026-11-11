@@ -396,7 +396,17 @@ function ConversationMessages({
         />
       ))}
       {Option.isSome(ended) && (
-        <Outcome run={ended.value} onAgain={Option.map(lastSaid, (words) => () => onSay(words))} />
+        <Outcome
+          run={ended.value}
+          // Words still held as not sent are what the Person last said, and sending them again
+          // is the same delivery under its own key: a Run the runtime never started is reserved
+          // again, never joined by a second one (`sending.Unarrival`).
+          onAgain={
+            unsent.length > 0
+              ? Option.some(onUnsentAgain)
+              : Option.map(lastSaid, (words) => () => onSay(words))
+          }
+        />
       )}
     </Messages>
   )
@@ -788,10 +798,19 @@ function NotSent({
   pictures: sending.Delivery['pictures']
   /** Whether the conversation above already shows these words. */
   shown: boolean
-  /** The server's own sentence for why, when it gave one meant for the Person. */
-  why: Option.Option<string>
+  /** Why they are not sent, which says whether this line or the Run's ending says so. */
+  why: sending.Unarrival
   onAgain: () => void
 }) {
+  // One send is said once: when the server held its Run, the Run's ending under the conversation
+  // says what happened and offers sending again (`Outcome`), so nothing is added here.
+  const said = sending.Unarrival.match(why, {
+    Unstarted: () => Option.none<string>(),
+    Refused: (refused) => Option.some(refused.words),
+    Unconfirmed: () => Option.some('Not sent.'),
+  })
+  // Words the conversation already draws, with nothing to say under them, are no row at all.
+  if (shown && Option.isNone(said)) return null
   return (
     <li className="flex flex-col items-end gap-1.5">
       {!shown && (
@@ -807,15 +826,17 @@ function NotSent({
           />
         </div>
       )}
-      <p role="alert" className="text-meta font-meta text-danger">
-        {Option.getOrElse(why, () => 'Not sent.')}{' '}
-        <button
-          onClick={onAgain}
-          className="cursor-pointer rounded-xs underline underline-offset-4 hover:text-ink focus-visible:text-ink"
-        >
-          Send again
-        </button>
-      </p>
+      {Option.isSome(said) && (
+        <p role="alert" className="text-meta font-meta text-danger">
+          {said.value}{' '}
+          <button
+            onClick={onAgain}
+            className="cursor-pointer rounded-xs underline underline-offset-4 hover:text-ink focus-visible:text-ink"
+          >
+            Send again
+          </button>
+        </p>
+      )}
     </li>
   )
 }

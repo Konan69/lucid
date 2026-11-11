@@ -3,12 +3,19 @@ import { Context, Effect, Layer, Match, Option, Predicate, Redacted, Schema, Str
 import * as Schedule from 'effect/Schedule'
 import type * as Scope from 'effect/Scope'
 import * as HttpClient from 'effect/http/HttpClient'
-import type * as HttpClientError from 'effect/http/HttpClientError'
+import * as HttpBody from 'effect/http/HttpBody'
+import * as HttpClientError from 'effect/http/HttpClientError'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/http/HttpClientResponse'
 import {
+  causeAfter,
+  CONTRACT_HEADER,
   ConversationState,
   Conflict,
+  IncidentCause,
+  incidentHop,
+  type Issue,
+  issuesOf,
   MemoryAddress,
   MemoryClosed,
   MemoryClosure,
@@ -39,6 +46,7 @@ import {
   type PersonId,
   type ThreadOrigin,
 } from '@vivid/contracts'
+import { contractFingerprint } from '@vivid/contracts/fingerprint'
 import { ServerConfig } from '../config.ts'
 import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
 import { Refusal, recordRefusal } from '../observability/refusal.ts'
@@ -50,10 +58,17 @@ import {
   cellNodes,
   conversationFrames,
   requestRuntime,
+  RuntimeRejected,
   RuntimeTransportFailed,
   type Address,
 } from './transport.ts'
-import { observeRun, settlementOf, Settlement } from './settlement.ts'
+import {
+  lostHere,
+  observeRun,
+  settlementOf,
+  type Settlement,
+  type SettlementLost,
+} from './settlement.ts'
 export { Settlement } from './settlement.ts'
 
 /** The runtime receipt also names the product reservation known before admission. */
@@ -63,6 +78,13 @@ export interface Admission extends Schema.Schema.Type<typeof Admission> {}
 /**
  * This request sent nothing, or was rejected before admitting new durable work. An earlier
  * uncertain attempt with this same key may still exist; refusal describes only this attempt.
+ *
+ * `reason` is what the server does about it; `cause` is why. For `Encoding` and `Address` it is
+ * one server hop, `Runtime.admit` with the `HttpClientError` reason's tag (`EncodeError`,
+ * `InvalidUrlError`). For `Rejected` it is the server hop (`Runtime.admit`, `RuntimeRejected`,
+ * the status the cell answered) followed by the cell's chain from `RuntimeRefusal.cause`. A
+ * refusal is never renamed `RuntimeUnavailable`: that tag is for a runtime that could not be
+ * reached, and a caller that replaces this error keeps `cause` (the keep-cause rule).
  */
 export class AdmissionRefused extends Schema.TaggedError<AdmissionRefused>()(
   'AdmissionRefused',
@@ -71,6 +93,7 @@ export class AdmissionRefused extends Schema.TaggedError<AdmissionRefused>()(
     /** The Run this request would have started: the product id derived from the Thread and key. */
     runId: RunId,
     reason: Schema.Literals(['Encoding', 'Address', 'Rejected']),
+    cause: IncidentCause,
   },
   { title: 'Runtime admission refused' },
 ) {}
@@ -83,6 +106,8 @@ export class AdmissionUncertain extends Schema.TaggedError<AdmissionUncertain>()
     /** The Run whose admission cannot be told: the product id derived from the Thread and key. */
     runId: RunId,
     reason: Schema.Literals(['Transport', 'Status', 'Receipt']),
+    /** Why it cannot be told: the server's hop, then the cell's chain when the cell answered. */
+    cause: IncidentCause,
   },
   { title: 'Runtime admission uncertain' },
 ) {}
@@ -119,21 +144,58 @@ const admissionBody = (input: AdmissionInput): RuntimeAdmissionBody => {
   return input.clientKey === undefined ? addressed : { ...addressed, clientKey: input.clientKey }
 }
 
+/** Every way a call to the cells fails before or instead of a typed answer. */
+type CellFailure =
+  | HttpClientError.HttpClientError
+  | HttpBody.HttpBodyError
+  | Schema.SchemaError
+  | RuntimeTransportFailed
+  | RuntimeRejected
+  | DatabaseInfrastructureError
+
+/**
+ * The cause of a failed call to the cells, with the server's hop first (the keep-cause rule on
+ * `IncidentCause`). A `RuntimeRejected` carries the cell's own chain, which follows the hop; an
+ * HTTP client or body error is named by its reason's tag; a decode failure names its fields.
+ * `status` is the status the cell answered, when it answered.
+ */
+const causeOf = (
+  operation: string,
+  error: CellFailure,
+  status: Option.Option<number>,
+): IncidentCause => {
+  const hop = (tag: string, issues: ReadonlyArray<Issue>) =>
+    incidentHop({ service: 'server', operation, tag, status, issues })
+  if (error instanceof RuntimeRejected) return causeAfter(hop(error._tag, []), error.refusal.cause)
+  if (error instanceof HttpClientError.HttpClientError) return [hop(error.reason._tag, [])]
+  if (error instanceof Schema.SchemaError) return [hop(error._tag, issuesOf(error.issue))]
+  if (error instanceof HttpBody.HttpBodyError)
+    return Match.value(error.reason).pipe(
+      Match.tagsExhaustive({
+        SchemaError: (reason) => [hop(reason._tag, issuesOf(reason.issue))],
+        JsonError: (reason) => [hop(reason._tag, [])],
+      }),
+    )
+  return [hop(error._tag, [])]
+}
+
 /** Transport errors cannot prove whether an idempotent delivery reached durable storage. */
 const admissionRequestError = (
   attempt: { threadId: ThreadId; runId: import('@vivid/contracts').RunId },
   error: HttpClientError.HttpClientError,
-) =>
-  Match.value(error.reason).pipe(
+) => {
+  const cause = causeOf('Runtime.admit', error, Option.none())
+  return Match.value(error.reason).pipe(
     Match.tagsExhaustive({
-      InvalidUrlError: () => AdmissionRefused.make({ ...attempt, reason: 'Address' }),
-      EncodeError: () => AdmissionRefused.make({ ...attempt, reason: 'Encoding' }),
-      TransportError: () => AdmissionUncertain.make({ ...attempt, reason: 'Transport' }),
-      StatusCodeError: () => AdmissionUncertain.make({ ...attempt, reason: 'Status' }),
-      DecodeError: () => AdmissionUncertain.make({ ...attempt, reason: 'Receipt' }),
-      EmptyBodyError: () => AdmissionUncertain.make({ ...attempt, reason: 'Receipt' }),
+      InvalidUrlError: () => AdmissionRefused.make({ ...attempt, reason: 'Address', cause }),
+      EncodeError: () => AdmissionRefused.make({ ...attempt, reason: 'Encoding', cause }),
+      TransportError: () => AdmissionUncertain.make({ ...attempt, reason: 'Transport', cause }),
+      StatusCodeError: () => AdmissionUncertain.make({ ...attempt, reason: 'Status', cause }),
+      DecodeError: () => AdmissionUncertain.make({ ...attempt, reason: 'Receipt', cause }),
+      EmptyBodyError: () => AdmissionUncertain.make({ ...attempt, reason: 'Receipt', cause }),
     }),
   )
+}
 
 export interface RuntimeService {
   readonly admit: (
@@ -142,7 +204,7 @@ export interface RuntimeService {
   readonly settled: (
     threadId: ThreadId,
     runId: RunId,
-  ) => Effect.Effect<Settlement, DatabaseInfrastructureError>
+  ) => Effect.Effect<Settlement, DatabaseInfrastructureError | SettlementLost>
   readonly stop: (threadId: ThreadId) => Effect.Effect<boolean, RuntimeUnavailable>
   /** How one helper's work stands in the runtime, with its answer once it ended. */
   readonly child: (
@@ -184,11 +246,20 @@ interface Transport {
   ) => HttpClientRequest.HttpClientRequest
 }
 
-const unavailable = () => RuntimeUnavailable.make({ message: 'Vivid could not be reached' })
+/** The runtime could not be reached or answered nothing usable in `operation`, because of `error`. */
+const unavailable = (operation: string) => (error: CellFailure) =>
+  RuntimeUnavailable.make({
+    message: 'Vivid could not be reached',
+    cause: causeOf(operation, error, Option.none()),
+  })
 const transportFailed = (address: Address) => () => RuntimeTransportFailed.make(address)
 const decodeReceipt = decodeStored(Admitted, 'Run admission receipt')
 
-/** Admission owns its response through receipt decoding, even after headers arrived. */
+/**
+ * Admission owns its response through receipt decoding, even after headers arrived. The request
+ * carries this server's contract fingerprint, so a cell that cannot read the body can say the
+ * two were built from different schemas (`ContractMismatch`) rather than only that it was invalid.
+ */
 const makeAdmit = ({ http, request }: Transport): RuntimeService['admit'] =>
   Effect.fn('Runtime.admit')(
     function* (input) {
@@ -196,23 +267,60 @@ const makeAdmit = ({ http, request }: Transport): RuntimeService['admit'] =>
       const attempt = { threadId, runId: deliveryRunId(threadId, input.idempotencyKey) }
       const address = { personId: input.origin.creator, threadId }
       const encoded = yield* HttpClientRequest.schemaBodyJson(RuntimeAdmissionBody)(
-        request(address, '', 'POST'),
+        request(address, '', 'POST').pipe(
+          HttpClientRequest.setHeader(CONTRACT_HEADER, contractFingerprint),
+        ),
         admissionBody(input),
-      ).pipe(Effect.mapError(() => AdmissionRefused.make({ ...attempt, reason: 'Encoding' })))
+      ).pipe(
+        Effect.mapError((error) =>
+          AdmissionRefused.make({
+            ...attempt,
+            reason: 'Encoding',
+            cause: causeOf('Runtime.admit', error, Option.none()),
+          }),
+        ),
+      )
       const response = yield* HttpClient.withScope(http)
         .execute(encoded)
         .pipe(Effect.mapError((error) => admissionRequestError(attempt, error)))
+      const answered = Option.some(response.status)
       if (response.status !== 202) {
+        // A body that is not a refusal (a Worker of another build answers one without a cause)
+        // names its missing fields here, at the status it came with.
         const refusal = yield* HttpClientResponse.schemaBodyJson(RuntimeRefusal)(response).pipe(
-          Effect.mapError(() => AdmissionUncertain.make({ ...attempt, reason: 'Status' })),
+          Effect.mapError((error) =>
+            AdmissionUncertain.make({
+              ...attempt,
+              reason: 'Status',
+              cause: causeOf('Runtime.admit', error, answered),
+            }),
+          ),
+        )
+        const cause = causeAfter(
+          incidentHop({
+            service: 'server',
+            operation: 'Runtime.admit',
+            tag: 'RuntimeRejected',
+            status: answered,
+            issues: [],
+          }),
+          refusal.cause,
         )
         if (refusal.error === 'Unavailable')
-          return yield* AdmissionUncertain.make({ ...attempt, reason: 'Transport' })
-        return yield* AdmissionRefused.make({ ...attempt, reason: 'Rejected' })
+          return yield* AdmissionUncertain.make({ ...attempt, reason: 'Transport', cause })
+        return yield* AdmissionRefused.make({ ...attempt, reason: 'Rejected', cause })
       }
       const receipt = yield* HttpClientResponse.schemaBodyJson(RuntimeAdmissionReceipt)(
         response,
-      ).pipe(Effect.mapError(() => AdmissionUncertain.make({ ...attempt, reason: 'Receipt' })))
+      ).pipe(
+        Effect.mapError((error) =>
+          AdmissionUncertain.make({
+            ...attempt,
+            reason: 'Receipt',
+            cause: causeOf('Runtime.admit', error, answered),
+          }),
+        ),
+      )
       return {
         runId: attempt.runId,
         submissionId: receipt.submissionId,
@@ -242,10 +350,10 @@ const makeChildCalls = (input: {
     const address = yield* addressOf(threadId)
     const suffix = `/children/${encodeURIComponent(runId)}`
     const response = yield* requestRuntime(http, request(address, suffix, 'GET'), address).pipe(
-      Effect.mapError(unavailable),
+      Effect.mapError(unavailable('Runtime.child')),
     )
     return yield* HttpClientResponse.schemaBodyJson(RuntimeChildAnswer)(response).pipe(
-      Effect.mapError(unavailable),
+      Effect.mapError(unavailable('Runtime.child')),
     )
   }, Effect.scoped)
   const stopChild: RuntimeService['stopChild'] = Effect.fn('Runtime.stopChild')(function* (
@@ -255,10 +363,10 @@ const makeChildCalls = (input: {
     const address = yield* addressOf(threadId)
     const suffix = `/children/${encodeURIComponent(runId)}/abort`
     const response = yield* requestRuntime(http, request(address, suffix, 'POST'), address).pipe(
-      Effect.mapError(unavailable),
+      Effect.mapError(unavailable('Runtime.stopChild')),
     )
     return (yield* HttpClientResponse.schemaBodyJson(RuntimeStopped)(response).pipe(
-      Effect.mapError(unavailable),
+      Effect.mapError(unavailable('Runtime.stopChild')),
     )).aborted
   }, Effect.scoped)
   const messageChild: RuntimeService['messageChild'] = Effect.fn('Runtime.messageChild')(function* (
@@ -271,12 +379,12 @@ const makeChildCalls = (input: {
     const encoded = yield* HttpClientRequest.schemaBodyJson(RuntimeChildMessage)(
       request(address, suffix, 'POST'),
       message,
-    ).pipe(Effect.mapError(unavailable))
+    ).pipe(Effect.mapError(unavailable('Runtime.messageChild')))
     const response = yield* requestRuntime(http, encoded, address).pipe(
-      Effect.mapError(unavailable),
+      Effect.mapError(unavailable('Runtime.messageChild')),
     )
     return yield* HttpClientResponse.schemaBodyJson(RuntimeChildMessaged)(response).pipe(
-      Effect.mapError(unavailable),
+      Effect.mapError(unavailable('Runtime.messageChild')),
     )
   }, Effect.scoped)
   return { child, stopChild, messageChild }
@@ -299,9 +407,22 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
   const addressOf = Effect.fn('Runtime.address')(function* (threadId: ThreadId) {
     const thread = yield* findThread(threadId).pipe(
       Effect.provideService(Database, database),
-      Effect.mapError(unavailable),
+      Effect.mapError(unavailable('Runtime.address')),
     )
-    if (Option.isNone(thread)) return yield* unavailable()
+    // No Thread row, so no cell to address: said as the server's own hop.
+    if (Option.isNone(thread))
+      return yield* RuntimeUnavailable.make({
+        message: 'Vivid could not be reached',
+        cause: [
+          incidentHop({
+            service: 'server',
+            operation: 'Runtime.address',
+            tag: 'ThreadMissing',
+            status: Option.none(),
+            issues: [],
+          }),
+        ],
+      })
     return { personId: thread.value.personId, threadId }
   })
   const settled: RuntimeService['settled'] = Effect.fn('Runtime.settled')(
@@ -314,7 +435,7 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
           schedule: Schedule.spaced('1 second'),
         }),
       )
-      if (Option.isNone(thread)) return Settlement.cases.Unknown.make({})
+      if (Option.isNone(thread)) return yield* lostHere('Runtime.settled', 'ThreadMissing')
       const address = { personId: thread.value.personId, threadId }
       const [row] = yield* database
         .run(
@@ -329,7 +450,8 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
             schedule: Schedule.spaced('1 second'),
           }),
         )
-      if (row === undefined || row.receipt === null) return Settlement.cases.Unknown.make({})
+      if (row === undefined || row.receipt === null)
+        return yield* lostHere('Runtime.settled', 'ReceiptMissing')
       // Corrupt product data is a typed storage failure, never evidence that Pi ended the reply.
       const receipt = yield* decodeReceipt(row.receipt)
       return yield* observeRun(
@@ -350,10 +472,10 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
   const stop: RuntimeService['stop'] = Effect.fn('Runtime.stop')(function* (threadId) {
     const address = yield* addressOf(threadId)
     const response = yield* requestRuntime(http, request(address, '/abort', 'POST'), address).pipe(
-      Effect.mapError(unavailable),
+      Effect.mapError(unavailable('Runtime.stop')),
     )
     return (yield* HttpClientResponse.schemaBodyJson(RuntimeStopped)(response).pipe(
-      Effect.mapError(unavailable),
+      Effect.mapError(unavailable('Runtime.stop')),
     )).aborted
   }, Effect.scoped)
   /** Finite history and attachment reads retain their caller's scope through body consumption. */
@@ -362,7 +484,7 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
     const suffix = input.suffix === '' ? '/state' : input.suffix
     return yield* HttpClient.withScope(http)
       .execute(request(address, suffix, 'GET'))
-      .pipe(Effect.mapError(unavailable))
+      .pipe(Effect.mapError(unavailable('Runtime.read')))
   })
   /** Interruption closes the upstream state stream as well as the access watcher. */
   const watch: RuntimeService['watch'] = (personId, threadId) =>
@@ -375,10 +497,12 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
             HttpClientRequest.setHeader('accept', 'text/event-stream'),
           ),
           address,
-        ).pipe(Effect.mapError(unavailable))
+        ).pipe(Effect.mapError(unavailable('Runtime.watch')))
         return conversationFrames(response, address).pipe(
           Stream.mapError((error) =>
-            Predicate.isTagged(error, 'ConversationTooLarge') ? error : unavailable(),
+            Predicate.isTagged(error, 'ConversationTooLarge')
+              ? error
+              : unavailable('Runtime.watch')(error),
           ),
         )
       }),
@@ -524,9 +648,21 @@ export const documentRun = Effect.fn('Runtime.documentRun')(function* (
     threadId,
     suffix: '',
   })
-  if (response.status !== 200) return yield* unavailable()
+  if (response.status !== 200)
+    return yield* RuntimeUnavailable.make({
+      message: 'Vivid could not be reached',
+      cause: [
+        incidentHop({
+          service: 'server',
+          operation: 'Runtime.documentRun',
+          tag: 'UnexpectedStatus',
+          status: Option.some(response.status),
+          issues: [],
+        }),
+      ],
+    })
   const state = yield* HttpClientResponse.schemaBodyJson(ConversationState)(response).pipe(
-    Effect.mapError(unavailable),
+    Effect.mapError(unavailable('Runtime.documentRun')),
   )
   const matches = state.messages.filter(
     (message) =>

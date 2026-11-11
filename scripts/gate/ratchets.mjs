@@ -158,6 +158,40 @@ export const ratchets = [
     rule: 'react-no-state-after-wait',
     ceiling: 95,
   },
+  // Added 10 November 2026; remeasured after resolving local bindings and widening client/cell
+  // coverage on feat/incidents-fd (11 November). Each finding is a
+  // failure a Person was owed that an observer could not see or explain; they come down as each
+  // site keeps its cause, records its Incident or declares its Impact.
+  {
+    label: 'failures replaced without their cause',
+    plugin: 'vivid',
+    rule: 'keep-incident-cause',
+    ceiling: 447,
+  },
+  {
+    label: 'failures turned into values unrecorded',
+    plugin: 'vivid',
+    rule: 'no-silent-failure',
+    ceiling: 343,
+  },
+  {
+    label: 'ad hoc failure log lines',
+    plugin: 'vivid',
+    rule: 'no-ad-hoc-failure-log',
+    ceiling: 115,
+  },
+  {
+    label: 'refusals renamed to unavailable',
+    plugin: 'vivid',
+    rule: 'no-refusal-as-unavailable',
+    ceiling: 0,
+  },
+  {
+    label: 'severity chosen by typedness',
+    plugin: 'vivid',
+    rule: 'severity-from-impact',
+    ceiling: 0,
+  },
   { label: 'design-system raw colors', plugin: 'shadcn', rule: 'no-raw-colors', ceiling: 0 },
   {
     label: 'design-system arbitrary values',
@@ -235,7 +269,10 @@ export function effectRule(line) {
   return named === null ? code[1] : named[1]
 }
 
-/** Knip findings and justified uncalled procedures are measured separately from lint output. */
+/**
+ * Knip findings, justified uncalled procedures and deploy commands that are shell chains
+ * (`scripts/gate/commands.mjs`) are measured separately from lint output.
+ */
 export const deadCodeRatchets = [
   { plugin: 'knip', rule: 'files', ceiling: 0 },
   { plugin: 'knip', rule: 'exports', ceiling: 21 },
@@ -252,4 +289,10 @@ export const deadCodeRatchets = [
   { plugin: 'knip', rule: 'namespaceMembers', ceiling: 0 },
   { plugin: 'knip', rule: 'optionalPeerDependencies', ceiling: 0 },
   { plugin: 'rpc', rule: 'uncalled', ceiling: 1 },
+  // Added 10 November 2026 at the server's pre-deploy chain in `infra/railway.ts`.
+  { plugin: 'deploy', rule: 'shell-chain', ceiling: 0 },
+  { plugin: 'readback', rule: 'missing', ceiling: 0 },
+  // Added 10 November 2026: every server <-> cell schema is in the contract fingerprint
+  // (`wireSchemas`); the admission body that drifted in production was outside it at bab8c618d.
+  { plugin: 'wire', rule: 'unregistered', ceiling: 0 },
 ]

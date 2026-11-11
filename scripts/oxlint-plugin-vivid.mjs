@@ -1,4 +1,5 @@
 import * as NodeEvents from 'node:events'
+import { visitorKeys } from 'oxc-parser'
 import { noCrossPackageImport } from './boundary.mjs'
 
 // Each runner has a `With` form that takes a Context first (`Effect.runPromiseWith(context)(program)`).
@@ -1224,6 +1225,555 @@ const reactNoUselessMemo = rule(
   }),
 )
 
+/*
+ * Failure rules. Each one is a way a Person's failed work went unseen in production on
+ * 8-10 November 2026: every send failed for two days, and the server turned the cell's refusal
+ * into "Vivid could not be reached" at warning level with no issue. The vocabulary they enforce
+ * is `packages/contracts/src/incidents.ts`. They read syntax, not types, so each is a warning with
+ * a ratchet in `scripts/gate/ratchets.mjs`: the count may only go down.
+ *
+ * Same-file bindings expose named handlers and object spreads. A decoded refusal remains a
+ * failure even when a later statement replaces it outside a combinator. Imported implementations
+ * and the outcomes of arbitrary calls remain unknown to these syntax rules.
+ */
+
+/** The combinators that replace one failure with another (`IncidentCause`'s keep-cause rule). */
+const remapMethods = new Set(['catchTag', 'catchTags', 'mapError', 'catch', 'catchIf', 'orElse'])
+/** The combinators whose handler may answer a success in place of the failure it caught. */
+const recoveryMethods = new Set([
+  'catch',
+  'catchCause',
+  'catchCauseIf',
+  'catchFilter',
+  'catchIf',
+  'catchReason',
+  'catchReasons',
+  'catchTag',
+  'catchTags',
+])
+/** Each turns any failure into a value or into nothing (`effect@4.0.2` `src/Effect.ts`). */
+const valueMethods = new Set(['exit', 'ignore', 'ignoreCause', 'option', 'orElseSucceed', 'result'])
+const failureOwners = new Set(['Effect', 'Layer', 'Stream'])
+/** Handlers given as an object of tag to handler rather than as the last argument. */
+const handlerObjectMethods = new Set(['catchReasons', 'catchTags'])
+const successCalls = new Set([
+  'as',
+  'asVoid',
+  'log',
+  'logDebug',
+  'logError',
+  'logFatal',
+  'logInfo',
+  'logTrace',
+  'logWarning',
+  'succeed',
+  'succeedNone',
+  'succeedSome',
+  'sync',
+])
+const successValues = new Set(['asVoid', 'succeedNone', 'void'])
+const failCalls = new Set(['die', 'fail', 'failCause', 'failSync'])
+const failureLogLevels = new Set(['logError', 'logFatal', 'logWarning'])
+/**
+ * What reports a failure before it becomes a value: the recorder (`Incidents`, or the `incidents`
+ * a producer yields it as), the client recorders, cell telemetry, reporters and observers.
+ */
+const reporterPattern =
+  /\b(?:[Ii]ncidents|withErrorReporting|ErrorReporter|recordRefusal|recordRunFailure|observeFailures|recordFailure|recording|ClientFailed|CellReports|CellFailure)\b/u
+/** `// Impact: Recovered, <why>` or `// Impact: Routine, <why>`: the site says what it decided. */
+const impactPattern = /\bImpact:\s*(?:Routine|Recovered)\b\W+\w[\s\S]{9,}/u
+const pascalCase = /^[A-Z][A-Za-z0-9]*$/u
+
+/** Whether `node` is `Owner.method` for one of `owners` and one of `methods`. */
+const isOwnedMember = (node, owners, methods) =>
+  node?.type === 'MemberExpression' &&
+  node.object?.type === 'Identifier' &&
+  owners.has(node.object.name) &&
+  methods.has(propertyName(node))
+
+const isEffectCall = (node, methods) =>
+  node?.type === 'CallExpression' && isOwnedMember(node.callee, new Set(['Effect']), methods)
+
+/** Walks `node`'s subtree in source order; `visit` returning false skips a node's children. */
+const walkTree = (node, visit) => {
+  if (node === null || typeof node !== 'object' || typeof node.type !== 'string') return
+  if (visit(node) === false) return
+  for (const key of visitorKeys[node.type] ?? []) {
+    const value = node[key]
+    if (Array.isArray(value)) value.forEach((child) => walkTree(child, visit))
+    else walkTree(value, visit)
+  }
+}
+
+/**
+ * The error a construction makes: `new Name(...)` or `Name.make(...)`, including a case of a
+ * tagged union (`Refusal.cases.AdmissionRefused.make`). Undefined for anything else.
+ */
+const constructedError = (node) => {
+  const expression = unwrapExpression(node)
+  if (expression?.type === 'NewExpression') {
+    const callee = unwrapExpression(expression.callee)
+    const name = callee?.type === 'Identifier' ? callee.name : propertyName(callee)
+    return name !== undefined && pascalCase.test(name) ? { node: expression, name } : undefined
+  }
+  if (expression?.type !== 'CallExpression') return undefined
+  const callee = unwrapExpression(expression.callee)
+  if (callee?.type !== 'MemberExpression' || propertyName(callee) !== 'make') return undefined
+  const owner = unwrapExpression(callee.object)
+  const name = owner?.type === 'Identifier' ? owner.name : propertyName(owner)
+  return name !== undefined && pascalCase.test(name) ? { node: expression, name } : undefined
+}
+
+/** Resolve the nearest lexical binding, never a same-named declaration in another scope. */
+const bindingOf = (context, node) => {
+  for (let scope = context.sourceCode.getScope(node); scope !== null; scope = scope.upper) {
+    const variable = scope.set.get(node.name)
+    if (variable !== undefined) return variable
+  }
+  return undefined
+}
+
+/** Only visible object literals prove that a spread carries `cause`; unknown spreads do not. */
+const objectHasCause = (context, node, seen = new Set()) => {
+  const fields = unwrapExpression(node)
+  if (fields?.type === 'Identifier') {
+    const definition = bindingOf(context, fields)?.defs[0]
+    if (definition?.parent?.kind !== 'const' || seen.has(definition.node)) return false
+    seen.add(definition.node)
+    return objectHasCause(context, definition.node.init, seen)
+  }
+  if (fields?.type !== 'ObjectExpression') return false
+  if (objectProperty(fields, 'cause') !== undefined) return true
+  return fields.properties.some(
+    (property) =>
+      property.type === 'SpreadElement' && objectHasCause(context, property.argument, seen),
+  )
+}
+
+/** A direct opaque argument keeps the old unknown result; visible fields must carry a cause. */
+const passesCause = (context, construction) => {
+  const fields = unwrapExpression(construction.node.arguments[0])
+  if (fields === undefined) return false
+  if (fields.type !== 'ObjectExpression') return true
+  return objectHasCause(context, fields)
+}
+
+/** The generator an `Effect.fn('name')(function* ...)` or `Effect.fnUntraced(...)` wraps. */
+const wrappedGenerator = (node) => {
+  const expression = unwrapExpression(node)
+  if (expression?.type !== 'CallExpression') return undefined
+  const callee = unwrapExpression(expression.callee)
+  const named = isEffectCall(callee, new Set(['fn']))
+  const direct = isOwnedMember(callee, new Set(['Effect']), new Set(['fn', 'fnUntraced', 'gen']))
+  if (!named && !direct) return undefined
+  const body = expression.arguments.find(isFunction)
+  return body?.generator === true ? body : undefined
+}
+
+/** A same-file function declaration or const has a body just as an inline handler does. */
+const handlerFunction = (context, node) => {
+  let expression = unwrapExpression(node)
+  if (expression?.type === 'Identifier') {
+    const definition = bindingOf(context, expression)?.defs[0]
+    if (definition?.type === 'FunctionName') return definition.node
+    if (definition?.parent?.kind !== 'const') return undefined
+    expression = unwrapExpression(definition.node.init)
+  }
+  return isFunction(expression) ? expression : wrappedGenerator(expression)
+}
+
+/** The handlers of a failure combinator call, each with the tags it catches when they are literal. */
+const handlersOf = (context, call) => {
+  const method = propertyName(call.callee)
+  if (handlerObjectMethods.has(method)) {
+    const handlers = call.arguments.find((argument) => argument?.type === 'ObjectExpression')
+    if (handlers === undefined) return []
+    return handlers.properties.flatMap((property) => {
+      const handler =
+        property.type === 'Property' ? handlerFunction(context, property.value) : undefined
+      const tag = property.key?.type === 'Identifier' ? property.key.name : property.key?.value
+      return handler === undefined ? [] : [{ handler, caught: new Set([tag]) }]
+    })
+  }
+  const handler = handlerFunction(context, call.arguments.at(-1))
+  if (handler === undefined) return []
+  const tags = method === 'catchTag' ? unwrapExpression(call.arguments[0]) : undefined
+  const literals = tags?.type === 'ArrayExpression' ? tags.elements : [tags]
+  return [{ handler, caught: new Set(literals.filter(isStringLiteral).map((tag) => tag.value)) }]
+}
+
+/** The values a function answers with: its expression body, or what its own `return`s give. */
+const resultsOf = (fn) => {
+  if (fn.body?.type !== 'BlockStatement') return [fn.body]
+  const results = []
+  walkTree(fn.body, (node) => {
+    if (isFunction(node)) return false
+    if (node.type === 'ReturnStatement') results.push(node.argument)
+    return true
+  })
+  return results
+}
+
+/**
+ * What an Effect expression does with the failure it stands in for: `success` for the forms
+ * that cannot fail (`Effect.succeed`, `Effect.void`, a log line), `fail` for a failure or an
+ * error made in place, `unknown` for anything a name or a call hides.
+ */
+const effectOutcome = (node) => {
+  const expression = unwrapExpression(node)
+  if (constructedError(expression) !== undefined || isEffectCall(expression, failCalls))
+    return 'fail'
+  if (isEffectCall(expression, successCalls)) return 'success'
+  if (isOwnedMember(expression, new Set(['Effect']), successValues)) return 'success'
+  const generator = wrappedGenerator(expression)
+  if (generator !== undefined) return functionOutcome(generator)
+  // `work.pipe(..., Effect.as(value))`: whatever `work` was, the caught failure became `value`.
+  if (expression?.type === 'CallExpression' && propertyName(expression.callee) === 'pipe') {
+    const last = unwrapExpression(expression.arguments.at(-1))
+    if (
+      isEffectCall(last, new Set(['as'])) ||
+      isOwnedMember(last, new Set(['Effect']), successValues)
+    )
+      return 'success'
+  }
+  if (expression?.type === 'ConditionalExpression') {
+    const branches = new Set([
+      effectOutcome(expression.consequent),
+      effectOutcome(expression.alternate),
+    ])
+    return branches.size === 1 ? [...branches][0] : 'unknown'
+  }
+  return 'unknown'
+}
+
+/** Whether a generator fails in place: `yield*` of a made error or of `Effect.fail(...)`. */
+const failsInPlace = (generator) => {
+  let fails = false
+  walkTree(generator.body, (node) => {
+    if (isFunction(node)) return false
+    if (node.type === 'YieldExpression' && node.delegate && effectOutcome(node.argument) === 'fail')
+      fails = true
+    return !fails
+  })
+  return fails
+}
+
+/**
+ * What a handler answers. A generator answers success with any plain `return` value and with no
+ * `return` at all; a `return yield* x` answers what `x` does. An arrow answers its Effect.
+ */
+function functionOutcome(fn) {
+  if (fn.generator === true) {
+    if (failsInPlace(fn)) return 'fail'
+    const outcomes = resultsOf(fn).map((result) => {
+      const value = unwrapExpression(result)
+      return value?.type === 'YieldExpression' && value.delegate
+        ? effectOutcome(value.argument)
+        : 'success'
+    })
+    if (outcomes.includes('fail')) return 'fail'
+    return outcomes.every((outcome) => outcome === 'success') ? 'success' : 'unknown'
+  }
+  const outcomes = resultsOf(fn).map(effectOutcome)
+  if (outcomes.includes('fail')) return 'fail'
+  if (outcomes.length > 0 && outcomes.every((outcome) => outcome === 'success')) return 'success'
+  return 'unknown'
+}
+
+/** The errors a handler makes and fails with: `Effect.fail(new X)`, `yield* X.make()`, or returns one. */
+const failingConstructions = (handler, mapsError) => {
+  const found = []
+  const add = (node) => {
+    const construction = constructedError(node)
+    if (construction !== undefined) found.push(construction)
+  }
+  walkTree(handler.body, (node) => {
+    // A nested failure combinator is a site of its own and is read when the rule reaches it.
+    if (node.type === 'CallExpression' && isOwnedMember(node.callee, failureOwners, remapMethods))
+      return false
+    if (isEffectCall(node, failCalls)) add(node.arguments[0])
+    if (node.type === 'YieldExpression' && node.delegate) add(node.argument)
+    return true
+  })
+  if (mapsError || handler.generator !== true) resultsOf(handler).forEach(add)
+  return found
+}
+
+/** Whether a handler ever reads the failure it was given. */
+const readsCaughtFailure = (context, handler) =>
+  context.sourceCode
+    .getDeclaredVariables(handler)
+    .some(
+      (variable) =>
+        variable.references.length > 0 &&
+        variable.defs.some((definition) => definition.type === 'Parameter'),
+    )
+
+/** A refusal decoded earlier in this lexical scope is still available to carry into a failure. */
+const hasDecodedRefusal = (context, node) => {
+  for (let scope = context.sourceCode.getScope(node); scope !== null; scope = scope.upper) {
+    for (const variable of scope.variables) {
+      const declaration = variable.defs[0]?.node
+      if (declaration?.type !== 'VariableDeclarator' || declaration.range[1] >= node.range[0])
+        continue
+      let refused = false
+      walkTree(declaration.init, (part) => {
+        if (part.type === 'CallExpression' && propertyName(part.callee) === 'schemaBodyJson') {
+          const schema = part.arguments[0]
+          if (schema?.type === 'Identifier' && refusalTag.test(schema.name)) refused = true
+        }
+        return !isFunction(part)
+      })
+      if (refused) return true
+    }
+  }
+  return false
+}
+
+/**
+ * `IncidentCause`'s keep-cause rule (`packages/contracts/src/incidents.ts`), the first link that
+ * broke on 8 November 2026: the cell answered 400 for a field the server sent, the server's
+ * `Runtime.admit` turned it into `AdmissionRefused{Rejected}`, `Conversation.admitRuntime` turned
+ * that into `RuntimeUnavailable`, and nothing said which field. A handler that fails with a new
+ * error must give it the caught error's cause; a handler that never reads what it caught and does
+ * not answer success has dropped the cause whatever it returns.
+ */
+const keepIncidentCause = {
+  meta: {
+    type: 'problem',
+    docs: { description: 'A failure replaced by another keeps its cause (IncidentCause).' },
+    schema: [],
+    messages: {
+      replaced:
+        "`{{name}}` replaces the caught failure without its cause. Give `{{name}}` a `cause: IncidentCause` field and pass the caught error's chain with this hop in front: { service, operation: <this Effect.fn name>, tag: <caught tag> } (packages/contracts/src/incidents.ts, IncidentCause).",
+      dropped:
+        'This handler never reads the failure it caught and answers with something else, so why it failed is lost. Take the caught error and carry its cause into what you fail or answer with: `cause: IncidentCause` with this hop in front (packages/contracts/src/incidents.ts). A handler that answers success is recovery and is not this rule.',
+    },
+  },
+  create(context) {
+    return {
+      YieldExpression(node) {
+        if (!node.delegate) return
+        const construction = constructedError(node.argument)
+        if (construction === undefined || passesCause(context, construction)) return
+        if (!hasDecodedRefusal(context, node)) return
+        context.report({
+          node: construction.node,
+          messageId: 'replaced',
+          data: { name: construction.name },
+        })
+      },
+      CallExpression(node) {
+        if (!isOwnedMember(node.callee, failureOwners, remapMethods)) return
+        const mapsError = propertyName(node.callee) === 'mapError'
+        for (const { handler, caught } of handlersOf(context, node)) {
+          const replaced = failingConstructions(handler, mapsError).filter(
+            (construction) => !caught.has(construction.name) && !passesCause(context, construction),
+          )
+          replaced.forEach((construction) =>
+            context.report({
+              node: construction.node,
+              messageId: 'replaced',
+              data: { name: construction.name },
+            }),
+          )
+          if (replaced.length > 0 || readsCaughtFailure(context, handler)) continue
+          if (mapsError || functionOutcome(handler) !== 'success')
+            context.report({ node: handler, messageId: 'dropped' })
+        }
+      },
+    }
+  },
+}
+
+/** Tags that say another party refused, as opposed to could not be reached. */
+const refusalTag =
+  /(?:Refused|Rejected|Refusal|Denied|Forbidden|Unauthorized|Unauthenticated|Conflict|NotFound|^Invalid\w*|^Wrong\w*|^Unknown\w*)$/u
+
+/**
+ * A refusal renamed to unavailable. `Conversation.admitRuntime` caught `AdmissionRefused` (the
+ * cell answered 400) and failed with `RuntimeUnavailable`, "Vivid could not be reached", so the
+ * Person, the phone and the log all read an outage when the cell had said exactly what was wrong.
+ * `RuntimeUnavailable` and its kind mean genuine unavailability only.
+ */
+const noRefusalAsUnavailable = {
+  meta: {
+    type: 'problem',
+    docs: { description: 'A refusal is never renamed to an unavailable failure.' },
+    schema: [],
+    messages: {
+      renamed:
+        '`{{caught}}` is a refusal and `{{name}}` says Vivid could not be reached. A refusal is never renamed to unavailable: keep `{{caught}}`, or fail with a refusal the caller can tell apart, and carry its cause (`cause: IncidentCause`, packages/contracts/src/incidents.ts).',
+    },
+  },
+  create(context) {
+    return {
+      CallExpression(node) {
+        if (!isOwnedMember(node.callee, failureOwners, remapMethods)) return
+        for (const { handler, caught } of handlersOf(context, node)) {
+          const refused = [...caught].find((tag) => refusalTag.test(tag))
+          if (refused === undefined) continue
+          failingConstructions(handler, false)
+            .filter((construction) => construction.name.endsWith('Unavailable'))
+            .forEach((construction) =>
+              context.report({
+                node: construction.node,
+                messageId: 'renamed',
+                data: { caught: refused, name: construction.name },
+              }),
+            )
+        }
+      },
+    }
+  },
+}
+
+/** The statement a site belongs to: what is read for a reporter and an `Impact` comment. */
+const enclosingStatement = (node) => {
+  let current = node
+  while (current?.parent !== undefined && current.parent !== null) {
+    if (/(?:Statement|Declaration)$/u.test(current.type) && current.type !== 'BlockStatement')
+      return current
+    current = current.parent
+  }
+  return current
+}
+
+/** Whether the site reports its failure or says which `Impact` it decided, beside itself. */
+const siteAccountsForFailure = (context, site) => {
+  const statement = enclosingStatement(site)
+  if (reporterPattern.test(sourceText(context, statement))) return true
+  const first = statement.loc.start.line - 1
+  const last = site.loc.start.line
+  return context.sourceCode
+    .getAllComments()
+    .some(
+      (comment) =>
+        comment.loc.end.line >= first &&
+        comment.loc.end.line <= last &&
+        impactPattern.test(comment.value),
+    )
+}
+
+/**
+ * A failure turned into a value with nobody told: `Effect.result`, `option`, `exit`, `ignore`,
+ * `orElseSucceed`, or a catch whose handler answers success. On 8-10 November 2026 a Run that
+ * ended `Unknown` (`runtime/settlement.ts`), a rejected push (`push/delivery.ts`) and a Computer
+ * that did not start (`computers/store.ts`) were all successful Effects, and none was recorded.
+ * The site records it (`Incidents.record`, `Effect.withErrorReporting`) or declares the impact it
+ * decided on the lines above it, with a reason.
+ */
+const noSilentFailure = {
+  meta: {
+    type: 'problem',
+    docs: { description: 'A failure that becomes a value is recorded or its impact declared.' },
+    schema: [],
+    messages: {
+      silent:
+        "{{form}} turns a failure into a value and nothing says so. Record it where it is decided, before it becomes a value: `Incidents.record(...)` (apps/server/src/observability/incidents.ts) or `Effect.withErrorReporting`; clients use `recordFailure` and cells use `CellReports.record` (packages/agent/runtime/src/telemetry.ts). If it is the Person's own decision or was recovered from, say so above this line: `// Impact: Routine, <why>` or `// Impact: Recovered, <why>` (Impact in packages/contracts/src/monitoring.ts).",
+    },
+  },
+  create(context) {
+    const report = (node, form) => {
+      if (!siteAccountsForFailure(context, node))
+        context.report({ node, messageId: 'silent', data: { form } })
+    }
+    return {
+      MemberExpression(node) {
+        if (isOwnedMember(node, new Set(['Effect']), valueMethods))
+          report(node, `\`Effect.${propertyName(node)}\``)
+      },
+      CallExpression(node) {
+        if (!isOwnedMember(node.callee, new Set(['Effect']), recoveryMethods)) return
+        const method = propertyName(node.callee)
+        const handlers = handlersOf(context, node)
+        if (
+          handlers.some(
+            ({ handler }) =>
+              functionOutcome(handler) === 'success' && !siteAccountsForFailure(context, handler),
+          )
+        )
+          report(node.callee, `This \`Effect.${method}\` answers success, so it`)
+      },
+    }
+  },
+}
+
+const isMessageConstant = (node) => {
+  const expression = unwrapExpression(node)
+  return (
+    expression?.type === 'MemberExpression' &&
+    unwrapExpression(expression.object)?.type === 'Identifier' &&
+    unwrapExpression(expression.object).name === 'Message'
+  )
+}
+
+/**
+ * A warning or error line written by hand. The exporter keeps a body only when it is one of
+ * `Message`'s constants and drops every attribute it does not know (`observability/export.ts`), so
+ * such a line reaches the backend as `[omitted]`: 65 of them in one day of November 2026, the
+ * Computer's start failure among them. A failure goes through the recorder; any other line writes
+ * a `Message` constant.
+ */
+const noAdHocFailureLog = rule(
+  'Failure lines go through the recorder or a fixed Message constant.',
+  "`Effect.{{level}}` {{what}} reaches the backend as `[omitted]`. A Person's failed work is `Incidents.record(...)` on the server or `CellReports.record(...)` in cells (packages/agent/runtime/src/telemetry.ts), and a failure at a boundary is `observeFailures`; any other line writes one `Message` constant (apps/server/src/observability/messages.ts) and puts closed attributes in `Effect.annotateLogs`.",
+  (report) => ({
+    MemberExpression(node) {
+      if (!isOwnedMember(node, new Set(['Effect']), failureLogLevels)) return
+      const level = propertyName(node)
+      const call = node.parent
+      if (call?.type !== 'CallExpression' || call.callee !== node) {
+        report(node, { level, what: 'given the failure itself as its payload' })
+        return
+      }
+      if (call.arguments.length === 1 && isMessageConstant(call.arguments[0])) return
+      const what = isMessageConstant(call.arguments[0])
+        ? 'with a payload beside its Message'
+        : 'with a message that is not a `Message` constant'
+      report(call, { level, what })
+    },
+  }),
+)
+
+const typednessWords =
+  /\b(?:Expected|Defect|expected|defect|isDieReason|isFailReason|hasDies|hasFails)\b/u
+const levelChoice =
+  /\bEffect\.log(?:Trace|Debug|Info|Warning|Error|Fatal)\b|\blevel\s*:|\bissue\s*:/u
+
+/**
+ * Severity chosen by whether a failure was declared. `failure.ts` logged every typed failure as a
+ * warning and every defect as an error, so the refusal that failed every send for two days was a
+ * warning nobody was paged for. Severity comes from impact: `impactSignal[impact]`.
+ */
+const severityFromImpact = rule(
+  'Choose log level and issue eligibility from impact, not from typedness.',
+  'Severity is chosen here by whether the failure was declared (expected or defect). Choose it from impact: `impactSignal[impactOfFailure(failure)]` (packages/contracts/src/monitoring.ts), or the Impact a recorder decided; expected or defect stays an attribute only.',
+  (report, context) => {
+    const choosesLevel = (node) =>
+      node !== null && node !== undefined && levelChoice.test(sourceText(context, node))
+    return {
+      ObjectExpression(node) {
+        const keys = node.properties.flatMap((property) =>
+          property.type === 'Property' && property.key?.type === 'Identifier'
+            ? [property.key.name]
+            : [],
+        )
+        const typed = ['Expected', 'Defect'].every((key) => keys.includes(key))
+        if (typed && choosesLevel(node)) report(node)
+      },
+      ConditionalExpression(node) {
+        if (typednessWords.test(sourceText(context, node.test)) && choosesLevel(node.consequent))
+          report(node)
+      },
+      IfStatement(node) {
+        if (typednessWords.test(sourceText(context, node.test)) && choosesLevel(node.consequent))
+          report(node)
+      },
+    }
+  },
+)
+
 export default {
   meta: { name: 'vivid' },
   rules: {
@@ -1234,6 +1784,8 @@ export default {
     'effect-no-service-object-syntax': effectNoServiceObjectSyntax,
     'effect-prefer-match-effect': effectPreferMatchEffect,
     'effect-require-effect-fn': effectRequireEffectFn,
+    'keep-incident-cause': keepIncidentCause,
+    'no-ad-hoc-failure-log': noAdHocFailureLog,
     'no-async-callback-api': noAsyncCallbackApi,
     'no-config-provider-from-env-in-library': noConfigProviderFromEnvInLibrary,
     'no-cross-package-import': noCrossPackageImport,
@@ -1252,9 +1804,11 @@ export default {
     'no-parse-method-alias': noParseMethodAlias,
     'no-platform-runtime-runmain-in-library': noPlatformRuntimeRunMainInLibrary,
     'no-promise-constructor': noPromiseConstructor,
+    'no-refusal-as-unavailable': noRefusalAsUnavailable,
     'no-runpromise-in-library': noRunPromiseInLibrary,
     'no-runpromise-nested': noRunPromiseNested,
     'no-runtime-env-mutation': noRuntimeEnvMutation,
+    'no-silent-failure': noSilentFailure,
     'no-try-catch': noTryCatch,
     'no-undefined-in-union': noUndefinedInUnion,
     'no-unnecessary-die': noUnnecessaryDie,
@@ -1269,5 +1823,6 @@ export default {
     'require-schema-class-identifier': requireSchemaClassIdentifier,
     'require-schema-class-title': requireSchemaClassTitle,
     'require-schema-decode-in-boundary': requireSchemaDecodeInBoundary,
+    'severity-from-impact': severityFromImpact,
   },
 }

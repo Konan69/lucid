@@ -41,6 +41,12 @@ const FAILED = {
   Unexplained: { words: 'Vivid couldn’t finish that.', again: true },
 } as const satisfies Record<RunFailure, Ending>
 
+/**
+ * What a Run the runtime never started says (`Failed` with `Delivery`), for words whose Run is not
+ * on screen to say it: a Thread's first words, whose record is not read until they are with Vivid.
+ */
+export const UNSTARTED: Ending = FAILED.Delivery
+
 const LOST: Ending = {
   words: 'Vivid lost track of this one, so it may not have finished.',
   again: true,

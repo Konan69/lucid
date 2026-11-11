@@ -1,8 +1,10 @@
-import type { ThreadId } from '@vivid/contracts'
-import { sending, type Live } from '@vivid/state'
-import { Effect, Layer, Option } from 'effect'
+import type { MeResponse, ThreadId } from '@vivid/contracts'
+import { sending, type Live, type LiveResult } from '@vivid/state'
+import { Effect, Layer, Option, Semaphore } from 'effect'
 import type { Atom } from 'effect/reactivity'
-import { start } from './app'
+import { launch, start } from './app'
+import { keepFile, recallFile } from './storage'
+import { recording } from './telemetry'
 
 /**
  * Sending in a Thread, as the phone does it: the shared machine (`@vivid/state` `sending.ts`),
@@ -39,15 +41,69 @@ const arrival = (
     }),
   )
 
-/** A session's sending: every Thread's machine, which outlives the screen that sent. */
-export function makeSending(engine: Live) {
-  const machines = sending.makeSending(
-    Layer.succeed(sending.Delivering, sending.delivering(engine.run)),
+// A file, as drafts are (`drafts.ts`): unsent words can run to pages.
+const FILE = 'unsent.json'
+
+/**
+ * What this phone kept of every Thread's unsent words (`sending.Kept`). A store that will not
+ * open kept none.
+ */
+const recalled = recallFile(FILE).pipe(
+  // Impact: Recovered, the phone's store would not open; the machines start empty and still send.
+  Effect.catchTag('StorageUnavailable', () => Effect.succeed(Option.none<string>())),
+  Effect.map(sending.readKept),
+)
+
+/**
+ * One change to the file at a time, each read when its turn comes: a write handed to the native
+ * side is answered later, and one begun earlier must not land over a newer one.
+ */
+const file = Semaphore.makeUnsafe(1)
+
+/**
+ * One change to the kept unsent words, in the file's turn and read from it when that turn comes,
+ * so a change asked for earlier never lands over a newer one. A store that refuses leaves the
+ * words in the machines for this run only.
+ */
+const changeUnsent = (revise: (held: sending.Kept) => sending.Kept) =>
+  Semaphore.withPermit(
+    file,
+    Effect.gen(function* () {
+      const next = revise(yield* recalled)
+      const text = sending.writeKept(next)
+      if (Option.isSome(text)) yield* keepFile(FILE, text.value)
+      return next
+    }).pipe(
+      // Impact: Recovered, the words stay in the machines for this run; only a restart loses them.
+      Effect.catchTag('StorageUnavailable', () => Effect.succeed<sending.Kept>({})),
+    ),
   )
+
+/** The session's own answer that says who is signed in and where. */
+interface WhereaboutsSources {
+  readonly me: Atom.Atom<LiveResult<MeResponse>>
+}
+
+/** A session's sending: every Thread's machine, which outlives the screen that sent. */
+export function makeSending(engine: Live, server: WhereaboutsSources) {
+  const transport = sending.delivering(engine.run, recording)
+  const machines = sending.makeSending(Layer.succeed(sending.Delivering, transport), {
+    registry: engine.registry,
+    whereabouts: sending.whereaboutsOf(server.me),
+    change: changeUnsent,
+    launch,
+  })
   const stateIn = (thread: ThreadId) => sending.stateOf(machines(thread))
 
   return {
     stateIn,
+    /**
+     * Hands one delivery to the server the way every Thread's machine does, outside a machine:
+     * a Thread's first words, which are said before its screen keeps one (`data/first.ts`). It
+     * asks again once, says why it did not arrive (`sending.Unarrival`) and records what the
+     * Person saw fail, as a machine's send does.
+     */
+    deliver: transport.send,
     /**
      * Sends one delivery and answers whether it arrived. Whatever sent the words (a card with a
      * choice on it, a form) closes while they are on their way and needs the answer to know

@@ -1,12 +1,13 @@
 import { regenerateThreadTitle, VividRpcClient } from '@vivid/client-runtime'
-import { ThreadId, type ProjectId } from '@vivid/contracts'
-import { titleFromMessage } from '@vivid/state'
-import { Data, Effect, Result, Schema } from 'effect'
+import { CodeName, ThreadId, type ProjectId } from '@vivid/contracts'
+import { sending, titleFromMessage } from '@vivid/state'
+import { Data, Effect, Option, Result, Schema } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { draft } from './drafts'
 import type { Delivery } from './delivery'
 import { firstKey, type Way } from './first'
 import { refusalOf, type LiveData } from './live'
+import { recording } from './telemetry'
 import * as App from './app'
 import { offerNotifications } from './notifying'
 import { shareLocation } from './locating'
@@ -125,9 +126,17 @@ export const startThread = Effect.fn('Threads.start')(function* (
     : Start.Started({ id })
 })
 
+/** The span a first words' Thread is made in (`data/first.ts` `deliver`). */
+const FIRST = CodeName.make('First.deliver')
+
 /**
  * How the first screen's first words reach the server (`deliver`, `data/first.ts`): the Thread is
  * made, then spoken in, each answering with why it did not go through.
+ *
+ * A Thread that was not made has no Run, so the server's sentence about it is what is said
+ * (`Refused`). The words go to a made Thread the way every message does (`data.sending.deliver`),
+ * so the same failure is said the same way: when the server held their Run and the runtime never
+ * started it (`Unstarted`), the Thread says that Run's ending (`data/outcome.ts`).
  *
  * Words that did not arrive are put back in the composer they were typed in, unless the Person
  * has written something else there since. A Thread that was never made is not in the menu, so
@@ -137,7 +146,16 @@ export const startThread = Effect.fn('Threads.start')(function* (
 export const firstWay = (data: LiveData): Way => ({
   make: (id, start) =>
     createThread(data, { id, message: start.message.words, projectId: start.projectId }).pipe(
-      Effect.map(refusalOf),
+      // A Thread that was not made is recorded as the later words' failures are
+      // (`sending.recordFailure`), in the first words' own span.
+      Effect.tap((made) =>
+        Result.isFailure(made)
+          ? sending.recordFailure(recording, FIRST, made.failure)
+          : Effect.void,
+      ),
+      Effect.map((made) =>
+        Option.map(refusalOf(made), (words) => sending.Unarrival.cases.Refused.make({ words })),
+      ),
     ),
   say: (id, start) =>
     // The Person's first words are the moment Vivid offers to notify them (`data/notifying.ts`),
@@ -147,14 +165,15 @@ export const firstWay = (data: LiveData): Way => ({
       shareLocation(data)
     }).pipe(
       Effect.andThen(
-        say(data, {
-          id,
-          body: start.message.words,
+        data.sending.deliver({
+          thread: id,
           key: firstKey(id),
+          words: start.message.words,
           pictures: start.message.pictures,
         }),
       ),
-      Effect.map(refusalOf),
+      Effect.as(Option.none<sending.Unarrival>()),
+      Effect.catchTag('Undelivered', ({ why }) => Effect.succeedSome(why)),
     ),
   returned: (start) => {
     if (draft.in(start.place).length === 0) draft.keep(start.place, start.words)

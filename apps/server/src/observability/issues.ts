@@ -1,6 +1,7 @@
 import * as Sentry from '@sentry/effect/server'
-import { isRoutineRefusal } from '@vivid/contracts'
+import { impactOfFailure, impactSignal } from '@vivid/contracts'
 import { Config, Effect, ErrorReporter, Layer, Option, Predicate } from 'effect'
+import { incidentTags, isIncidentFingerprint, isIncidentMessage } from './incidents.ts'
 import { isCodeName } from './messages.ts'
 
 /** Keep symbolication coordinates without local account paths, request data or source contents. */
@@ -16,7 +17,24 @@ const operationTags = (tags: Sentry.Event['tags']) => {
     : undefined
 }
 
-/** Build an issue payload rather than serializing arbitrary errors, causes or request scopes. */
+/**
+ * The tags an issue keeps: the operation, and an Incident's (`incidents.ts`), each by the rule the
+ * OTLP export applies to the same key. Absent when none is left.
+ */
+const keptTags = (tags: Sentry.Event['tags']) => {
+  const kept = {
+    ...operationTags(tags),
+    ...Option.match(Option.fromUndefinedOr(tags), { onNone: () => ({}), onSome: incidentTags }),
+  }
+  return Object.keys(kept).length === 0 ? undefined : kept
+}
+
+/**
+ * Build an issue payload rather than serializing arbitrary errors, causes or request scopes. An
+ * Incident's event (`incidents.ts` `record`) keeps its message, which is its case's tag, and its
+ * fingerprint, which is that tag and a code name per hop; any other message or fingerprint is not
+ * one of those and is dropped.
+ */
 const scrub: NonNullable<Sentry.EffectServerLayerOptions['beforeSend']> = (event) => ({
   type: undefined,
   event_id: event.event_id,
@@ -26,7 +44,13 @@ const scrub: NonNullable<Sentry.EffectServerLayerOptions['beforeSend']> = (event
   release: event.release,
   environment: event.environment,
   sdk: event.sdk,
-  tags: operationTags(event.tags),
+  message:
+    event.message !== undefined && isIncidentMessage(event.message) ? event.message : undefined,
+  fingerprint:
+    event.fingerprint !== undefined && isIncidentFingerprint(event.fingerprint)
+      ? event.fingerprint
+      : undefined,
+  tags: keptTags(event.tags),
   contexts: {
     trace:
       event.contexts === undefined || event.contexts.trace === undefined
@@ -81,7 +105,13 @@ const reporterLayer = Layer.sync(
   () =>
     new Set([
       ErrorReporter.make(({ error, fiber }) => {
-        if (isRoutineRefusal(error)) return
+        // An issue is opened by impact (`impactSignal`): a refusal the Person can correct is not one.
+        if (
+          Predicate.hasProperty(error, '_tag') &&
+          Predicate.isString(error._tag) &&
+          !impactSignal[impactOfFailure({ _tag: error._tag })].issue
+        )
+          return
         const span = fiber.cache.span
         Sentry.captureException(error, {
           captureContext: {

@@ -61,10 +61,16 @@ async function withPrivateConfig(command) {
   }
 }
 
-/** Keep the local dev entry and explicit deploy entry on the same private-config lifecycle. */
+/**
+ * Keep the local dev entry, the version entry and the deploy entry on the same private-config
+ * lifecycle. `build` is celld's dry run over the deployed vars: it prints the version a `deploy`
+ * with the same code and vars would publish, which is the Worker's identity (`Infra.CellWorker`
+ * in `infra/cells.ts`, the worker step of `infra/predeploy.mjs`), and writes nothing to a bucket.
+ */
 async function main() {
   const [mode, ...args] = process.argv.slice(2)
-  if (mode !== 'dev' && mode !== 'deploy') throw new Error('Expected dev or deploy')
+  if (mode !== 'dev' && mode !== 'build' && mode !== 'deploy')
+    throw new Error('Expected dev, build or deploy')
   await withPrivateConfig(async (path) => {
     if (mode === 'dev') {
       await run('celld', [mode, path, ...args], 'inherit')
@@ -74,7 +80,7 @@ async function main() {
       process.execPath,
       [
         NodeURL.fileURLToPath(new URL('../apps/cells/scripts/build.mjs', import.meta.url)),
-        'deploy',
+        mode,
         path,
         NodeURL.fileURLToPath(new URL('../apps/cells/dist/deployment.json', import.meta.url)),
         ...args,

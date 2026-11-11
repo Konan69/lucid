@@ -1,5 +1,6 @@
 import * as Schema from 'effect/Schema'
 import { PersonId, RunId, ThreadId } from './identity.js'
+import { IncidentCause } from './incidents.js'
 import { RunFailure } from './runs.js'
 import { ThreadOrigin } from './threads.js'
 import { MemoryEntry } from './memory.js'
@@ -11,8 +12,10 @@ import { MessageHit } from './search.js'
  * route but `/health` carries the runtime token as a bearer credential and names the Person whose
  * conversations are meant and the Thread:
  *
+ * - `GET /contract` answers `RuntimeContract`, the fingerprint the cells were built with.
  * - `POST /persons/:personId/threads/:threadId` admits one delivery (`RuntimeAdmissionBody`) and
- *   answers 202 with `RuntimeAdmissionReceipt`.
+ *   answers 202 with `RuntimeAdmissionReceipt`. The request carries the sender's
+ *   `ContractFingerprint` in `CONTRACT_HEADER`.
  * - `POST /persons/:personId/threads/:threadId/abort` stops the Thread's work: `RuntimeStopped`.
  * - `GET /persons/:personId/threads/:threadId/submissions/:submissionId` answers
  *   `RuntimeSettlement` once the submission settles. Cancelling the request ends only the wait.
@@ -101,8 +104,10 @@ export interface RuntimeStopped extends Schema.Schema.Type<typeof RuntimeStopped
  *   `reply` is the words of the final answer, and `toolCalls` counts the tools the response
  *   used, so an answer with no words after real work is told from no answer at all.
  * - `Failed`: it can no longer be answered. `failure` is the product's own category and `status`
- *   the provider's HTTP status when it gave one. The provider's words never leave the runtime:
- *   they can quote a request, a path or a key.
+ *   the provider's HTTP status when it gave one. `cause` is the cell's chain for it, outermost
+ *   first (Pi's reason, then the model's hop when the model failed), which the server's `RunFailed`
+ *   records: the cell opens no issue of its own for it, so one outcome is one Incident. The
+ *   provider's words never leave the runtime: they can quote a request, a path or a key.
  * - `Stopped`: it was stopped, or withdrawn before it was placed.
  */
 export const RuntimeSettlement = Schema.TaggedUnion({
@@ -114,12 +119,54 @@ export const RuntimeSettlement = Schema.TaggedUnion({
   Failed: {
     failure: RunFailure,
     status: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 400, maximum: 599 }))),
+    cause: IncidentCause,
   },
   Stopped: {},
 })
 export type RuntimeSettlement = typeof RuntimeSettlement.Type
 
-/** Why the runtime did not do what a request asked; only the tag crosses, never a cause. */
+/**
+ * A hash of the wire schemas the server and a cell must share to admit work (`fingerprint.ts`
+ * computes it). Equal fingerprints mean both were built from the same schemas; it is not secret.
+ */
+export const ContractFingerprint = Schema.String.check(Schema.isPattern(/^[0-9a-f]{8}$/u)).pipe(
+  Schema.brand('ContractFingerprint'),
+)
+export type ContractFingerprint = typeof ContractFingerprint.Type
+
+/** The header an admission carries its sender's `ContractFingerprint` in. */
+export const CONTRACT_HEADER = 'vivid-contract'
+
+/** The answer of the cells' `GET /contract`: the fingerprint the published Worker was built with. */
+export const RuntimeContract = Schema.Struct({ contract: ContractFingerprint })
+export interface RuntimeContract extends Schema.Schema.Type<typeof RuntimeContract> {}
+
+/**
+ * Why the runtime did not do what a request asked. `error` is what the caller acts on; `cause` is
+ * why, as an `IncidentCause` whose first hop is the cell's own (`service: 'cell'`, the route's
+ * operation, the failure's tag and the status it answered with). It holds no free text, so it
+ * may cross where a raw cause may not: a schema issue or a storage error can quote the request it
+ * failed on, and an `IncidentCause` keeps only field names, issue kinds and code names.
+ *
+ * - `InvalidRequest` from a `SchemaError`: the cause's `issues` name each field that did not
+ *   decode and how. From an `HttpServerError`: its reason's tag (`RequestParseError`).
+ * - `WrongThread`: `issues` name the field whose check failed, with kind `InvalidValue`:
+ *   `threadId` (the body names another Thread than the route), `initialData.creator` (the body's
+ *   creator is not the route's Person), or `personId` (the route's Person is not this cell's).
+ * - `Unavailable`: the Pi or storage failure's tag, and under it what that failure carried.
+ * - `ContractMismatch`: an admission body did not decode and the sender's contract fingerprint is
+ *   not this cell's (`contractFingerprint` in `fingerprint.ts`); `issues` are the decode's. The
+ *   two sides were built from different wire schemas, so no retry of this body can succeed.
+ *
+ * `contract` is the answering cell's own fingerprint, on every refusal, so a refusal read by a
+ * server of another build says which build answered it.
+ *
+ * The receiver puts the chain after its own hop (the keep-cause rule on `IncidentCause`).
+ *
+ * Required, not optional: cells deploy in the server's pre-deploy step (`infra/railway.ts`,
+ * `apps/cells/scripts/build.mjs deploy`), so a new cell answers before the new server reads it,
+ * and the server before it ignores a key it does not know.
+ */
 export const RuntimeRefusal = Schema.Struct({
   error: Schema.Literals([
     'Unauthorized',
@@ -129,7 +176,10 @@ export const RuntimeRefusal = Schema.Struct({
     'UnknownSubmission',
     'NotFound',
     'Unavailable',
+    'ContractMismatch',
   ]),
+  cause: IncidentCause,
+  contract: ContractFingerprint,
 })
 export interface RuntimeRefusal extends Schema.Schema.Type<typeof RuntimeRefusal> {}
 

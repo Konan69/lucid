@@ -1,3 +1,6 @@
+import { CodeName } from '@vivid/contracts'
+import * as Schema from 'effect/Schema'
+
 /**
  * Every log message Vivid's own recorders write, as one closed set.
  *
@@ -33,11 +36,21 @@ export const Message = {
   memberRefused: 'Executor member refused',
   executorNotReady: 'Executor selection not ready',
   connectionRemoved: 'Integration removed',
+  /** `computers/store.ts`: the provider did not answer a read; the read answered from the record. */
+  computerUnobserved: 'Computer could not be observed',
+  /** `computers/store.ts`: a running Computer's screen could not be had; the read went on without it. */
+  computerUnshown: 'Computer could not be shown',
+  /** `watches/lifecycle.ts`: Executor kept a subscription Vivid no longer has; the Watch moved on. */
+  watchUnsubscribed: 'Watch subscription not removed from Executor',
+  /** `connections/catalog.ts`: one attempt to refresh the Integration catalog failed. */
+  catalogAttempt: 'Integration catalog attempt failed',
   artifactRemoved: 'Artifact removed',
   /** `failure.ts`: a typed failure was answered at a boundary. */
   failure: 'Failure reached a boundary',
   /** `failure.ts`: a defect was answered at a boundary. */
   defect: 'Defect reached a boundary',
+  /** `incidents.ts`: a Person's work did not happen. */
+  incident: "Person's work did not happen",
   /** `refusal.ts`: Vivid declined to do something. */
   refusal: 'vivid.refusal',
   /** `http/faults.ts`: a client reported that it failed to draw. */
@@ -65,13 +78,7 @@ const messages: ReadonlySet<string> = new Set(Object.values(Message))
 export const isMessage = (text: string): text is Message => messages.has(text)
 
 /**
- * A code identifier, optionally dotted: an error's `_tag` or class name, an `Effect.fn` name,
- * an RPC's tag. No spaces, quotes, slashes or punctuation, so prose, an address and a
- * statement cannot have this shape; the length bound keeps a generated name from being a payload.
+ * Whether `text` has the shape of a code identifier and is short enough to be one: the one rule,
+ * `CodeName` in `@vivid/contracts`, which an Incident's hops are built of too.
  */
-const CODE_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/
-const LONGEST_CODE_NAME = 120
-
-/** Whether `text` has the shape of a code identifier and is short enough to be one. */
-export const isCodeName = (text: string): boolean =>
-  text.length <= LONGEST_CODE_NAME && CODE_NAME.test(text)
+export const isCodeName: (text: string) => boolean = Schema.is(CodeName)

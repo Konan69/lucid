@@ -36,6 +36,8 @@ import { Presence } from './presence.ts'
 import { RunStore, runStoreLayer } from './runs.ts'
 import { ThreadStore, threadStoreLayer } from './store.ts'
 import { firstThreads, threads } from './tables.ts'
+import { incidentsTestLayer } from '../runtime/testing.ts'
+import { contractFingerprint } from '@vivid/contracts/fingerprint'
 
 const stores = Layer.merge(threadStoreLayer, runStoreLayer).pipe(
   Layer.provideMerge(testDatabaseLayer),
@@ -119,11 +121,25 @@ const harness = Effect.fn('FirstThread.test.harness')(function* () {
         ),
       )
       yield* Ref.update(deliveries, (all) => [...all, delivery])
-      // A missing receipt exercises the production RuntimeUnavailable path after reservation.
+      // A cell's refusal exercises the production DeliveryRefused path after reservation.
       if (yield* Ref.getAndSet(refuseAdmission, false))
         return HttpClientResponse.fromWeb(
           request,
-          new Response('{"error":"InvalidRequest"}', { status: 400 }),
+          new Response(
+            JSON.stringify({
+              error: 'InvalidRequest',
+              cause: [
+                {
+                  service: 'cell',
+                  operation: 'Runtime.admission',
+                  tag: 'SchemaError',
+                  status: 400,
+                },
+              ],
+              contract: contractFingerprint,
+            }),
+            { status: 400 },
+          ),
         )
       return HttpClientResponse.fromWeb(
         request,
@@ -166,7 +182,11 @@ const harness = Effect.fn('FirstThread.test.harness')(function* () {
     Layer.mock(Presence, { watching: () => Effect.succeed(true) }),
   )
   const context = yield* Layer.build(
-    conversationLayer.pipe(Layer.provide(silentChannelRepliesLayer), Layer.provide(services)),
+    conversationLayer.pipe(
+      Layer.provide(silentChannelRepliesLayer),
+      Layer.provide(services),
+      Layer.provide(incidentsTestLayer),
+    ),
   )
   const conversation = yield* Conversation.pipe(Effect.provideContext(context))
   const auth = AuthState.Person({
@@ -219,9 +239,7 @@ layer(stores)((it) => {
         const test = yield* harness()
         yield* Ref.set(test.refuseAdmission, true)
         const outcome = yield* test.open(test.actor.workspace).pipe(Effect.result)
-        expect(Result.isFailure(outcome) ? outcome.failure._tag : 'opened').toBe(
-          'RuntimeUnavailable',
-        )
+        expect(Result.isFailure(outcome) ? outcome.failure._tag : 'opened').toBe('DeliveryRefused')
         const [thread] = yield* recorded(test.actor.person.id)
         if (thread === undefined) expect.fail('A recorded Run must protect its Thread')
         const [run] = yield* (yield* RunStore).list(thread.id)

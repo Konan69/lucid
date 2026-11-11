@@ -1,5 +1,5 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { RunId, RunState, ThreadId, RuntimeDelivery } from '@vivid/contracts'
+import { CodeName, RunId, RunState, ThreadId, RuntimeDelivery } from '@vivid/contracts'
 import { Effect, Fiber, Layer, Option, Queue, Ref } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { Settlement } from '../runtime/client.ts'
@@ -245,7 +245,16 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
           const test = yield* linked()
           const control = yield* ChannelControl
           for (const settlement of [
-            Settlement.cases.Failed.make({ reason: 'NoAnswer' }),
+            Settlement.cases.Failed.make({
+              reason: 'NoAnswer',
+              cause: [
+                {
+                  service: 'server',
+                  operation: CodeName.make('Runtime.settled'),
+                  tag: CodeName.make('NoAnswer'),
+                },
+              ],
+            }),
             Settlement.cases.Stopped.make({}),
             Settlement.cases.Unknown.make({}),
             Settlement.cases.Completed.make({ reply: '', responseId: RunId.make('empty-reply') }),

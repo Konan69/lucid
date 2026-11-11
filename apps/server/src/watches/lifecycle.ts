@@ -17,11 +17,14 @@ import {
   type CreateWatchRequest,
   type ReviseWatchFilters,
   type WatchStopReason,
+  Incident,
 } from '@vivid/contracts'
 import { companyColumnOf, type Actor } from '../auth/access.ts'
 import { ServerConfig } from '../config.ts'
 import { Changes, Topic } from '../live/changes.ts'
-import { observeFailures } from '../observability/failure.ts'
+import { FailureAttribute, observeFailures } from '../observability/failure.ts'
+import { Message } from '../observability/messages.ts'
+import { causeOf, hop, Incidents, incidentsLayer } from '../observability/incidents.ts'
 import { untraced } from '../observability/quiet.ts'
 import { WatchedApps, WatchConnectionRemoved } from './apps.ts'
 import { ExecutorEvents, type EventDefinition, type ExecutorEventsFailure } from './events.ts'
@@ -149,6 +152,12 @@ const outcomeUnknown = (failure: ExecutorEventsFailure) =>
  */
 export const RECOVER_AFTER_MS = 60_000
 
+/** An unsubscribe that did not reach Executor: the Watch is already stopped for the Person. */
+const unsubscribeFailed = (failure: { readonly _tag: string }) =>
+  Effect.logWarning(Message.watchUnsubscribed).pipe(
+    Effect.annotateLogs(FailureAttribute.type, failure._tag),
+  )
+
 /** A revision owns its grant and compare-and-set; the ordinary lifecycle keeps its original key. */
 function makeRevision(input: {
   readonly store: WatchStore['Service']
@@ -186,12 +195,7 @@ function makeRevision(input: {
         arguments: previous.watch.arguments,
         url: previous.callbackUrl,
       })
-      .pipe(
-        Effect.tapError((failure) =>
-          Effect.logWarning('Previous Watch subscription could not be removed', failure._tag),
-        ),
-        Effect.ignore,
-      )
+      .pipe(Effect.tapError(unsubscribeFailed), Effect.ignore)
     yield* publish(revised.value)
     return (yield* store.present(actor, revised.value)).watch
   })
@@ -207,9 +211,28 @@ function findEvents(apps: WatchedApps['Service'], events: ExecutorEvents['Servic
   })
 }
 
+/**
+ * A Watch Executor says can never be subscribed, so it can no longer wake Vivid. Recorded once:
+ * only by the renewal whose stop changed the row.
+ */
+const stoppedForGood = (record: WatchRecord, failure: { readonly _tag: string }) =>
+  Incident.cases.WatchFailed.make({
+    personId: record.personId,
+    watchId: record.watch.id,
+    cause: causeOf(hop('executor', 'Watches.renewOne', failure._tag)),
+  })
+
+/**
+ * The renewal pass runs untraced (`watchRenewalLayer`); a Watch that is due is work, so each
+ * renewal is a trace of its own and an Incident it records has a trace to open.
+ */
+const ownTrace = <A, E, R>(renewal: Effect.Effect<A, E, R>) =>
+  renewal.pipe(Effect.withSpan('Watches.renewDue', { root: true }), Effect.withTracerEnabled(true))
+
 /** Build the service over its stores, Executor and the server's address and secret. */
 const make = Effect.fn('Watches.make')(function* () {
   const store = yield* WatchStore
+  const incidents = yield* Incidents
   const apps = yield* WatchedApps
   const events = yield* ExecutorEvents
   const changes = yield* Changes
@@ -302,9 +325,7 @@ const make = Effect.fn('Watches.make')(function* () {
     if (Option.isNone(stopped)) return yield* new WatchMissing({})
     yield* apps.callerOf(found.value.connectionId).pipe(
       Effect.flatMap((caller) => events.unsubscribe(caller, subscriptionOf(found.value))),
-      Effect.tapError((failure) =>
-        Effect.logWarning('Watch unsubscribe did not reach Executor', failure._tag),
-      ),
+      Effect.tapError(unsubscribeFailed),
       Effect.ignore,
     )
     yield* publish(stopped.value)
@@ -331,7 +352,8 @@ const make = Effect.fn('Watches.make')(function* () {
     }
     const reason = renewalOutcome(renewed.failure)
     if (Option.isNone(reason)) return
-    yield* store.stop(record.watch.id, reason.value)
+    const stopped = yield* store.stop(record.watch.id, reason.value)
+    if (Option.isSome(stopped)) yield* incidents.record(stoppedForGood(record, renewed.failure))
     yield* publish(record)
   })
 
@@ -346,7 +368,7 @@ const make = Effect.fn('Watches.make')(function* () {
       activeBefore: now + RENEW_WITHIN_MS,
       pendingBefore: now - RECOVER_AFTER_MS,
     })
-    const outcomes = yield* Effect.forEach(due, (record) => Effect.exit(renewOne(record)))
+    const outcomes = yield* Effect.forEach(due, (record) => Effect.exit(ownTrace(renewOne(record))))
     for (const outcome of outcomes) yield* outcome
   })
 
@@ -369,7 +391,9 @@ export class Watches extends Context.Service<Watches, Effect.Success<ReturnType<
   'vivid/Watches',
 ) {}
 
-export const watchesLayer = Layer.effect(Watches, make()).pipe(Layer.provide(owedStoreLayer))
+export const watchesLayer = Layer.effect(Watches, make()).pipe(
+  Layer.provide([owedStoreLayer, incidentsLayer]),
+)
 
 /**
  * The renewal worker: one pass every ten minutes, scoped to the server, with no detached timer.
@@ -378,11 +402,7 @@ export const watchesLayer = Layer.effect(Watches, make()).pipe(Layer.provide(owe
 export const watchRenewalLayer = Layer.effectDiscard(
   Effect.gen(function* () {
     const watching = yield* Watches
-    const pass = watching.renew().pipe(
-      observeFailures('schedule'),
-      Effect.tapError((error) => Effect.logError('Watch renewal pass failed', error)),
-      Effect.ignore,
-    )
+    const pass = watching.renew().pipe(observeFailures('schedule'), Effect.ignore)
     yield* pass.pipe(untraced, Effect.repeat(Schedule.spaced('10 minutes')), Effect.forkScoped)
   }),
 )

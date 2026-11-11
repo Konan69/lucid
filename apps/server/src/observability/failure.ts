@@ -12,6 +12,7 @@ import * as Schema from 'effect/Schema'
 import * as SchemaAST from 'effect/SchemaAST'
 import * as HttpClientError from 'effect/http/HttpClientError'
 import * as HttpServerError from 'effect/http/HttpServerError'
+import { type Impact, impactOfFailure, impactSignal } from '@vivid/contracts'
 import { Message, isCodeName } from './messages.ts'
 
 /**
@@ -544,16 +545,28 @@ const attributesOf = (boundary: Boundary, failure: FailureOutcome) => {
 }
 
 /**
- * One log line for one failure: its attributes, plus the message for whoever reads stdout. An expected failure is a warning and a defect is an error, so the backend can alert on
- * defects without being paged for every refused sign-in.
+ * What a failure that reached a boundary cost a Person (`@vivid/contracts` `Impact`). A defect is
+ * an Incident. A typed failure is one too, unless it is a refusal the Person can correct, which is
+ * Routine (`impactOfFailure`, read by the failure's code-owned type). Whether the code declared
+ * the failure no longer picks the level: on 8 November 2026 a typed `RuntimeUnavailable` lost every
+ * message a Person sent and was logged as a warning.
+ */
+const impactOf: (failure: FailureOutcome) => Impact = FailureOutcome.$match({
+  Expected: ({ summary }): Impact => impactOfFailure({ _tag: summary.type }),
+  Defect: (): Impact => 'Incident',
+})
+
+/**
+ * One log line for one failure: its attributes, plus the message for whoever reads stdout. Its
+ * level is its impact's (`impactSignal`): an error for an Incident, info for a Routine refusal.
+ * The message still says whether it was declared, as `vivid.failure.kind` does.
  */
 const line = (boundary: Boundary, failure: FailureOutcome) => {
   const attributes = attributesOf(boundary, failure)
   return Effect.annotateLogs(
-    FailureOutcome.$match(failure, {
-      Expected: () => Effect.logWarning(Message.failure),
-      Defect: () => Effect.logError(Message.defect),
-    }),
+    Effect.logWithLevel(impactSignal[impactOf(failure)].level)(
+      FailureOutcome.$is('Defect')(failure) ? Message.defect : Message.failure,
+    ),
     Option.match(failure.summary.message, {
       onNone: () => attributes,
       onSome: (message) => ({ ...attributes, [MESSAGE_ANNOTATION]: message }),
@@ -596,6 +609,25 @@ const record = Effect.fnUntraced(function* (
 export const observeFailures =
   (boundary: Boundary) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-    Effect.tapCause(effect, (cause) =>
-      Effect.andThen(record(boundary, failuresOf(cause)), ErrorReporter.report(cause)),
-    )
+    Effect.tapCause(effect, recordFailures(boundary))
+
+/**
+ * Records the failures of a cause a handler already holds, as `observeFailures` records those
+ * passing through an effect: the span, a line each, and the issue. For a loop that catches a
+ * cause to carry on (`connections/catalog.ts`), where an ad hoc line would leave the process as
+ * `[omitted]`.
+ */
+export const recordFailures =
+  (boundary: Boundary) =>
+  <E>(cause: Cause.Cause<E>): Effect.Effect<void> =>
+    Effect.andThen(record(boundary, failuresOf(cause)), ErrorReporter.report(cause))
+
+/**
+ * The code-owned type of a cause's primary failure (`primaryOf`), for the tag of an Incident's
+ * hop (`incidents.ts` `hop`). `_OTHER` when the cause holds only interruptions.
+ */
+export const failureType = <E>(cause: Cause.Cause<E>): string =>
+  Option.match(primaryOf(failuresOf(cause)), {
+    onNone: () => UNTYPED,
+    onSome: ({ summary }) => summary.type,
+  })

@@ -10,6 +10,7 @@ import { computerScreenRoutes } from '../computers/screen.ts'
 import { egressRoutes } from '../computers/egress/route.ts'
 import { connectionReturnRoutes } from '../connections/return.ts'
 import { rpcServerLayer } from '../rpc/server.ts'
+import { CellContract, CellContractReading } from '../runtime/contract.ts'
 import { gatewayRoutes } from '../threads/gateway.ts'
 import { watchRoutes } from '../watches/receiver.ts'
 import { bytesRoutes } from './bytes.ts'
@@ -44,10 +45,39 @@ export const authRoute = HttpRouter.add(
   }),
 )
 
-const healthRoute = HttpRouter.add(
+/**
+ * Readiness, as Railway reads it before this deployment takes traffic (`infra/railway.ts`
+ * `healthcheckPath`). Not ready only when the cells answered and were built from other wire
+ * schemas (`Mismatched`, or `Unanswered` from a Worker older than `/contract`): that is a broken
+ * pairing, so the deploy fails with the reason and the previous deployment keeps serving.
+ *
+ * Cells that cannot be reached do not make the server unready. They start after the server in a
+ * fresh stack (they are given its address), and a cell outage must not take sign-in, Threads and
+ * Settings down with it; sends then fail as `RuntimeUnavailable`, each one a recorded Incident,
+ * and the reading is logged at error. The first `verify launch` of this change deadlocked on that
+ * ordering.
+ */
+export const healthRoute = HttpRouter.add(
   'GET',
   '/health',
-  HttpServerResponse.jsonUnsafe({ ok: true, service: 'vivid' }),
+  Effect.gen(function* () {
+    const reading = yield* (yield* CellContract).read
+    return CellContractReading.match(reading, {
+      Matched: () => HttpServerResponse.jsonUnsafe({ ok: true, service: 'vivid' }),
+      Unreachable: () =>
+        HttpServerResponse.jsonUnsafe({ ok: true, service: 'vivid', contract: reading }),
+      Mismatched: () =>
+        HttpServerResponse.jsonUnsafe(
+          { ok: false, service: 'vivid', contract: reading },
+          { status: 503 },
+        ),
+      Unanswered: () =>
+        HttpServerResponse.jsonUnsafe(
+          { ok: false, service: 'vivid', contract: reading },
+          { status: 503 },
+        ),
+    })
+  }),
 )
 
 /**
