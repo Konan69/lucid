@@ -2,6 +2,7 @@ import { defineTool } from './tool.ts'
 import { FeedSource, PostRequest, Tool, PostOutcome } from '@vivid/contracts'
 import { Effect, Match, Option, Schema } from 'effect'
 import * as v from 'valibot'
+import { drawingFaults } from '../agents/displays.ts'
 import { Scope, type RunTool } from './scope.ts'
 import { summary, text } from './inputs.ts'
 
@@ -10,10 +11,10 @@ import { summary, text } from './inputs.ts'
  * whole contract the model gets, so it says when to post and when to stay quiet.
  */
 const instructions =
-  'Put something on the Person’s Feed when work you did on your own found something that needs them or that they would want to know. Most cards are drawn: the drawing is the whole card, the letter you wrote, the numbers as a chart, the options as tiles, the place as a map, the week as a strip of days, the web page you read, your Computer’s screen, as one openui-lang display with its own Buttons that answer you (@ToAssistant), the way a reply’s display does; nothing is written above or under it. Your drawing sits on a card the Feed already gives it, so never wrap the drawing in a Card and never start it with the title. Only when there is nothing to draw, say it in a sentence or two with up to two buttons. One card per piece of work: posting again replaces the card. When what you found came from a page or record with a link, give it in sources so the Person can open it. Say in from where it came from, in their words (a note you keep, a goal, a letter, a recent conversation, a check-in on what someone owes them). Cards appear silently. An ordinary card waits for a quiet moment in their waking hours, and at most one a day is announced; mark a card urgent only when it cannot wait for that (a deadline today, money or access at risk, someone waiting on them now), and it is announced at once with sound. Follow what their attention page says they want to hear about, never want brought up, and when. If nothing needs them, do not post.'
+  'Put something on the Person’s Feed when work you did on your own found something that needs them or that they would want to know. Most cards are drawn: the drawing is the whole card, the thing itself (the letter you wrote, the invoice with its amount and lines, the numbers as a chart, the options as tiles with their pictures, the place as a map, the week as a strip of days, the web page you read with its picture, your Computer’s screen) as one openui-lang display with its own Buttons that answer you (@ToAssistant), the way a reply’s display does. The Feed already shows where the card came from and when, so the drawing never repeats its title, its source or a date line, and holds at most one short line of words per block; never a paragraph. Never wrap the drawing in a Card. Only when there is nothing to draw, say it in a sentence or two with up to two buttons. One card per piece of work: posting again replaces the card. When what you found came from a page or record with a link, give it in sources so the Person can open it. Say in from where it came from, in their words (a note you keep, a goal, a letter, a recent conversation, a check-in on what someone owes them). Cards appear silently. An ordinary card waits for a quiet moment in their waking hours, and at most one a day is announced; mark a card urgent only when it cannot wait for that (a deadline today, money or access at risk, someone waiting on them now), and it is announced at once with sound. Follow what their attention page says they want to hear about, never want brought up, and when. If nothing needs them, do not post.'
 
 const title = text(
-  'A short name for the card where it is listed once handled: what needs them, as a question or a fact.',
+  'A short name for the card, read aloud and shown where it is listed once handled: what needs them, as a question or a fact. A drawn card does not show it above the drawing.',
   120,
 )
 
@@ -26,7 +27,7 @@ const card = v.variant('kind', [
     kind: v.literal('Drawn'),
     title,
     display: text(
-      'The whole card as one openui-lang program (no fence) that starts with its root statement (root = Col([...])). Its Buttons with @ToAssistant are how the Person answers.',
+      'The whole card as one openui-lang program (no fence) that starts with its root statement (root = Col([...])), leading with the thing itself. Its Buttons with @ToAssistant are how the Person answers.',
       20_000,
     ),
   }),
@@ -110,6 +111,16 @@ export function feedTools(runTool: RunTool) {
                 output: {
                   ok: false,
                   message: `“${invalid.url}” is not a full http or https address. Give links exactly as you obtained them, or leave sources empty.`,
+                },
+              }
+            // A drawing the screens' parser rejects is said back to the model, as a chat display
+            // is (`correction.ts`), so it draws the card again instead of posting a broken one.
+            const faults = data.card.kind === 'Drawn' ? drawingFaults(data.card.display) : []
+            if (faults.length > 0)
+              return {
+                output: {
+                  ok: false,
+                  message: `The display does not draw. OpenUI reported:\n${faults.map((fault) => `- ${fault}`).join('\n')}\nPost it again, fixed.`,
                 },
               }
             const { client } = yield* Scope

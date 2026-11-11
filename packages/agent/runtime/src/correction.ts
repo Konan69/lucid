@@ -8,25 +8,18 @@ import {
   type Harness,
   type TaskId,
 } from '@earendil-works/pi-durable'
-import { createParser } from '@openuidev/lang-core'
 import { stretches } from '@vivid/contracts/display'
 import { Effect, Option, Schema } from 'effect'
-import spec from './agents/parts.json' with { type: 'json' }
+import { drawingFaults } from './agents/displays.ts'
 import { runInputs } from './deliveries.ts'
 import { pi } from './threads.ts'
 
 /**
- * The parser a surface draws with, over the same library: what it reports here is what a screen
- * would fail to draw. Vivid could not see that before; on 27 October 2026 it redrew one display
- * four times in a reply, calling each "glitched", because a `Card` variant was not one of the two
- * the library has.
- */
-const parser = createParser(spec.schema, spec.root)
-
-/**
  * What OpenUI's parser reports about each whole display of an answer, one line per error, named
- * by the display's place in the answer and the statement it is in. Displays are found with the
- * stretch finder the surfaces draw with; one still arriving is not judged.
+ * by the display's place in the answer and the statement it is in. Vivid could not see that
+ * before; on 27 October 2026 it redrew one display four times in a reply, calling each
+ * "glitched", because a `Card` variant was not one of the two the library has. Displays are found
+ * with the stretch finder the surfaces draw with; one still arriving is not judged.
  */
 const faultsOf = (answer: AssistantMessage) => {
   const text = answer.content.flatMap((part) => (part.type === 'text' ? [part.text] : []))
@@ -36,13 +29,7 @@ const faultsOf = (answer: AssistantMessage) => {
     ),
   )
   return displays.flatMap((display, index) =>
-    parser
-      .parse(display)
-      .meta.errors.map((error) =>
-        error.statementId === undefined
-          ? `display ${index + 1}: ${error.message}`
-          : `display ${index + 1}, \`${error.statementId}\`: ${error.message}`,
-      ),
+    drawingFaults(display).map((fault) => `display ${index + 1}, ${fault}`),
   )
 }
 
