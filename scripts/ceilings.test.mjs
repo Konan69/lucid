@@ -6,6 +6,7 @@ import * as NodePath from 'node:path'
 import * as NodeTest from 'node:test'
 import * as NodeURL from 'node:url'
 import { checkRaises } from './ceilings.mjs'
+import { ratchets } from './gate/ratchets.mjs'
 import { lintCeilingBase, parse } from './gate.mjs'
 import { applyRatchets, stageResult } from './gate/local.mjs'
 
@@ -179,13 +180,32 @@ void test('the CLI consumes an existing lint log and exits nonzero for a loose c
   )
 })
 
-/** Numeric ceiling history remains enforced after lifecycle debt moves to individual sites. */
-void test('the lint stage rejects an increased numeric ceiling', (t) => {
+/** Exercise the gate's own reducer with the same logs it receives from cached or executed lint tasks. */
+void test('the lint stage enforces decreases and exact measured ceilings', (t) => {
   const repo = repository(t, table(18))
-  repo.write(table(28))
-  const lint = { name: 'lint', failed: [], output: '' }
+  const rule = ratchets.find((entry) => entry.rule === 'keep-incident-cause')
+  // Every other ratcheted rule is held at its ceiling, so only this one is loose.
+  const held = ratchets
+    .filter((entry) => entry !== rule && entry.ceiling > 0)
+    .map((entry) => `  ⚠ ${entry.plugin}(${entry.rule}): held.\n`.repeat(entry.ceiling))
+    .join('')
+  const output = `${held}${'  ⚠ vivid(keep-incident-cause): move the lifecycle.\n'.repeat(
+    rule.ceiling - 1,
+  )}`
+  const lint = { name: 'lint', failed: [], output }
   applyRatchets([lint], { root: repo.root, ceilingsBase: 'HEAD', env: environment() })
-  assert.match(lint.failed.join('\n'), /ceiling 18 -> 28/u)
+  assert.equal(lint.failed.length, 1)
+  assert.match(lint.failed[0], /write ceiling:/u)
+  const complete = {
+    name: 'lint',
+    failed: [],
+    output: `${output}  ⚠ vivid(keep-incident-cause): one more.\n`,
+  }
+  applyRatchets([complete], { root: repo.root, ceilingsBase: 'HEAD', env: environment() })
+  assert.deepEqual(complete.failed, [])
+  repo.write(table(28))
+  applyRatchets([complete], { root: repo.root, ceilingsBase: 'HEAD', env: environment() })
+  assert.match(complete.failed.join('\n'), /ceiling 18 -> 28/u)
 })
 
 /** A converted handler cannot purchase permission for a different late write. */

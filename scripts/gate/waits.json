@@ -3,8 +3,6 @@
     "useAllowing.decide:setDeciding": 1,
     "useAsking.answer:setPending": 1,
     "useAsking.answer:setRefused": 1,
-    "useSend.send:setPending": 1,
-    "useSend.send:setUnsent": 1,
     "useStop.stop:setRefused": 1
   },
   "apps/mobile/src/screen/Computer.tsx": {
@@ -43,17 +41,14 @@
     "Rename.save:setRefused": 1
   },
   "apps/mobile/src/screen/integration/Key.tsx": {
-    "Key.submit:setBusy": 1,
-    "Key.submit:setRefused": 1
+    "KeyForm.submit:setBusy": 1,
+    "KeyForm.submit:setRefused": 1
   },
   "apps/mobile/src/screen/integration/flow.ts": {
     "useFlowHeld.remove:setUnremoved": 1
   },
   "apps/mobile/src/screen/notifications/Invitation.tsx": {
     "Join.join:setJoining": 2
-  },
-  "apps/mobile/src/screen/settings/Memory.tsx": {
-    "Kept.correct:setSaving": 1
   },
   "apps/mobile/src/screen/settings/People.tsx": {
     "InvitationSheet.withdraw:setRefused": 1,
@@ -80,9 +75,6 @@
   },
   "apps/mobile/src/ui/Copy.tsx": {
     "Copy:setState": 1
-  },
-  "apps/mobile/src/ui/Share.tsx": {
-    "Share:setRefused": 1
   },
   "apps/mobile/src/ui/Sheet.tsx": {
     "NameSheet.save:setBusy": 1,
@@ -118,9 +110,6 @@
     "useSubmission.submit:setPending": 1,
     "useSubmission.submit:setRefused": 1
   },
-  "apps/web/src/screen/Thread.tsx": {
-    "Conversation:setUnsent": 1
-  },
   "apps/web/src/screen/Welcome.tsx": {
     "Welcome.google:setBusy": 1,
     "Welcome.google:setNotice": 1,
@@ -145,10 +134,6 @@
   "apps/web/src/screen/settings/General.tsx": {
     "General.leave:setStuck": 1,
     "Preferences.save:setUnsaved": 1
-  },
-  "apps/web/src/screen/settings/Memory.tsx": {
-    "MemoryRow.correct:setDraft": 1,
-    "MemoryRow.correct:setRefused": 1
   },
   "apps/web/src/screen/settings/People.tsx": {
     "CompanyPeople.attempt:setRefusal": 1,
