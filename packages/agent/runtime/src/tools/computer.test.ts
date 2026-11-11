@@ -128,44 +128,41 @@ const browserPage = BrowseResult.make({
 })
 
 describe('browser model target and image result', () => {
-  it.effect('rejects unknown computers and overlong controls before any RPC dispatch', () =>
+  it.effect.each<Schema.JsonObject>([
+    { computer: 'other', action: { kind: 'read' }, summary: 'Read the page' },
+    { action: { kind: 'read' }, summary: '   ' },
+    { action: { kind: 'show_tab', tab: 0 }, summary: 'Show the tab' },
+    { action: { kind: 'close_tab', tab: 51 }, summary: 'Close the tab' },
+    { action: { kind: 'wait', seconds: 11 }, summary: 'Wait for the page' },
+    { action: { kind: 'click', target: 'x'.repeat(4001) }, summary: 'Click the control' },
+    { action: { kind: 'press', key: 'x'.repeat(201) }, summary: 'Press the key' },
+  ])('rejects unknown computers and overlong controls before any RPC dispatch (case %#)', (input) =>
     Effect.gen(function* () {
       const transport = yield* fixture()
-      const invalid: Schema.JsonObject[] = [
-        { computer: 'other', action: { kind: 'read' }, summary: 'Read the page' },
-        { action: { kind: 'read' }, summary: '   ' },
-        { action: { kind: 'show_tab', tab: 0 }, summary: 'Show the tab' },
-        { action: { kind: 'close_tab', tab: 51 }, summary: 'Close the tab' },
-        { action: { kind: 'wait', seconds: 11 }, summary: 'Wait for the page' },
-        { action: { kind: 'click', target: 'x'.repeat(4001) }, summary: 'Click the control' },
-        { action: { kind: 'press', key: 'x'.repeat(201) }, summary: 'Press the key' },
-      ]
-      for (const input of invalid) {
-        expect(() =>
-          validateToolArguments(transport.browser, {
-            type: 'toolCall',
-            id: 'invalid-browse',
-            name: 'browse',
-            arguments: input,
-          }),
-        ).toThrow('Validation failed')
-        const result = yield* Effect.promise(() =>
-          transport.browser.execute('invalid-browse', input, new AbortController().signal),
-        )
-        const validation = Result.try(() =>
-          validateToolArguments(transport.browser, {
-            type: 'toolCall',
-            id: 'invalid-browse',
-            name: 'browse',
-            arguments: input,
-          }),
-        )
-        if (!Result.isFailure(validation) || !(validation.failure instanceof Error))
-          expect.fail('Expected a schema refusal.')
-        expect(result.content).toEqual([
-          { type: 'text', text: `<harness>\n[error] ${validation.failure.message}\n</harness>` },
-        ])
-      }
+      expect(() =>
+        validateToolArguments(transport.browser, {
+          type: 'toolCall',
+          id: 'invalid-browse',
+          name: 'browse',
+          arguments: input,
+        }),
+      ).toThrow('Validation failed')
+      const result = yield* Effect.promise(() =>
+        transport.browser.execute('invalid-browse', input, new AbortController().signal),
+      )
+      const validation = Result.try(() =>
+        validateToolArguments(transport.browser, {
+          type: 'toolCall',
+          id: 'invalid-browse',
+          name: 'browse',
+          arguments: input,
+        }),
+      )
+      if (!Result.isFailure(validation) || !(validation.failure instanceof Error))
+        expect.fail('Expected a schema refusal.')
+      expect(result.content).toEqual([
+        { type: 'text', text: `<harness>\n[error] ${validation.failure.message}\n</harness>` },
+      ])
       expect(yield* Queue.size(transport.requests)).toBe(0)
     }).pipe(Effect.scoped),
   )
@@ -232,134 +229,131 @@ describe('browser model target and image result', () => {
       expect(JSON.stringify(result.details)).not.toContain(picture)
     }).pipe(Effect.scoped),
   )
-  it.effect(
-    'preserves each refusal, uncertainty and approval receipt through the real browser callback',
-    () =>
+  it.effect.each([
+    [
+      BrowseOutcome.cases.NotConnected.make({}),
+      {
+        ok: false,
+        message: expect.stringContaining('desktop app is not connected'),
+      },
+      false,
+    ],
+    [
+      BrowseOutcome.cases.NotAllowed.make({}),
+      {
+        ok: false,
+        message: expect.stringContaining('has not allowed Vivid'),
+      },
+      false,
+    ],
+    [
+      BrowseOutcome.cases.AddressRefused.make({}),
+      {
+        ok: false,
+        message: expect.stringContaining('address cannot be opened'),
+      },
+      false,
+    ],
+    [
+      BrowseOutcome.cases.Busy.make({}),
+      {
+        ok: false,
+        message: expect.stringContaining('busy with an earlier action'),
+      },
+      false,
+    ],
+    [
+      BrowseOutcome.cases.Stopped.make({}),
+      {
+        ok: false,
+        message: expect.stringContaining('Person took control'),
+      },
+      true,
+    ],
+    [
+      BrowseOutcome.cases.PageGone.make({}),
+      { ok: false, message: expect.stringContaining('page is gone') },
+      false,
+    ],
+    [
+      BrowseOutcome.cases.Unsupported.make({}),
+      {
+        ok: false,
+        message: expect.stringContaining('does not support this browser action'),
+      },
+      false,
+    ],
+    [
+      BrowseOutcome.cases.RunRequired.make({}),
+      {
+        ok: false,
+        message: expect.stringContaining('work that asked for it has ended'),
+      },
+      true,
+    ],
+    [
+      BrowseOutcome.cases.OutcomeUnknown.make({}),
+      {
+        ok: false,
+        message: expect.stringContaining('action may or may not have happened'),
+      },
+      false,
+    ],
+    [
+      BrowseOutcome.cases.Unavailable.make({
+        reason: 'The Person’s computer could not complete this action.',
+      }),
+      {
+        ok: false,
+        reason: 'The Person’s computer could not complete this action.',
+        message: expect.stringContaining('Computer is unavailable'),
+      },
+      false,
+    ],
+    [
+      BrowseOutcome.cases.Blocked.make({ rule: 'Never submit' }),
+      {
+        ok: false,
+        rule: 'Never submit',
+        message: expect.stringContaining('rule forbids this action'),
+      },
+      false,
+    ],
+    [
+      BrowseOutcome.cases.ApprovalRequired.make({
+        approvalId: ApprovalId.make('fixture-approval'),
+        summary: 'Click Send',
+      }),
+      {
+        kind: 'approval-request',
+        approvalId: 'fixture-approval',
+        summary: 'Click Send',
+        message: expect.stringContaining('person has been asked to approve'),
+      },
+      true,
+    ],
+  ] as const)(
+    'preserves each refusal, uncertainty and approval receipt through the real browser callback (case %#)',
+    ([outcome, expected, terminate]) =>
       Effect.gen(function* () {
-        const cases = [
-          [
-            BrowseOutcome.cases.NotConnected.make({}),
-            {
-              ok: false,
-              message: expect.stringContaining('desktop app is not connected'),
-            },
-            false,
-          ],
-          [
-            BrowseOutcome.cases.NotAllowed.make({}),
-            {
-              ok: false,
-              message: expect.stringContaining('has not allowed Vivid'),
-            },
-            false,
-          ],
-          [
-            BrowseOutcome.cases.AddressRefused.make({}),
-            {
-              ok: false,
-              message: expect.stringContaining('address cannot be opened'),
-            },
-            false,
-          ],
-          [
-            BrowseOutcome.cases.Busy.make({}),
-            {
-              ok: false,
-              message: expect.stringContaining('busy with an earlier action'),
-            },
-            false,
-          ],
-          [
-            BrowseOutcome.cases.Stopped.make({}),
-            {
-              ok: false,
-              message: expect.stringContaining('Person took control'),
-            },
-            true,
-          ],
-          [
-            BrowseOutcome.cases.PageGone.make({}),
-            { ok: false, message: expect.stringContaining('page is gone') },
-            false,
-          ],
-          [
-            BrowseOutcome.cases.Unsupported.make({}),
-            {
-              ok: false,
-              message: expect.stringContaining('does not support this browser action'),
-            },
-            false,
-          ],
-          [
-            BrowseOutcome.cases.RunRequired.make({}),
-            {
-              ok: false,
-              message: expect.stringContaining('work that asked for it has ended'),
-            },
-            true,
-          ],
-          [
-            BrowseOutcome.cases.OutcomeUnknown.make({}),
-            {
-              ok: false,
-              message: expect.stringContaining('action may or may not have happened'),
-            },
-            false,
-          ],
-          [
-            BrowseOutcome.cases.Unavailable.make({
-              reason: 'The Person’s computer could not complete this action.',
-            }),
-            {
-              ok: false,
-              reason: 'The Person’s computer could not complete this action.',
-              message: expect.stringContaining('Computer is unavailable'),
-            },
-            false,
-          ],
-          [
-            BrowseOutcome.cases.Blocked.make({ rule: 'Never submit' }),
-            {
-              ok: false,
-              rule: 'Never submit',
-              message: expect.stringContaining('rule forbids this action'),
-            },
-            false,
-          ],
-          [
-            BrowseOutcome.cases.ApprovalRequired.make({
-              approvalId: ApprovalId.make('fixture-approval'),
-              summary: 'Click Send',
-            }),
-            {
-              kind: 'approval-request',
-              approvalId: 'fixture-approval',
-              summary: 'Click Send',
-              message: expect.stringContaining('person has been asked to approve'),
-            },
-            true,
-          ],
-        ] as const
-        for (const [outcome, expected, terminate] of cases) {
-          const transport = yield* fixture()
-          const call = Effect.promise(() =>
-            transport.browser.execute(
-              'browse-call',
-              { action: { kind: 'screenshot' }, summary: 'Look at my page', computer: 'person' },
-              new AbortController().signal,
-            ),
-          )
-          const [result] = yield* Effect.all(
-            [call, browserReply(transport, outcome, BrowseTarget.cases.Person.make({}))],
-            { concurrency: 2 },
-          )
-          expect(
-            result.content.every((block) => block.type === 'text'),
-            outcome._tag,
-          ).toBe(true)
-          expect(result.details, outcome._tag).toEqual(expected)
-          expect(result.terminate, outcome._tag).toBe(terminate)
-        }
+        const transport = yield* fixture()
+        const call = Effect.promise(() =>
+          transport.browser.execute(
+            'browse-call',
+            { action: { kind: 'screenshot' }, summary: 'Look at my page', computer: 'person' },
+            new AbortController().signal,
+          ),
+        )
+        const [result] = yield* Effect.all(
+          [call, browserReply(transport, outcome, BrowseTarget.cases.Person.make({}))],
+          { concurrency: 2 },
+        )
+        expect(
+          result.content.every((block) => block.type === 'text'),
+          outcome._tag,
+        ).toBe(true)
+        expect(result.details, outcome._tag).toEqual(expected)
+        expect(result.terminate, outcome._tag).toBe(terminate)
       }).pipe(Effect.scoped),
   )
 })
@@ -543,9 +537,10 @@ const nativeActions: ReadonlyArray<{ input: Schema.JsonObject; action: WindowAct
 ]
 
 describe('use_person_computer', () => {
-  it.effect('maps every native action input to the independent native wire contract', () =>
-    Effect.gen(function* () {
-      for (const step of nativeActions) {
+  it.effect.each(nativeActions)(
+    'maps every native action input to the independent native wire contract (case %#)',
+    (step) =>
+      Effect.gen(function* () {
         const transport = yield* fixture()
         const input = { summary: 'Work in the window', action: step.input }
         expect(
@@ -569,8 +564,7 @@ describe('use_person_computer', () => {
         )
         expect(result.details).toMatchObject({ ok: true })
         expect(result.details).not.toHaveProperty('computer')
-      }
-    }).pipe(Effect.scoped),
+      }).pipe(Effect.scoped),
   )
 
   it.effect('requires a meaningful shared summary before any RPC', () =>

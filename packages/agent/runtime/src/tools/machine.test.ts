@@ -143,10 +143,10 @@ describe('Computer tools on Pi', () => {
     }),
   )
 
-  it.effect('runs shell, grep and glob on the Computer without changing main’s vocabulary', () =>
+  it.effect('runs shell on the Computer without changing main’s vocabulary', () =>
     Effect.gen(function* () {
       const {
-        tools: [, , , bash, grep, glob],
+        tools: [, , , bash],
         reply,
       } = yield* fixture('machine-person')
       const signal = yield* Effect.abortSignal
@@ -162,6 +162,16 @@ describe('Computer tools on Pi', () => {
         { concurrency: 2 },
       )
       expect(shellResult.message.content).toEqual([{ type: 'text', text: 'hello' }])
+    }),
+  )
+
+  it.effect('runs grep on the Computer without changing main’s vocabulary', () =>
+    Effect.gen(function* () {
+      const {
+        tools: [, , , , grep],
+        reply,
+      } = yield* fixture('machine-person')
+      const signal = yield* Effect.abortSignal
       const [grepResult] = yield* Effect.all(
         [
           Effect.promise(() =>
@@ -189,6 +199,16 @@ describe('Computer tools on Pi', () => {
       )
       expect(grepResult.message.content).toEqual([{ type: 'text', text: 'a.ts:1:hi' }])
       expect(grepResult.message.details).toEqual({ matchCount: 1 })
+    }),
+  )
+
+  it.effect('runs glob on the Computer without changing main’s vocabulary', () =>
+    Effect.gen(function* () {
+      const {
+        tools: [, , , , , glob],
+        reply,
+      } = yield* fixture('machine-person')
+      const signal = yield* Effect.abortSignal
       const [globResult] = yield* Effect.all(
         [
           Effect.promise(() => roundTrip(glob, { pattern: '*.ts' }, signal)),
