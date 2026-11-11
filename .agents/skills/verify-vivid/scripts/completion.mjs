@@ -44,7 +44,7 @@ export async function completion(state, _id, directory, browser) {
     )
     const list = await observe(state, {
       tag: 'WatchNotifications',
-      payload: {},
+      payload: null,
       accept: (value) =>
         value.notifications.some((notice) => notice.threadId === id && notice.kind === 'finished'),
     })

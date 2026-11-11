@@ -10,6 +10,8 @@ After Launch and worthy Doctor, run `verify feature addresses <run>` and `verify
 
 HTTP uses the public Person gateway. Browser sends the same words through the composer and checks both accounts in Integrations Settings. `reply-*.json` retains Vivid's words, `accounts-*.response.json` the public account lists, `read-*.response.json` each real read, and `step-*.json` each successful checkpoint. A failed step leaves subsequent steps unconfirmed. Native clients remain unproved.
 
+blocked: the current Launch Executor enables `EXECUTOR_URL_ALLOW_LOOPBACK_HTTP` for its disposable catalogue and callbacks, and does not declare `VIVID_EXECUTOR_PUBLIC_ONLY`. The real address registration therefore returns "this Vivid is not set up to add a server by address yet" before an account exists. Recipes 1 and 3 need a proof-owned Executor with public-only egress and no loopback exceptions. Do not assert that declaration on the current loopback-enabled Executor or weaken product enforcement. The required separate configuration remains follow-up work.
+
 Before Launch, retain a POST initialize probe against DeepWiki with the MCP Accept and Content-Type headers. If unavailable, report blocked and name the failed public authority. Do not substitute simulated Executor responses.
 
 ## Retry a failed personal account
