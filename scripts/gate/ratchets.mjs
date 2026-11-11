@@ -287,4 +287,7 @@ export const deadCodeRatchets = [
   // Added 10 November 2026: every server <-> cell schema is in the contract fingerprint
   // (`wireSchemas`); the admission body that drifted in production was outside it at bab8c618d.
   { plugin: 'wire', rule: 'unregistered', ceiling: 0 },
+  // Added 11 November 2026: Vivid's own drawing rules in `agents/displays.ts` do not grow with
+  // every bad card read; the examples teach the shape (`scripts/gate/prompts.mjs`).
+  { plugin: 'prompt', rule: 'display-rules', ceiling: 9 },
 ]

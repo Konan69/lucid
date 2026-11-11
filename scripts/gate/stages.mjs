@@ -33,6 +33,8 @@ export const stages = [
       ['node', 'scripts/gate/readback.mjs'],
       // Every schema the server and the cell both import is part of the contract fingerprint.
       ['node', 'scripts/gate/wire.mjs'],
+      // Display drawing rules do not grow one per bad card (scripts/gate/prompts.mjs).
+      ['node', 'scripts/gate/prompts.mjs'],
       // Structure: one-word names, no dumping grounds, server layering (docs/00-structure.md).
       ['node', 'scripts/structure.mjs'],
       // The action protocol's TLA+ models and their code anchors, about 12 s with TLC
