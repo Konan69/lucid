@@ -110,6 +110,11 @@
       "id": "linked",
       "pattern": "\\b(linked|unlinked)\\b",
       "instead": "\"i can get into…\" / \"you're signed in to…\""
+    },
+    {
+      "id": "long-dash",
+      "pattern": "[—–]",
+      "instead": "a full stop or a comma"
     }
   ]
 }

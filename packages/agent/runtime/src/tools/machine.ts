@@ -117,7 +117,7 @@ export function machineTools(sandbox: Sandbox) {
     defineTool({
       name: 'read',
       description:
-        'Read a file. Output is truncated to 2000 lines or 50KB — use offset/limit for large files.',
+        'Read a file. Output is truncated to 2000 lines or 50KB; use offset/limit for large files.',
       input: v.object({
         path: string('Path to the file to read'),
         offset: v.optional(number('Line number to start from (1-indexed)')),
