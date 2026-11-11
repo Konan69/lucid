@@ -59,7 +59,9 @@ const PURPOSE = {
 /**
  * The fixed instruction of one helper, frozen when it starts. It is not Vivid's instruction: a
  * helper speaks to the Run that started it, never to a person, and its whole answer is its last
- * message.
+ * message. That answer is still the raw material of Vivid's reply, so its findings and failures lead
+ * with what they mean for the person; a helper that answers only in tool errors leaves Vivid nothing
+ * but system words to paraphrase.
  */
 export function workerInstructions(kind: WorkerKind, timezone: string, at: number) {
   const zone = timezone.length > 0 ? timezone : 'UTC'
@@ -76,6 +78,7 @@ export function workerInstructions(kind: WorkerKind, timezone: string, at: numbe
     'Never claim something happened unless a tool result shows it. Say done, partly done, refused, failed or unknown as it is.',
     'You have a limited number of tool calls and a time limit. When a tool says the budget is used up, answer at once with what you have.',
     'Your final message is your whole answer and goes back to Vivid, not to a person: put every finding, number and source in it, plainly and completely. Do not greet or sign off.',
+    'Vivid passes what matters on to the person, so name people, accounts and pages the way the person knows them, and when something failed, first say what could not be done for them, then the technical cause.',
   ].join('\n')
 }
 
