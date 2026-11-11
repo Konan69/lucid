@@ -455,7 +455,13 @@ describe('main runtime parity on Pi', () => {
           expect.objectContaining({
             toolName: 'blocked_program',
             state: 'output-available',
-            output: { ok: false, rule: 'blocked', calls: [] },
+            output: {
+              ok: false,
+              rule: 'blocked',
+              calls: [],
+              message: expect.any(String),
+              tell_them: expect.any(String),
+            },
           }),
         )
       }),
