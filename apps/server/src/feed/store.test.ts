@@ -4,6 +4,7 @@ import {
   Company,
   CompanyId,
   FeedDisplayInvalid,
+  FeedOpening,
   FeedItem,
   MarkFeedCardRequest,
   Person,
@@ -35,13 +36,14 @@ import { CHANNEL } from '../live/changes.ts'
 import { payload, silent } from '../live/testing.ts'
 import { Runtime } from '../runtime/client.ts'
 import { ChildRuns } from '../runs/store.ts'
-import { StoredRunOrigin } from '../threads/conversation.ts'
+import { Conversation, StoredRunOrigin } from '../threads/conversation.ts'
 import type { ThreadPlace } from '../threads/place.ts'
 import { RunEnding, RunStore, runStoreLayer, TurnReservation } from '../threads/runs.ts'
 import { ThreadStore, threadStoreLayer } from '../threads/store.ts'
 import { stopPersonRun } from '../threads/stop.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { cardIdOf } from './read.ts'
+import { resumeFeedItem } from './resume.ts'
 import { dismissFeedItem, FeedStore, feedStoreLayer } from './store.ts'
 import { feedCards } from './tables.ts'
 
@@ -59,6 +61,8 @@ const testLayer = Layer.mergeAll(
   threadStoreLayer,
   Layer.mock(Runtime, { stop: () => Effect.succeed(false) }),
   Layer.mock(ChildRuns, { stopThread: () => Effect.void }),
+  // Pressing a Conversation hands nothing over, so neither the runtime's history nor admission is read.
+  Layer.mock(Conversation, {}),
 ).pipe(Layer.provideMerge(testDatabaseLayer))
 
 const now = 1_800_000_000_000
@@ -1089,6 +1093,41 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
             .where(eq(feedCards.threadId, bens)),
         )
         expect(rows).toEqual([{ state: 'new', updatedAt: now }])
+      }).pipe(Effect.scoped),
+    )
+    it.effect('pressing a Conversation on the Feed opens it and makes no second Thread', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const work = yield* insertThread(
+          { person: test.ada, place: 'Conversation', company: null, updatedAt: now - hour },
+          'Reconnect Notion',
+        )
+        const database = yield* Database
+        const mine = () =>
+          database.run(database.select().from(threads).where(eq(threads.personId, test.ada)))
+        const before = yield* mine()
+
+        // Read as an Exit: making a copy reads the runtime's history, which this suite does not run.
+        const opened = yield* Effect.exit(
+          resumeFeedItem(
+            {
+              person: test.person,
+              workspace: Workspace.cases.Personal.make({}),
+              by: 'person',
+              threadId: Option.none(),
+              helper: Option.none(),
+            },
+            {
+              work,
+              conversation: ThreadId.make(crypto.randomUUID()),
+              key: crypto.randomUUID(),
+              opening: FeedOpening.cases.Looking.make({}),
+            },
+          ),
+        )
+
+        expect(Exit.isSuccess(opened) && opened.value.thread.id).toBe(work)
+        expect((yield* mine()).map((row) => row.id)).toEqual(before.map((row) => row.id))
       }).pipe(Effect.scoped),
     )
   })

@@ -507,6 +507,7 @@ export async function watch(state, id, directory) {
   const integration = await connectPulse(state, directory)
   const marker = 'Pulse ' + crypto.randomUUID().slice(0, 8)
   await chat(state, id, watchWords(marker), directory)
+  await openedInPlace(state, id, directory)
   const proof = await occurrence(
     state,
     { id, integration, marker, away: async () => undefined },
@@ -517,6 +518,33 @@ export async function watch(state, id, directory) {
     rpc(state, 'RemoveConnection', { id: integration.connection.id }, directory),
   )
   await dismissedAndResumed(state, proof, directory)
+}
+
+/**
+ * A Conversation on the Feed is already the chat about its work: pressing it answers with that
+ * Thread and makes no Conversation of its own, so the Person's list does not show it twice.
+ */
+async function openedInPlace(state, id, directory) {
+  const before = await rpc(state, 'ListThreads', undefined, directory, 'in-place-threads-before')
+  const request = {
+    work: id,
+    conversation: crypto.randomUUID(),
+    key: crypto.randomUUID(),
+    opening: { _tag: 'Looking' },
+  }
+  const opened = await rpc(state, 'ResumeFeedItem', request, directory, 'in-place-resume')
+  const after = await rpc(state, 'ListThreads', undefined, directory, 'in-place-threads-after')
+  const titled = after.threads.filter((thread) => thread.title === opened.thread.title)
+  await json(directory + '/in-place.json', {
+    work: id,
+    opened: opened.thread.id,
+    before: before.threads.length,
+    after: after.threads.length,
+    sameTitle: titled.length,
+  })
+  NodeAssert.equal(opened.thread.id, id, 'Pressing a Conversation did not open it')
+  NodeAssert.equal(after.threads.length, before.threads.length, 'Pressing a Conversation made a Thread')
+  NodeAssert.equal(titled.length, 1, 'The Conversation is listed twice')
 }
 
 /** The Runs in the delivered card's background Thread, read from their run-owned rows. */
