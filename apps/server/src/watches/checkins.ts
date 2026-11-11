@@ -10,7 +10,6 @@ import {
   CheckinNotScheduled,
   OwedState,
   ProjectWork,
-  ProjectNotActive,
   TimerOperationKey,
   TimerReceipt,
   WatchPurpose,
@@ -205,7 +204,9 @@ export const watchCheckins = Effect.fn('Watches.checkins')(function* () {
       const project = (yield* projects.list(actor)).find((item) => item.id === focus.projectId)
       if (project === undefined) return yield* new NotFound({ message: 'Project not found' })
       if (!ProjectWork.guards.Active(project.work))
-        return yield* new ProjectNotActive({ id: project.id })
+        return yield* new InvalidRequest({
+          message: 'Only an active Project can have a check-in.',
+        })
     }
     if (CheckinFocus.guards.Thread(focus))
       yield* requireThread(focus.threadId, actor.person.id).pipe(
