@@ -12,7 +12,9 @@ import {
   type LiveQuery,
 } from '@vivid/state'
 import { Effect, Layer, Option } from 'effect'
+import { start } from './app'
 import { heldConversations } from './conversation'
+import { kept } from './kept'
 import { live } from './live'
 import { engine } from './runtime'
 import { shareLocation } from './locating'
@@ -38,6 +40,21 @@ const followed = conversations(engine)
 /** A Thread's conversation: what its screen reads, and what is held open ahead of it. */
 export const conversationOf = (id: ThreadId): LiveQuery<Following> => followed.get(id)
 
+/** Where this browser keeps every Thread's unsent words between visits (`sending.Kept`). */
+const UNSENT = 'vivid-unsent'
+
+/**
+ * One change to the kept unsent words. What the store holds is read back first, so words another
+ * tab kept are not written over; a store that refuses leaves them in this page's memory only.
+ */
+const changeUnsent = (revise: (held: sending.Kept) => sending.Kept) =>
+  Effect.sync(() => {
+    const next = revise(sending.readKept(kept.read(UNSENT)))
+    const text = sending.writeKept(next)
+    if (Option.isSome(text)) kept.write(UNSENT, text.value)
+    return next
+  })
+
 /** How this page hands a delivery to the server: `SendToThread` on its socket. */
 const transport = sending.delivering(engine.run, recording)
 const machines = sending.makeSending(
@@ -47,6 +64,12 @@ const machines = sending.makeSending(
     create: (request) =>
       transport.create(request).pipe(Effect.tap(() => Effect.sync(() => engine.reopen()))),
   }),
+  {
+    registry: engine.registry,
+    whereabouts: sending.whereaboutsOf(live.me.answers),
+    change: changeUnsent,
+    launch: start,
+  },
 )
 
 /**
