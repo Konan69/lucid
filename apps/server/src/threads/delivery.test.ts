@@ -96,6 +96,7 @@ import { Database } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { Changes, Topic, silentChangesLayer } from '../live/changes.ts'
 import { Notifier, type Notice } from '../notifications/notifier.ts'
+import { notifications } from '../notifications/tables.ts'
 import { Message } from '../observability/messages.ts'
 import {
   Admission,
@@ -1106,6 +1107,14 @@ layer(
             const unknown = yield* test.conversation.admit(said(test.threadId, test.ada))
             yield* settled(unknown.runId, Settlement.cases.Unknown.make({}))
             expect(yield* Ref.get(test.notices)).toEqual([])
+            expect(
+              yield* database.run(
+                database
+                  .select()
+                  .from(notifications)
+                  .where(eq(notifications.conversationId, test.threadId)),
+              ),
+            ).toEqual([])
             // A question raised there waits on the Person: it is shown on the Feed, and told.
             const question = yield* askFor(test, test.ada, test.threadId)
             expect(question.state._tag).toBe('Waiting')
@@ -1116,10 +1125,14 @@ layer(
             yield* place('Conversation')
             const spoken = yield* test.conversation.admit(said(test.threadId, test.ada))
             yield* test.finish(spoken.runId)
-            expect((yield* Ref.get(test.notices)).map((notice) => notice.kind)).toEqual([
-              'needs-you',
-              'finished',
-            ])
+            expect(
+              yield* database.run(
+                database
+                  .select({ kind: notifications.kind })
+                  .from(notifications)
+                  .where(eq(notifications.conversationId, test.threadId)),
+              ),
+            ).toEqual([{ kind: 'finished' }])
           }),
         ),
     )
