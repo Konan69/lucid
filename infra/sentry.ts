@@ -203,13 +203,14 @@ const execFile = NodeUtil.promisify(NodeChildProcess.execFile)
 /** Applies the policy with its own read-back, then answers the rules as they are live. */
 const apply = Effect.fn('Infra.SentryAlerts.apply')(function* () {
   const bearer = yield* token
-  const receipt = NodePath.join(
-    yield* Effect.tryPromise({
+  const directory = yield* Effect.acquireRelease(
+    Effect.tryPromise({
       try: () => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), 'vivid-sentry-')),
       catch: () => new SentryAlertsUnread({ message: 'no temporary directory for the receipt' }),
     }),
-    'receipt.json',
+    (path) => Effect.sync(() => NodeFS.rmSync(path, { recursive: true, force: true })),
   )
+  const receipt = NodePath.join(directory, 'receipt.json')
   yield* Effect.tryPromise({
     try: () =>
       execFile(process.execPath, [script, '--apply'], {
@@ -245,7 +246,7 @@ const apply = Effect.fn('Infra.SentryAlerts.apply')(function* () {
 /** Provider of `Infra.SentryAlerts`; it needs an HTTP client (the Railway providers carry one). */
 export const SentryAlertsProvider = Provider.succeed(SentryAlerts, {
   reconcile: Effect.fn(function* () {
-    return { rules: yield* apply() }
+    return { rules: yield* apply().pipe(Effect.scoped) }
   }),
   read: Effect.fn(function* ({ output }) {
     if (output === undefined) return undefined

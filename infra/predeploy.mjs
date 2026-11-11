@@ -119,11 +119,14 @@ const worker = async () => {
   return `${expected} published and selected by the fleet`
 }
 
-for (const { name, step } of [
-  { name: 'migrate', step: migrate },
-  { name: 'maps', step: maps },
-  { name: 'worker', step: worker },
-]) {
+/** Read-back evidence each step must return before the following step can run. */
+export const predeploySteps = [
+  { name: 'migrate', step: migrate, readBack: 'Drizzle auth and product migration journal' },
+  { name: 'maps', step: maps, readBack: 'Sentry CLI upload receipt for each project' },
+  { name: 'worker', step: worker, readBack: 'fleet pointer equals the expected Worker version' },
+]
+
+for (const { name, step } of predeploySteps) {
   // The step's own reason, or the bare fact that it failed: a thrown value is never printed whole.
   const outcome = await step().then(
     (evidence) => ({ ok: true, evidence }),
