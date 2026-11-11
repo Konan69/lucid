@@ -41,17 +41,26 @@ function textLimit(text: string) {
   return { text: result, truncated: size > budgets.pageText }
 }
 
-/** Only short interstitials are refused, so an article quoting a notice remains readable. */
+/**
+ * A page whose whole readable text is a notice that it needs scripts, or a bot check, holds
+ * nothing to read. On 10 Nov 2026 `read_page` answered ok for Notion's settings pages with only
+ * "JavaScript must be enabled in order to use Notion." and Vivid handed the Person the address
+ * as if it had read it. Only a short page is refused: an article that quotes such a notice has
+ * far more text than a notice has, and stays readable.
+ */
 function interstitial(text: string) {
   const normalized = text.replace(/\s+/g, ' ').trim()
-  if (normalized.length > 2000) return Option.none()
+  // Script-required notices are one or two sentences; 400 characters is several times the
+  // longest seen (Notion's, 86) and far below any real page.
   if (
-    /^(?:JavaScript must be enabled in order to use Notion\. Please enable JavaScript to continue\.|You need to enable JavaScript to run this app\.)$/i.test(
+    normalized.length <= 400 &&
+    /\benable javascript\b|\bjavascript (?:must be|needs to be|is) (?:enabled|required|disabled)\b|\brequires javascript\b/i.test(
       normalized,
     )
   )
     return Option.some('needs a browser to show its content' as const)
   if (
+    normalized.length <= 2000 &&
     /Unfortunately, bots use DuckDuckGo too\.|Please complete the following challenge to confirm this search was made by a human\./i.test(
       normalized,
     )
