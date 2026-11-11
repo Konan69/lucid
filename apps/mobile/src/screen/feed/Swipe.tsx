@@ -57,7 +57,10 @@ const AnimatedCircle = Animated.createAnimatedComponent(Circle)
  * with the speed of the throw. Under it, the side it is heading to shows in that side's colour and
  * the card's own words; a ring fills as the drag nears the line. Crossing the line ticks; a release
  * past half the width, or a flick that would carry it there, throws the card off at the finger's
- * speed and then does that side's work, so the list folds the card behind it as a press does.
+ * speed, and the side's work is done the moment the card has left its place, so the list closes
+ * the gap while the card is still flying. Waiting for the throw's spring to settle left the empty
+ * place standing for about a second after the card was gone (11 November 2026: "i still see its
+ * place empty where it was, then a second later the space closes").
  *
  * Gesture, springs and haptics follow Apple's fluid interface rules (`apple-design`): velocity is
  * handed to the spring, the landing point is projected from the flick, a side the card cannot go
@@ -124,6 +127,8 @@ function useSwipe(sides: Sides, held: boolean): Motion {
   const width = useSharedValue(1)
   const lastSide = useSharedValue(1)
   const fill = useSharedValue(0)
+  // The side a released card was thrown to, until its work is done; 0 when nothing is in flight.
+  const thrown = useSharedValue(0)
   const right = Option.isSome(sides.answer)
   const left = Option.isSome(sides.away)
   // Plain booleans for the worklets, which cannot read the Sides' functions.
@@ -139,6 +144,22 @@ function useSwipe(sides: Sides, held: boolean): Motion {
       if (now !== 0) lastSide.set(now)
       fill.set(withTiming(now === 0 ? 0 : 1, { duration: 160 }))
       scheduleOnRN(tick)
+    },
+  )
+
+  // A thrown card's work is done on the frame it clears its own place (a full width across), not
+  // when the throw's spring settles: past that point the Person sees only the gap it left.
+  const land = () => {
+    'worklet'
+    const side = thrown.get()
+    if (side === 0) return
+    thrown.set(0)
+    scheduleOnRN(act, side)
+  }
+  useAnimatedReaction(
+    () => thrown.get() !== 0 && Math.abs(x.get()) >= width.get(),
+    (gone, before) => {
+      if (gone && before !== true) land()
     },
   )
 
@@ -179,13 +200,15 @@ function useSwipe(sides: Sides, held: boolean): Motion {
         return
       }
       const throwSpeed = side * Math.max(Math.abs(event.velocityX), 1500)
+      thrown.set(side)
       y.set(withSpring(y.get() - 80, { duration: 500, dampingRatio: 1 }))
+      // The spring's end lands the card too, should a measure leave the width unknown.
       x.set(
         withSpring(
           side * w * 1.8,
           { duration: 500, dampingRatio: 1, velocity: throwSpeed },
           (done) => {
-            if (done) scheduleOnRN(act, side)
+            if (done) land()
           },
         ),
       )
