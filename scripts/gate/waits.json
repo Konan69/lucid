@@ -1,0 +1,190 @@
+{
+  "apps/mobile/src/screen/Chat.tsx": {
+    "useAllowing.decide:setDeciding": 1,
+    "useAsking.answer:setPending": 1,
+    "useAsking.answer:setRefused": 1,
+    "useSend.send:setPending": 1,
+    "useSend.send:setUnsent": 1,
+    "useStop.stop:setRefused": 1
+  },
+  "apps/mobile/src/screen/Computer.tsx": {
+    "Machine.press:setRefused": 1
+  },
+  "apps/mobile/src/screen/Library.tsx": {
+    "FolderActions.remove:setRefused": 1,
+    "ItemSheet.ask:setBusy": 1,
+    "ItemSheet.ask:setRefused": 1,
+    "ItemSheet.open:setBusy": 1,
+    "ItemSheet.open:setRefused": 1,
+    "useAdd.add:setBusy": 1,
+    "useAdd.add:setSaid": 2
+  },
+  "apps/mobile/src/screen/Projects.tsx": {
+    "Inside.begin:setRefused": 1
+  },
+  "apps/mobile/src/screen/chat/Share.tsx": {
+    "Share.save:setRefused": 1,
+    "Share.save:setSaving": 1
+  },
+  "apps/mobile/src/screen/chat/Words.tsx": {
+    "Formatted.open:setUnopened": 2
+  },
+  "apps/mobile/src/screen/computer/Live.tsx": {
+    "Live:renewed": 1
+  },
+  "apps/mobile/src/screen/home/Filing.tsx": {
+    "Filing.file:setRefused": 1
+  },
+  "apps/mobile/src/screen/home/Switcher.tsx": {
+    "Switcher.enter:setRefused": 1
+  },
+  "apps/mobile/src/screen/integration/Account.tsx": {
+    "Rename.save:setBusy": 1,
+    "Rename.save:setRefused": 1
+  },
+  "apps/mobile/src/screen/integration/Key.tsx": {
+    "Key.submit:setBusy": 1,
+    "Key.submit:setRefused": 1
+  },
+  "apps/mobile/src/screen/integration/flow.ts": {
+    "useFlowHeld.remove:setUnremoved": 1
+  },
+  "apps/mobile/src/screen/notifications/Invitation.tsx": {
+    "Join.join:setJoining": 2
+  },
+  "apps/mobile/src/screen/settings/Memory.tsx": {
+    "Kept.correct:setSaving": 1
+  },
+  "apps/mobile/src/screen/settings/People.tsx": {
+    "InvitationSheet.withdraw:setRefused": 1,
+    "Invite.invite:setBusy": 1,
+    "Invite.invite:setRefused": 1,
+    "Invite.invite:setSent": 1,
+    "Listed.leave:setRefused": 1,
+    "MemberSheet.change:setRefused": 1,
+    "MemberSheet.change:setRole": 1,
+    "MemberSheet.remove:setRefused": 1
+  },
+  "apps/mobile/src/screen/settings/Rules.tsx": {
+    "NewRule.add:setAction": 1,
+    "NewRule.add:setAdding": 2,
+    "Rules.remove:setUnremoved": 1
+  },
+  "apps/mobile/src/screen/settings/Texting.tsx": {
+    "ChannelControl.ask:setAsking": 1,
+    "ChannelControl.ask:setRefused": 1
+  },
+  "apps/mobile/src/screen/vivid/Customise.tsx": {
+    "Customise.save:setBusy": 1,
+    "Customise.save:setRefused": 1
+  },
+  "apps/mobile/src/ui/Copy.tsx": {
+    "Copy:setState": 1
+  },
+  "apps/mobile/src/ui/Share.tsx": {
+    "Share:setRefused": 1
+  },
+  "apps/mobile/src/ui/Sheet.tsx": {
+    "NameSheet.save:setBusy": 1,
+    "NameSheet.save:setRefused": 1
+  },
+  "apps/web/src/screen/Computer.tsx": {
+    "Viewer:setShown": 1
+  },
+  "apps/web/src/screen/Invite.tsx": {
+    "Invite.join:setRefusal": 2
+  },
+  "apps/web/src/screen/Library.tsx": {
+    "browseActions.askMove:setAsk": 1,
+    "browseActions.askMove:setRefused": 1,
+    "browseActions.openResult:setRefused": 1,
+    "browseActions.openResult:setView": 1,
+    "browseActions.removeFolder:setPath": 1,
+    "browseActions.removeFolder:setRefused": 1,
+    "browseActions.removeItem:setRefused": 1,
+    "browseActions.search:setRefused": 1,
+    "browseActions.search:setView": 1,
+    "dialogActions.moveFolder:close": 1,
+    "dialogActions.moveFolder:setPath": 1,
+    "dialogActions.moveItem:close": 1,
+    "dialogActions.moveItem:setView": 1,
+    "dialogActions.newFolder:close": 1,
+    "dialogActions.renameFolder:close": 1,
+    "dialogActions.renameFolder:setPath": 1,
+    "dialogActions.renameItem:close": 1,
+    "dialogActions.renameItem:setView": 1,
+    "uploadActions.send:setStatus": 2,
+    "uploadActions.send:setUploads": 1,
+    "useSubmission.submit:setPending": 1,
+    "useSubmission.submit:setRefused": 1
+  },
+  "apps/web/src/screen/Thread.tsx": {
+    "Conversation:setUnsent": 1
+  },
+  "apps/web/src/screen/Welcome.tsx": {
+    "Welcome.google:setBusy": 1,
+    "Welcome.google:setNotice": 1,
+    "Welcome.submit:setBusy": 1,
+    "Welcome.submit:setNotice": 1
+  },
+  "apps/web/src/screen/integration/Key.tsx": {
+    "EnterKey.submit:setRefusal": 1
+  },
+  "apps/web/src/screen/project/Create.tsx": {
+    "CreateProject.create:setCreating": 1,
+    "CreateProject.create:setRefused": 1
+  },
+  "apps/web/src/screen/settings/Channel.tsx": {
+    "ChannelControl.ask:setAsking": 1,
+    "ChannelControl.ask:setRefused": 1
+  },
+  "apps/web/src/screen/settings/Devices.tsx": {
+    "SignedIn.end:setAsked": 1,
+    "SignedIn.end:setRefused": 1
+  },
+  "apps/web/src/screen/settings/General.tsx": {
+    "General.leave:setStuck": 1,
+    "Preferences.save:setUnsaved": 1
+  },
+  "apps/web/src/screen/settings/Memory.tsx": {
+    "MemoryRow.correct:setDraft": 1,
+    "MemoryRow.correct:setRefused": 1
+  },
+  "apps/web/src/screen/settings/People.tsx": {
+    "CompanyPeople.attempt:setRefusal": 1,
+    "Invite.invite:setRefusal": 1,
+    "Invite.invite:setSent": 1
+  },
+  "apps/web/src/screen/settings/Rules.tsx": {
+    "NewRule:setAction": 1,
+    "Rules.add:setRefusal": 1
+  },
+  "apps/web/src/screen/sidebar/Company.tsx": {
+    "CreateCompany.create:setCreating": 1,
+    "CreateCompany.create:setRefusal": 1
+  },
+  "apps/web/src/screen/sidebar/Threads.tsx": {
+    "useRetitling.retitle:settle": 2
+  },
+  "apps/web/src/screen/thread/Attach.tsx": {
+    "useAttachments.hold:refused": 2,
+    "useAttachments.hold:setFiles": 1,
+    "useAttachments.send:stand": 1
+  },
+  "apps/web/src/screen/thread/Message.tsx": {
+    "CopyWords:setState": 2
+  },
+  "apps/web/src/screen/thread/Share.tsx": {
+    "Share.save:setRefusal": 1
+  },
+  "apps/web/src/screen/vivid/Customise.tsx": {
+    "Customise.save:setFault": 1,
+    "Customise.save:setSaving": 1
+  },
+  "apps/web/src/ui/Copy.tsx": {
+    "Copy:setState": 2
+  },
+  "apps/web/src/ui/Markdown.tsx": {
+    "Table:setState": 2
+  }
+}

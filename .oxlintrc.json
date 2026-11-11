@@ -261,7 +261,7 @@
       "rules": {
         "vivid/react-no-derived-state-effect": "warn",
         "vivid/react-no-inline-context-value": "warn",
-        "vivid/react-no-state-after-wait": "warn",
+        "vivid/react-no-state-after-wait": "error",
         "vivid/react-no-useless-memo": "error"
       }
     },

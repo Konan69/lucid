@@ -318,6 +318,9 @@ for (const [ruleName, invalid, valid, filename] of cases) {
         ruleDiagnostics(ruleName, lint(ruleName, source, 'component.tsx')).length
       const state = 'const [said, setSaid] = useState(null); '
       const late = [
+        // Computer Live's named renewal callback and a completion called after a wait.
+        'const renewed = (answer) => setSaid(answer); function renew() { send().then(renewed) }',
+        'async function save() { const end = () => setSaid(null); await send(); end() }',
         // An Effect.gen body waits at each `yield*`.
         'const save = Effect.gen(function* () { const answer = yield* send(); setSaid(answer) })',
         // A callback given to then, catch or finally runs when the wait is over.
@@ -341,15 +344,7 @@ for (const [ruleName, invalid, valid, filename] of cases) {
         'async function save() { await send(); setOther(null) }',
       ]
       for (const source of owned) assert.equal(count(state + source), 0, source)
-      // What the rule does not follow, stated so nobody takes its silence for proof: a helper
-      // that sets state and is called after the wait, and a branch that waited and returned
-      // (the second is reported although its path never waited).
-      assert.equal(
-        count(
-          state + 'async function save() { const end = () => setSaid(null); await send(); end() }',
-        ),
-        0,
-      )
+      // The syntax-only rule still reports a branch that waited and returned.
       assert.equal(
         count(state + 'async function save(x) { if (x) { await send(); return } setSaid(null) }'),
         1,
