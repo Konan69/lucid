@@ -5,6 +5,7 @@ import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Predicate from 'effect/Predicate'
 import * as Schedule from 'effect/Schedule'
+import type * as PersistedQueue from 'effect/persistence/PersistedQueue'
 import {
   causeAfter,
   Conflict,
@@ -28,6 +29,7 @@ import { DeviceRegistry, deviceLayer } from '../computers/device.ts'
 import { ChannelReplies } from '../channels/replies.ts'
 import { workLayer } from '../database/work.ts'
 import { Notifier } from '../notifications/notifier.ts'
+import { PushTargets, pushTargetsLayer } from '../push/targets.ts'
 import { Presence } from './presence.ts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
 import { claimWithdrawalsFor } from '../inputs/handoff.ts'
@@ -161,7 +163,9 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
   const incidents = yield* Incidents
   const scope = yield* Effect.scope
   const queue = yield* notificationDelivery
-  const noticeContext = yield* Effect.context<Database | Notifier | Presence>()
+  const noticeContext = yield* Effect.context<
+    Database | Notifier | Presence | PushTargets | PersistedQueue.PersistedQueueFactory
+  >()
 
   /** A savepoint failure leaves a durable notice retry in the Run ending's outer transaction. */
   const deferNotice = Effect.fn('Conversation.deferNotice')(function* (
@@ -564,6 +568,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
 /** Needs a `Scope`: the Runs it observes live as long as the server does. */
 export const conversationLayer = Layer.effect(Conversation, makeConversation()).pipe(
   Layer.provide(workLayer),
+  Layer.provide(pushTargetsLayer),
   Layer.provideMerge(deviceLayer),
   Layer.provide(activitiesLayer),
 )

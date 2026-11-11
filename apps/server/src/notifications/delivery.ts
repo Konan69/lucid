@@ -14,7 +14,7 @@ import { automaticallyNotifies } from '../threads/runs.ts'
 import { notifiesFrom } from '../threads/place.ts'
 import { Presence } from '../threads/presence.ts'
 import { PushTargets } from '../push/targets.ts'
-import { Notifier, oweNotice } from './notifier.ts'
+import { Notifier, oweNotice, type Notice } from './notifier.ts'
 
 /** A failed savepoint retains the Run's verdict so a later worker can recheck notice eligibility. */
 const RunNotice = Schema.Struct({
@@ -37,7 +37,7 @@ export const oweRunNotice = Effect.fn('Notifications.oweRun')(function* (
   if (yield* (yield* Presence).watching(run.threadId, run.personId)) return
   // A Run can outlast its Person's access. Never quote a Thread they can no longer read.
   if (!(yield* canSee(run.threadId, run.personId))) return
-  yield* (yield* Notifier).notify({
+  const notice: Notice = {
     personId: run.personId,
     companyId: thread.value.companyId,
     kind: 'finished',
@@ -47,7 +47,16 @@ export const oweRunNotice = Effect.fn('Notifications.oweRun')(function* (
       : 'Vivid could not finish this.',
     threadId: run.threadId,
     approvalId: null,
-  })
+  }
+  if (Settlement.guards.Completed(settlement)) {
+    // Joined submissions share an answer. Its recipient-scoped primary key also fences retries.
+    yield* oweNotice({
+      id: NotificationId.make(`${settlement.responseId}:finished:${run.personId}`),
+      notice,
+    })
+  } else {
+    yield* (yield* Notifier).notify(notice)
+  }
 })
 
 /** Failed owing is repaid under one notice id even if the worker loses its acknowledgement. */
