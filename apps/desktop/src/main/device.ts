@@ -52,7 +52,7 @@ class LinkRetry extends Schema.TaggedError<LinkRetry>()(
   { title: 'The link will be tried again' },
 ) {}
 
-export type LinkFailure = LinkSignedOut | LinkRefused | LinkDown
+type LinkFailure = LinkSignedOut | LinkRefused | LinkDown
 
 /** One piece of work the server sent: the `Act` case of `DeviceRequest`. */
 export type DeviceAct = typeof DeviceRequest.cases.Act.Type
@@ -290,7 +290,7 @@ export const deviceLink = Effect.fn('DesktopDevice.makeLink')(function* (
       Effect.forkScoped(reporting).pipe(
         Effect.andThen(
           Stream.runForEach(server.watch(device, dependencies.ability()), (request) =>
-            DeviceRequest.match<Effect.Effect<void, never, Scope.Scope>>(request, {
+            DeviceRequest.match(request, {
               Act: (act) => Effect.forkScoped(handle(server, device, act)).pipe(Effect.asVoid),
               RunEnded: ({ runId }) => dependencies.ended(runId),
             }),
@@ -309,14 +309,11 @@ export const deviceLink = Effect.fn('DesktopDevice.makeLink')(function* (
     const server = yield* dependencies.connect
     if (Option.isNone(server)) return yield* rest(DeviceLink.cases.SignedOut.make({}))
     const device = yield* server.value.enrol
-    return yield* DeviceAccess.match<Effect.Effect<boolean, LinkRetry | LinkFailure>>(
-      device.access,
-      {
-        Pending: () => again(DeviceLink.cases.Waiting.make({ device: device.id })),
-        Revoked: () => rest(DeviceLink.cases.Revoked.make({ device: device.id })),
-        Allowed: () => listen(server.value, device.id),
-      },
-    )
+    return yield* DeviceAccess.match(device.access, {
+      Pending: () => again(DeviceLink.cases.Waiting.make({ device: device.id })),
+      Revoked: () => rest(DeviceLink.cases.Revoked.make({ device: device.id })),
+      Allowed: () => listen(server.value, device.id),
+    })
   })
 
   const settled = Effect.scoped(pass()).pipe(

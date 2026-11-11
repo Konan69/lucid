@@ -210,13 +210,20 @@ const EarlierSignalData = Schema.Struct({
 export const PlacedSignal = Schema.Union([SignalData, EarlierSignalData])
 export type PlacedSignal = typeof PlacedSignal.Type
 
+/** A signal as the model reads it: the tag it is drawn in, its attributes and its words. */
+export interface ShownSignal {
+  readonly tagName: string
+  readonly attributes: { readonly [name: string]: string }
+  readonly body: string
+}
+
 /**
  * A placed signal as a screen draws it and as learning reads it: its tag, its attributes and its
  * words. A Watch's event is drawn as what Vivid saw, so its words are the event itself, whole,
  * and its attributes add the event's name and time; the model's framing around it is not shown.
  * An earlier signal reads as it was placed.
  */
-export function signalShown(placed: PlacedSignal) {
+export function signalShown(placed: PlacedSignal): ShownSignal {
   if (!('envelope' in placed))
     return { tagName: placed.type, attributes: placed.attributes, body: placed.body }
   const { envelope } = placed

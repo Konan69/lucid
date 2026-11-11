@@ -1,5 +1,6 @@
 import { NodeHttpServerRequest } from '@effect/platform-node'
-import { NodeWS } from '@effect/platform-node/NodeSocket'
+import * as NodeWS from 'ws'
+import * as NodeHttp from 'node:http'
 import type * as NodeStream from 'node:stream'
 import { Deferred, Effect, Option } from 'effect'
 import type { PersonId } from '@vivid/contracts'
@@ -169,6 +170,8 @@ export const exitSocket = Effect.fn('Egress.exitSocket')(function* (
   request: HttpServerRequest.HttpServerRequest,
 ) {
   const incoming = NodeHttpServerRequest.toIncomingMessage(request)
+  // Effect 4.1 serves HTTP/2 as well; only an HTTP/1.1 request carries an upgrade and the raw socket.
+  if (!(incoming instanceof NodeHttp.IncomingMessage)) return yield* unopened()
   const wire = incoming.socket
   const upgraded = yield* Effect.acquireRelease(
     Effect.callback<NodeWS.WebSocket, Socket.SocketError>((resume) => {

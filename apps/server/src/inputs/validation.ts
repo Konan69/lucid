@@ -77,7 +77,7 @@ export const answerText = Effect.fn('Inputs.answerText')(function* (
   const lines = yield* Effect.forEach(
     Arr.zip(questions, request.answers),
     ([question, answer], questionIndex): Effect.Effect<string, InputAnswerFailure> =>
-      InputAnswer.match<Effect.Effect<string, InputAnswerFailure>>(answer, {
+      InputAnswer.match(answer, {
         Chosen: ({ labels }) => chosen(question, labels, { id: request.id, questionIndex }),
         Written: ({ words }) => written(question, words, { id: request.id, questionIndex }),
       }).pipe(

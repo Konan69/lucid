@@ -81,7 +81,7 @@ export const operationOf = {
  */
 const fingerprintOf = Effect.fn('Actions.fingerprint')(function* (target: ActionTarget) {
   const encoded = yield* encodeTarget(target)
-  const essential = ActionTarget.match<Schema.Json>(target, {
+  const essential = ActionTarget.match(target, {
     Connection: ({ connectionId, tool, input }) => ({
       kind: 'Connection',
       connectionId,
@@ -448,7 +448,7 @@ export const reconcile = Effect.fn('Actions.reconcile')(
     const decidableAt = row.claimedAt + LANDING_WINDOW_MS
     const found = yield* (yield* ActionLookup).look(action)
     // A live ask can resume later, so its age alone never proves absence.
-    const reconciliation = Lookup.match<typeof StoredReconciliation.Type>(found, {
+    const reconciliation = Lookup.match(found, {
       Found: ({ receipt }) => ActionReconciliation.cases.Applied.make({ receipt }),
       Absent: () =>
         checkedAt < decidableAt || stored.held

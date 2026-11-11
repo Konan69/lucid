@@ -26,7 +26,7 @@ const completion = (actor: Actor, id: ProjectId, change: Parameters<typeof resol
  * Person's own completion cites them, so both reach the store as the same `Complete`.
  */
 const workChange = (actor: Actor, request: UpdateProjectRequest) =>
-  ProjectChange.match<ReturnType<typeof completion>>(request.change, {
+  ProjectChange.match(request.change, {
     Define: ({ objective, nextStep }) =>
       Effect.succeed(WorkChange.cases.Define.make({ objective, nextStep })),
     Progress: ({ text, nextStep }) =>

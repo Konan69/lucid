@@ -28,7 +28,7 @@ pnpm infra:dev
   └─ Command.Dev: Vite web proxy → 127.0.0.1:5178
 ```
 
-Alchemy `2.0.0-beta.81` owns the local resources through `alchemy.run.ts`, with only Command and
+Alchemy `2.0.0-beta.85` owns the local resources through `alchemy.run.ts`, with only Command and
 Docker providers registered. There is no AWS provider or emulator in the running stack.
 
 Do not go back to Alchemy beta.79 against state that beta.81 has written. beta.81 marks a resource

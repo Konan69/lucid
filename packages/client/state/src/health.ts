@@ -140,18 +140,18 @@ const ABILITIES = [
 
 /** What one probe says about the ability that needs its part. */
 const probeSays = (probe: ComputerProbe): Omit<Ability, 'name'> =>
-  ComputerProbeResult.match<Omit<Ability, 'name'>>(probe.result, {
+  ComputerProbeResult.match(probe.result, {
     Passed: ({ observed }) => ({
-      state: 'works',
+      state: 'works' as const,
       detail: ComputerProbeObservation.guards.Disk(observed)
         ? `${size.format(Math.min(...observed.volumes.map((volume) => volume.availableBytes)) / 1e9)} free`
         : 'Works',
     }),
-    Failed: ({ failure }) => ({ state: 'broken', detail: failureWords(failure) }),
+    Failed: ({ failure }) => ({ state: 'broken' as const, detail: failureWords(failure) }),
     NotRun: ({ reason }) =>
       reason === 'BrowserNotStarted'
-        ? { state: 'idle', detail: 'Opens when Vivid needs it' }
-        : { state: 'unchecked', detail: 'Not checked' },
+        ? { state: 'idle' as const, detail: 'Opens when Vivid needs it' }
+        : { state: 'unchecked' as const, detail: 'Not checked' },
   })
 
 /** The worse of two states, so an ability is only as good as its weakest part. */

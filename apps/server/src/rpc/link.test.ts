@@ -1,5 +1,5 @@
 import { NodeHttpServer } from '@effect/platform-node'
-import { NodeWS } from '@effect/platform-node/NodeSocket'
+import * as NodeWS from 'ws'
 import { expect, layer } from '@effect/vitest'
 import * as Clock from 'effect/Clock'
 import * as Deferred from 'effect/Deferred'

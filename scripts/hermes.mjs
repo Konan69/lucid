@@ -15,6 +15,15 @@ const decodeManifest = Schema.decodeUnknownResult(Schema.fromJsonString(Manifest
 const hermesLib = ['lib.es2022.d.ts']
 const domLib = [...hermesLib, 'lib.dom.d.ts']
 const browserLib = [...domLib, 'lib.dom.iterable.d.ts']
+/**
+ * Libraries a pinned dependency's own declarations load, which no project setting can refuse.
+ * Effect 4.1.4 opens `Effect.d.ts` and `ManagedRuntime.d.ts` with
+ * `/// <reference lib="esnext.disposable" preserve="true" />` for `acquireDisposable` and a
+ * runtime's `Symbol.asyncDispose`; its runtime touches `Symbol.dispose` only inside
+ * `acquireDisposable` (`internal/effect.js`), which nothing shipped to Hermes calls. Phone-bound
+ * code still may not use `using` or `Symbol.dispose`; this admits the types, not the API.
+ */
+const dependencyLibraries = new Set(['lib.esnext.disposable.d.ts'])
 
 function libraryFiles(program) {
   return program
@@ -63,7 +72,7 @@ function libraryErrors(api, config, relative) {
   const allowed = allowedLibraries(api, lib)
   using program = productionProgram(api, config)
   const loaded = libraryFiles(program).map((file) => NodePath.basename(file))
-  const wider = loaded.filter((file) => !allowed.has(file))
+  const wider = loaded.filter((file) => !allowed.has(file) && !dependencyLibraries.has(file))
   if (wider.length > 0)
     errors.push(`${relative}: loaded libraries exceed the Hermes profile: ${wider.join(', ')}`)
   return errors

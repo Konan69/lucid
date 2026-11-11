@@ -1,5 +1,5 @@
 import { NodeHttpServer } from '@effect/platform-node'
-import { NodeWS } from '@effect/platform-node/NodeSocket'
+import * as NodeWS from 'ws'
 import { describe, expect, it } from '@effect/vitest'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeHttp from 'node:http'

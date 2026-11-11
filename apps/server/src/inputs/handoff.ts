@@ -256,7 +256,7 @@ const view = Effect.fn('Handoffs.view')(function* (
         summary: row.summary,
         createdAt: row.createdAt,
       }
-      return yield* Definition.match<Effect.Effect<HandoffRequest, DatabaseFailure>>(row.request, {
+      return yield* Definition.match(row.request, {
         Form: ({ kind, fields }) =>
           formState(row, people).pipe(
             Effect.map((state) =>
@@ -355,7 +355,7 @@ const labelsOf = (request: PrepareHandoffRequest) =>
 
 /** The definition kept for the request, with a server-made id for every field. */
 const definitionOf = (request: PrepareHandoffRequest): Definition =>
-  PrepareHandoffRequest.match<Definition>(request, {
+  PrepareHandoffRequest.match(request, {
     Form: ({ kind, fields }) =>
       Definition.cases.Form.make({
         kind,

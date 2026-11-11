@@ -441,7 +441,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
   const desktopSession = session.fromPartition(APP_PARTITION)
   /** Protocol, navigation, permissions, and IPC follow the same durable selection. */
   const renderer = (): RendererSource =>
-    ServerSettings.match<RendererSource>(serverSettings, {
+    ServerSettings.match(serverSettings, {
       NoServer: () => RendererSource.cases.Chooser.make({ path: chooserPath }),
       Server: ({ origin }) => RendererSource.cases.Server.make({ origin }),
     })

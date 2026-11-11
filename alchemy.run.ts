@@ -1,9 +1,9 @@
 import * as Alchemy from 'alchemy'
 import * as Command from 'alchemy/Command'
-import * as Cloudflare from 'alchemy/Cloudflare'
-import * as Docker from 'alchemy/Docker'
-import * as GitHub from 'alchemy/GitHub'
-import * as Railway from 'alchemy/Railway'
+import * as Cloudflare from '@alchemy.run/cloudflare'
+import * as Docker from '@alchemy.run/docker'
+import * as GitHub from '@alchemy.run/github'
+import * as Railway from '@alchemy.run/railway'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import { computerBinariesRelease } from './infra/github.ts'
@@ -142,13 +142,13 @@ const railwayStack = () =>
     deployTarget.stackName,
     {
       /**
-       * Cloudflare's providers carry the HttpClient the others use, so they are built first. The
-       * stack's own resources (`Infra.*`) read Railway's credential and HTTP client from Railway's.
+       * Cloudflare's providers carry the HttpClient the others use, so they are built first.
+       * Railway's come next: since beta.85 GitHub's providers read the HttpClient Railway's
+       * provide. The stack's own resources (`Infra.*`) read Railway's credential and HTTP client.
        */
       providers: Layer.mergeAll(CellWorkerProvider, ReleaseProvider, SentryAlertsProvider).pipe(
-        Layer.provideMerge(
-          Layer.mergeAll(Railway.providers(), Command.providers(), GitHub.providers()),
-        ),
+        Layer.provideMerge(Layer.mergeAll(Command.providers(), GitHub.providers())),
+        Layer.provideMerge(Railway.providers()),
         Layer.provideMerge(Cloudflare.providers()),
       ),
       /** Off the PC: every machine plans and deploys against the same state (`infra/state.ts`). */

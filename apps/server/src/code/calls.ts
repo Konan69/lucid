@@ -123,7 +123,7 @@ const connection = Effect.fn('Code.useConnection')(function* (
     return yield* refused('use_tool', { ok: false, reason: RECONCILE_FIRST }, request.summary)
   const result = sent.value
   const evidence = { coverage: result.coverage, asOf: result.asOf, observedAt: result.observedAt }
-  return ToolOutcome.match<CallOutcome>(result.outcome, {
+  return ToolOutcome.match(result.outcome, {
     Accepted: ({ output, receipt }) =>
       CallOutcome.cases.Returned.make({
         value: {
@@ -192,7 +192,7 @@ const browse = Effect.fn('Code.browse')(function* (actor: Actor, input: Schema.J
   const outcome = yield* computerBrowse(actor, request)
   // Each exhaustive branch owns whether this is a new code refusal or a carried Device reply.
   // New outcomes must choose their recording Effect here; there is no separate recording list.
-  return yield* BrowseOutcome.match<Effect.Effect<CallOutcome>>(outcome, {
+  return yield* BrowseOutcome.match(outcome, {
     NotConnected: () =>
       refused(
         'browse',

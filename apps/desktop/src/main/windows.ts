@@ -397,7 +397,7 @@ const located = Effect.fn('DesktopWindows.located')(function* (
 
 /** Each action as the Computer's requests. Exhaustive: a new action fails to typecheck here. */
 const route = (asking: Asking, table: Table, action: WindowAction) =>
-  WindowAction.match<Effect.Effect<WindowResult, Ended>>(action, {
+  WindowAction.match(action, {
     ListApps: () => listApps(asking, table),
     ListWindows: () => listWindows(asking, table),
     Open: ({ app }) => open(asking, table, app),

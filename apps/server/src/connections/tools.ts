@@ -54,7 +54,6 @@ import { actingRun } from '../threads/runs.ts'
 import { Watches } from '../watches/lifecycle.ts'
 import {
   Claim,
-  ActionLookup,
   answerBefore,
   claim,
   operationOf,
@@ -523,17 +522,7 @@ const connectionOutcome = Effect.fn('Connections.outcome')(function* (
     operation,
     () => effect !== 'read' || outcome.approvalAnswered === true,
   )
-  return yield* ExecutorCallOutcome.match<
-    Effect.Effect<
-      IntegrationResult,
-      | import('@vivid/contracts').NotFound
-      | ReturnType<typeof executorFailure>
-      | ExecutorApprovalUnsupported
-      | import('@vivid/contracts').Conflict
-      | import('../database/client.ts').DatabaseInfrastructureError,
-      ConnectionStore | IntegrationAnswers | ActionLookup | import('../database/client.ts').Database
-    >
-  >(outcome, {
+  return yield* ExecutorCallOutcome.match(outcome, {
     UncertainPause: Effect.fnUntraced(function* () {
       if (DisplayCallPolicy.guards.Draw(call.policy))
         return yield* notRead(
@@ -798,7 +787,7 @@ type ToolAdmissionRefusal = typeof ToolAdmissionRefusal.Type
 
 /** Direct callers keep the same Tool receipts, including the generic discovery failure text. */
 const toolAdmissionOutcome = (decision: ToolAdmissionRefusal) =>
-  ToolAdmissionRefusal.match<ToolOutcome>(decision, {
+  ToolAdmissionRefusal.match(decision, {
     IntegrationUnavailable: () =>
       ToolOutcome.cases.Rejected.make({ message: 'This integration is not available to you.' }),
     IntegrationFailed: ({ reason }) => ToolOutcome.cases.Rejected.make({ message: reason }),
@@ -824,7 +813,7 @@ const toolAdmissionOutcome = (decision: ToolAdmissionRefusal) =>
 
 /** Approved callers preserve uncertainty on discovery conflict and their original reason texts. */
 const approvedAdmissionOutcome = (decision: ToolAdmissionRefusal) =>
-  ToolAdmissionRefusal.match<ActionOutcome>(decision, {
+  ToolAdmissionRefusal.match(decision, {
     IntegrationUnavailable: () =>
       ActionOutcome.cases.Failed.make({ reason: unavailableActionReason }),
     IntegrationFailed: ({ reason }) => ActionOutcome.cases.Failed.make({ reason }),
@@ -863,28 +852,25 @@ const prepareTool = Effect.fn('Connections.prepareTool')(function* (
   }
   const row = found.value
   const state = yield* stateOf(row)
-  const refusal = yield* ConnectionState.match<Effect.Effect<Option.Option<ToolAdmissionRefusal>>>(
-    state,
-    {
-      Failed: Effect.fnUntraced(function* ({ reason }) {
-        // The known failed Integration prevents this call; the failure's prose stays in the result.
-        yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'IntegrationFailed' }))
-        return Option.some(ToolAdmissionRefusal.cases.IntegrationFailed.make({ reason }))
-      }),
-      NeedsAuthorization: Effect.fnUntraced(function* () {
-        // This call is declined from current Integration state, without attempting the service.
-        yield* recordRefusal(Refusal.cases.IntegrationNotReady.make({ service: row.service }))
-        return Option.some(
-          ToolAdmissionRefusal.cases.NeedsAuthorization.make({
-            service: row.service,
-            serviceName: row.serviceName,
-            grant: grantOf(row),
-          }),
-        )
-      }),
-      Ready: () => Effect.succeedNone,
-    },
-  )
+  const refusal: Option.Option<ToolAdmissionRefusal> = yield* ConnectionState.match(state, {
+    Failed: Effect.fnUntraced(function* ({ reason }) {
+      // The known failed Integration prevents this call; the failure's prose stays in the result.
+      yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'IntegrationFailed' }))
+      return Option.some(ToolAdmissionRefusal.cases.IntegrationFailed.make({ reason }))
+    }),
+    NeedsAuthorization: Effect.fnUntraced(function* () {
+      // This call is declined from current Integration state, without attempting the service.
+      yield* recordRefusal(Refusal.cases.IntegrationNotReady.make({ service: row.service }))
+      return Option.some(
+        ToolAdmissionRefusal.cases.NeedsAuthorization.make({
+          service: row.service,
+          serviceName: row.serviceName,
+          grant: grantOf(row),
+        }),
+      )
+    }),
+    Ready: () => Effect.succeedNone,
+  })
   if (Option.isSome(refusal)) return Result.fail(refusal.value)
   const tools: Result.Result<typeof ToolDiscovery.Type, ToolAdmissionRefusal> = yield* store
     .tools(actor, row)
@@ -909,25 +895,24 @@ const prepareTool = Effect.fn('Connections.prepareTool')(function* (
   }
   // Discovery persisted what it found: a lapsed sign-in or a lost resource declines the call as
   // from that state, counted once here; a ready catalog goes on to the requested tool.
-  const catalog = yield* ToolDiscovery.match<
-    Effect.Effect<Result.Result<readonly (typeof ExecutorTool.Type)[], ToolAdmissionRefusal>>
-  >(tools.success, {
-    Ready: ({ tools: ready }) => Effect.succeed(Result.succeed(ready)),
-    NeedsAuthorization: Effect.fnUntraced(function* () {
-      yield* recordRefusal(Refusal.cases.IntegrationNotReady.make({ service: row.service }))
-      return Result.fail(
-        ToolAdmissionRefusal.cases.NeedsAuthorization.make({
-          service: row.service,
-          serviceName: row.serviceName,
-          grant: ConnectionGrant.cases.ReauthorizationRequired.make({}),
-        }),
-      )
-    }),
-    Failed: Effect.fnUntraced(function* () {
-      yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'IntegrationFailed' }))
-      return Result.fail(ToolAdmissionRefusal.cases.DiscoveryFailed.make({ tool: request.tool }))
-    }),
-  })
+  const catalog: Result.Result<readonly (typeof ExecutorTool.Type)[], ToolAdmissionRefusal> =
+    yield* ToolDiscovery.match(tools.success, {
+      Ready: ({ tools: ready }) => Effect.succeed(Result.succeed(ready)),
+      NeedsAuthorization: Effect.fnUntraced(function* () {
+        yield* recordRefusal(Refusal.cases.IntegrationNotReady.make({ service: row.service }))
+        return Result.fail(
+          ToolAdmissionRefusal.cases.NeedsAuthorization.make({
+            service: row.service,
+            serviceName: row.serviceName,
+            grant: ConnectionGrant.cases.ReauthorizationRequired.make({}),
+          }),
+        )
+      }),
+      Failed: Effect.fnUntraced(function* () {
+        yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'IntegrationFailed' }))
+        return Result.fail(ToolAdmissionRefusal.cases.DiscoveryFailed.make({ tool: request.tool }))
+      }),
+    })
   if (Result.isFailure(catalog)) return Result.fail(catalog.failure)
   const requested = catalog.success.find((entry) => entry.name === request.tool)
   if (requested === undefined) {
@@ -1175,7 +1160,7 @@ const useToolAs = Effect.fn('Connections.useTool')(function* (
       preconditions: bound.success.preconditions,
     }),
   )
-  return yield* GateDecision.match<ReturnType<typeof sendJournaled>>(decision, {
+  return yield* GateDecision.match(decision, {
     Blocked: ({ rule }) => notRead(ToolOutcome.cases.Blocked.make({ rule })),
     ApprovalRequired: ({ approval }) =>
       notRead(
@@ -1312,7 +1297,7 @@ export const useDisplayTool = Effect.fn('Connections.useDisplayTool')(function* 
 
 /** Approved execution carries the shared Tool decision as an action receipt without recording again. */
 const actionOutcome = (result: IntegrationResult) =>
-  ToolOutcome.match<ActionOutcome>(result.outcome, {
+  ToolOutcome.match(result.outcome, {
     Accepted: () =>
       ActionOutcome.cases.Succeeded.make({
         result: 'The service accepted the action; its result is not confirmed yet.',

@@ -1,5 +1,6 @@
 import { describe, expect, layer } from '@effect/vitest'
 import { Clock, Deferred, Effect, Fiber, Layer, Logger, Predicate, Ref, Schema } from 'effect'
+import type * as Decision from 'effect/ai/Decision'
 import * as Option from 'effect/Option'
 import { ScriptedAnswer } from '../decisions/testing.ts'
 import { DecisionModel } from 'effect/ai'
@@ -1430,8 +1431,8 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           const firstRelease = yield* Deferred.make<void>()
           const secondStarted = yield* Deferred.make<void>()
           const secondRelease = yield* Deferred.make<void>()
-          const firstNames: string[] = []
-          const retriedNames: string[] = []
+          const firstNames: Array<Decision.Description> = []
+          const retriedNames: Array<Decision.Description> = []
           let wave = 0
           const modelLayer = Layer.effect(
             DecisionModel.DecisionModel,
@@ -1567,7 +1568,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           name: 'Work',
           shared: false,
         })
-        const names: string[] = []
+        const names: Array<Decision.Description> = []
         const modelLayer = Layer.effect(
           DecisionModel.DecisionModel,
           DecisionModel.make({

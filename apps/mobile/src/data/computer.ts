@@ -30,20 +30,20 @@ const TURN_ON = Option.some('Turn it on')
 
 /** Where a Person's Computer stands, said for a Person. */
 export const standingOf = (computer: Computer): Standing =>
-  ComputerState.match<Standing>(computer.state, {
+  ComputerState.match(computer.state, {
     Absent: () => ({
       glass: 'Not started yet',
       title: 'A computer of its own',
       detail:
         'Vivid can use a real machine for work that needs one: running a script, reading a site, filling a form. It is yours alone and keeps its files and sign-ins between uses.',
-      mood: 'neutral',
+      mood: 'neutral' as const,
       start: TURN_ON,
     }),
     Starting: () => ({
       glass: 'Starting up…',
       title: 'Starting up',
       detail: 'This takes a few seconds.',
-      mood: 'thinking',
+      mood: 'thinking' as const,
       start: Option.none(),
     }),
     Running: () =>
@@ -52,21 +52,21 @@ export const standingOf = (computer: Computer): Standing =>
             glass: 'You have the keyboard',
             title: 'Turned on',
             detail: 'Vivid won’t use its computer until you hand it back.',
-            mood: 'neutral',
+            mood: 'neutral' as const,
             start: Option.none(),
           }
         : {
             glass: 'Vivid has the keyboard',
             title: 'Turned on',
             detail: 'Take over to stop Vivid using its computer until you hand it back.',
-            mood: 'happy',
+            mood: 'happy' as const,
             start: Option.none(),
           },
     Stopped: () => ({
       glass: 'Turned off · files and sign-ins kept',
       title: 'Turned off',
       detail: 'Its files and sign-ins are kept.',
-      mood: 'asleep',
+      mood: 'asleep' as const,
       start: TURN_ON,
     }),
     Failed: ({ reason }) => ({
@@ -74,7 +74,7 @@ export const standingOf = (computer: Computer): Standing =>
       title: 'It did not start',
       // The machine's own reason, as the server recorded it.
       detail: reason,
-      mood: 'neutral',
+      mood: 'neutral' as const,
       start: Option.some('Try again'),
     }),
   })

@@ -131,7 +131,7 @@ export function inputRequest(item: InputRequest) {
  * question; every refusal says what to do next. Nothing here names a value: none exists yet.
  */
 export function handoff(outcome: PrepareHandoffOutcome): Schema.Json {
-  return PrepareHandoffOutcome.match<Schema.Json>(outcome, {
+  return PrepareHandoffOutcome.match(outcome, {
     Prepared: (prepared) => ({
       kind: 'handoff',
       handoffId: prepared.handoff.id,

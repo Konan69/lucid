@@ -35,7 +35,7 @@ const fileKind = (mimeType: string): Kind => {
 /** The kind of a shelf row, from its newest holds. */
 export const kindOfHolds = (holds: ArtifactHolds): Kind =>
   ArtifactHolds.match(holds, {
-    Document: () => 'document',
+    Document: () => 'document' as const,
     File: ({ output }) => fileKind(output.mimeType),
   })
 

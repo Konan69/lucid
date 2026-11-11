@@ -188,7 +188,7 @@ const arrivalOf = (
   )
   if (Option.isNone(target)) return stray
   const { pathname, search, searchParams } = target.value
-  return Phase.match<Arrival>(phase, {
+  return Phase.match(phase, {
     Waiting: () =>
       Option.match(
         Option.filter(
@@ -304,7 +304,7 @@ const listen = Effect.fn('DesktopSignIn.listen')(function* (
 
 /** How a return reads to the window: the code with this attempt's secret, or that there is none. */
 const endingOf = (back: SignInReturn, secrets: AttemptSecrets): SignInEnding =>
-  SignInReturn.match<SignInEnding>(back, {
+  SignInReturn.match(back, {
     Granted: ({ code, state }) =>
       SignInEnding.cases.Granted.make({
         code,

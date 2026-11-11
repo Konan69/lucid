@@ -60,7 +60,7 @@ export const fileKind = (file: ArtifactFile): string => {
 
 /** What an opened version's holds is, as a shelf row knows it. */
 export const holdsOf = (content: ArtifactContent): ArtifactHolds =>
-  ArtifactContent.match<ArtifactHolds>(content, {
+  ArtifactContent.match(content, {
     Document: () => ArtifactHolds.cases.Document.make({}),
     File: ({ output }) => ArtifactHolds.cases.File.make({ output }),
   })

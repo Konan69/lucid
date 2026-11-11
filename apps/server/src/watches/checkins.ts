@@ -70,7 +70,7 @@ const projectReading = Effect.fn('Checkins.project')(function* (
 ) {
   const project = (yield* (yield* ProjectStore).list(actor)).find((item) => item.id === projectId)
   if (project === undefined) return yield* new NotFound({ message: 'Project not found' })
-  return ProjectWork.match<CheckinRead>(project.work, {
+  return ProjectWork.match(project.work, {
     Unspecified: () =>
       CheckinRead.cases.Closed.make({ evidence: 'The Project has no active objective.' }),
     Active: ({ objective, nextStep, progress }) =>
@@ -217,7 +217,7 @@ export const watchCheckins = Effect.fn('Watches.checkins')(function* () {
   /** Validate a new intent before assigning its server-owned operation key. */
   const plan = Effect.fn('Checkins.plan')(function* (actor: Actor, intent: WatchIntent) {
     if (WatchIntent.guards.Checkin(intent)) yield* validate(actor, intent.focus)
-    return WatchIntent.match<WatchPurpose>(intent, {
+    return WatchIntent.match(intent, {
       Event: () => WatchPurpose.cases.Event.make({}),
       Checkin: ({ focus, timing }) =>
         WatchPurpose.cases.Checkin.make({ focus, timing, arming: awaiting() }),

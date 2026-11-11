@@ -83,7 +83,7 @@ if (Fixture.guards.absent(input)) NodeProcess.exit(1)
 /** All fixtures use the production RPC contract and the official runner, including handler death. */
 const handlers = ExtractionRpcs.toLayer({
   ExtractPdf: ({ bytes }) =>
-    Fixture.match<Effect.Effect<ReadonlyArray<string>, ExtractionFaulted>>(input, {
+    Fixture.match(input, {
       digest: () =>
         Effect.sync(() => [NodeCrypto.createHash('sha256').update(bytes).digest('hex')]),
       spin: () => Effect.sync(spin),

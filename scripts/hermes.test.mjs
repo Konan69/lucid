@@ -119,11 +119,7 @@ void test('a types entry that references wider libraries is refused', (context) 
     include: ['src'],
   })
   const errors = hermesConfigErrors(directory, paths).join('\n')
-  assert.match(
-    errors,
-    /loaded libraries exceed the Hermes profile.*lib\.esnext\.disposable\.d\.ts/u,
-  )
-  assert.match(errors, /lib\.es2025\.float16\.d\.ts/u)
+  assert.match(errors, /loaded libraries exceed the Hermes profile.*lib\.es2025\.float16\.d\.ts/u)
   assert.doesNotMatch(errors, /effective lib must/u)
 })
 

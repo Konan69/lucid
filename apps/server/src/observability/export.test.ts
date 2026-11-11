@@ -980,7 +980,7 @@ it.effect("exports no query, path or header of a provider's sign-in return", () 
 )
 
 it.effect(
-  'exports no span under a malformed or all-zero inbound trace id, and no such parent',
+  'traces a request whose inbound ids are not ids as its own, and drops an all-zero trace',
   () =>
     withReceiver(
       Effect.gen(function* () {
@@ -1022,32 +1022,28 @@ it.effect(
         )
 
         expect(statuses).toEqual([204, 204, 204, 204, 204, 204])
-        // The second and last requests' spans are exported, the server span as a root; the spans of
-        // every other request are gone.
+        // Effect 4.1 `HttpTraceContext` refuses a B3 header whose ids are not ids (`isB3Ids`), so
+        // the first three requests carry no caller's trace and are traced as this process's own.
+        // The all-zero ids pass that shape check and are dropped here (`guard.ts`); the sound trace
+        // under an all-zero parent is kept, its server span as a root.
         const servers = spanNamed(spans, 'GET /probe')
-        expect(servers.map((span) => [span.traceId, span.parentSpanId])).toEqual([
-          [trace, undefined],
-          [rooted, undefined],
-        ])
-        expect(spanNamed(spans, 'Probe.inbound').map((span) => span.traceId)).toEqual([
-          trace,
-          rooted,
-        ])
-        // Every refusal is still counted. A line written under a dropped span is filed under that
-        // span's own trace id, which the server made: an id, a different one for each request, and
-        // never the text that was sent.
+        expect(servers).toHaveLength(4)
+        expect(servers.slice(0, 3).every((span) => span.traceId !== trace)).toBe(true)
+        expect(servers[3]).toMatchObject({ traceId: rooted })
+        expect(servers[3]).not.toHaveProperty('parentSpanId')
+        expect(
+          spanNamed(spans, 'Probe.inbound')
+            .map((span) => span.traceId)
+            .at(-1),
+        ).toBe(rooted)
+        // Every refusal is still counted, each under an id: the sound caller's, or one the server
+        // made, never the text that was sent.
         const refusals = lines.filter((line) => line.body.stringValue === Message.refusal)
         const filed = refusals.map((line) => (line.traceId === undefined ? '' : line.traceId))
-        expect([filed[1], filed[5]]).toEqual([trace, rooted])
-        const made = [filed[0], filed[2], filed[3], filed[4]]
-        expect(made.map((id) => id !== undefined && /^[0-9a-f]{32}$/.test(id))).toEqual([
-          true,
-          true,
-          true,
-          true,
-        ])
-        expect(new Set([...made, trace, rooted]).size).toBe(6)
         expect(filed).toHaveLength(6)
+        expect(filed[5]).toBe(rooted)
+        expect(filed.every((id) => /^[0-9a-f]{32}$/.test(id) && id !== '0'.repeat(32))).toBe(true)
+        expect(filed.slice(0, 5).includes(trace)).toBe(false)
         expect(text).not.toContain('forged')
         expect(text).not.toContain('Lovelace')
         expect(text).not.toContain('463ac35c9f6413ad463ac35c')

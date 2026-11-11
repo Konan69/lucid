@@ -447,10 +447,7 @@ const Connecting = Machine.make({
           resolve: (context, enqueue) => {
             const { output, state, select } = context
             if (output.attempt !== state.attempt.id) return context.decline()
-            // Each branch answers with its own selector, so the answer's type is said: `match`
-            // would otherwise take the first branch's as the answer of them all.
-            type Next = ReturnType<(typeof select)[keyof typeof select]>
-            return ConnectionStep.match<Next>(output.step, {
+            return ConnectionStep.match(output.step, {
               OpenSignIn: ({ connection, address }) =>
                 select.signIn({
                   data: {
@@ -565,8 +562,7 @@ const Connecting = Machine.make({
           resolve: (context, enqueue) => {
             const { output, state, select } = context
             if (output.attempt !== state.attempt.id) return context.decline()
-            type Next = ReturnType<(typeof select)[keyof typeof select]>
-            return ConnectionStep.match<Next>(output.step, {
+            return ConnectionStep.match(output.step, {
               // Still to do is not an error: people look at the page and leave.
               OpenSignIn: () =>
                 select.unfinished({ data: { attempt: state.attempt, id: state.id } }),

@@ -15,7 +15,7 @@ import {
   Tool,
   WatchState,
 } from '@vivid/contracts'
-import { Array as Arr, Effect, Result, Schema } from 'effect'
+import { Array as Arr, Effect, Result } from 'effect'
 import { InvalidRequest } from '@vivid/contracts/rpc'
 import * as v from 'valibot'
 import { summary, text } from './inputs.ts'
@@ -100,7 +100,7 @@ const dependents = Effect.fn('ForgetTools.dependents')(function* (
 
 /** What a receipt says to the model: where the forget stands and counts, never ids or the fact. */
 const receiptView = (receipt: MemoryForgetReceipt) =>
-  MemoryForgetReceipt.match<{ readonly [key: string]: Schema.Json }>(receipt, {
+  MemoryForgetReceipt.match(receipt, {
     Pending: () => ({ state: 'pending' }),
     Completed: ({ done }) => ({ state: 'completed', done }),
     Blocked: ({ done, remaining }) => ({

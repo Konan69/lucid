@@ -224,23 +224,20 @@ const finish = Effect.fn('Connections.finish')(function* (
   const status = yield* (yield* operationsOf(row))
     .status(references)
     .pipe(Effect.mapError(executorFailure))
-  const next = ExecutorStatus.match<{ state: ConnectionState; references: ExecutorReferences }>(
-    status,
-    {
-      Ready: (value) => ({
-        state: ConnectionState.cases.Ready.make({}),
-        references: value.references,
-      }),
-      NeedsAuthorization: (value) => ({
-        state: ConnectionState.cases.NeedsAuthorization.make({}),
-        references: value.references,
-      }),
-      Failed: ({ reason }) => ({
-        state: ConnectionState.cases.Failed.make({ reason }),
-        references,
-      }),
-    },
-  )
+  const next = ExecutorStatus.match(status, {
+    Ready: (value) => ({
+      state: ConnectionState.cases.Ready.make({}),
+      references: value.references,
+    }),
+    NeedsAuthorization: (value) => ({
+      state: ConnectionState.cases.NeedsAuthorization.make({}),
+      references: value.references,
+    }),
+    Failed: ({ reason }) => ({
+      state: ConnectionState.cases.Failed.make({ reason }),
+      references,
+    }),
+  })
   const saved = yield* identify(
     yield* saveState(
       row,
@@ -401,7 +398,7 @@ const begin = Effect.fn('Connections.begin')(function* <E>(
       AuditEvent.cases.ConnectionAdded.make({ service: service.name, shared: request.shared }),
     )
   const connection = yield* publicConnection(actor, row)
-  return ExecutorStep.match<ConnectionStep>(step, {
+  return ExecutorStep.match(step, {
     Done: () => ConnectionStep.cases.Done.make({ connection }),
     EnterKey: ({ fields }) => ConnectionStep.cases.EnterKey.make({ connection, fields }),
     OpenSignIn: ({ address }) => ConnectionStep.cases.OpenSignIn.make({ connection, address }),
@@ -490,7 +487,7 @@ const resume = Effect.fn('Connections.resume')(function* (actor: Actor, row: Con
       }),
     )
   const connection = yield* publicConnection(actor, saved)
-  return ExecutorStep.match<ConnectionStep>(step, {
+  return ExecutorStep.match(step, {
     Done: () => ConnectionStep.cases.Done.make({ connection }),
     EnterKey: ({ fields }) => ConnectionStep.cases.EnterKey.make({ connection, fields }),
     OpenSignIn: ({ address }) => ConnectionStep.cases.OpenSignIn.make({ connection, address }),

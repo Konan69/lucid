@@ -41,9 +41,7 @@ export const authorIntegration = Effect.fn('Connections.authorIntegration')(func
   )
   if (existing !== undefined) {
     const state = yield* stateOf(existing.row)
-    return yield* ConnectionState.match<
-      Effect.Effect<MakeIntegrationOutcome, Effect.Error<ReturnType<typeof store.resume>>>
-    >(state, {
+    return yield* ConnectionState.match(state, {
       Ready: () =>
         Effect.succeed(
           MakeIntegrationOutcome.cases.AlreadyConnected.make({
@@ -96,7 +94,7 @@ export const authorIntegration = Effect.fn('Connections.authorIntegration')(func
   )
   if (selected === undefined)
     return yield* new NotFound({ message: 'Integration not found after registration' })
-  return ConnectionStep.match<MakeIntegrationOutcome>(result, {
+  return ConnectionStep.match(result, {
     Done: () => MakeIntegrationOutcome.cases.Made.make({ account: selected.account }),
     OpenSignIn: (step) =>
       MakeIntegrationOutcome.cases.PendingAuthorization.make({ account: selected.account, step }),
@@ -239,16 +237,7 @@ const reuseAccount = Effect.fn('Connections.reuseAccount')(function* (
   existing: ReturnType<typeof namedAccounts>[number],
 ) {
   const state = yield* stateOf(existing.row)
-  return yield* ConnectionState.match<
-    Effect.Effect<
-      Option.Option<AddIntegrationOutcome>,
-      Effect.Error<
-        | ReturnType<typeof ConnectionStore.Service.resume>
-        | ReturnType<typeof ConnectionStore.Service.remove>
-      >,
-      ConnectionStore | Effect.Services<ReturnType<typeof ConnectionStore.Service.remove>>
-    >
-  >(state, {
+  const reused: Option.Option<AddIntegrationOutcome> = yield* ConnectionState.match(state, {
     Ready: () =>
       Effect.succeedSome(
         AddIntegrationOutcome.cases.AlreadyConnected.make({
@@ -293,6 +282,7 @@ const reuseAccount = Effect.fn('Connections.reuseAccount')(function* (
         )
       }),
   })
+  return reused
 })
 
 /** Only inspection and new registration classify import failures. In particular, resume's
@@ -373,7 +363,7 @@ export const addIntegration = Effect.fn('Connections.addIntegration')(function* 
   )
   if (Option.isNone(selected))
     return yield* new NotFound({ message: 'Integration not found after registration' })
-  return ConnectionStep.match<AddIntegrationOutcome>(step, {
+  return ConnectionStep.match(step, {
     Done: () => AddIntegrationOutcome.cases.Added.make({ account: selected.value.account }),
     OpenSignIn: (value) => AddIntegrationOutcome.cases.NeedsSignIn.make({ step: value }),
     EnterKey: (value) => AddIntegrationOutcome.cases.NeedsKey.make({ step: value }),
@@ -392,7 +382,7 @@ export const testIntegration = Effect.fn('Connections.testIntegration')(
     if (selected === undefined) return yield* new NotFound({ message: 'Integration not found' })
     const { row, account } = selected
     const state = yield* stateOf(row)
-    const refusal = ConnectionState.match<Option.Option<TestIntegrationOutcome>>(state, {
+    const refusal = ConnectionState.match(state, {
       Failed: () =>
         Option.some(
           TestIntegrationOutcome.cases.NotTested.make({
@@ -472,7 +462,7 @@ function testedOutcome(
   tool: string,
   outcome: ToolOutcome,
 ) {
-  return ToolOutcome.match<TestIntegrationOutcome>(outcome, {
+  return ToolOutcome.match(outcome, {
     Accepted: () =>
       TestIntegrationOutcome.cases.NotTested.make({
         account,

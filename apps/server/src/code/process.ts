@@ -280,7 +280,7 @@ class Execution {
     // One hundred receipts must fit the final aggregate even for Unicode or escaped summaries.
     // Bound encoded bytes, not code units; metadata cannot consume the returned value's budget.
     const summary = encodedPrefix(result.summary, 200)
-    return CallOutcome.match<CallStep>(result, {
+    return CallOutcome.match(result, {
       Returned: ({ value, end, receipt }) => {
         this.calls[index] = CodeCall.make({ kind: call.kind, summary, end, receipt })
         const size = bytes(JSON.stringify(value))

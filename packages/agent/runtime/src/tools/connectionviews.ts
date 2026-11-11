@@ -54,7 +54,7 @@ export function integrations(response: FindIntegrationsResponse) {
     services: response.catalog,
     omittedAccounts: response.omittedAccounts,
     integrations: response.integrations.map((entry) =>
-      ConnectionMatch.match<Schema.Json>(entry, {
+      ConnectionMatch.match(entry, {
         // `signedInAs` is who the service says the account is. It is said beside the account's
         // name because a Person may have named the account ("Gmail (Work)"), and may then ask for
         // it by either: the name, or the address behind it.
@@ -112,7 +112,7 @@ export function integrations(response: FindIntegrationsResponse) {
  * tells Vivid to carry on, so there is nothing for the model to be told here.
  */
 export function added(outcome: AddIntegrationOutcome): Schema.Json {
-  return AddIntegrationOutcome.match<Schema.Json>(outcome, {
+  return AddIntegrationOutcome.match(outcome, {
     Added: ({ account }) => ({ added: true, account: modelText(account) }),
     AlreadyConnected: ({ name }) => ({
       alreadyConnected: true,
@@ -191,7 +191,7 @@ export function added(outcome: AddIntegrationOutcome): Schema.Json {
  * ("Calendar's live — I read it successfully", production, November 2026).
  */
 export function tested(outcome: TestIntegrationOutcome) {
-  return TestIntegrationOutcome.match<Schema.Json>(outcome, {
+  return TestIntegrationOutcome.match(outcome, {
     Tested: ({ account, tools, tool }) => ({
       works: true,
       account: modelText(account),
@@ -239,7 +239,7 @@ export function tested(outcome: TestIntegrationOutcome) {
 
 /** Made apps use the same secure authorization card as imports; compiler messages expose no ids. */
 export function made(outcome: MakeIntegrationOutcome): Schema.Json {
-  return MakeIntegrationOutcome.match<Schema.Json>(outcome, {
+  return MakeIntegrationOutcome.match(outcome, {
     // The Person asked for a reminder or a check, never for an Integration, so a made one is
     // reported as what it now does for them ("Made. It is ready as X." was repeated as it was).
     Made: ({ account }) => ({

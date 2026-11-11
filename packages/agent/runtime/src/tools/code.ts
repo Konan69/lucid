@@ -25,7 +25,7 @@ Find first: find_tools returns each tool's call expression and its TypeScript si
 
 /** Error metadata is Vivid's; provider records in successful results retain their usable identifiers. */
 function failureView(failure: CodeFailure): Schema.Json {
-  return CodeFailure.match<Schema.Json>(failure, {
+  return CodeFailure.match(failure, {
     Threw: ({ message }) => CodeFailure.cases.Threw.make({ message: views.modelText(message) }),
     TimedOut: () => failure,
     OverLimit: () => failure,
@@ -68,7 +68,7 @@ function codeResult(
   outcome: CodeOutcome,
   calls: ReadonlyArray<{ readonly kind: string; readonly summary: string; readonly end: string }>,
 ): ToolResult {
-  return CodeOutcome.match<ToolResult>(outcome, {
+  return CodeOutcome.match(outcome, {
     Completed: ({ result, truncated, logs, logsTruncated }) => ({
       output: { ok: true, result, calls, truncated, logs, logsTruncated },
     }),
@@ -120,7 +120,7 @@ function codeResult(
 
 /** Public text is projected just like a Computer page; no credential or session can enter this call. */
 function pageOutcome(outcome: ReadPageOutcome): ToolResult {
-  return ReadPageOutcome.match<ToolResult>(outcome, {
+  return ReadPageOutcome.match(outcome, {
     Read: ({ address, title, text: content, truncated, pictures }) => ({
       output: {
         ok: true,

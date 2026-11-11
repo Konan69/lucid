@@ -41,7 +41,11 @@
     "check": "node scripts/types.mjs"
   },
   "devDependencies": {
+    "@alchemy.run/cloudflare": "catalog:",
+    "@alchemy.run/docker": "catalog:",
     "@alchemy.run/frontend-frameworks": "catalog:",
+    "@alchemy.run/github": "catalog:",
+    "@alchemy.run/railway": "catalog:",
     "@effect/vitest": "catalog:",
     "@maschwenk/tsrslint": "0.1.6",
     "@oxlint/plugins": "1.93.0",

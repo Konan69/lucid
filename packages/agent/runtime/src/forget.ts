@@ -14,12 +14,7 @@ import {
 import { Effect, Option, Predicate, Result, Schema } from 'effect'
 import { DREAMING_TASK } from './dreaming.ts'
 import { LEARNING_TASK, LearningInput } from './learning.ts'
-import {
-  Memory,
-  type MemoryConflict,
-  type MemoryMissing,
-  type MemoryUnavailable,
-} from './memory.ts'
+import { Memory } from './memory.ts'
 import { pi, threadOf, type PiRejected } from './threads.ts'
 
 const decodeLearning = Schema.decodeUnknownOption(LearningInput)
@@ -99,9 +94,7 @@ const change = Effect.fn('Forget.change')(function* (
   item: ForgetChange,
 ) {
   const memory = yield* Memory
-  return yield* ForgetChange.match<
-    Effect.Effect<Made, MemoryConflict | MemoryMissing | MemoryUnavailable>
-  >(item, {
+  return yield* ForgetChange.match(item, {
     Retract: ({ address, expected }) =>
       memory
         .delete(person, MemoryRetraction.make({ address, expected, authority: closure.authority }))

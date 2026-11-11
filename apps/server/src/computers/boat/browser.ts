@@ -1,11 +1,6 @@
 import { BrowseResult, BrowserAction } from '@vivid/contracts'
 import { Effect, Schema, Option } from 'effect'
-import {
-  BrowserStepFailed,
-  MachineInputInvalid,
-  MachineCapabilityUnavailable,
-  type MachineFailure,
-} from '../machine.ts'
+import { BrowserStepFailed, MachineInputInvalid, MachineCapabilityUnavailable } from '../machine.ts'
 import { validateAddress, validateKey } from '../browser.ts'
 import type { Driver } from './driver.ts'
 import { ActionReceipt, NavigationReceipt } from './receipt.ts'
@@ -248,7 +243,7 @@ const step = Effect.fn('Machine.boat.browser.step')(function* (
     )
     return undefined
   })
-  yield* BrowserAction.match<Effect.Effect<void, MachineFailure>>(action, {
+  yield* BrowserAction.match(action, {
     Open: Effect.fn('Machine.boat.browser.open')(function* ({ address }) {
       yield* validateAddress(address)
       const tab = yield* currentTab(bound)

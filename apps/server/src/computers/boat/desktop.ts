@@ -1,12 +1,7 @@
 import * as NodeBuffer from 'node:buffer'
 import { DesktopAction, DesktopView } from '@vivid/contracts'
 import { Effect, Schema } from 'effect'
-import {
-  MachineInputInvalid,
-  MachineResponseInvalid,
-  type MachineFailure,
-  type MachineKey,
-} from '../machine.ts'
+import { MachineInputInvalid, MachineResponseInvalid, type MachineKey } from '../machine.ts'
 import type { Driver } from './driver.ts'
 import type { ProviderId } from './protocol.ts'
 import type { Transport } from './transport.ts'
@@ -52,7 +47,7 @@ export const desktopStep = Effect.fn('Machine.boat.desktop.step')(function* (
   action: DesktopAction,
 ) {
   const common = { scope: 'desktop', delivery_mode: 'foreground' }
-  yield* DesktopAction.match<Effect.Effect<void, MachineFailure>>(action, {
+  yield* DesktopAction.match(action, {
     Look: () => Effect.void,
     Move: ({ to }) =>
       native

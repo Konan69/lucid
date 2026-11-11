@@ -275,7 +275,7 @@ const turnOff = Option.some({ label: 'Turn off', press: turnNotificationsOff })
 
 /** The row's words for each reading of the machine (`@vivid/state` `notifying.ts`). */
 const awayWords = (reading: notifying.Reading): AwayWords =>
-  notifying.Reading.match<AwayWords>(reading, {
+  notifying.Reading.match(reading, {
     Starting: () => ({ detail: HERE, action: Option.none() }),
     Unsupported: () => ({
       detail: 'This browser cannot notify you while Vivid is closed.',

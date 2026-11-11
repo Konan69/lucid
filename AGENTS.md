@@ -41,7 +41,7 @@ Production code starts with the domain model, not plumbing. Decode unknown data 
 
 Errors are part of the domain model. Failures that demand different handling need different tags with branded domain context. Never use one catch-all error discriminated by a free-form message or code string.
 
-For closed Effect 4 states, prefer `Schema.TaggedUnion` and its generated `.cases`, `.guards`, `.isAnyOf`, and exhaustive `.match` helpers. Construct variants with the case schema's `.make`; do not recreate the state machine with raw discriminator comparisons, object literals, nested booleans, or duplicated readiness predicates. These names are verified against the pinned Effect `4.0.2` source; re-check installed source when the pin changes.
+For closed Effect 4 states, prefer `Schema.TaggedUnion` and its generated `.cases`, `.guards`, `.isAnyOf`, and exhaustive `.match` helpers. Construct variants with the case schema's `.make`; do not recreate the state machine with raw discriminator comparisons, object literals, nested booleans, or duplicated readiness predicates. Since Effect 4.1 `match` takes no output type: its result is the union of what the handlers return, so a literal or tuple that must keep its type is written `as const` or under a typed binding. These names are verified against the pinned Effect `4.1.4` source; re-check installed source when the pin changes.
 
 Keep identity, tenancy, and attribution separate. A **Person** is the human actor. A **Company** plus **Membership** defines tenancy and permissions. **Vivid** is the product actor. A **Thread** is the collaboration boundary and a **Run** is one bounded attempt inside it. Do not smuggle Person ids into Company identity, runtime identity, connection identity, storage keys, or attribution fields.
 
@@ -60,10 +60,10 @@ Keep code simple by making the model honest. If a function needs many optional i
 - Be pragmatic and readable: prefer flat named `Effect.fn` or `Effect.gen` programs with one clear `yield*` per operation. Avoid callback pyramids and long `.pipe` chains when do-notation is clearer.
 - Use `Schema.decodeUnknownEffect` only at real ingress such as request bodies, response payloads, parsed JSON, database JSON, and SDK output. Keep decoded values typed; encode at wire and persistence egress. Do not re-decode trusted values or cast encoded values.
 - Never use the throwing Schema forms in product code: `Schema.decodeSync`, `decodeUnknownSync`, `encodeSync`, `encodeUnknownSync`. They turn a value that does not fit into a defect nobody typed. In Effect code use the `...Effect` form and give the failure a tagged error (a store uses `decodeStored` and `encodeStored` in `apps/server/src/database/client.ts`, which answer `DatabaseFailure`); in plain synchronous code use the `...Result` or `...Option` form and branch on it. A constant that must exist for the process to start says so with `Result.getOrThrow` over the `...Result` form and a comment that names the reason. Tests (`*.test.ts`, `*.test.tsx`, `tests/`) are exempt: a test may throw on a fixture it wrote. The Effect language-service rule `schemaSync` in `tsconfig.base.json` enforces this at `error`, and typecheck fails on it.
-- Model expected failures with `Schema.TaggedError` for the pinned Effect 4.0.2 API. Do not use JavaScript `try/catch`, `Effect.orDie`, or `Effect.orDieWith` in application/domain code.
+- Model expected failures with `Schema.TaggedError` for the pinned Effect 4.1.4 API. Do not use JavaScript `try/catch`, `Effect.orDie`, or `Effect.orDieWith` in application/domain code.
 - Use `Context.Service` for a real authority seam and provide implementations with Layers. Keep pure values and per-request inputs out of Effect context. Prefer flat Layer composition over nested provisioning pyramids.
 - Read configuration with Effect `Config`. Wrap secrets in `Redacted`; never print secrets, credentials, tokens, database URLs, or supplied invalid values.
-- Read `.agents/skills/effect/SKILL.md` and every matching reference branch before changing Effect code. Read `.agents/skills/effect-service-design/SKILL.md` before adding or reshaping a service. Installed package source wins when examples differ from the pinned 4.0.2.
+- Read `.agents/skills/effect/SKILL.md` and every matching reference branch before changing Effect code. Read `.agents/skills/effect-service-design/SKILL.md` before adding or reshaping a service. Installed package source wins when examples differ from the pinned 4.1.4.
 
 ## Boundaries and persistence
 
@@ -75,7 +75,7 @@ The chosen runtime is one celld Person cell with a native Pi Durable Harness ove
 
 Edit the Drizzle TypeScript schema first, run `pnpm --filter @vivid/server db:generate` for auth or `pnpm --filter @vivid/server db:generate:product` for product tables, and review generated SQL before migration. Never hand-write schema SQL, use `push` for a shared or remote database, or edit a snapshot manually. The migration order is the server's auth tables, then the server's product tables (`apps/server/product-drizzle.config.ts`); root `pnpm db:migrate` preserves it. Read both Drizzle skills before reading or changing schemas, queries, config, or migrations.
 
-Alchemy `2.0.0-beta.81` peers on the pinned Drizzle RC. Workspace overrides hold Effect `4.0.2` and Drizzle `1.0.0-rc.5-ab785fc` in lockstep. Do not relax them without validating Alchemy, Better Auth, and every migration owner together.
+Alchemy `2.0.0-beta.85` and its `@alchemy.run/*` provider packages peer on the pinned Drizzle RC and Effect `^4.1.0`. Workspace overrides hold Effect `4.1.4` and Drizzle `1.0.0-rc.5-ab785fc` in lockstep. Do not relax them without validating Alchemy, Better Auth, and every migration owner together.
 
 ## Hit every surface
 

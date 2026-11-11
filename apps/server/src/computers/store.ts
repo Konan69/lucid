@@ -1785,34 +1785,31 @@ export const computerDesktop = Effect.fn('Computer.desktop')(function* (
     target: ActionTarget.cases.Desktop.make({ action: request.action }),
   })
   const decision = yield* gate.check(actor, action, 'Ordinary', unbound)
-  return yield* GateDecision.match<Effect.Effect<DesktopOutcome, DatabaseInfrastructureError>>(
-    decision,
-    {
-      Blocked: ({ rule }) => Effect.succeed(DesktopOutcome.cases.Blocked.make({ rule })),
-      ApprovalRequired: ({ approval }) =>
-        Effect.succeed(
-          DesktopOutcome.cases.ApprovalRequired.make({
-            approvalId: approval.id,
-            summary: approval.action.summary,
-          }),
+  return yield* GateDecision.match(decision, {
+    Blocked: ({ rule }) => Effect.succeed(DesktopOutcome.cases.Blocked.make({ rule })),
+    ApprovalRequired: ({ approval }) =>
+      Effect.succeed(
+        DesktopOutcome.cases.ApprovalRequired.make({
+          approvalId: approval.id,
+          summary: approval.action.summary,
+        }),
+      ),
+    Allowed: Effect.fn('Computer.desktop.allowed')(() =>
+      store.desktop(actor.person.id, request.action).pipe(
+        Effect.map((view) => DesktopOutcome.cases.Completed.make({ view })),
+        Effect.catchTag('MachineExecutionUnknown', () =>
+          Effect.succeed(DesktopOutcome.cases.OutcomeUnknown.make({})),
         ),
-      Allowed: Effect.fn('Computer.desktop.allowed')(() =>
-        store.desktop(actor.person.id, request.action).pipe(
-          Effect.map((view) => DesktopOutcome.cases.Completed.make({ view })),
-          Effect.catchTag('MachineExecutionUnknown', () =>
-            Effect.succeed(DesktopOutcome.cases.OutcomeUnknown.make({})),
-          ),
-          Effect.catchTags(
-            executionRefusals((failure) =>
-              Effect.succeed(
-                DesktopOutcome.cases.Unavailable.make({ reason: executionReason(failure) }),
-              ),
+        Effect.catchTags(
+          executionRefusals((failure) =>
+            Effect.succeed(
+              DesktopOutcome.cases.Unavailable.make({ reason: executionReason(failure) }),
             ),
           ),
         ),
       ),
-    },
-  )
+    ),
+  })
 })
 
 type ComputerTarget =
@@ -1821,7 +1818,7 @@ type ComputerTarget =
 
 /** Approval receipts preserve takeover and uncertainty without persisting private page contents. */
 const approvedBrowse = (outcome: BrowseOutcome): ActionOutcome =>
-  BrowseOutcome.match<ActionOutcome>(outcome, {
+  BrowseOutcome.match(outcome, {
     Completed: () =>
       ActionOutcome.cases.Succeeded.make({ result: 'The browser action completed.' }),
     OutcomeUnknown: () => ActionOutcome.cases.Unknown.make({}),
@@ -1882,9 +1879,7 @@ export const computerRunner = Effect.fn('Computer.runner')(function* (input: {
   readonly origin: ActionOrigin
 }) {
   const store = yield* ComputerStore
-  const result = yield* ActionTarget.match<
-    Effect.Effect<ActionOutcome, ExecutionFailure, DeviceRegistry>
-  >(input.target, {
+  const result = yield* ActionTarget.match(input.target, {
     Browser: ({ action, target }) =>
       BrowseTarget.guards.Person(target)
         ? personBrowse({

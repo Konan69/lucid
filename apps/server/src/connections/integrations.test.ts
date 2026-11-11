@@ -322,7 +322,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
           const before = yield* store.records(ownerActor)
           const begins = yield* Ref.get(probe.begins)
           const catalogs = yield* Ref.get(probe.catalogs)
-          const workspace = Workspace.match<Workspace>(memberActor.workspace, {
+          const workspace = Workspace.match(memberActor.workspace, {
             Personal: () => Workspace.cases.Personal.make({}),
             Company: ({ company }) => Workspace.cases.Company.make({ company, role: 'admin' }),
           })

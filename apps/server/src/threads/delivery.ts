@@ -77,9 +77,9 @@ const previewOf = (message: DeliveryMessage) =>
 /** Which kind of delivery did not reach Vivid: a Person's own words, or a server cue by its case. */
 const deliveryKind = (message: DeliveryMessage): DeliveryKind =>
   DeliveryMessage.match(message, {
-    Said: () => 'Words',
-    ChannelText: () => 'Words',
-    FirstConversation: () => 'FirstConversation',
+    Said: () => 'Words' as const,
+    ChannelText: () => 'Words' as const,
+    FirstConversation: () => 'FirstConversation' as const,
     Signal: ({ cue }) => cue._tag,
   })
 
@@ -501,20 +501,17 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
       })
       const said = previewOf(delivery.message)
       // Replay completes inside the reservation match; only a new reserved turn reaches the runtime.
-      const turn = yield* TurnReservation.match<Effect.Effect<number | Admitted, Conflict>>(
-        reservation,
-        {
-          Reserved: (reserved) => Effect.succeed(reserved.turn),
-          Replayed: (replayed) =>
-            follow({ id, threadId: thread.id, person: speaker }).pipe(Effect.as(replayed.receipt)),
-          Busy: ({ person }) =>
-            Effect.fail(
-              Conflict.make({
-                message: `Vivid is still answering ${person.name}. Send this again when it has finished.`,
-              }),
-            ),
-        },
-      )
+      const turn = yield* TurnReservation.match(reservation, {
+        Reserved: (reserved) => Effect.succeed(reserved.turn),
+        Replayed: (replayed) =>
+          follow({ id, threadId: thread.id, person: speaker }).pipe(Effect.as(replayed.receipt)),
+        Busy: ({ person }) =>
+          Effect.fail(
+            Conflict.make({
+              message: `Vivid is still answering ${person.name}. Send this again when it has finished.`,
+            }),
+          ),
+      })
       if (!Predicate.isNumber(turn)) return turn
       const failed = {
         personId: speaker.id,

@@ -239,7 +239,7 @@ const accessColumns = (access: DeviceAccess) => ({
 
 /** What the Run is told. Words for the model: they name the Person's computer and nothing inside it. */
 const outcomeOf = (answer: DeviceAnswer): BrowseOutcome =>
-  DeviceAnswer.match<BrowseOutcome>(answer, {
+  DeviceAnswer.match(answer, {
     Done: ({ result }) => BrowseOutcome.cases.Completed.make({ result }),
     // The Device’s legacy NotAllowed literal means an address/page refusal, not access permission.
     // Keep the wire vocabulary compatible with desktop while making the product outcome precise.
@@ -694,7 +694,7 @@ const makeSend = (
         action: DeviceWork.match(request.work, {
           Page: ({ action }) => action._tag,
           Window: ({ action }) => action._tag,
-          SignIn: () => 'SignIn',
+          SignIn: () => 'SignIn' as const,
         }),
         receipt: yield* encodeReceipt(DeviceReceipt.cases.Dispatched.make({})),
         dispatchedAt: yield* Clock.currentTimeMillis,
@@ -820,7 +820,7 @@ const makeDispatch = ({ database, registry, links, send }: Dispatcher) => {
 
 /** Native outcomes share transport with pages while retaining their distinct protocol vocabulary. */
 const windowOutcome = (answer: DeviceAnswer): WindowOutcome =>
-  DeviceAnswer.match<WindowOutcome>(answer, {
+  DeviceAnswer.match(answer, {
     Did: ({ result }) => WindowOutcome.cases.Completed.make({ result }),
     Declined: ({ reason }) => WindowOutcome.cases.Refused.make({ reason }),
     Done: () => WindowOutcome.cases.OutcomeUnknown.make({}),
@@ -908,7 +908,7 @@ const makeSignIns = (dispatch: ReturnType<typeof makeDispatch>) =>
         Option.match(answer, {
           onNone: (): SignInDelivery => SignInDelivery.cases.NotAnswered.make({}),
           onSome: (value): SignInDelivery =>
-            DeviceAnswer.match<SignInDelivery>(value, {
+            DeviceAnswer.match(value, {
               SignIn: ({ read }) => read,
               Failed: () =>
                 SignInDelivery.cases.Unavailable.make({

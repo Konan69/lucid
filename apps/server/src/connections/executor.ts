@@ -1173,7 +1173,7 @@ function completedCall(value: Schema.Json) {
 
 /** Requirement routes carry the declared scope. A public app has no account route. */
 function bindingPath(references: Pick<ExecutorActiveReferences, 'app' | 'binding'>) {
-  return ExecutorBinding.match<Effect.Effect<string, ExecutorNotReady>>(references.binding, {
+  return ExecutorBinding.match(references.binding, {
     Public: () =>
       Effect.fail(
         ExecutorNotReady.make({ service: 'connections', tool: null, cause: 'Unavailable' }),
@@ -1663,7 +1663,7 @@ function makeIdentity(http: ExecutorHttp) {
 /** Saved failures retain the same finite refusal vocabulary as their completion routes. */
 function connectionFailure(failure: typeof ConnectionFailure.Type) {
   const context = { service: 'connections' as const, tool: null }
-  return ConnectionFailure.match<Effect.Effect<never, ExecutorFailure>>(failure, {
+  return ConnectionFailure.match(failure, {
     OAuthSetupFailed: ({ reason }) =>
       Effect.fail(ExecutorOAuthSetupFailed.make({ ...context, reason })),
     OAuthCompletionFailed: () =>
@@ -2868,7 +2868,7 @@ const callPaused = Effect.fn('Executor.callPaused')(function* (
 
 /** Preserve pauses and expiry before interpreting an ordinary provider result. */
 const fromMcp = (outcome: McpCallOutcome, effect: ActionEffect) =>
-  McpCallOutcome.match<typeof ExecutorCallOutcome.Type>(outcome, {
+  McpCallOutcome.match(outcome, {
     Truncated: ({ message }) =>
       effect === 'read'
         ? ExecutorCallOutcome.cases.Rejected.make({ message })
@@ -2917,9 +2917,7 @@ function makeResume(mcp: ReturnType<typeof mcpCalls>) {
  * correlation so retirement can discover a completed account without inventing a selection.
  */
 export function retirementOf(references: ExecutorActiveReferences) {
-  const app = ExecutorAppOwnership.match<
-    Pick<typeof ExecutorRetired.Type, 'original' | 'ownership' | 'copies'>
-  >(references.appOwnership, {
+  const app = ExecutorAppOwnership.match(references.appOwnership, {
     Dedicated: () => ({ original: references.app, ownership: 'Dedicated' as const, copies: [] }),
     Adopted: () => ({ original: references.app, ownership: 'Dedicated' as const, copies: [] }),
     Copied: ({ original }) => ({

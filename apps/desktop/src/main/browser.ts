@@ -29,7 +29,6 @@ import {
   PageCacheClearFailed,
   PagesRequest,
   PagesResponse,
-  type PagesFailure,
 } from '../shared/pages.ts'
 import { AddressDecision, decideAddress, isPageAddress, type PageAddress } from './address.ts'
 import { pageZoomChanges } from './menu.ts'
@@ -60,14 +59,11 @@ class PageLoadRejected extends Schema.TaggedError<PageLoadRejected>()(
 
 /** Convert typed text once before creating a guest or changing an existing navigation. */
 const resolveAddress = Effect.fn('DesktopBrowser.resolveAddress')(function* (input: string) {
-  return yield* AddressDecision.match<Effect.Effect<PageAddress, PageAddressRefused>>(
-    decideAddress(input),
-    {
-      Navigate: ({ address }) => Effect.succeed(address),
-      Search: ({ address }) => Effect.succeed(address),
-      Refused: ({ reason }) => Effect.fail(new PageAddressRefused({ reason })),
-    },
-  )
+  return yield* AddressDecision.match(decideAddress(input), {
+    Navigate: ({ address }) => Effect.succeed(address),
+    Search: ({ address }) => Effect.succeed(address),
+    Refused: ({ reason }) => Effect.fail(new PageAddressRefused({ reason })),
+  })
 })
 
 /** Native host inputs are owned by main; the renderer supplies only decoded operations. */
@@ -757,7 +753,7 @@ export class Browser {
     this: Browser,
     request: PagesRequest,
   ) {
-    return yield* PagesRequest.match<Effect.Effect<PagesResponse, PagesFailure>>(request, {
+    return yield* PagesRequest.match(request, {
       Open: ({ address }) => this.open(address),
       Move: ({ tab, to }) => this.move(tab, to),
       Duplicate: ({ tab }) => this.duplicate(tab),

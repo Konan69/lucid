@@ -53,7 +53,7 @@ export function delivered(
 
 /** Missing documents offer only the titles in the acting Thread; found documents retain Markdown. */
 function read(outcome: ReadDocumentOutcome) {
-  return ReadDocumentOutcome.match<Schema.Json>(outcome, {
+  return ReadDocumentOutcome.match(outcome, {
     Found: ({ title, version, body }) => ({
       ok: true,
       title: modelText(title),

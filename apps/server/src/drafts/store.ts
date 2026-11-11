@@ -1,6 +1,5 @@
 import { and, desc, eq, exists, inArray, isNull, or, sql } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
-import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core/errors'
 import { Clock, Context, Effect, Layer, Schema } from 'effect'
 import {
   CompanyId,
@@ -72,13 +71,7 @@ const location = Effect.fn('DraftStore.location')(function* (
   actor: Actor,
   place: DraftPlace,
 ) {
-  return yield* DraftPlace.match<
-    Effect.Effect<
-      { readonly companyId: CompanyId | null; readonly threadId: ThreadId | null },
-      Effect.Error<ReturnType<typeof requireThread>> | EffectDrizzleQueryError,
-      Database
-    >
-  >(place, {
+  return yield* DraftPlace.match(place, {
     NewThread: () =>
       Effect.succeed({
         companyId: companyColumnOf(actor.workspace),
@@ -203,7 +196,7 @@ const makeStore = (database: Database['Service']) => {
           )
           .orderBy(desc(drafts.revision))
           .limit(50)
-        const workspace = Workspace.match<DraftWorkspace>(actor.workspace, {
+        const workspace = Workspace.match(actor.workspace, {
           Personal: () => DraftWorkspace.cases.Personal.make({}),
           Company: ({ company }) => DraftWorkspace.cases.Company.make({ company: company.id }),
         })

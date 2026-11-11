@@ -90,9 +90,7 @@ export const memoryHandlers = {
   /** A confirmed plan carried out, or a Settings press handed to Vivid; both answer a receipt. */
   ForgetMemory: Effect.fn('Rpc.ForgetMemory')(function* (input: ForgetMemoryRequest) {
     const actor = yield* requireActor()
-    return yield* ForgetMemoryRequest.match<
-      ReturnType<typeof carryOut> | ReturnType<typeof forgetFromSettings>
-    >(input, {
+    return yield* ForgetMemoryRequest.match(input, {
       Planned: () => carryOut(actor),
       Entry: ({ address, expected }) => forgetFromSettings(actor, address, expected),
     })

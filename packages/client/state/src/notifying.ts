@@ -247,8 +247,7 @@ const machine = Machine.make({
         onDone: {
           branches: 'read',
           resolve: ({ output, select }) => {
-            type Next = ReturnType<(typeof select)[keyof typeof select]>
-            return Holding.match<Next>(output, {
+            return Holding.match(output, {
               Unsupported: () => select.unsupported(),
               Blocked: () => select.blocked(),
               Unasked: () => select.unasked(),

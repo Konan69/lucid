@@ -11,15 +11,11 @@ import { signInCommand } from './guest.ts'
 /** Host-only cookies omit domain, preserving __Host- rules. Persistent cookies keep their
  * expiry, and unspecified SameSite is omitted so Chromium applies its own default. */
 const cdpCookie = (cookie: SignInCookie) => {
-  const scope = SignInCookie.fields.scope.match<
-    { readonly url: string } | { readonly domain: string }
-  >(cookie.scope, {
+  const scope = SignInCookie.fields.scope.match(cookie.scope, {
     Host: ({ host }) => ({ url: `${cookie.secure ? 'https' : 'http'}://${host}${cookie.path}` }),
     Domain: ({ domain }) => ({ domain: `.${domain}` }),
   })
-  const expiry = SignInCookie.fields.expiry.match<
-    { readonly expires: number } | Record<string, never>
-  >(cookie.expiry, {
+  const expiry = SignInCookie.fields.expiry.match(cookie.expiry, {
     Session: () => ({}),
     Persistent: ({ seconds }) => ({ expires: seconds }),
   })

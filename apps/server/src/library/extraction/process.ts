@@ -201,7 +201,7 @@ const REFUSALS = {
  * rc.116 Runtime.defaultTeardown reads errorExitCode; 78 identifies configuration refusal.
  * Only a closed reason and static guidance are carried, never inherited option values or paths.
  */
-export class ExtractionConfigurationError extends Schema.TaggedError<ExtractionConfigurationError>()(
+class ExtractionConfigurationError extends Schema.TaggedError<ExtractionConfigurationError>()(
   'ExtractionConfigurationError',
   { reason: Schema.Literals(['PercentageNamed', 'OptionsQuoted', 'OptionsFromFile']) },
   { title: 'Extraction configuration error' },
@@ -222,7 +222,7 @@ const refuse = ({ _tag }: Exclude<typeof CapStanding.Type, { _tag: 'Holds' }>) =
  * branch does not infer a `never` error channel and erase the configuration refusals.
  */
 const admit = Effect.fn('LibraryExtractionProcess.admit')((inherited: Inherited) =>
-  CapStanding.match<Effect.Effect<void, ExtractionConfigurationError>>(capStanding(inherited), {
+  CapStanding.match(capStanding(inherited), {
     Holds: () => Effect.void,
     PercentageNamed: refuse,
     OptionsQuoted: refuse,

@@ -215,13 +215,7 @@ export const captureArtifact = Effect.fn('Artifacts.captureArtifact')(function* 
       message: 'A PDF export needs its separate editable source.',
     })
   const output = yield* capture(personId, request.path, 'output')
-  const source = yield* ArtifactSourcePath.match<
-    Effect.Effect<
-      { metadata: ArtifactSource; bytes: Uint8Array | null },
-      ArtifactComputerUnavailable | ArtifactFileRefused | ArtifactFileTooLarge,
-      ComputerStore
-    >
-  >(request.source, {
+  const source = yield* ArtifactSourcePath.match(request.source, {
     Output: () => Effect.succeed({ metadata: ArtifactSource.cases.Output.make({}), bytes: null }),
     Separate: ({ path }) =>
       Effect.gen(function* () {

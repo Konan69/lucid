@@ -483,7 +483,7 @@ function computerAvailability(facts: CapabilityFacts): Availability {
     return Availability.cases.TemporarilyUnavailable.make({
       reason: 'They are using the computer themselves right now.',
     })
-  return ComputerLifecycle.match<Availability>(facts.computer.value.state, {
+  return ComputerLifecycle.match(facts.computer.value.state, {
     Absent: () => Availability.cases.WakeOnUse.make({}),
     Stopped: () => Availability.cases.WakeOnUse.make({}),
     Running: () => Availability.cases.Available.make({}),

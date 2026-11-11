@@ -1,4 +1,4 @@
-import * as NodeSocket from '@effect/platform-node/NodeSocket'
+import * as NodeWS from 'ws'
 import { Duration, Effect, Option, Predicate, Redacted, Stream } from 'effect'
 import * as HttpRouter from 'effect/http/HttpRouter'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
@@ -26,7 +26,7 @@ const relay = Effect.fn('Computer.screen.relay')(function* (
     Effect.acquireRelease(
       Effect.sync(
         () =>
-          new NodeSocket.NodeWS.WebSocket(endpoint.address, ['binary'], {
+          new NodeWS.WebSocket(endpoint.address, ['binary'], {
             headers: { authorization: Redacted.value(endpoint.authorization) },
           }),
       ),

@@ -2,11 +2,11 @@ import { expect, it } from '@effect/vitest'
 import { ServiceAuthorization } from '@vivid/contracts'
 import { Effect, Layer } from 'effect'
 import { searchCatalog } from './curation.ts'
-import { discordAppName, discordFiles, discordServiceId } from './discord.ts'
+import { discordFiles, discordServiceId } from './discord.ts'
 import { Executor } from './executor.ts'
 import { hostedExecutorFixture } from './testing.ts'
 
-it.effect('offers Discord with a Person key and emits deterministic credential-free source', () =>
+it.effect('offers Discord with a Person key and emits credential-free source', () =>
   Effect.gen(function* () {
     const hosted = yield* hostedExecutorFixture()
     const context = yield* Layer.build(hosted.configured)
@@ -21,9 +21,6 @@ it.effect('offers Discord with a Person key and emits deterministic credential-f
         fields: [{ name: 'token', label: 'Bot token' }],
       }),
     })
-    expect(discordFiles()).toEqual(discordFiles())
-    expect(discordAppName()).toMatch(/^Vivid Discord [0-9a-f]{16}$/u)
-    expect(discordAppName()).toBe(discordAppName())
     expect(JSON.stringify(discordFiles())).not.toContain('disposable-discord-token')
   }).pipe(Effect.scoped),
 )

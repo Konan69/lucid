@@ -57,8 +57,6 @@ class InputUnknown extends Schema.TaggedError<InputUnknown>()(
   { title: 'The input outcome is unknown' },
 ) {}
 
-type StepFailure = PageGone | StepFailed | StepNotAllowed | StepUnsupported | InputUnknown
-
 /** A value inside a debugger command: the plain data its protocol carries. */
 type CommandValue =
   | string
@@ -675,7 +673,7 @@ const unseen = <Failure>(step: Effect.Effect<unknown, Failure>) =>
  * Only `Screenshot` produces a picture; it is returned so the answer can carry it.
  */
 const perform = (acting: Acting, action: BrowserAction) =>
-  BrowserAction.match<Effect.Effect<Option.Option<PagePicture>, StepFailure>>(action, {
+  BrowserAction.match(action, {
     // In the page in front, or in a first page when none is open.
     Open: ({ address }) => unseen(go(acting, showing(acting.browser.state()), address)),
     Read: () => unseen(front(acting)),

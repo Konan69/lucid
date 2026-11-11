@@ -70,7 +70,7 @@ const instant = (at: number) => new Date(at).toISOString()
  * bounded by the shared tool-output limit like any list (`result.ts`).
  */
 const workView = (project: Project) =>
-  ProjectWork.match<{ readonly [key: string]: Schema.Json }>(project.work, {
+  ProjectWork.match(project.work, {
     Unspecified: () => ({ state: 'unspecified' }),
     Active: (work) => ({
       state: 'active',

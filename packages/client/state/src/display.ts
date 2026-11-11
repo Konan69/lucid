@@ -169,20 +169,20 @@ const failed = (text: string): DisplayToolResult => ({
  * data; every other outcome reaches OpenUI's error API and a Mutation's `result.error`.
  */
 const displayToolResult = (outcome: ToolOutcome): DisplayToolResult =>
-  ToolOutcome.match<DisplayToolResult>(outcome, {
+  ToolOutcome.match(outcome, {
     // The provider took the call but has not confirmed the result, so the display gets its answer
     // without calling it done.
     Accepted: ({ output }) => ({
       content: [
         {
-          type: 'text',
+          type: 'text' as const,
           text: 'Accepted. The service has taken this but has not confirmed it is done.',
         },
       ],
       structuredContent: output,
     }),
     Completed: ({ output }) => ({
-      content: [{ type: 'text', text: JSON.stringify(output) }],
+      content: [{ type: 'text' as const, text: JSON.stringify(output) }],
       structuredContent: output,
     }),
     Rejected: () =>

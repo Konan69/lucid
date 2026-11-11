@@ -17,7 +17,6 @@ import {
   integrationExpiredMessage,
   integrationWaitingMessage,
   type IntegrationResponse,
-  type IntegrationResult,
 } from '@vivid/contracts'
 import { Clock, Effect, Layer, Option, Result } from 'effect'
 import { ApprovalStore } from '../approvals/store.ts'
@@ -207,20 +206,7 @@ const approve = Effect.fn('IntegrationAsks.approve')(function* (
         preconditions: [],
       }),
     )
-    return yield* GateDecision.match<
-      Effect.Effect<
-        Result.Result<typeof ExecutorCallOutcome.Type, IntegrationResult>,
-        NotFound | InvalidRequest | DatabaseInfrastructureError,
-        | Gate
-        | ApprovalStore
-        | InputStore
-        | ConnectionStore
-        | Database
-        | Executor
-        | ExecutorMembers
-        | Audit
-      >
-    >(decision, {
+    return yield* GateDecision.match(decision, {
       Allowed: ({ basis: reviewed }) =>
         reviewed === 'Reviewed'
           ? resumeApproved(addressed, row, { pause: input.pause, action, basis: reviewed })
@@ -345,13 +331,7 @@ const answer = Effect.fn('IntegrationAsks.answer')(function* (
         : IntegrationAnswerOutcome.cases.Waiting.make({})
     result = resolved.success
   }
-  const outcome = yield* ExecutorCallOutcome.match<
-    Effect.Effect<
-      IntegrationAnswerOutcome,
-      import('@vivid/contracts').NotFound | InvalidRequest | DatabaseInfrastructureError,
-      ApprovalStore | ConnectionStore | InputStore | Database
-    >
-  >(result, {
+  const outcome = yield* ExecutorCallOutcome.match(result, {
     Completed: ({ value }) =>
       Effect.succeed(
         response.action === 'accept'

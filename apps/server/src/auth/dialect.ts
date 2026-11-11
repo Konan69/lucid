@@ -1,4 +1,4 @@
-import { openPostgresPool } from 'alchemy/SQL/PostgresDriver'
+import { openPostgresPool } from '@alchemy.run/sql/PostgresDriver'
 import { getTableName } from 'drizzle-orm'
 import * as Array from 'effect/Array'
 import * as Effect from 'effect/Effect'

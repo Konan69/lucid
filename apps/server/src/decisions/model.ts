@@ -212,45 +212,47 @@ export const decisionUnavailability = Effect.fn('Decisions.unavailability')(func
   if (state === undefined) return Option.none<DecisionUnavailable['reason']>()
   const current = yield* Ref.get(state.state)
   const now = yield* Clock.currentTimeMillis
-  return Availability.match<Option.Option<DecisionUnavailable['reason']>>(current, {
-    Ready: () => Option.none(),
-    Suspect: () => Option.none(),
-    Cooling: ({ retryAt }) => (now >= retryAt ? Option.none() : Option.some('Backoff')),
-    CredentialCooling: ({ retryAt }) =>
+  return Availability.match(current, {
+    Ready: (): Option.Option<DecisionUnavailable['reason']> => Option.none(),
+    Suspect: (): Option.Option<DecisionUnavailable['reason']> => Option.none(),
+    Cooling: ({ retryAt }): Option.Option<DecisionUnavailable['reason']> =>
+      now >= retryAt ? Option.none() : Option.some('Backoff'),
+    CredentialCooling: ({ retryAt }): Option.Option<DecisionUnavailable['reason']> =>
       now >= retryAt ? Option.none() : Option.some('Authentication'),
-    Probing: () => Option.some('Backoff'),
+    Probing: (): Option.Option<DecisionUnavailable['reason']> => Option.some('Backoff'),
   })
 })
 
 /** Existing callers need only readiness; the reviewer also records the closed reason above. */
 export const decisionWouldAttempt = decisionUnavailability().pipe(Effect.map(Option.isNone))
 
+/** What one admission answers: the caller's admission and the availability it leaves behind. */
+type Admitted = readonly [typeof Admission.Type, typeof Availability.Type]
+
 /** Atomic admission never queues callers behind a probe. */
 const admit = Effect.fn('Decisions.admit')(function* (state: Ref.Ref<typeof Availability.Type>) {
   const now = yield* Clock.currentTimeMillis
   const normal = Admission.cases.Normal.make({ startedAt: now, suspicion: Option.none() })
-  return yield* Ref.modify(
-    state,
-    (current): readonly [typeof Admission.Type, typeof Availability.Type] =>
-      Availability.match<readonly [typeof Admission.Type, typeof Availability.Type]>(current, {
-        Ready: () => [normal, current],
-        Suspect: (mark) =>
-          now >= mark.expiresAt
-            ? [normal, Availability.cases.Ready.make({})]
-            : [
-                Admission.cases.Normal.make({ startedAt: now, suspicion: Option.some(mark.id) }),
-                current,
-              ],
-        Cooling: ({ retryAt }) =>
-          now < retryAt
-            ? [Admission.cases.Backoff.make({}), current]
-            : [Admission.cases.Probe.make({}), Availability.cases.Probing.make({})],
-        CredentialCooling: ({ retryAt }) =>
-          now < retryAt
-            ? [Admission.cases.Backoff.make({}), current]
-            : [Admission.cases.Probe.make({}), Availability.cases.Probing.make({})],
-        Probing: () => [Admission.cases.Backoff.make({}), current],
-      }),
+  return yield* Ref.modify(state, (current): Admitted =>
+    Availability.match(current, {
+      Ready: (): Admitted => [normal, current],
+      Suspect: (mark): Admitted =>
+        now >= mark.expiresAt
+          ? [normal, Availability.cases.Ready.make({})]
+          : [
+              Admission.cases.Normal.make({ startedAt: now, suspicion: Option.some(mark.id) }),
+              current,
+            ],
+      Cooling: ({ retryAt }): Admitted =>
+        now < retryAt
+          ? [Admission.cases.Backoff.make({}), current]
+          : [Admission.cases.Probe.make({}), Availability.cases.Probing.make({})],
+      CredentialCooling: ({ retryAt }): Admitted =>
+        now < retryAt
+          ? [Admission.cases.Backoff.make({}), current]
+          : [Admission.cases.Probe.make({}), Availability.cases.Probing.make({})],
+      Probing: (): Admitted => [Admission.cases.Backoff.make({}), current],
+    }),
   )
 })
 
@@ -312,21 +314,21 @@ const settleNormal = (
       : authenticationSettlement(now)
   if (!Availability.isAnyOf(['Ready', 'Suspect'])(current)) return [Option.none(), current]
   return Outcome.match(outcome, {
-    Outage: () => [
+    Outage: (): Settlement => [
       Option.some(Transition.cases.Opened.make({})),
       Availability.cases.Cooling.make({
         retryAt: now + Duration.toMillis(Duration.fromInputUnsafe(DECISION_BACKOFF)),
       }),
     ],
-    TimedOut: () => timeoutSettlement(current, admission, now),
-    Success: () => [Option.none(), Availability.cases.Ready.make({})],
-    RequestFailure: () => [Option.none(), Availability.cases.Ready.make({})],
-    AuthenticationFailure: () => authenticationSettlement(now),
-    Cancelled: () =>
+    TimedOut: (): Settlement => timeoutSettlement(current, admission, now),
+    Success: (): Settlement => [Option.none(), Availability.cases.Ready.make({})],
+    RequestFailure: (): Settlement => [Option.none(), Availability.cases.Ready.make({})],
+    AuthenticationFailure: (): Settlement => authenticationSettlement(now),
+    Cancelled: (): Settlement =>
       now - admission.startedAt >= DECISION_OUTAGE_MINIMUM_MILLIS
         ? timeoutSettlement(current, admission, now)
         : [Option.none(), current],
-    CallerLocalTimeout: () => [Option.none(), current],
+    CallerLocalTimeout: (): Settlement => [Option.none(), current],
   })
 }
 
@@ -400,11 +402,11 @@ const unavailableReason = (
   error: AttemptUnavailable | AttemptTimedOut,
 ): DecisionUnavailable['reason'] => {
   if (error instanceof AttemptTimedOut) return 'TimedOut'
-  return FailureClassification.match<DecisionUnavailable['reason']>(error.classification, {
-    Authentication: () => 'Authentication',
-    Outage: () => 'Provider',
-    RequestSpecific: () => 'Provider',
-    Permission: () => 'Provider',
+  return FailureClassification.match(error.classification, {
+    Authentication: () => 'Authentication' as const,
+    Outage: () => 'Provider' as const,
+    RequestSpecific: () => 'Provider' as const,
+    Permission: () => 'Provider' as const,
   })
 }
 

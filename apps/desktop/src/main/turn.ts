@@ -317,7 +317,7 @@ const turnFor = Effect.fn('DesktopTurn.turnFor')(function* (
     budget: TURN_BUDGET_MS,
   })
   // The Computer would not begin, or is gone. Nothing was done.
-  yield* ComputerReply.match<Effect.Effect<void, NotBegun>>(reply, {
+  yield* ComputerReply.match(reply, {
     Answered: () => Effect.void,
     Lost: () => Effect.fail(new NotBegun({ answer: failed })),
     Refused: ({ name }) => Effect.fail(new NotBegun({ answer: notBegun(name) })),

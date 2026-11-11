@@ -1,5 +1,5 @@
 import * as Output from 'alchemy/Output'
-import * as Railway from 'alchemy/Railway'
+import * as Railway from '@alchemy.run/railway'
 import * as RemovalPolicy from 'alchemy/RemovalPolicy'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'

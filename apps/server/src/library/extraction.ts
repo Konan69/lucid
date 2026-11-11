@@ -43,7 +43,7 @@ export const EXTRACTION_HEAP_MB = 512
 
 /** What the log may say about an end: the exit code or the signal name Node reported, nothing else. */
 const reported = (end: typeof ProcessEnd.Type) =>
-  ProcessEnd.match<Record<string, string | number>>(end, {
+  ProcessEnd.match(end, {
     Exited: ({ code }) => ({ code }),
     Signaled: ({ signal }) => ({ signal }),
     Unreported: () => ({}),
@@ -62,7 +62,7 @@ const classify = Effect.fn('LibraryExtraction.classify')(function* (
   pid: number,
   end: typeof ProcessEnd.Type,
 ) {
-  const heap = yield* ProcessEnd.match<Effect.Effect<boolean, never, FileSystem.FileSystem>>(end, {
+  const heap = yield* ProcessEnd.match(end, {
     Exited: () => Effect.succeed(false),
     Signaled: ({ signal }) =>
       signal === 'SIGABRT' ? heapEvidence(reportDir, pid) : Effect.succeed(false),

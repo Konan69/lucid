@@ -147,7 +147,7 @@ export const clampWindowPlacement = (
       minimum: Math.min(MIN_WINDOW_HEIGHT, area.height),
       maximum: area.height,
     })
-    return WindowPlacement.match<WindowPlacement>(placement, {
+    return WindowPlacement.match(placement, {
       Centered: ({ maximized }) =>
         WindowPlacement.cases.Centered.make({ width, height, maximized }),
       Positioned: ({ x, y, maximized }) =>

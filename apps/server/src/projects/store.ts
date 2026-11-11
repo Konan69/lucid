@@ -87,7 +87,7 @@ const advance = ({
   readonly at: number
   readonly by: ProjectAuthor
 }) =>
-  WorkChange.match<Effect.Effect<ProjectWork, ProjectNotActive>>(change, {
+  WorkChange.match(change, {
     Define: ({ objective, nextStep }) =>
       Effect.succeed(
         ProjectWork.cases.Active.make({ objective, nextStep, progress: progressOf(work) }),

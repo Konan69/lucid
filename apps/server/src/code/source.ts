@@ -147,13 +147,6 @@ type SourceFailure =
   | RuntimeUnavailable
   | DatabaseInfrastructureError
 
-/** Both persisted authorities project the same declarations while retaining their I/O failures. */
-type StoredDisplay = Effect.Effect<
-  { readonly thread: ThreadId; readonly stored: typeof StoredPrograms.Type },
-  SourceFailure,
-  Database | Runtime | FeedStore
->
-
 interface CodeSourceService {
   readonly resolve: (
     source: DisplaySource,
@@ -182,7 +175,7 @@ export const codeSourceLayer = Layer.effect(
     })
     return CodeSource.of({
       resolve: Effect.fn('Code.resolveSource')(function* (source, person, request) {
-        const stored = yield* DisplaySource.match<StoredDisplay>(source, {
+        const stored = yield* DisplaySource.match(source, {
           ThreadMessage: (message) =>
             Effect.gen(function* () {
               yield* requireThread(message.thread, person)

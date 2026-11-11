@@ -29,15 +29,15 @@ export type Check = typeof Check.Type
  * What the Integration's lookup said (`ActionReconciliation`, less `Unchecked`, which a check that
  * was made is not): it happened, it did not, or the Integration cannot tell.
  */
-export const Finding = Schema.TaggedUnion({ Applied: {}, NotApplied: {}, Inconclusive: {} })
-export type Finding = typeof Finding.Type
+const Finding = Schema.TaggedUnion({ Applied: {}, NotApplied: {}, Inconclusive: {} })
+type Finding = typeof Finding.Type
 
 /**
  * The server's answer as a `Finding`. `Unchecked` cannot come back from a check the server made
  * (it records an answer before it returns), and if it did, nothing would be known: so it reads as
  * `Inconclusive`, which keeps the action blocked and `Check` on offer.
  */
-export const findingOf = ActionReconciliation.match<Finding>({
+export const findingOf = ActionReconciliation.match({
   Unchecked: () => Finding.cases.Inconclusive.make({}),
   Applied: () => Finding.cases.Applied.make({}),
   NotApplied: () => Finding.cases.NotApplied.make({}),
@@ -189,13 +189,13 @@ export const wordsOf = Line.match({
 
 /** The line for `operationId`: an answer about another operation says nothing about this one. */
 export const lineOf = (reading: Reading, operationId: ActionOperationId): Line =>
-  Reading.match<Line>(reading, {
+  Reading.match(reading, {
     Starting: () => Line.cases.Checking.make({}),
     Idle: () => Line.cases.Unheard.make({}),
     Checking: () => Line.cases.Checking.make({}),
     Checked: (checked) =>
       checked.operationId === operationId
-        ? Finding.match<Line>(checked.finding, {
+        ? Finding.match(checked.finding, {
             Applied: () => Line.cases.Applied.make({}),
             NotApplied: () => Line.cases.NotApplied.make({}),
             Inconclusive: () => Line.cases.Unsure.make({}),

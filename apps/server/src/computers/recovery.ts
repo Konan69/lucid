@@ -100,7 +100,7 @@ const step = (input: Authority) =>
       if (!(yield* admitted(actor).pipe(Effect.provideService(Database, input.database))))
         return Outcome.cases.Refused.make({ cause: Refusal.cases.RunRequired.make({}) })
       const before = yield* input.health(person, 'Deep')
-      const refused = ComputerHealth.match<Option.Option<typeof Refusal.Type>>(before, {
+      const refused = ComputerHealth.match(before, {
         Held: () => Option.some(Refusal.cases.Held.make({})),
         Unavailable: ({ cause }) => Option.some(Refusal.cases.Unavailable.make({ cause })),
         Absent: () => Option.none(),
@@ -127,7 +127,7 @@ const step = (input: Authority) =>
         const repaired = yield* mutate(input, person, request, before)
         if (Result.isFailure(repaired))
           return Outcome.cases.OutcomeUnknown.make({ receipt: request.id })
-        const refusal = MachineRecovery.match<Option.Option<Outcome>>(repaired.success, {
+        const refusal = MachineRecovery.match(repaired.success, {
           Applied: () => Option.none(),
           Unsupported: ({ reason: unavailable }) =>
             Option.some(

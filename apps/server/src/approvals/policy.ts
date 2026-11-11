@@ -69,8 +69,8 @@ export type ReviewOutcome = typeof ReviewOutcome.Type
 /** A background request is never a Person's authorization; only a contained write can run. */
 export const unwatchedOutcome = (review: Review): ReviewOutcome =>
   Review.match(review, {
-    Reviewed: ({ contained }) => (contained >= CONTAINED_THRESHOLD ? 'Run' : 'Ask'),
-    Unreviewed: () => 'Ask',
+    Reviewed: ({ contained }): ReviewOutcome => (contained >= CONTAINED_THRESHOLD ? 'Run' : 'Ask'),
+    Unreviewed: () => 'Ask' as const,
   })
 
 /**

@@ -137,7 +137,7 @@ const decodeReturnFields = Schema.decodeUnknownOption(ReturnFields)
 
 /** A return as the names and values an address carries it in. */
 const returnFields = (back: SignInReturn): Readonly<Record<string, string>> =>
-  SignInReturn.match<Readonly<Record<string, string>>>(back, {
+  SignInReturn.match(back, {
     Granted: ({ code, state }) => ({ state, code }),
     Failed: ({ state }) => ({ state, error: 'sign_in_failed' }),
   })

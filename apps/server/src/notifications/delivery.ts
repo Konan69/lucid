@@ -2,7 +2,7 @@ import { and, eq, isNull } from 'drizzle-orm'
 import { Cause, Clock, Effect, Layer, Option, Schedule, Schema } from 'effect'
 import * as PersistedQueue from 'effect/persistence/PersistedQueue'
 import { Incident, NotificationId, PersonId, PushTargetId, RunId, ThreadId } from '@vivid/contracts'
-import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
+import { Database } from '../database/client.ts'
 import { announce, Topic } from '../live/changes.ts'
 import { failureType, recordFailures } from '../observability/failure.ts'
 import { causeOf, hop, Incidents, recorder } from '../observability/incidents.ts'
@@ -134,13 +134,7 @@ export const takeNotification = Effect.fn('Notifications.take')(
     const queue = yield* notificationDelivery
     const incidents = yield* Incidents
     return yield* queue.take((job, metadata) =>
-      NotificationDelivery.match<
-        Effect.Effect<
-          void,
-          DatabaseInfrastructureError,
-          Effect.Services<ReturnType<typeof retryRunNotice> | ReturnType<typeof deliverTarget>>
-        >
-      >(job, {
+      NotificationDelivery.match(job, {
         OweRun: retryRunNotice,
         Publish: publishNotice,
         Push: deliverTarget,

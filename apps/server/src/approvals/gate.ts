@@ -231,8 +231,8 @@ const reviewable = (action: ProposedAction) =>
 /** Only an actual judgment is reusable when a provider reveals new consequence evidence. */
 const basisOf = (review: Review): GateBasis =>
   Review.match(review, {
-    Reviewed: () => 'Reviewed',
-    Unreviewed: () => 'Unreviewed',
+    Reviewed: () => 'Reviewed' as const,
+    Unreviewed: () => 'Unreviewed' as const,
   })
 
 /** Record the judgment source and policy result without exporting action text or model scores. */

@@ -59,50 +59,46 @@ const computerHealth = Effect.fn('Computer.health')(function* (input: {
 }) {
   const checkedAt = yield* Clock.currentTimeMillis
   if (input.heldByPerson) return ComputerHealth.cases.Held.make({ checkedAt })
-  return yield* ComputerLifecycle.match<Effect.Effect<ComputerHealth, MachineFailure>>(
-    input.state,
-    {
-      Absent: () => Effect.succeed(ComputerHealth.cases.Absent.make({ checkedAt })),
-      Stopped: () => Effect.succeed(ComputerHealth.cases.Sleeping.make({ checkedAt })),
-      Starting: ({ since }) =>
-        Effect.succeed(ComputerHealth.cases.Starting.make({ checkedAt, since })),
-      Failed: () =>
-        Effect.succeed(
-          ComputerHealth.cases.Unavailable.make({
-            checkedAt,
-            cause: ComputerProbeFailure.cases.RecordedFailure.make({}),
-          }),
-        ),
-      Running: () =>
-        Effect.gen(function* () {
-          const provider = ComputerProbe.make({
-            component: 'Provider',
-            result: ComputerProbeResult.cases.Passed.make({
-              observed: ComputerProbeObservation.cases.Responsive.make({}),
-            }),
-          })
-          const probes =
-            input.depth === 'Shallow' ? [provider] : [provider, ...(yield* input.probe)]
-          if (probes.some((probe) => ComputerProbeResult.guards.Failed(probe.result)))
-            return ComputerHealth.cases.Degraded.make({ checkedAt, probes })
-          // Unsupported/downstream-skipped probes cannot certify Ready. Degraded also requires a
-          // real failure, so an incomplete adapter answers Unavailable rather than inventing one.
-          if (
-            input.depth === 'Deep' &&
-            probes.some(
-              (probe) =>
-                ComputerProbeResult.guards.NotRun(probe.result) &&
-                probe.result.reason !== 'BrowserNotStarted',
-            )
-          )
-            return ComputerHealth.cases.Unavailable.make({
-              checkedAt,
-              cause: ComputerProbeFailure.cases.InvalidObservation.make({}),
-            })
-          return ComputerHealth.cases.Ready.make({ checkedAt, depth: input.depth, probes })
+  return yield* ComputerLifecycle.match(input.state, {
+    Absent: () => Effect.succeed(ComputerHealth.cases.Absent.make({ checkedAt })),
+    Stopped: () => Effect.succeed(ComputerHealth.cases.Sleeping.make({ checkedAt })),
+    Starting: ({ since }) =>
+      Effect.succeed(ComputerHealth.cases.Starting.make({ checkedAt, since })),
+    Failed: () =>
+      Effect.succeed(
+        ComputerHealth.cases.Unavailable.make({
+          checkedAt,
+          cause: ComputerProbeFailure.cases.RecordedFailure.make({}),
         }),
-    },
-  )
+      ),
+    Running: () =>
+      Effect.gen(function* () {
+        const provider = ComputerProbe.make({
+          component: 'Provider',
+          result: ComputerProbeResult.cases.Passed.make({
+            observed: ComputerProbeObservation.cases.Responsive.make({}),
+          }),
+        })
+        const probes = input.depth === 'Shallow' ? [provider] : [provider, ...(yield* input.probe)]
+        if (probes.some((probe) => ComputerProbeResult.guards.Failed(probe.result)))
+          return ComputerHealth.cases.Degraded.make({ checkedAt, probes })
+        // Unsupported/downstream-skipped probes cannot certify Ready. Degraded also requires a
+        // real failure, so an incomplete adapter answers Unavailable rather than inventing one.
+        if (
+          input.depth === 'Deep' &&
+          probes.some(
+            (probe) =>
+              ComputerProbeResult.guards.NotRun(probe.result) &&
+              probe.result.reason !== 'BrowserNotStarted',
+          )
+        )
+          return ComputerHealth.cases.Unavailable.make({
+            checkedAt,
+            cause: ComputerProbeFailure.cases.InvalidObservation.make({}),
+          })
+        return ComputerHealth.cases.Ready.make({ checkedAt, depth: input.depth, probes })
+      }),
+  })
 })
 
 /** The Computer store delegates passive observations here; no viewer or activity path is used. */

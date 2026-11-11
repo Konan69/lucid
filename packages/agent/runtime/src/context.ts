@@ -236,7 +236,7 @@ export const loadContext = Effect.fn('Context.load')(function* (
  * said as the Person's own.
  */
 function accountsSaid(fact: typeof CapabilityIntegrationFact.Type) {
-  return CapabilityIntegrationFact.match<Schema.Json>(fact, {
+  return CapabilityIntegrationFact.match(fact, {
     Unavailable: (unavailable) => unavailable,
     Available: ({ value }) => ({
       setup: value.setup,

@@ -2,7 +2,8 @@ import { appsVersion } from './framework.ts'
 import { NodeHttpServerRequest } from '@effect/platform-node'
 import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import * as TestClock from 'effect/testing/TestClock'
-import { describe, expect, layer } from '@effect/vitest'
+import { assert, describe, expect, layer } from '@effect/vitest'
+import * as NodeHttp from 'node:http'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import {
   Forbidden,
@@ -350,6 +351,7 @@ describe.skipIf(!testDatabaseConfigured)('made Integrations through real adapter
               }
               // A lost response can also arrive as an undecodable 5xx from an upstream proxy.
               const response = NodeHttpServerRequest.toServerResponse(incoming)
+              assert.instanceOf(response, NodeHttp.ServerResponse)
               yield* Effect.sync(() => {
                 response.writeHead(503, { 'content-type': 'application/json' })
                 response.end('{}')

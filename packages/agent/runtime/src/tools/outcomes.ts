@@ -107,7 +107,7 @@ const appliedWords = (receipt: ActionApplied) =>
 /** Provider records pass through untouched; settle bounds them without removing provider authority.
  * Each service outcome gives one truthful next step; an unknown side effect must never be retried blindly. */
 export function toolOutcome(result: IntegrationResult): ToolResult {
-  const projected = ToolOutcome.match<ToolResult>(result.outcome, {
+  const projected = ToolOutcome.match(result.outcome, {
     Accepted: ({ output, receipt }) => ({
       output: {
         ok: true,
@@ -199,7 +199,7 @@ const busy = quiet
 
 /** Browser results keep the page outline and authorization decisions supplied by the server. */
 export function browseOutcome(outcome: BrowseOutcome): ToolResult {
-  return BrowseOutcome.match<ToolResult>(outcome, {
+  return BrowseOutcome.match(outcome, {
     NotConnected: () => ({
       output: refused(
         'The Person’s desktop app is not connected. Ask them to connect it.',
@@ -323,7 +323,7 @@ const windowView = ({ window, app, look, width, height, outline, truncated }: Wi
 
 /** Inventories are compact text with IDs; every observed window retains its look ID and outline. */
 const windowResult = (result: WindowResult) =>
-  WindowResult.match<ToolResult>(result, {
+  WindowResult.match(result, {
     Apps: ({ apps, skipped }) => ({
       output: {
         ok: true,
@@ -369,7 +369,7 @@ const windowResult = (result: WindowResult) =>
 
 /** Native availability, refusal and uncertainty remain separate outcomes for the model. */
 export function windowOutcome(outcome: WindowOutcome): ToolResult {
-  return WindowOutcome.match<ToolResult>(outcome, {
+  return WindowOutcome.match(outcome, {
     Completed: ({ result }) => windowResult(result),
     Refused: ({ reason }) => ({
       output: {

@@ -328,7 +328,7 @@ const NOT_STARTED = Option.some<Said>({
  * service's name. The phone says the same (`cardSaid`, `apps/mobile/src/data/integration.ts`).
  */
 const saidAfter = (standing: connecting.Standing, serviceName: string) =>
-  connecting.Standing.match<Option.Option<Said>>(standing, {
+  connecting.Standing.match(standing, {
     Still: () => Option.none(),
     Starting: () => Option.none(),
     Away: () => Option.some({ words: 'Finish signing in in the browser', urgent: false }),
@@ -337,7 +337,7 @@ const saidAfter = (standing: connecting.Standing, serviceName: string) =>
     Unfinished: () => Option.some({ words: `${serviceName} is not signed in yet.`, urgent: false }),
     Connected: () => Option.none(),
     Refused: ({ refusal }) =>
-      connecting.Refusal.match<Option.Option<Said>>(refusal, {
+      connecting.Refusal.match(refusal, {
         NotBegun: () => NOT_STARTED,
         Blocked: () =>
           Option.some({
@@ -624,7 +624,7 @@ function ConnectionAction({
   /** The button at one point of an attempt: what it says, and whether a name is asked first. */
   const says = (words: string) => Offer.Press({ words, naming, quiet: false })
   // What there is to press, from where the card's own attempt stands.
-  const offer = connecting.Standing.match<Offer>(standing, {
+  const offer = connecting.Standing.match(standing, {
     Still: () => says(way.label),
     // Beginning can take the server many seconds; the button says so from the press.
     Starting: () => says(way.starting),
@@ -638,7 +638,7 @@ function ConnectionAction({
     Unfinished: () => Offer.Press({ words: 'Try again', naming: Option.none(), quiet: false }),
     Connected: () => says(way.label),
     Refused: ({ refusal }) =>
-      connecting.Refusal.match<Offer>(refusal, {
+      connecting.Refusal.match(refusal, {
         NotBegun: () => Offer.Settings(),
         Blocked: () => says(way.label),
         Unopened: () => Offer.Settings(),

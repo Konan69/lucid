@@ -72,7 +72,7 @@ import { Awaiting } from './Parts'
  * not a page, says only that it did not start.
  */
 const saidOf = (standing: connecting.Standing) =>
-  connecting.Standing.match<Option.Option<string>>(standing, {
+  connecting.Standing.match(standing, {
     Still: () => Option.none(),
     Starting: () => Option.some('Connecting…'),
     Away: () => Option.some('Finish in the new tab'),
@@ -85,7 +85,7 @@ const saidOf = (standing: connecting.Standing) =>
     Unfinished: () => Option.none(),
     Connected: () => Option.some('Connected'),
     Refused: ({ refusal }) =>
-      connecting.Refusal.match<Option.Option<string>>(refusal, {
+      connecting.Refusal.match(refusal, {
         NotBegun: () => Option.some('Did not start. Try again'),
         Blocked: () => Option.some('Allow pop-ups, then try again'),
         Unopened: () => Option.some('Did not start. Try again'),

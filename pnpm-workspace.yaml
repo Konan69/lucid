@@ -32,15 +32,20 @@ pmOnFail: error
 # Every repeated stack pin has one owner. Manifests reference these entries with
 # catalog: so Effect/Drizzle cannot drift by package.
 catalog:
-  '@alchemy.run/frontend-frameworks': 2.0.0-beta.81
+  '@alchemy.run/cloudflare': 2.0.0-beta.85
+  '@alchemy.run/docker': 2.0.0-beta.85
+  '@alchemy.run/frontend-frameworks': 2.0.0-beta.85
+  '@alchemy.run/github': 2.0.0-beta.85
+  '@alchemy.run/railway': 2.0.0-beta.85
+  '@alchemy.run/sql': 2.0.0-beta.85
   '@earendil-works/chord': 1.4.0
   '@earendil-works/pi-ai': 1.4.0
   '@earendil-works/pi-durable': 1.4.0
-  '@effect/ai-typesafe': 4.0.2
-  '@effect/atom-react': 4.0.2
-  '@effect/platform-node': 4.0.2
-  '@effect/sql-pg': 4.0.2
-  '@effect/vitest': 4.0.2
+  '@effect/ai-typesafe': 4.1.4
+  '@effect/atom-react': 4.1.4
+  '@effect/platform-node': 4.1.4
+  '@effect/sql-pg': 4.1.4
+  '@effect/vitest': 4.1.4
   '@openuidev/cli': 0.4.1
   '@openuidev/lang-core': 1.0.0
   '@openuidev/react-lang': 1.0.0
@@ -64,11 +69,11 @@ catalog:
   '@typeonce/effect-machine': 0.46.0
   '@typeonce/oxlint-plugin-effect-machine': 0.46.0
   '@vitejs/plugin-react': 6.1.1
-  alchemy: 2.0.0-beta.81
+  alchemy: 2.0.0-beta.85
   better-auth: 1.7.21
   drizzle-kit: 1.0.0-rc.5-ab785fc
   drizzle-orm: 1.0.0-rc.5-ab785fc
-  effect: 4.0.2
+  effect: 4.1.4
   electron: 44.4.3
   electron-builder: 26.15.3
   electron-builder-squirrel-windows: 26.15.3
@@ -119,9 +124,9 @@ overrides:
   '@effect/platform-node': 'catalog:'
   # Drizzle's optional Effect adapters. Nothing here imports them, but a copy left on the release
   # candidate would import module paths stable Effect no longer has.
-  '@effect/sql-d1': 4.0.2
+  '@effect/sql-d1': 4.1.4
   '@effect/sql-pg': 'catalog:'
-  '@effect/sql-sqlite-do': 4.0.2
+  '@effect/sql-sqlite-do': 4.1.4
   drizzle-kit: 'catalog:'
   drizzle-orm: 'catalog:'
   # Better Auth finds its schema check by the identity of its adapter object; a second jose
@@ -167,19 +172,19 @@ patchedDependencies:
   react-native-screens@4.26.2: patches/react-native-screens@4.26.2.patch
 minimumReleaseAgeExclude:
   - '@cloudflare/workers-types@5.20260919.1'
-  - '@effect/platform-node-shared@4.0.2'
-  - '@effect/platform-node@4.0.2'
-  - '@effect/sql-d1@4.0.2'
-  - '@effect/sql-pg@4.0.2'
-  - '@effect/sql-sqlite-do@4.0.2'
-  - '@effect/vitest@4.0.2'
+  - '@effect/platform-node-shared@4.1.4'
+  - '@effect/platform-node@4.1.4'
+  - '@effect/sql-d1@4.1.4'
+  - '@effect/sql-pg@4.1.4'
+  - '@effect/sql-sqlite-do@4.1.4'
+  - '@effect/vitest@4.1.4'
   - '@turbo/darwin-64@2.11.2'
   - '@turbo/darwin-arm64@2.11.2'
   - '@turbo/linux-64@2.11.2'
   - '@turbo/linux-arm64@2.11.2'
   - '@turbo/windows-64@2.11.2'
   - '@turbo/windows-arm64@2.11.2'
-  - effect@4.0.2
+  - effect@4.1.4
   - turbo@2.11.2
   - '@earendil-works/pi-codemode@1.0.0'
   - '@tsc-rs/darwin-arm64@0.8.0'
@@ -204,5 +209,7 @@ minimumReleaseAgeExclude:
   - '@better-auth/prisma-adapter@1.7.21'
   - '@better-auth/telemetry@1.7.21'
   - better-auth@1.7.21
+  - '@effect/ai-typesafe@4.1.4'
+  - '@effect/atom-react@4.1.4'
 
 preferSymlinkedExecutables: true

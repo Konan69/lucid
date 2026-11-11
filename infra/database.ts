@@ -2,7 +2,7 @@ import * as Config from 'effect/Config'
 import * as Effect from 'effect/Effect'
 import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
-import * as Docker from 'alchemy/Docker'
+import * as Docker from '@alchemy.run/docker'
 import type { DeploymentTarget } from './targets.ts'
 
 class DatabaseConfigurationError extends Schema.TaggedError<DatabaseConfigurationError>()(
