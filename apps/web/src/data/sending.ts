@@ -57,20 +57,35 @@ const changeUnsent = (revise: (held: sending.Kept) => sending.Kept) =>
 
 /** How this page hands a delivery to the server: `SendToThread` on its socket. */
 const transport = sending.delivering(engine.run, recording)
-const machines = sending.makeSending(
-  Layer.succeed(sending.Delivering, {
-    ...transport,
-    // Reopen queries only after creation succeeds. The invoke then releases first words in order.
-    create: (request) =>
-      transport.create(request).pipe(Effect.tap(() => Effect.sync(() => engine.reopen()))),
-  }),
-  {
-    registry: engine.registry,
-    whereabouts: sending.whereaboutsOf(live.me.answers),
-    change: changeUnsent,
-    launch: start,
-  },
-)
+/**
+ * The Threads' send machines, made at first use rather than when this module loads. `live` imports
+ * the router, whose route tree reaches this module through the Thread screen, so on a fresh page
+ * this module runs before `live` has: reading `live.me` at load threw and left the page blank
+ * (b8164ade9, 11 November 2026). The first use is a held conversation or a send, both after load;
+ * the kept words are restored then, from the whereabouts `live` already has (`immediate`).
+ */
+const makeMachines = () =>
+  sending.makeSending(
+    Layer.succeed(sending.Delivering, {
+      ...transport,
+      // Reopen queries only after creation succeeds. The invoke then releases first words in order.
+      create: (request) =>
+        transport.create(request).pipe(Effect.tap(() => Effect.sync(() => engine.reopen()))),
+    }),
+    {
+      registry: engine.registry,
+      whereabouts: sending.whereaboutsOf(live.me.answers),
+      change: changeUnsent,
+      launch: start,
+    },
+  )
+let made = Option.none<ReturnType<typeof makeMachines>>()
+const machines = (): ReturnType<typeof makeMachines> => {
+  if (Option.isSome(made)) return made.value
+  const fresh = makeMachines()
+  made = Option.some(fresh)
+  return fresh
+}
 
 /**
  * This page's conversations: the one used last and three before it. Each is a subscription on
@@ -86,7 +101,7 @@ const held = heldConversations(3, (id) => {
   const letGoOfWords = engine.registry.mount(query.atom)
   // The Thread's machine is held with its conversation, so words that did not arrive are still
   // there to send again when the Person comes back to a Thread they left.
-  const letGoOfSending = engine.registry.mount(sending.stateOf(machines(id)))
+  const letGoOfSending = engine.registry.mount(sending.stateOf(machines()(id)))
   return {
     end: () => {
       letGoOfWords()
@@ -111,7 +126,7 @@ export const warmConversation = held.warm
  */
 export const forgetConversations = (): void => {
   held.forget()
-  machines.forget(engine.registry)
+  machines().forget(engine.registry)
 }
 
 /**
@@ -124,7 +139,7 @@ export const reopenConversation = (id: ThreadId): void => {
 
 /** Where sending stands in a Thread. The component re-renders when its machine moves. */
 export const useSending = (id: ThreadId): Option.Option<sending.SendingState> =>
-  useAtomValue(sending.stateOf(machines(id)))
+  useAtomValue(sending.stateOf(machines()(id)))
 
 /**
  * What a Thread draws now of its conversation and of what this page sent into it
@@ -137,7 +152,7 @@ export const useSending = (id: ThreadId): Option.Option<sending.SendingState> =>
 const drawnNow = (id: ThreadId) => {
   const reading = liveStateOf(engine.registry.get(conversationOf(id).atom))
   const detail = liveStateOf(engine.registry.get(live.thread.get(id).atom))
-  const state = engine.registry.get(sending.stateOf(machines(id)))
+  const state = engine.registry.get(sending.stateOf(machines()(id)))
   return {
     ...sending.drawing({
       messages: Option.match(conversationIn(reading), {
@@ -162,7 +177,7 @@ const drawnNow = (id: ThreadId) => {
  */
 export const sayAgain = (id: ThreadId): void => {
   const drawn = drawnNow(id)
-  sending.sendAgain(engine.registry, machines(id), {
+  sending.sendAgain(engine.registry, machines()(id), {
     seen: drawn.seen,
   })
 }
@@ -175,7 +190,7 @@ export const sayAgain = (id: ThreadId): void => {
 export const say = (delivery: sending.Delivery): void => {
   // Vivid is about to answer: where the Person is now, while they share it (`locating.ts`).
   shareLocation()
-  sending.send(engine.registry, machines(delivery.thread), {
+  sending.send(engine.registry, machines()(delivery.thread), {
     delivery,
     seen: drawnNow(delivery.thread).seen,
   })
@@ -185,10 +200,10 @@ export const say = (delivery: sending.Delivery): void => {
  * Tells a Thread's sending that the Person stopped Vivid: nothing that was waiting to be sent
  * from this page is sent after it (`SendingEvents.Stop`).
  */
-export const halted = (id: ThreadId): void => sending.stopped(engine.registry, machines(id))
+export const halted = (id: ThreadId): void => sending.stopped(engine.registry, machines()(id))
 
 /** Start creation with first words already in their Thread's ordered sending owner. */
 export const beginThread = (first: Parameters<typeof sending.begin>[2]): void => {
   shareLocation()
-  sending.begin(engine.registry, machines(first.delivery.thread), first)
+  sending.begin(engine.registry, machines()(first.delivery.thread), first)
 }
