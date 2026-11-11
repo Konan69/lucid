@@ -11,6 +11,6 @@ Establish the Person's local date and timezone, then the accounts and commitment
 
 Read today's real calendar, including cancellations and timezone changes. Read a bounded window of urgent or unanswered mail and check the full conversation before identifying a request. Combine these with explicit commitments. Prioritize what changes the Person's day: imminent meetings, decisions waiting for them, deadlines and a conflict that needs attention. Include source links and concrete next steps. Keep informational mail separate and omit noise.
 
-Return a brief the Person can scan quickly. State the date and account coverage, then the few things needing attention and any material gaps. Do not claim to have handled a commitment merely by mentioning it. Sending replies, moving meetings and changing records still need their own permission and Approval.
+Return a brief the Person can scan quickly. Give the date and, in a few words, what you looked at ("your work calendar and gmail"), then the few things needing attention, then what you could not see, said as what it means ("i couldn't get into outlook, so this leaves out your client mail"). Do not claim to have handled a commitment merely by mentioning it. Sending replies, moving meetings and changing records still need their own permission and Approval.
 
 When the Person wants this brief every morning, set it up with the make-an-integration skill: a morning app whose event you watch, with this brief as the watch's instruction, so it reaches their Feed.

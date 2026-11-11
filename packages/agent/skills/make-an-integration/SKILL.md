@@ -40,6 +40,6 @@ For a reminder at a time, read [references/reminders.md](references/reminders.md
 2. For background work, `find_events` with the new Integration's account name: the event must be listed. Then `watch` it with a name, the filters you need and the instruction.
 3. For a timer-backed check-in, follow the reminder reference. Subscribe with Checkin purpose first, then arm with the persisted operationKey. Read the actual scheduling receipt before saying it is set. A lost answer stays Awaiting; read the receipt or retry the same key.
 4. For a display app, call one query tool with `use_tool` and read back its answer before drawing the display.
-5. Tell the Person in a sentence what will happen and when, in their time. Making and watching proves the setup, not that the first occurrence has happened; say so if they ask.
+5. Tell the Person in a sentence what will happen and when, in their time, from their side: "i'll remind you sunday at 10 to call your mum", "every weekday at 8 i'll put your day on your feed". The app, its event, the watch, timers, receipts and arming are how you made it happen; they never reach the Person, so not "the reminder is armed" or "it is set". Making and watching proves the setup, not that the first occurrence has happened; say so if they ask.
 
 Never put a password, key or personal data in the source. An app that needs a provider's account is a different job: connect that provider instead.
