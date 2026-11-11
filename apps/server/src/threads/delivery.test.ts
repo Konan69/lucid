@@ -52,7 +52,7 @@ import {
   WatchCondition,
   WatchId,
 } from '@vivid/contracts'
-import { eq, inArray } from 'drizzle-orm'
+import { eq, inArray, sql } from 'drizzle-orm'
 import {
   Clock,
   Context,
@@ -1230,6 +1230,55 @@ layer(
         }).pipe(Effect.scoped),
       )
     })
+
+    it.effect(
+      'a database failure after reservation names the failed Run in the client answer',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* harness()
+          const database = yield* Database
+          const scoped = RunStore.of({
+            ...test.observed,
+            // Fail through the real SQL driver only after start has committed the reservation.
+            scope: (input) =>
+              database
+                .run(database.execute(sql`select 1 / 0`))
+                .pipe(Effect.andThen(() => test.observed.scope(input))),
+          })
+          const context = yield* Layer.build(
+            conversationLayer.pipe(
+              Layer.provide(silentChannelRepliesLayer),
+              Layer.provide(Layer.merge(test.services, Layer.succeed(RunStore, scoped))),
+            ),
+          )
+          const conversation = yield* Conversation.pipe(Effect.provideContext(context))
+          const message = said(test.threadId, test.ada)
+          const runId = deliveryRunId(test.threadId, message.idempotencyKey)
+          const result = yield* conversation.admit(message).pipe(Effect.result)
+          if (Result.isSuccess(result)) expect.fail('The scoping query must fail')
+          expect(result.failure).toEqual(
+            DeliveryRefused.make({
+              runId,
+              cause: [
+                incidentHop({
+                  service: 'server',
+                  operation: 'Conversation.admit',
+                  tag: 'DatabaseFailure',
+                  status: Option.none(),
+                  issues: [],
+                }),
+              ],
+            }),
+          )
+          expect(
+            (yield* test.observed.list(test.threadId)).map((run) => [run.id, run.state._tag]),
+          ).toEqual([[runId, 'Failed']])
+          expect(yield* Ref.get(test.requests)).toEqual([])
+          expect((yield* test.incidents).map((incident) => incident._tag)).toEqual([
+            'AdmissionFailed',
+          ])
+        }).pipe(Effect.scoped),
+    )
 
     // Both precise Runtime failures retain this slice's existing Conversation error and state assertions.
     const admissionFailures = [

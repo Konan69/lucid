@@ -488,7 +488,15 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
         delivery: deliveryKind(delivery.message),
       }
       const admission = yield* Effect.gen(function* () {
-        const deliveryScope = yield* runs.scope({ threadId: thread.id, turn })
+        const deliveryScope = yield* runs.scope({ threadId: thread.id, turn }).pipe(
+          // Reservation committed, but nothing reached the runtime. The failed Run owns the
+          // Person's notice; a bare database error would also claim the send was unconfirmed.
+          Effect.catchTag(
+            ['DatabaseFailure', 'DatabaseUnavailable', 'DatabaseConstraintViolation'],
+            (error) =>
+              Effect.fail(DeliveryRefused.make({ runId: id, cause: admissionCause(error) })),
+          ),
+        )
         return yield* admitRuntime(runtime, {
           threadId: thread.id,
           message: runtimeMessage(thread.audience, from, delivery.message, turn),

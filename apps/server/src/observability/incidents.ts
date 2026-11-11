@@ -93,7 +93,7 @@ export const recordFailure = <E extends object>(
 ) =>
   incidents
     .record(incident)
-    .pipe(Effect.map(() => Object.assign(failure, { [ErrorReporter.ignore]: true })))
+    .pipe(Effect.map(() => Object.defineProperty(failure, ErrorReporter.ignore, { value: true })))
 
 /** The attribute an Incident's part is written under, on the span, the log line and the issue. */
 const attribute = (name: string) => `vivid.incident.${name}`
