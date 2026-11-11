@@ -1056,7 +1056,6 @@ export function Card({
   const choose = (next: feed.Chosen) => {
     Option.map(remember, ({ post }) => remembered.set(card, { post, chosen: next }))
   }
-  const title = Option.match(post, { onNone: () => ask.title, onSome: (made) => made.title })
   const heading = feed.headingOf(post, ask.title)
   const said = (words: string, actions: Option.Option<ReadonlyArray<FeedAction>>) => (
     <Said words={words} actions={actions} reply={reply} />
