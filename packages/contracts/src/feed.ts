@@ -194,10 +194,23 @@ export class FeedDisplayInvalid extends Schema.TaggedError<FeedDisplayInvalid>()
  * Conversation's id and `key` its first delivery's, both made once per press by the client, so a
  * press sent again after a lost answer finds the same Conversation and the same Run.
  */
+/**
+ * Why the Person opened the chat. `Looking`: they pressed the item to talk about it. `Answered`:
+ * they gave the card its answer (its answer button, or the swipe that says it), which Vivid acts on
+ * in the new chat; the owner, 11 November 2026: "it should always open in chat for now when i
+ * swipe yes or click the approval button".
+ */
+export const FeedOpening = Schema.TaggedUnion({
+  Looking: {},
+  Answered: { words: FeedAction },
+})
+export type FeedOpening = typeof FeedOpening.Type
+
 export const ResumeFeedItemRequest = Schema.Struct({
   work: ThreadId,
   conversation: ThreadId,
   key: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
+  opening: FeedOpening,
 })
 export interface ResumeFeedItemRequest extends Schema.Schema.Type<typeof ResumeFeedItemRequest> {}
 

@@ -4,6 +4,7 @@ import {
   ApprovalState,
   FeedCardId,
   FeedItem,
+  FeedOpening,
   type Approval,
   ThreadId,
   FeedResponse as FeedResponseSchema,
@@ -395,6 +396,7 @@ const ResumeAttempt = Schema.Struct({
   work: ThreadId,
   conversation: ThreadId,
   key: Schema.String,
+  opening: FeedOpening,
 })
 export interface ResumeAttempt extends Schema.Schema.Type<typeof ResumeAttempt> {}
 
@@ -430,7 +432,12 @@ export type ResumeState = Parameters<typeof ResumeStates.matches>[0]
 export const ResumeEvents = Machine.events({ Resume: ResumeAttempt.fields })
 
 const attemptOf = (held: ResumeAttempt): ResumeAttempt =>
-  ResumeAttempt.make({ work: held.work, conversation: held.conversation, key: held.key })
+  ResumeAttempt.make({
+    work: held.work,
+    conversation: held.conversation,
+    key: held.key,
+    opening: held.opening,
+  })
 const sameAttempt = Schema.toEquivalence(ResumeAttempt)
 
 const ResumeMachine = Machine.make({

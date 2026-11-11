@@ -1,6 +1,7 @@
 import { useAtomValue } from '@effect/atom-react'
 import {
   DisplaySource,
+  FeedOpening,
   FeedPost,
   type Approval,
   type FeedAction,
@@ -70,7 +71,7 @@ const ANSWER = { height: 40, radius: 12 } as const
  * then the cards that need them under theirs, Vivid's work, and the one block of what is handled.
  */
 type Row = Data.TaggedEnum<{
-  Caption: { readonly words: string }
+  Caption: { readonly words: string; readonly count: Option.Option<number> }
   Owed: { readonly record: owed.Waiting; readonly said: owed.OwedWords }
   Todo: { readonly todo: todos.Open; readonly due: todos.TodoWords }
   Computer: { readonly waiting: DeviceWaiting }
@@ -117,17 +118,14 @@ export function Feed() {
   const date = today.format(now)
 
   const inbox = useInbox()
-  const { unstarted, onResume } = useResume(openThread)
+  const { unstarted, onResume, onAnswered } = useResume(openThread)
 
-  // A card that a press has folded leaves the list until Vivid posts again.
-  const shown = view.waiting.filter(
-    (item) => !feed.folds(item, Option.fromUndefinedOr(presses.get(item.card))),
-  )
-  // A card a press has folded no longer waits on the Person, so it leaves the count with it.
-  const standing = feed.standingOf(Option.toArray(view.computer).length + shown.length)
-  // A record a press has closed is no longer owed, so it leaves the head's sentence with it.
-  const open = records.filter((record) => standings.get(record.id) !== 'folded')
-  const rows = rowsOf(view, records, toDo, zone)
+  // A card that a press has folded leaves the list until Vivid posts again, and the count with it.
+  const waiting =
+    Option.toArray(view.computer).length +
+    view.waiting.filter((item) => !feed.folds(item, Option.fromUndefinedOr(presses.get(item.card))))
+      .length
+  const rows = rowsOf(view, records, toDo, { zone, waiting })
 
   // One function for the list's life: FlatList refuses a viewability callback that changes. The
   // session's data does not change while this screen is up, so the first one serves.
@@ -144,14 +142,7 @@ export function Feed() {
     { viewabilityConfig: { viewAreaCoveragePercentThreshold: 80 }, onViewableItemsChanged: seen },
   ])
 
-  const head = (
-    <Head
-      date={date}
-      head={Option.flatMap(zone, (tz) => owed.headOf(open, owed.owedWordsIn(tz).timing, now))}
-      mood={LOOK[feed.feedFace(view, pleased)]}
-      standing={standing}
-    />
-  )
+  const head = <Head date={date} mood={LOOK[feed.feedFace(view, pleased)]} />
 
   return (
     <Screen>
@@ -168,6 +159,7 @@ export function Feed() {
           Handled: () => 'handled',
         })}
         ListHeaderComponent={head}
+        ListEmptyComponent={<Empty />}
         // Clear of the glass bar and its menu button, as every other page under it is; without
         // it the date and the greeting stood under the menu button.
         contentInsetAdjustmentBehavior="automatic"
@@ -176,7 +168,7 @@ export function Feed() {
         viewabilityConfigCallbackPairs={looked}
         renderItem={({ item: row }) =>
           Row.$match(row, {
-            Caption: ({ words }) => <Caption words={words} />,
+            Caption: ({ words, count }) => <Caption words={words} count={count} />,
             Owed: ({ record, said }) => (
               <OwedRow
                 record={record}
@@ -211,7 +203,8 @@ export function Feed() {
                 asked={feed.approvalOf(item, inbox)}
                 press={Option.fromUndefinedOr(presses.get(item.card))}
                 now={now}
-                onAnswer={(words) => answer(data, item, words)}
+                onAnswer={(words) => onAnswered(item.thread, words)}
+                onDraw={(words) => answer(data, item, words)}
                 onDone={() => close(data, item)}
                 onOpen={() => openThread(item.thread)}
                 unstarted={unstarted(item.thread)}
@@ -241,8 +234,15 @@ const rowsOf = (
   view: feed.FeedView,
   records: ReadonlyArray<owed.Waiting>,
   toDo: ReadonlyArray<todos.Open>,
-  /** The Person's own zone: deadlines and due dates are days on their calendar, so rows wait for it. */
-  zone: Option.Option<string>,
+  {
+    zone,
+    waiting,
+  }: {
+    /** The Person's own zone: deadlines and due dates are days on their calendar, so rows wait for it. */
+    readonly zone: Option.Option<string>
+    /** How many wait on the Person now, said beside their caption. */
+    readonly waiting: number
+  },
 ): ReadonlyArray<Row> => [
   // A row says its deadline on the Person's calendar, so none is drawn before their settings are.
   ...Option.match(
@@ -250,7 +250,7 @@ const rowsOf = (
     {
       onNone: () => [],
       onSome: (words) => [
-        Row.Caption({ words: 'Waiting on' }),
+        Row.Caption({ words: 'Waiting on', count: Option.none() }),
         ...records.map((record) => Row.Owed({ record, said: words })),
       ],
     },
@@ -261,13 +261,13 @@ const rowsOf = (
     {
       onNone: () => [],
       onSome: (due) => [
-        Row.Caption({ words: 'To do' }),
+        Row.Caption({ words: 'To do', count: Option.none() }),
         ...toDo.map((todo) => Row.Todo({ todo, due })),
       ],
     },
   ),
   ...(Option.isSome(view.computer) || view.waiting.length > 0
-    ? [Row.Caption({ words: 'Needs you' })]
+    ? [Row.Caption({ words: 'For you', count: Option.some(waiting) })]
     : []),
   ...Option.toArray(view.computer).map((asking) => Row.Computer({ waiting: asking })),
   ...view.waiting.map((item) => Row.Waiting({ item })),
@@ -275,17 +275,41 @@ const rowsOf = (
   ...(view.settled.length > 0 ? [Row.Handled({ items: view.settled })] : []),
 ]
 
-/** A section's caption: quiet, and a heading to a screen reader. */
-function Caption({ words }: { words: string }) {
+/** A section's caption: quiet, a heading to a screen reader, with its count beside it when it has one. */
+function Caption({ words, count }: { words: string; count: Option.Option<number> }) {
+  const { colors: c } = useTheme()
   return (
-    <Label
+    <View
       accessibilityRole="header"
-      size="label"
-      tone="ink-3"
-      style={{ fontWeight: '600', paddingHorizontal: 4, marginTop: 4 }}
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 4,
+        marginTop: 4,
+      }}
     >
-      {words}
-    </Label>
+      <Label size="label" tone="ink-3" style={{ fontWeight: '600' }}>
+        {words}
+      </Label>
+      {Option.isSome(count) && (
+        <View
+          style={{
+            minWidth: 20,
+            height: 20,
+            paddingHorizontal: 6,
+            borderRadius: 10,
+            backgroundColor: c.subtle,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Label size="caption" tone="ink-2" style={{ fontVariant: ['tabular-nums'] }}>
+            {count.value}
+          </Label>
+        </View>
+      )}
+    </View>
   )
 }
 
@@ -325,57 +349,42 @@ function Foot({ onHeight }: { onHeight: (height: number) => void }) {
 }
 
 /**
- * The head of the Feed: the date, then the one sentence the page opens with beside Vivid's face:
- * what the Person is waiting on ("5 people owe you." and the one that matters now), or, with
- * nothing owed, what needs them. Under it the standing line, or what to do with nothing owed.
- * Never a greeting.
+ * The head of the Feed: Vivid's face beside today's date, on the same left edge as the captions
+ * under it. Nothing is said over them: what waits is the list itself, and the caption counts it
+ * (the owner, 11 November 2026, of "4 things need you. The rest is handled.": "i dont like this").
  */
-function Head({
-  date,
-  head,
-  mood,
-  standing,
-}: {
-  date: string
-  head: Option.Option<owed.Head>
-  mood: (typeof LOOK)[keyof typeof LOOK]
-  standing: ReturnType<typeof feed.standingOf>
-}) {
-  // With something owed and urgent, the line under the head leads with it; otherwise it is the
-  // Feed's standing line, and with nothing owed, how something comes to be owed.
-  const line = Option.match(head, {
-    onNone: () => ({ bold: '', rest: EMPTY }),
-    onSome: (made) =>
-      Option.match(made.rest, {
-        onSome: (rest) => ({ bold: rest, rest: standing.lead }),
-        onNone: () => ({ bold: standing.lead, rest: standing.rest }),
-      }),
-  })
+function Head({ date, mood }: { date: string; mood: (typeof LOOK)[keyof typeof LOOK] }) {
   return (
-    <View style={{ paddingTop: 24, paddingBottom: 8 }}>
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        paddingHorizontal: 4,
+        paddingTop: 16,
+      }}
+    >
+      <Face size={32} mood={mood} />
       <Label size="label" tone="ink-3">
         {date}
-      </Label>
-      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 12, marginTop: 8 }}>
-        <Label accessibilityRole="header" size="opening" style={{ flex: 1 }}>
-          {Option.match(head, { onNone: () => standing.lead, onSome: (made) => made.lead })}
-        </Label>
-        <Face size={56} mood={mood} />
-      </View>
-      <Label size="body" tone="ink-2" style={{ marginTop: 10 }}>
-        {line.bold.length > 0 && (
-          <Label size="body" style={{ fontWeight: '600' }}>
-            {line.bold}
-          </Label>
-        )}
-        {line.bold.length > 0 && line.rest.length > 0 ? ` ${line.rest}` : line.rest}
       </Label>
     </View>
   )
 }
 
-/** What the head says under the standing line when nobody owes the Person anything. */
-const EMPTY = 'When someone promises you something, tell Vivid. It keeps track and chases it.'
+/** With nothing on the Feed at all: what the place is for, in one quiet line. */
+function Empty() {
+  return (
+    <View style={{ paddingHorizontal: 4, paddingTop: 8, gap: 2 }}>
+      <Label size="body" style={{ fontWeight: '600' }}>
+        Nothing waiting
+      </Label>
+      <Label size="body" tone="ink-2" style={{ maxWidth: 300 }}>
+        When Vivid needs your answer on something, it shows up here.
+      </Label>
+    </View>
+  )
+}
 
 /**
  * One record of what the Person is waiting on: who and when on the first line, what under it, its
@@ -672,6 +681,7 @@ function Waiting({
   press,
   now,
   onAnswer,
+  onDraw,
   onDone,
   onOpen,
   unstarted,
@@ -682,7 +692,10 @@ function Waiting({
   asked: Option.Option<Approval>
   press: Option.Option<feed.Press>
   now: number
-  onAnswer: (words: string) => void
+  /** The card's answer: a new chat about the work, where Vivid acts on it. */
+  onAnswer: (words: FeedAction) => void
+  /** A drawing's own button, said in the work's Thread. */
+  onDraw: (words: string) => void
   onDone: () => void
   /** Opens the work's own Thread, where an ask is answered (the swipe's "Open"). */
   onOpen: () => void
@@ -735,6 +748,7 @@ function Waiting({
               (held) => feed.Press.$is('Sending')(held) && held.revision === feed.revisionOf(item),
             ),
             onSay: onAnswer,
+            onDraw,
             onDone,
           })}
           now={now}
@@ -757,7 +771,9 @@ function useResume(openThread: (thread: ThreadId) => void) {
   return {
     unstarted: (work: ThreadId) =>
       AsyncResult.isSuccess(resuming) && feed.resumedOf(resuming.value, work) === 'unstarted',
-    onResume: (work: ThreadId) => resume(data, resumer, work),
+    onResume: (work: ThreadId) => resume(data, resumer, work, FeedOpening.cases.Looking.make({})),
+    onAnswered: (work: ThreadId, words: FeedAction) =>
+      resume(data, resumer, work, FeedOpening.cases.Answered.make({ words })),
   }
 }
 
@@ -844,8 +860,14 @@ function sidesOf(
 interface Reply {
   /** A press is on its way: nothing more can be pressed. */
   readonly held: boolean
-  /** Says these words in the card's Thread, as the Person. */
-  readonly onSay: (words: string) => void
+  /**
+   * The card's answer, one of its buttons: a new chat about the work opens and Vivid acts on it
+   * there (the owner, 11 November 2026: "it should always open in chat for now when i swipe yes
+   * or click the approval button").
+   */
+  readonly onSay: (words: FeedAction) => void
+  /** A drawing's own button: its words go to the work's Thread, as a reply's display does. */
+  readonly onDraw: (words: string) => void
   /** Puts the card away without an answer. */
   readonly onDone: () => void
 }
@@ -991,7 +1013,7 @@ function Card({
                 text={display}
                 arriving={false}
                 live={Option.exists(reply, ({ held }) => !held)}
-                onSay={(words) => Option.map(reply, ({ onSay }) => onSay(words))}
+                onSay={(words) => Option.map(reply, ({ onDraw }) => onDraw(words))}
                 onState={choose}
                 initial={start}
               />
@@ -1060,7 +1082,7 @@ function Answers({ actions, held, onSay, onDone }: { actions: ReadonlyArray<Feed
           words={words}
           primary={place === last}
           held={held}
-          onPress={() => onSay(words)}
+          onPress={() => (place === last ? onSay(words) : onDone())}
         />
       ))}
     </>
@@ -1130,7 +1152,7 @@ function Handled({
         tone="ink-3"
         style={{ fontWeight: '600', paddingHorizontal: 4, paddingBottom: 4 }}
       >
-        Handled
+        Done
       </Label>
       {items.map((item, place) => (
         <Pressable

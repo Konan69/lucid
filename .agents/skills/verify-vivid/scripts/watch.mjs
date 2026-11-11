@@ -546,6 +546,7 @@ async function dismissedAndResumed(state, proof, directory) {
     work: proof.background,
     conversation: crypto.randomUUID(),
     key: crypto.randomUUID(),
+    opening: { _tag: 'Looking' },
   }
   const first = await rpc(state, 'ResumeFeedItem', request, directory, 'resume')
   const again = await rpc(state, 'ResumeFeedItem', request, directory, 'resume-again')
@@ -560,6 +561,21 @@ async function dismissedAndResumed(state, proof, directory) {
       message.parts.some((part) => part.type === 'text' && part.text.trim().length > 0),
   )
   const afterResume = await backgroundRuns(state, proof, directory, 'resume-runs-after')
+  // Answering the card opens a chat too, and Vivid is told the answer there.
+  const answer = {
+    work: proof.background,
+    conversation: crypto.randomUUID(),
+    key: crypto.randomUUID(),
+    opening: { _tag: 'Answered', words: 'Go ahead' },
+  }
+  await rpc(state, 'ResumeFeedItem', answer, directory, 'answer')
+  await settled(state, answer.conversation, 1, 'Completed', directory)
+  const answered = (await history(state, answer.conversation, directory, 'answered-history')).messages.filter(
+    (message) => message.signal !== undefined && message.signal.tagName === 'carry-on',
+  )
+  const afterAnswer = (await rpc(state, 'ListFeed', undefined, directory, 'answered-feed')).items.find(
+    (item) => item.card === proof.feed,
+  )
   await json(directory + '/dismiss-resume.json', {
     dismissed,
     runs: {
@@ -572,6 +588,8 @@ async function dismissedAndResumed(state, proof, directory) {
     resumedRuns: detail.runs.length,
     handed: handed.length,
     replies: replies.length,
+    answered: answered.length,
+    afterAnswer: afterAnswer && afterAnswer._tag,
   })
   for (const item of dismissed)
     NodeAssert.equal(item && item._tag, 'Settled', 'A dismissed card came back')
@@ -596,6 +614,12 @@ async function dismissedAndResumed(state, proof, directory) {
   )
   NodeAssert.ok(replies.length > 0, 'Vivid did not answer in the new Conversation')
   NodeAssert.equal(afterResume.length, before.length, 'Resuming started a Run in the work’s Thread')
+  NodeAssert.ok(
+    answered.length === 1 &&
+      answered[0].parts.some((part) => part.type === 'text' && part.text.includes('"Go ahead"')),
+    'The answer did not reach Vivid in the new chat',
+  )
+  NodeAssert.equal(afterAnswer && afterAnswer._tag, 'Settled', 'An answered card stayed waiting')
 }
 
 /** An Until Watch ends only after a live provider read and its own admitted completion tool. */

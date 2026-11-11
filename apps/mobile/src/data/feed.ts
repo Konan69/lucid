@@ -1,5 +1,5 @@
 import { useAtomValue } from '@effect/atom-react'
-import { ThreadId, type FeedCardId } from '@vivid/contracts'
+import { ThreadId, type FeedCardId, type FeedOpening } from '@vivid/contracts'
 import { feed } from '@vivid/state'
 import { Effect, Layer, Option, Result } from 'effect'
 import { AsyncResult, Atom } from 'effect/reactivity'
@@ -107,14 +107,23 @@ export const makeResume = (data: LiveData, open: (thread: ThreadId) => void) =>
     }),
   )
 
-/** Starts a new Conversation about an item's work, with fresh ids for a new attempt. */
-export function resume(data: LiveData, machine: feed.ResumeAtoms, work: ThreadId): void {
+/**
+ * Starts a new Conversation about an item's work, with fresh ids for a new attempt: to look at it,
+ * or with the answer the Person gave its card, which Vivid acts on there.
+ */
+export function resume(
+  data: LiveData,
+  machine: feed.ResumeAtoms,
+  work: ThreadId,
+  opening: FeedOpening,
+): void {
   data.registry.set(
     machine.send,
     feed.ResumeEvents.Resume({
       work,
       conversation: ThreadId.make(randomUUID()),
       key: randomUUID(),
+      opening,
     }),
   )
 }

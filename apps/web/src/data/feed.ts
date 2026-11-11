@@ -1,6 +1,6 @@
 import { useAtomValue } from '@effect/atom-react'
 import { VividRpcClient } from '@vivid/client-runtime'
-import { FeedItem, ThreadId, type FeedCardId } from '@vivid/contracts'
+import { FeedItem, FeedOpening, ThreadId, type FeedCardId } from '@vivid/contracts'
 import { feed } from '@vivid/state'
 import { Effect, Layer, Option, Result } from 'effect'
 import { Atom, AsyncResult } from 'effect/reactivity'
@@ -176,6 +176,8 @@ export function resume(work: ThreadId) {
       work,
       conversation: ThreadId.make(crypto.randomUUID()),
       key: crypto.randomUUID(),
+      // The web opens a chat to look at the work; answering stays on the card's own buttons.
+      opening: FeedOpening.cases.Looking.make({}),
     }),
   )
 }

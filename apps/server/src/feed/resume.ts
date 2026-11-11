@@ -1,6 +1,8 @@
 import { and, eq } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
 import {
+  FeedOpening,
+  MarkFeedCardRequest,
   NotFound,
   SignalCue,
   type ConversationState,
@@ -21,6 +23,8 @@ import {
 } from '../threads/conversation.ts'
 import { messageKey } from '../threads/key.ts'
 import { ThreadStore } from '../threads/store.ts'
+import { cardIdOf } from './read.ts'
+import { FeedStore } from './store.ts'
 import { feedCards } from './tables.ts'
 
 /** The newest messages of the work handed over; a Background Thread rarely holds more. */
@@ -75,9 +79,19 @@ const cardLines = (card: Card) => [
  * card the Person pressed, and the work's own words. The Person has said nothing yet, so the
  * order of who speaks is spelt out, as the first Thread's instruction does (`threads/message.ts`).
  */
-const handedOver = (title: string, card: ReadonlyArray<Card>, history: ConversationState) =>
+const handedOver = (
+  title: string,
+  opening: FeedOpening,
+  card: ReadonlyArray<Card>,
+  history: ConversationState,
+) =>
   [
-    `The Person pressed earlier work on their Feed, "${title}", to talk about it here. This is a new conversation; the work goes on where it was. Nothing has been said here yet, so you speak first: say in a sentence or two where that work stands and what, if anything, it needs from them, then let them lead. Do nothing about the work until they ask.`,
+    FeedOpening.match(opening, {
+      Looking: () =>
+        `The Person pressed earlier work on their Feed, "${title}", to talk about it here. This is a new conversation; the work goes on where it was. Nothing has been said here yet, so you speak first: say in a sentence or two where that work stands and what, if anything, it needs from them, then let them lead. Do nothing about the work until they ask.`,
+      Answered: ({ words }) =>
+        `The Person answered the card for earlier work on their Feed, "${title}", by pressing "${words}", and came here to see it done. This is a new conversation about that work. Act on their answer now, as you would have if they had said it in the work's own conversation, then say here in a sentence or two what you did, or what stopped you.`,
+    }),
     ...card.flatMap(cardLines),
     ['The work so far, oldest first:', ...transcriptOf(history)].join('\n'),
   ].join('\n\n')
@@ -127,7 +141,9 @@ export const resumeFeedItem = Effect.fn('Feed.resume')(function* (
     personId: person,
     speaker: DeliverySpeaker.cases.Acting.make({}),
     message: DeliveryMessage.cases.Signal.make({
-      cue: SignalCue.cases.CarryOn.make({ body: handedOver(work.title, card, history) }),
+      cue: SignalCue.cases.CarryOn.make({
+        body: handedOver(work.title, request.opening, card, history),
+      }),
     }),
     // No fingerprint: the hand-over is the server's text, read afresh on a retry, and the key
     // alone names the delivery, as for other server-made text (`StoredRunOrigin.Message`).
@@ -135,5 +151,11 @@ export const resumeFeedItem = Effect.fn('Feed.resume')(function* (
     idempotencyKey: messageKey(person, request.key),
     clientKey: request.key,
   })
+  // Answered, the card has had its answer: it is put away as a press on Done puts it away.
+  if (FeedOpening.guards.Answered(request.opening) && card.length > 0)
+    yield* (yield* FeedStore).mark(
+      person,
+      MarkFeedCardRequest.make({ card: cardIdOf(work.id), state: 'done' }),
+    )
   return { thread }
 })
