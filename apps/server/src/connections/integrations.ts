@@ -182,12 +182,12 @@ export const findIntegrations = Effect.fn('Connections.findIntegrations')(functi
 })
 
 /** Match address.ts publicAddress/readMcp and Executor imports: URL serialization folds scheme,
- * host case and default ports; a terminal DNS dot names the same host. Preserve the exact path
- * (including its trailing slash), query and scheme because inspection dispatches that URL and
- * imports persist it. Redirect equivalence is checked separately after inspection. */
+ * host case and default ports; a terminal DNS dot and trailing path slash do not distinguish
+ * accounts on the same server. Inspection still dispatches the supplied URL. */
 function serverAddress(value: string) {
   return Option.map(Option.fromNullishOr(publicAddress(value)), (address) => {
     address.hostname = address.hostname.replace(/\.$/u, '')
+    address.pathname = address.pathname.replace(/\/+$/u, '')
     return address.href
   })
 }
@@ -224,14 +224,16 @@ function existingAccount(
           ? Option.contains(companyId, row.companyId)
           : row.companyId === null && row.personId === actor.person.id
         if (!sameOwner || !row.service.startsWith(IMPORTED)) return false
+        if (request.another && row.status !== 'failed') return false
         return Option.contains(serverAddress(row.service.slice(IMPORTED.length)), address)
       }),
     ),
   )
 }
 
-/** Pending authorization resumes the existing provider resources and row. Failed resources
- * must be removed explicitly; another Add must never silently allocate a duplicate account. */
+/** Pending authorization retains its resources. A failed personal account has no working
+ * authorization: asking again in chat replaces it through ordinary removal, not a duplicate.
+ * Shared accounts remain under their existing management authority. None continues registration. */
 const reuseAccount = Effect.fn('Connections.reuseAccount')(function* (
   actor: Actor,
   existing: ReturnType<typeof namedAccounts>[number],
@@ -239,43 +241,56 @@ const reuseAccount = Effect.fn('Connections.reuseAccount')(function* (
   const state = yield* stateOf(existing.row)
   return yield* ConnectionState.match<
     Effect.Effect<
-      AddIntegrationOutcome,
-      Effect.Error<ReturnType<typeof ConnectionStore.Service.resume>>,
-      ConnectionStore
+      Option.Option<AddIntegrationOutcome>,
+      Effect.Error<
+        | ReturnType<typeof ConnectionStore.Service.resume>
+        | ReturnType<typeof ConnectionStore.Service.remove>
+      >,
+      ConnectionStore | Effect.Services<ReturnType<typeof ConnectionStore.Service.remove>>
     >
   >(state, {
     Ready: () =>
-      Effect.succeed(
+      Effect.succeedSome(
         AddIntegrationOutcome.cases.AlreadyConnected.make({
           account: existing.account,
           name: existing.row.serviceName,
         }),
       ),
-    Failed: () =>
-      Effect.succeed(
-        AddIntegrationOutcome.cases.Failed.make({
-          account: existing.account,
-          name: existing.row.serviceName,
-        }),
-      ),
+    Failed: ({ reason }) =>
+      Effect.gen(function* () {
+        if (existing.row.companyId !== null || existing.row.personId !== actor.person.id)
+          return Option.some(
+            AddIntegrationOutcome.cases.Failed.make({
+              account: existing.account,
+              name: existing.row.serviceName,
+              reason,
+            }),
+          )
+        yield* (yield* ConnectionStore).remove(actor, existing.row.id)
+        return Option.none()
+      }),
     // A Run may reissue only its acting Person's grant. Company visibility is not permission
     // to transfer someone else's pending sign-in through the Person-only resume operation.
     NeedsAuthorization: () =>
       Effect.gen(function* () {
         if (existing.row.personId !== actor.person.id)
-          return AddIntegrationOutcome.cases.AwaitingInitiator.make({
-            name: existing.row.serviceName,
-          })
+          return Option.some(
+            AddIntegrationOutcome.cases.AwaitingInitiator.make({
+              name: existing.row.serviceName,
+            }),
+          )
         // A Run has no new client surface; retain the destination of the last client trip.
         const step = yield* (yield* ConnectionStore).resume(
           actor,
           existing.row.id,
           existing.row.returnsTo,
         )
-        return AddIntegrationOutcome.cases.PendingAuthorization.make({
-          account: existing.account,
-          step,
-        })
+        return Option.some(
+          AddIntegrationOutcome.cases.PendingAuthorization.make({
+            account: existing.account,
+            step,
+          }),
+        )
       }),
   })
 })
@@ -329,7 +344,10 @@ export const addIntegration = Effect.fn('Connections.addIntegration')(function* 
   const store = yield* ConnectionStore
   const records = yield* store.records(actor)
   const existing = existingAccount(records, actor, request, request.address)
-  if (Option.isSome(existing)) return yield* reuseAccount(actor, existing.value)
+  if (Option.isSome(existing)) {
+    const reused = yield* reuseAccount(actor, existing.value)
+    if (Option.isSome(reused)) return reused.value
+  }
   const source = yield* (yield* ConnectionAddress)
     .inspect(request.address)
     .pipe(Effect.catchTags(inspectionFailures))
@@ -339,8 +357,11 @@ export const addIntegration = Effect.fn('Connections.addIntegration')(function* 
   )
     return source
   // inspectAddress follows redirects; imports persist source.address, never the supplied alias.
-  const resolved = existingAccount(records, actor, request, source.address)
-  if (Option.isSome(resolved)) return yield* reuseAccount(actor, resolved.value)
+  const resolved = existingAccount(yield* store.records(actor), actor, request, source.address)
+  if (Option.isSome(resolved)) {
+    const reused = yield* reuseAccount(actor, resolved.value)
+    if (Option.isSome(reused)) return reused.value
+  }
   const step = yield* store.add(actor, request, source).pipe(Effect.catchTags(registrationFailures))
   if (
     AddIntegrationOutcome.guards.NotAnIntegration(step) ||

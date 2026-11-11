@@ -36,6 +36,11 @@ export function integrations(response: FindIntegrationsResponse) {
             NeedsAuthorization: () => 'needs sign-in',
             Failed: () => 'failed',
           }),
+          reason: ConnectionState.match(state, {
+            Ready: () => null,
+            NeedsAuthorization: () => null,
+            Failed: ({ reason }) => modelText(reason),
+          }),
         }),
         Catalog: ({ name, description, connected, authorization }) => ({
           name: modelText(name),
@@ -69,9 +74,10 @@ export function added(outcome: AddIntegrationOutcome): Schema.Json {
       alreadyConnected: true,
       message: `${modelText(name)} is already connected. Call find_tools to discover its tools and the account names you may use.`,
     }),
-    Failed: ({ name }) => ({
+    Failed: ({ name, reason }) => ({
       added: false,
-      message: `${modelText(name)} has failed. Remove ${modelText(name)} in Integrations settings before connecting again. Call find_tools for the account names you may use.`,
+      reason: modelText(reason),
+      message: `${modelText(name)} has failed: ${modelText(reason)}`,
     }),
     AwaitingInitiator: ({ name }) => ({
       added: false,
@@ -167,6 +173,9 @@ export function made(outcome: MakeIntegrationOutcome): Schema.Json {
       account: modelText(account),
       message: `An Integration called ${modelText(name)} already exists and was not changed. To do something different, make a new one under a new name.`,
     }),
-    Failed: (value) => added(AddIntegrationOutcome.cases.Failed.make(value)),
+    Failed: ({ name }) => ({
+      added: false,
+      message: `${modelText(name)} has failed. Call find_integrations to read the failure reason.`,
+    }),
   })
 }

@@ -106,6 +106,7 @@ describe.skipIf(!testDatabaseConfigured)('An Integration added by address with s
             const added = yield* addIntegration(personalActor, {
               address: grain,
               name: 'Grain',
+              another: false,
               shared: false,
             }).pipe(
               Effect.provideService(

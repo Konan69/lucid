@@ -34,6 +34,10 @@ import { testDatabaseConfigured } from '../database/testdb.ts'
 import { auditLayer } from '../audit/record.ts'
 import { auditEntries } from '../audit/tables.ts'
 import { Database } from '../database/client.ts'
+import {
+  integrations,
+  added,
+} from '../../../../packages/agent/runtime/src/tools/connectionviews.ts'
 
 /** Handler calls retain transport authentication, real store scope and real disposable SQL. */
 describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
@@ -67,6 +71,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
                   address: url,
                   name,
                   shared,
+                  another: false,
                 })
                 .pipe(
                   Effect.provideService(AuthContext, auth),
@@ -117,18 +122,104 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
                 name: 'Shared',
               }),
             )
-            expect(
-              AddIntegrationOutcome.guards.Added(
-                yield* add('https://server.example/mcp/', 'Slash', false),
-              ),
-            ).toBe(true)
-            expect(yield* store.records(ownerActor)).toHaveLength(6)
+            expect(yield* add('https://SERVER.example/mcp/', 'Slash', false)).toEqual(
+              AddIntegrationOutcome.cases.AlreadyConnected.make({
+                account: 'Records',
+                name: 'Records',
+              }),
+            )
+            expect(yield* store.records(ownerActor)).toHaveLength(5)
           }),
       )
     },
   )
 
   layer(connectionTestLayer)((it) => {
+    it.effect('adds another account of a Ready address import with a fresh sign-in step', () =>
+      Effect.gen(function* () {
+        const { personalActor, threadId } = yield* fixture()
+        const store = yield* ConnectionStore
+        const probe = yield* ConnectionProbe
+        const source = ConnectionSource.cases.Mcp.make({
+          address: 'https://another.example/mcp',
+          authorization: 'auto',
+        })
+        const request = { address: source.address, name: 'Records', shared: false, another: false }
+        const first = yield* store.add(personalActor, request, source)
+        expect(ConnectionStep.guards.Done(first)).toBe(true)
+        yield* Ref.set(probe.step, 'OpenSignIn')
+        yield* TestClock.adjust(1)
+        const result = yield* connectionHandlers.AddIntegration({ ...request, another: true }).pipe(
+          Effect.provideService(
+            AuthContext,
+            AuthState.Vivid({
+              person: personalActor.person,
+              workspace: personalActor.workspace,
+              threadId,
+            }),
+          ),
+          Effect.provideService(
+            ConnectionAddress,
+            ConnectionAddress.of({
+              inspect: () => Effect.succeed(source),
+            }),
+          ),
+        )
+        if (!AddIntegrationOutcome.guards.NeedsSignIn(result)) expect.fail('Expected sign-in')
+        expect(result.step.connection.id).not.toBe(first.connection.id)
+        expect(result.step.connection.account).toBe('Records (2)')
+        const rows = yield* store.records(personalActor)
+        expect(rows).toHaveLength(2)
+        expect(rows.find((row) => row.id === first.connection.id)?.status).toBe('ready')
+      }),
+    )
+
+    it.effect('replaces a Failed personal import through removal and returns fresh sign-in', () =>
+      Effect.gen(function* () {
+        const { personalActor, threadId } = yield* fixture()
+        const store = yield* ConnectionStore
+        const probe = yield* ConnectionProbe
+        const source = ConnectionSource.cases.Mcp.make({
+          address: 'https://retry.example/mcp/',
+          authorization: 'auto',
+        })
+        const request = { address: source.address, name: 'Records', shared: false, another: false }
+        const first = yield* store.add(personalActor, request, source)
+        const row = yield* store.get(personalActor, first.connection.id)
+        yield* store.failed(personalActor, row, 'Could not load tools')
+        const removals = yield* Ref.get(probe.removals)
+        yield* Ref.set(probe.step, 'OpenSignIn')
+        const result = yield* connectionHandlers
+          .AddIntegration({
+            ...request,
+            address: 'https://RETRY.example/mcp',
+          })
+          .pipe(
+            Effect.provideService(
+              AuthContext,
+              AuthState.Vivid({
+                person: personalActor.person,
+                workspace: personalActor.workspace,
+                threadId,
+              }),
+            ),
+            Effect.provideService(
+              ConnectionAddress,
+              ConnectionAddress.of({
+                inspect: () => Effect.succeed(source),
+              }),
+            ),
+          )
+        if (!AddIntegrationOutcome.guards.NeedsSignIn(result)) expect.fail('Expected sign-in')
+        expect(result.step.connection.id).not.toBe(first.connection.id)
+        expect(result.step.connection.account).toBe('Records')
+        expect((yield* store.records(personalActor)).map((entry) => entry.id)).toEqual([
+          result.step.connection.id,
+        ])
+        expect(yield* Ref.get(probe.removals)).toBe(removals + 1)
+      }),
+    )
+
     it.effect(
       'resumes both pending authorization forms across two attempts without a second row',
       () =>
@@ -158,6 +249,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
                   address: `https://pending.example/${step}`,
                   name: step,
                   shared: true,
+                  another: false,
                 })
                 .pipe(
                   Effect.provideService(AuthContext, auth),
@@ -180,6 +272,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
             .AddIntegration({
               address: 'https://pending.example/OpenSignIn',
               name: 'OpenSignIn',
+              another: false,
               shared: true,
             })
             .pipe(
@@ -187,7 +280,23 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
               Effect.provideService(ConnectionAddress, address),
             )
           expect(failed).toEqual(
-            AddIntegrationOutcome.cases.Failed.make({ account: 'OpenSignIn', name: 'OpenSignIn' }),
+            AddIntegrationOutcome.cases.Failed.make({
+              account: 'OpenSignIn',
+              name: 'OpenSignIn',
+              reason: 'Provider resource missing',
+            }),
+          )
+          expect(added(failed)).toMatchObject({ reason: 'Provider resource missing' })
+          expect(JSON.stringify(added(failed))).not.toContain('settings')
+          const found = yield* connectionHandlers
+            .FindIntegrations({ query: 'OpenSignIn' })
+            .pipe(Effect.provideService(AuthContext, auth))
+          expect(integrations(found).integrations).toContainEqual(
+            expect.objectContaining({
+              account: 'OpenSignIn',
+              state: 'failed',
+              reason: 'Provider resource missing',
+            }),
           )
           expect(yield* store.records(ownerActor)).toHaveLength(2)
           return yield* Effect.void
@@ -210,7 +319,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
           })
           yield* store.add(
             ownerActor,
-            { address: address.address, name: 'Company Records', shared: true },
+            { address: address.address, name: 'Company Records', another: false, shared: true },
             address,
           )
           const before = yield* store.records(ownerActor)
@@ -224,6 +333,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
             .AddIntegration({
               address: address.address,
               name: 'Other label',
+              another: false,
               shared: true,
             })
             .pipe(
@@ -255,7 +365,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
         })
         yield* store.add(
           ownerActor,
-          { address: source.address, name: 'Older Failed', shared: false },
+          { address: source.address, name: 'Older Failed', another: false, shared: false },
           source,
         )
         const rows = yield* store.records(ownerActor)
@@ -315,7 +425,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
           ]),
         )
         const result = yield* connectionHandlers
-          .AddIntegration({ address: source.address, name: 'Again', shared: false })
+          .AddIntegration({ address: source.address, name: 'Again', another: false, shared: false })
           .pipe(
             Effect.provideService(
               AuthContext,
@@ -351,7 +461,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
         })
         yield* store.add(
           ownerActor,
-          { address: source.address, name: 'Pending', shared: false },
+          { address: source.address, name: 'Pending', another: false, shared: false },
           source,
         )
         const row = (yield* store.records(ownerActor))[0]
@@ -380,7 +490,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
             // Capture InvalidRequest at the store boundary for both resume paths.
             const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
             return yield* connectionHandlers
-              .AddIntegration({ address, name: 'Again', shared: false })
+              .AddIntegration({ address, name: 'Again', another: false, shared: false })
               .pipe(Effect.provideService(ConnectionAddress, addresses), Effect.provide(context))
           }).pipe(
             Effect.scoped,
@@ -433,6 +543,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
             .AddIntegration({
               address: 'https://server.example/mcp',
               name: 'Server',
+              another: false,
               shared: false,
             })
             .pipe(Effect.provideService(ConnectionAddress, addresses), Effect.provide(context))
@@ -499,7 +610,12 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
           const probe = yield* ConnectionProbe
           const before = yield* Ref.get(probe.begins)
           const denied = yield* connectionHandlers
-            .AddIntegration({ address: 'http://127.0.0.1/', name: 'Forbidden', shared: true })
+            .AddIntegration({
+              address: 'http://127.0.0.1/',
+              name: 'Forbidden',
+              another: false,
+              shared: true,
+            })
             .pipe(
               Effect.provideService(AuthContext, auth),
               Effect.provideService(
@@ -702,6 +818,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
                   .AddIntegration({
                     address: 'https://integration.example/mcp',
                     name: 'Keyed Records',
+                    another: false,
                     shared: false,
                   })
                   .pipe(

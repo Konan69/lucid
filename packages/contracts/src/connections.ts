@@ -646,11 +646,14 @@ export interface FindIntegrationsResponse extends Schema.Schema.Type<
   typeof FindIntegrationsResponse
 > {}
 
-/** URL imports are personal by default; shared imports require the existing Company admin role. */
+/** URL imports are personal by default; shared imports require the existing Company admin role.
+ * another=false reuses an account already added for this address; true means the Person asked
+ * for one more account of the same server. */
 export const AddIntegrationRequest = Schema.Struct({
   address: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(4000)),
   name: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(40)),
   shared: Schema.Boolean,
+  another: Schema.Boolean,
 })
 export interface AddIntegrationRequest extends Schema.Schema.Type<typeof AddIntegrationRequest> {}
 
@@ -676,7 +679,11 @@ export const AddIntegrationOutcome = Schema.TaggedUnion({
   AlreadyConnected: { account: Schema.String, name: Schema.String },
   PendingAuthorization: { account: Schema.String, step: ConnectionStep },
   AwaitingInitiator: { name: Schema.String },
-  Failed: { account: Schema.String, name: Schema.String },
+  Failed: {
+    account: Schema.String,
+    name: Schema.String,
+    reason: ConnectionState.cases.Failed.fields.reason,
+  },
   NeedsSignIn: { step: ConnectionStep.cases.OpenSignIn },
   NeedsKey: { step: ConnectionStep.cases.EnterKey },
   NotAnIntegration: { reason: ConnectionAddressRefusal },

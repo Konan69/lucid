@@ -3,6 +3,8 @@ import {
   Tool,
   ConnectionStep,
   ConnectionState,
+  ConnectionOwnership,
+  type Connection,
   AddIntegrationOutcome,
   MakeIntegrationOutcome,
   MakeIntegrationRequest,
@@ -63,7 +65,7 @@ export function connectionTools(runTool: RunTool) {
     defineTool({
       name: Tool.connect,
       description:
-        'Offer an integration as a secure connect card for the person. The card shows only the service, so in the same reply, before you call this, write one short sentence to the person in your own voice that hands them the card. Use it for a service named in unconnected by find_tools. A person can have several accounts on one integration: to add one more account on a service they already connected (a second Gmail, their work GitHub), whether they told you to connect it or the account they asked for is not among theirs, set another to true and say in reason which account it is.',
+        'Offer an integration as a secure connect card for the person. The card shows only the service, so in the same reply, before you call this, write one short sentence to the person in your own voice that hands them the card. Use it for a service named in unconnected by find_tools or an account named by find_integrations. A person can have several accounts on one integration: to add one more account on a service they already connected (a second Gmail, their work GitHub), whether they told you to connect it or the account they asked for is not among theirs, set another to true and say in reason which account it is.',
       input: v.object({
         summary,
         service: text(
@@ -84,7 +86,8 @@ export function connectionTools(runTool: RunTool) {
         ),
       }),
       /**
-       * FindServices is Person-only; runtime authority resolves services through FindTools instead.
+       * FindServices is Person-only; catalogue offers resolve through FindTools and address
+       * imports resolve through the same accessible account inventory as discovery.
        *
        * Discovery answers with two lists: services the Person has no account on (`unconnected`),
        * and services they have one on (`connected`). An ordinary offer names one of the first. A
@@ -97,9 +100,21 @@ export function connectionTools(runTool: RunTool) {
         return runTool(
           Effect.gen(function* () {
             const { client } = yield* Scope
+            const another = data.another === true
+            // Address imports have no catalogue entry. Resolve the same account name discovery
+            // showed, then let AddIntegration enforce ownership and failed-account replacement.
+            const { connections } = yield* client.ListConnections()
+            const imported = connections.find(
+              (entry) =>
+                entry.origin === 'Address' &&
+                views.modelText(entry.account).trim().toLowerCase() ===
+                  data.service.trim().toLowerCase(),
+            )
+            if (imported !== undefined) {
+              return yield* connectImported(imported, another)
+            }
             const found = yield* client.FindTools({ query: data.service, limit: 25 })
             const name = (item: (typeof found.unconnected)[number]) => views.modelText(item.name)
-            const another = data.another === true
             if (!another) {
               const held = named(catalog(found.connected, name), data.service)
               if (Result.isSuccess(held)) return { output: views.alreadyConnected(held.success) }
@@ -131,6 +146,51 @@ export function connectionTools(runTool: RunTool) {
     makeIntegrationTool(runTool),
   ] as const
 }
+
+/** Address imports have no catalogue offer. Existing shared accounts remain intact; the server
+ * owns personal retries and allocates another account through the ordinary import path. */
+const connectImported = Effect.fn('Integrations.connectImported')(function* (
+  connection: Connection,
+  another: boolean,
+) {
+  const { client } = yield* Scope
+  if (!another && ConnectionState.guards.Ready(connection.state))
+    return {
+      output: connectionViews.added(
+        AddIntegrationOutcome.cases.AlreadyConnected.make({
+          account: connection.account,
+          name: connection.serviceName,
+        }),
+      ),
+    }
+  if (
+    ConnectionState.guards.Failed(connection.state) &&
+    ConnectionOwnership.guards.Shared(connection.ownership)
+  )
+    return {
+      output: connectionViews.added(
+        AddIntegrationOutcome.cases.Failed.make({
+          account: connection.account,
+          name: connection.serviceName,
+          reason: connection.state.reason,
+        }),
+      ),
+    }
+  const outcome = yield* client.AddIntegration({
+    address: connection.service.slice('url:'.length),
+    name: connection.serviceName,
+    shared: false,
+    // A named failed account is the one being replaced even when another account already works.
+    another: another || ConnectionState.guards.Failed(connection.state),
+  })
+  return {
+    output: connectionViews.added(outcome),
+    terminate:
+      AddIntegrationOutcome.isAnyOf(['NeedsSignIn', 'NeedsKey'])(outcome) ||
+      (AddIntegrationOutcome.guards.PendingAuthorization(outcome) &&
+        !ConnectionStep.guards.Done(outcome.step)),
+  }
+})
 
 /** Source is decoded at model ingress with the same bounds and path rules as the RPC. */
 function makeIntegrationTool(runTool: RunTool) {
@@ -297,6 +357,7 @@ function integrationTools(runTool: RunTool) {
               address: data.address,
               name: data.name,
               shared: false,
+              another: false,
             })
             if (AddIntegrationOutcome.isAnyOf(['NotAnIntegration', 'Unreachable'])(outcome))
               yield* warnFailure('add_integration', outcome._tag)

@@ -120,6 +120,7 @@ describe.skipIf(!enabled)('keyed MCP product acceptance', () => {
                 .AddIntegration({
                   address: 'https://api.githubcopilot.com/mcp/',
                   name: 'GitHub proof',
+                  another: false,
                   shared: false,
                 })
                 .pipe(Effect.provideService(AuthContext, vivid))

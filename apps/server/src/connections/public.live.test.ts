@@ -119,6 +119,7 @@ describe.skipIf(!enabled)('Public integrations through Vivid and Executor', () =
                 const added = yield* connectionHandlers.AddIntegration({
                   name: source.name,
                   address: source.address,
+                  another: false,
                   shared: false,
                 })
                 console.info(JSON.stringify({ source: source.name, added }))
