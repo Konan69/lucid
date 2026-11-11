@@ -1,5 +1,6 @@
 import * as NodeHttp from 'node:http'
 import { describe, expect, layer } from '@effect/vitest'
+import { ReadPageOutcome } from '@vivid/contracts'
 import { Clock, Deferred, Effect, Fiber, Predicate, Queue, Result, Layer } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { PageReader, pageReaderLayer } from './page.ts'
@@ -175,7 +176,8 @@ layer(
         ] as const
         const server = NodeHttp.createServer((request, response) => {
           response.setHeader('Content-Type', 'text/html')
-          const fixture = fixtures[Number(request.url?.slice(1))]
+          if (request.url === undefined) throw new Error('Expected the fixture request path')
+          const fixture = fixtures[Number(request.url.slice(1))]
           response.end(
             `<html><body>${fixture === undefined ? 'An ordinary article.' : fixture[0]}</body></html>`,
           )
@@ -197,11 +199,16 @@ layer(
         for (const [index, fixture] of fixtures.entries()) {
           expect(
             yield* reader.read({ address: `http://page.test:${address.port}/${index}` }),
-          ).toEqual({ _tag: 'Refused', reason: fixture[1] })
+          ).toEqual(ReadPageOutcome.cases.Refused.make({ reason: fixture[1] }))
         }
-        expect(
-          yield* reader.read({ address: `http://page.test:${address.port}/article` }),
-        ).toMatchObject({ _tag: 'Read', text: 'An ordinary article.' })
+        expect(yield* reader.read({ address: `http://page.test:${address.port}/article` })).toEqual(
+          ReadPageOutcome.cases.Read.make({
+            address: `http://page.test:${address.port}/article`,
+            title: '',
+            text: 'An ordinary article.',
+            truncated: false,
+          }),
+        )
       }).pipe(Effect.scoped),
   )
 })

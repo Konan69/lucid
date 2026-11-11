@@ -9,6 +9,7 @@ import * as Option from 'effect/Option'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 import {
+  NotificationId,
   Conflict,
   DatabaseFailure,
   HandoffField,
@@ -407,6 +408,7 @@ const announce = Effect.fn('Handoffs.announce')(function* (
   // A step handed over in a Background Thread is shown by the Feed, never as a notification.
   if (!notifiesFrom(thread.place)) return
   yield* (yield* Notifier).notify({
+    id: NotificationId.make(crypto.randomUUID()),
     personId: actor.person.id,
     companyId: thread.companyId,
     kind: 'needs-you',

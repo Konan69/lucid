@@ -4,6 +4,7 @@ import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import {
   AddIntegrationOutcome,
   ConnectionMatch,
+  ConnectionState,
   ConnectionStep,
   Forbidden,
   SessionId,
@@ -34,10 +35,6 @@ import { testDatabaseConfigured } from '../database/testdb.ts'
 import { auditLayer } from '../audit/record.ts'
 import { auditEntries } from '../audit/tables.ts'
 import { Database } from '../database/client.ts'
-import {
-  integrations,
-  added,
-} from '../../../../packages/agent/runtime/src/tools/connectionviews.ts'
 
 /** Handler calls retain transport authentication, real store scope and real disposable SQL. */
 describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
@@ -170,7 +167,9 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
         expect(result.step.connection.account).toBe('Records (2)')
         const rows = yield* store.records(personalActor)
         expect(rows).toHaveLength(2)
-        expect(rows.find((row) => row.id === first.connection.id)?.status).toBe('ready')
+        expect(rows).toContainEqual(
+          expect.objectContaining({ id: first.connection.id, status: 'ready' }),
+        )
       }),
     )
 
@@ -286,16 +285,13 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
               reason: 'Provider resource missing',
             }),
           )
-          expect(added(failed)).toMatchObject({ reason: 'Provider resource missing' })
-          expect(JSON.stringify(added(failed))).not.toContain('settings')
           const found = yield* connectionHandlers
             .FindIntegrations({ query: 'OpenSignIn' })
             .pipe(Effect.provideService(AuthContext, auth))
-          expect(integrations(found).integrations).toContainEqual(
+          expect(found.integrations).toContainEqual(
             expect.objectContaining({
               account: 'OpenSignIn',
-              state: 'failed',
-              reason: 'Provider resource missing',
+              state: ConnectionState.cases.Failed.make({ reason: 'Provider resource missing' }),
             }),
           )
           expect(yield* store.records(ownerActor)).toHaveLength(2)

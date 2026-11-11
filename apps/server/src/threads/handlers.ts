@@ -4,6 +4,7 @@ import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Stream from 'effect/Stream'
 import {
+  NotificationId,
   type AcknowledgeRunDeliveryRequest,
   Forbidden,
   InvalidRequest,
@@ -64,6 +65,7 @@ const announceShare = Effect.fn('Threads.announceShare')(function* (
     added,
     (personId) =>
       notifier.notify({
+        id: NotificationId.make(crypto.randomUUID()),
         personId,
         companyId: thread.companyId,
         kind: 'shared',

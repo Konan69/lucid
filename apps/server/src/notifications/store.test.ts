@@ -2,7 +2,7 @@ import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
 import { inArray } from 'drizzle-orm'
 import { Effect, Layer, Option, Ref, Result, Stream } from 'effect'
-import { Person, PersonId, PushOutcome, Workspace } from '@vivid/contracts'
+import { NotificationId, Person, PersonId, PushOutcome, Workspace } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
 import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
@@ -118,7 +118,7 @@ describe.skipIf(!testDatabaseConfigured)('recipient notifications', () => {
           threadId: null,
           approvalId: null,
         }
-        yield* notifier.notify(notice)
+        yield* notifier.notify({ ...notice, id: NotificationId.make(crypto.randomUUID()) })
         const own = yield* store.list(owner)
         expect(own.unreadCount).toBe(1)
         const [stored] = own.notifications

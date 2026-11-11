@@ -1125,14 +1125,14 @@ layer(
             yield* place('Conversation')
             const spoken = yield* test.conversation.admit(said(test.threadId, test.ada))
             yield* test.finish(spoken.runId)
-            expect(
-              yield* database.run(
-                database
-                  .select({ kind: notifications.kind })
-                  .from(notifications)
-                  .where(eq(notifications.conversationId, test.threadId)),
-              ),
-            ).toEqual([{ kind: 'finished' }])
+            expect((yield* Ref.get(test.notices)).map((notice) => notice.kind)).toEqual([
+              'needs-you',
+              'finished',
+            ])
+            expect(yield* Ref.get(test.notices)).toMatchObject([
+              { kind: 'needs-you' },
+              { kind: 'finished', id: `${spoken.runId}:finished:${test.ada}` },
+            ])
           }),
         ),
     )

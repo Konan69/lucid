@@ -3,6 +3,7 @@ import { Message } from '../observability/messages.ts'
 import * as Exit from 'effect/Exit'
 import {
   IntegrationAnswerOutcome,
+  NotificationId,
   type AnswerIntegrationInputRequest,
   type AnswerIntegrationInputResponse,
   ProposedAction,
@@ -316,6 +317,7 @@ const ask = Effect.fn('Inputs.ask')(function* (
   // A question waits on the Person wherever it was asked. One asked in a Background Thread is
   // shown on the Feed, and its notice opens the Feed (`opensAt`, `threads/place.ts`).
   yield* (yield* Notifier).notify({
+    id: NotificationId.make(crypto.randomUUID()),
     personId: actor.person.id,
     companyId: thread.companyId,
     kind: 'needs-you',

@@ -1,6 +1,7 @@
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import {
+  NotificationId,
   Conflict,
   MeResponse,
   SwitchWorkspaceRequest,
@@ -130,6 +131,7 @@ export const companyHandlers = {
     const invited = yield* store.personByEmail(invitation.email)
     if (Option.isSome(invited)) {
       yield* (yield* Notifier).notify({
+        id: NotificationId.make(crypto.randomUUID()),
         personId: invited.value,
         companyId: null,
         kind: 'invited',

@@ -114,7 +114,9 @@ export interface NotifierService {
    * Tells one Person something happened: stores the notification and wakes their open clients.
    * Device registration controls push delivery; every notice remains available in the inbox.
    */
-  readonly notify: (notice: Notice) => Effect.Effect<void, DatabaseInfrastructureError>
+  readonly notify: (
+    notice: Notice & { readonly id: NotificationId },
+  ) => Effect.Effect<void, DatabaseInfrastructureError>
 }
 
 /** Implemented in `notifications/notifier.ts` by `notifierLayer`. */
@@ -127,9 +129,11 @@ export const notifierLayer = Layer.effect(
     const database = yield* Database
     const targets = yield* PushTargets
     const factory = yield* PersistedQueue.PersistedQueueFactory
-    /** A disabled preference suppresses storage and publication, so no unread record is left behind. */
-    const notify = Effect.fn('Notifier.notify')(function* (notice: Notice) {
-      yield* oweNotice({ id: NotificationId.make(crypto.randomUUID()), notice }).pipe(
+    /** The caller owns identity so retries and joined answers owe the same notification. */
+    const notify = Effect.fn('Notifier.notify')(function* (
+      notice: Parameters<NotifierService['notify']>[0],
+    ) {
+      yield* oweNotice({ id: notice.id, notice }).pipe(
         // Preserve the caller's SQL transaction service while restoring stable authorities.
         Effect.provideService(Database, database),
         Effect.provideService(PushTargets, targets),

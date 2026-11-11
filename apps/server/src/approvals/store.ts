@@ -1,7 +1,7 @@
 import * as Exit from 'effect/Exit'
 import * as Match from 'effect/Match'
 import { DeliveryMessage } from '../threads/conversation.ts'
-import { IntegrationAnswerOutcome, SignalCue } from '@vivid/contracts'
+import { IntegrationAnswerOutcome, NotificationId, SignalCue } from '@vivid/contracts'
 import { IntegrationAnswers } from '../connections/answers.ts'
 import { integrationAnswerText } from '../connections/asks.ts'
 import * as NodeCrypto from 'node:crypto'
@@ -1004,6 +1004,7 @@ const raise = Effect.fn('Approvals.raise')(function* (
   // An Approval waits on the Person wherever it was raised. One raised in a Background Thread is
   // shown on the Feed, and its notice opens the Feed (`opensAt`, `threads/place.ts`).
   yield* (yield* Notifier).notify({
+    id: NotificationId.make(crypto.randomUUID()),
     personId: actor.person.id,
     companyId: companyColumnOf(actor.workspace),
     kind: 'needs-you',
