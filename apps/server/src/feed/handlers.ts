@@ -42,7 +42,7 @@ export const feedHandlers = {
     if (work.personId !== person) return yield* new NotFound({ message: 'Thread not found' })
     return yield* dismissFeedItem(person, work.id)
   }),
-  /** Pressing a Feed item is a Person's act: a new Conversation about its work (`resume.ts`). */
+  /** Pressing a Feed item is a Person's act: it opens the chat about its work (`resume.ts`). */
   ResumeFeedItem: Effect.fn('Rpc.ResumeFeedItem')(function* (request: ResumeFeedItemRequest) {
     yield* requirePerson()
     return yield* resumeFeedItem(yield* requireActor(), request)

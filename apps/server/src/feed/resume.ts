@@ -14,7 +14,7 @@ import type { Actor } from '../auth/access.ts'
 import { Database } from '../database/client.ts'
 import { Runtime } from '../runtime/client.ts'
 import { readThreadHistory, textOf } from '../runtime/history.ts'
-import { requireThread } from '../threads/access.ts'
+import { requireThread, type StoredThread } from '../threads/access.ts'
 import {
   Conversation,
   DeliveryMessage,
@@ -113,14 +113,79 @@ const cardOf = Effect.fn('Feed.resume.card')(function* (person: PersonId, thread
   )
 })
 
+/** Hands Vivid server-made text in a Thread as a `carry-on` signal, which no screen draws. */
+const carryOn = Effect.fn('Feed.resume.carryOn')(function* (
+  thread: ThreadId,
+  person: PersonId,
+  key: string,
+  body: string,
+) {
+  yield* (yield* Conversation).admit({
+    threadId: thread,
+    personId: person,
+    speaker: DeliverySpeaker.cases.Acting.make({}),
+    message: DeliveryMessage.cases.Signal.make({ cue: SignalCue.cases.CarryOn.make({ body }) }),
+    // No fingerprint: the hand-over is the server's text, read afresh on a retry, and the key
+    // alone names the delivery, as for other server-made text (`StoredRunOrigin.Message`).
+    origin: StoredRunOrigin.cases.Message.make({}),
+    idempotencyKey: messageKey(person, key),
+    clientKey: key,
+  })
+})
+
 /**
- * Starts a new Conversation about one Feed item's work and hands Vivid that work there. Only the
- * Person's own Threads are on their Feed (`read.ts` `mine`), so only those can be carried over.
- * The work is read before anything is made, so a history that cannot be read leaves no empty
- * Conversation behind. The Conversation is created under the client's id and the hand-over is
- * admitted under the client's key, so a press sent again finds both instead of making a second.
- * The hand-over is a `carry-on` signal, which no screen draws: what the Person sees is Vivid's
- * answer, never words put in their mouth.
+ * A new Conversation about Background work, with the work handed over to Vivid there. The work is
+ * read before anything is made, so a history that cannot be read leaves no empty Conversation
+ * behind. The Conversation is created under the client's id and the hand-over is admitted under
+ * the client's key, so a press sent again finds both instead of making a second.
+ */
+const handOver = Effect.fn('Feed.resume.handOver')(function* (
+  actor: Actor,
+  work: StoredThread,
+  request: ResumeFeedItemRequest,
+  card: ReadonlyArray<Card>,
+) {
+  const history = yield* readThreadHistory(yield* Runtime, work.id).pipe(Effect.scoped)
+  const thread = yield* (yield* ThreadStore).create(actor, {
+    id: request.conversation,
+    title: work.title,
+    projectId: null,
+  })
+  yield* carryOn(
+    thread.id,
+    actor.person.id,
+    request.key,
+    handedOver(work.title, request.opening, card, history),
+  )
+  return thread
+})
+
+/**
+ * A Conversation on the Feed is already the chat about its work, so pressing it opens it. Making
+ * a second Conversation about it left two Threads with one title in the Person's list (11 November
+ * 2026, "Reconnect Notion Agency connection"). An answer pressed on its card is handed to Vivid
+ * there, under the client's key as a hand-over is.
+ */
+const inPlace = Effect.fn('Feed.resume.inPlace')(function* (
+  person: PersonId,
+  work: StoredThread,
+  request: ResumeFeedItemRequest,
+) {
+  if (FeedOpening.guards.Answered(request.opening))
+    yield* carryOn(
+      work.id,
+      person,
+      request.key,
+      `The Person answered what you asked here by pressing "${request.opening.words}" on its card on their Feed. Act on their answer now, then say in a sentence or two what you did, or what stopped you.`,
+    )
+  return yield* (yield* ThreadStore).view(work, person)
+})
+
+/**
+ * Opens the chat about one Feed item's work: the Conversation itself when the work is one, a new
+ * Conversation with the work handed over when it is Background work. Only the Person's own
+ * Threads are on their Feed (`read.ts` `mine`), so only those can be opened from it. What the
+ * Person sees is Vivid's answer, never words put in their mouth.
  */
 export const resumeFeedItem = Effect.fn('Feed.resume')(function* (
   actor: Actor,
@@ -129,28 +194,11 @@ export const resumeFeedItem = Effect.fn('Feed.resume')(function* (
   const person = actor.person.id
   const work = yield* requireThread(request.work, person)
   if (work.personId !== person) return yield* new NotFound({ message: 'Thread not found' })
-  const history = yield* readThreadHistory(yield* Runtime, work.id).pipe(Effect.scoped)
   const card = yield* cardOf(person, work.id)
-  const thread = yield* (yield* ThreadStore).create(actor, {
-    id: request.conversation,
-    title: work.title,
-    projectId: null,
-  })
-  yield* (yield* Conversation).admit({
-    threadId: thread.id,
-    personId: person,
-    speaker: DeliverySpeaker.cases.Acting.make({}),
-    message: DeliveryMessage.cases.Signal.make({
-      cue: SignalCue.cases.CarryOn.make({
-        body: handedOver(work.title, request.opening, card, history),
-      }),
-    }),
-    // No fingerprint: the hand-over is the server's text, read afresh on a retry, and the key
-    // alone names the delivery, as for other server-made text (`StoredRunOrigin.Message`).
-    origin: StoredRunOrigin.cases.Message.make({}),
-    idempotencyKey: messageKey(person, request.key),
-    clientKey: request.key,
-  })
+  const thread =
+    work.place === 'Conversation'
+      ? yield* inPlace(person, work, request)
+      : yield* handOver(actor, work, request, card)
   // Answered, the card has had its answer: it is put away as a press on Done puts it away.
   if (FeedOpening.guards.Answered(request.opening) && card.length > 0)
     yield* (yield* FeedStore).mark(
