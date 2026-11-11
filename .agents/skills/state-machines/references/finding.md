@@ -2,11 +2,11 @@
 
 ## What `vivid/react-no-state-after-wait` sees
 
-`scripts/oxlint-plugin-vivid.mjs` (rule `reactNoStateAfterWait`) records setters from `const [x, setX] = useState(...)` and reports a direct call to one inside a function that has passed an `await`, a `yield*`, or an inline `.then`/`.catch`/`.finally` callback. Its tests in `scripts/oxlint-plugin-vivid.test.mjs` pin the blind spots on purpose.
+`scripts/oxlint-plugin-vivid.mjs` (rule `reactNoStateAfterWait`) records setters from `const [x, setX] = useState(...)` and already-declared local helpers that call them. It reports a direct setter or helper call inside a function that has passed an `await`, a `yield*`, or an inline `.then`/`.catch`/`.finally` callback, and named helper arguments to those settlement methods. Its tests in `scripts/oxlint-plugin-vivid.test.mjs` pin the blind spots on purpose.
 
-It misses: a setter reached through a helper (`await send(); end()`), a named callback (`.then(renewed)`), a setter passed as a prop or returned from a hook, an alias, `setX(await save())` (the setter is visited before the wait), `Effect.ensuring`/`Effect.sync`/`Effect.map` callbacks, timers, subscriptions and native callbacks, `useReducer` dispatch, Zustand and custom stores, atoms, and status shapes that never wait in the same function. `.agents/skills/state-machines/scripts/find.sh` searches for these shapes.
+It misses: helpers defined after their use, object-method and `useCallback`-wrapped helpers, a setter passed as a prop or returned from a hook, an alias, `setX(await save())` (the setter is visited before the wait), `Effect.ensuring`/`Effect.sync`/`Effect.map` callbacks, timers, subscriptions and native callbacks, `useReducer` dispatch, Zustand and custom stores, atoms, and status shapes that never wait in the same function. `.agents/skills/state-machines/scripts/find.sh` searches for these shapes.
 
-The ceiling in `scripts/gate/ratchets.mjs` is an aggregate count, checked both ways: above it fails, and below it fails too until the ceiling is set to the measured number. It keeps no list of grandfathered sites.
+The legacy list in `scripts/gate/waits.json` identifies each file, named function chain, setter or helper, and multiplicity. Unlisted writes and stale entries fail lint. `scripts/ceilings.mjs` rejects new or increased entries against the gate's comparison commit, so removing one site cannot pay for a new handler elsewhere. Renaming a legacy handler changes its identity; converting it removes that debt.
 
 ## Shapes to recognise
 

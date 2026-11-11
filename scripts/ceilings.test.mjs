@@ -188,6 +188,25 @@ void test('the lint stage rejects an increased numeric ceiling', (t) => {
   assert.match(lint.failed.join('\n'), /ceiling 18 -> 28/u)
 })
 
+/** A converted handler cannot purchase permission for a different late write. */
+void test('the lint stage rejects a same-count replacement of legacy wait sites', (t) => {
+  const repo = repository(t, table(18))
+  const waits = NodePath.join(repo.root, 'scripts/gate/waits.json')
+  NodeFS.writeFileSync(NodePath.join(repo.root, 'a.tsx'), 'old handler')
+  NodeFS.writeFileSync(NodePath.join(repo.root, 'b.tsx'), 'new handler')
+  NodeFS.writeFileSync(waits, JSON.stringify({ 'a.tsx': { 'A.save:setBusy': 1 } }))
+  repo.git(['add', '.'])
+  repo.git(['commit', '--quiet', '-m', 'existing wait site'])
+  const base = repo.git(['rev-parse', 'HEAD'])
+  NodeFS.writeFileSync(waits, JSON.stringify({ 'b.tsx': { 'B.save:setBusy': 1 } }))
+  const result = repo.run([base])
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /B\.save:setBusy.*0 -> 1/u)
+  const lint = { name: 'lint', failed: [], output: '' }
+  applyRatchets([lint], { root: repo.root, ceilingsBase: base, env: environment() })
+  assert.match(lint.failed.join('\n'), /B\.save:setBusy.*0 -> 1/u)
+})
+
 void test('failed lint cannot recommend lowering from a partial log', (t) => {
   const repo = repository(t, table(18))
   const lint = { name: 'lint', failed: ['linter stopped early'], output: '' }

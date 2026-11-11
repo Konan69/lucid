@@ -11,7 +11,7 @@ Check the installed version with `rg effect-machine pnpm-workspace.yaml`. This s
 
 ## 1. Find and classify
 
-Always run both the lint and `find.sh`. `pnpm gate --only lint --host <devbox-pick host>` reports `react-no-state-after-wait` against its ceiling in `scripts/gate/ratchets.mjs`. A plain `setX` after an `await` is counted there. `find.sh` lists only shapes the lint rule misses:
+Always run both the lint and `find.sh`. `pnpm gate --only lint --host <devbox-pick host>` rejects unlisted `react-no-state-after-wait` sites against the legacy list in `scripts/gate/waits.json`. It follows direct setters and already-declared named local helpers after waits. `find.sh` lists only shapes the lint rule misses:
 
 ```bash
 .agents/skills/state-machines/scripts/find.sh [paths]
@@ -70,14 +70,14 @@ Read [references/library.md](references/library.md) for exact shapes, the compil
 
 ## 5. Delete the old lifecycle
 
-Remove every `useState`, flag, map and callback the machine replaced, on every surface. Measure the lint count again and write the exact new number as the `react-no-state-after-wait` ceiling in `scripts/gate/ratchets.mjs`; the gate rejects a ceiling above or below the measured count. Keep existing server guarantees (idempotency keys, attempt checks, proposal digests) intact.
+Remove every `useState`, flag, map and callback the machine replaced, on every surface. Delete or lower the converted entries in `scripts/gate/waits.json`; lint rejects stale entries, and the gate rejects new or increased entries. Keep existing server guarantees (idempotency keys, attempt checks, proposal digests) intact.
 
 ## 6. Prove it
 
 - No pure unit, property or sequence tests of state (`AGENTS.md`); the library's `MachineTest` planner traces are not used here. State invariants live in the machine and the types.
 - Drive the real app with the `verify-vivid` skill (`.agents/skills/verify-vivid/SKILL.md`) for the feature the lifecycle serves, on the devbox. Exercise the races the trace in step 1 named: double press, press then cancel then press again, a slow answer arriving after a newer press, dismissal mid-flight, background and return on the phone. Check the phone on the devbox emulator. Name the feature file and the evidence path in the PR.
 - Where the server is involved, a database-backed integration test with `VIVID_TEST_DATABASE_URL` proves the server side.
-- `pnpm gate --host <devbox-pick host>` green, including the lowered ceiling.
+- `pnpm gate --host <devbox-pick host>` green, including the trimmed legacy list.
 - The seven `effect-machine` rules run at error for `packages/client/state`. Fix their diagnostics before review. [references/library.md](references/library.md#lint-in-the-gate) names all seven.
 
 ## 7. Review
@@ -86,4 +86,4 @@ Get a review from the other model family. Brief the reviewer on correctness per 
 
 ## Report
 
-The lifecycle and its class, the owner chosen, states and events in one line each, surfaces converted, the lint count before and after, verify-vivid evidence path, and the PR.
+The lifecycle and its class, the owner chosen, states and events in one line each, surfaces converted, the legacy sites removed, verify-vivid evidence path, and the PR.
