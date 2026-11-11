@@ -507,6 +507,7 @@ export async function watch(state, id, directory) {
   const integration = await connectPulse(state, directory)
   const marker = 'Pulse ' + crypto.randomUUID().slice(0, 8)
   await chat(state, id, watchWords(marker), directory)
+  await openedInPlace(state, id, directory)
   const proof = await occurrence(
     state,
     { id, integration, marker, away: async () => undefined },
@@ -517,7 +518,6 @@ export async function watch(state, id, directory) {
     rpc(state, 'RemoveConnection', { id: integration.connection.id }, directory),
   )
   await dismissedAndResumed(state, proof, directory)
-  await openedInPlace(state, id, directory)
 }
 
 /**
