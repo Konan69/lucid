@@ -15,7 +15,7 @@ A fine-grained or classic GitHub token that can read its owner's profile. Keep i
 After Launch and Doctor on the unchanged commit, run the recipe with the explicit run id.
 
 ```sh
-VIVID_VERIFY_GITHUB_TOKEN_FILE=/private/github-token .agents/skills/verify-vivid/verify feature github flue-<id>
+VIVID_VERIFY_GITHUB_TOKEN_FILE=/private/github-token .agents/skills/verify-vivid/verify feature github pi-<id>
 ```
 
 1. GitHub REST `GET /user` reads the token owner's login.

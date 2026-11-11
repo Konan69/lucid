@@ -20,7 +20,7 @@ The ceiling in `scripts/gate/ratchets.mjs` is an aggregate count, checked both w
 
 - A sheet or menu open flag, editable text, a selected option, a measured size: plain state. `creating` that only chooses whether a create form is shown is plain state, not an in-flight request.
 - A value that mirrors the server (lists, records, Computer state, membership): a live query in `packages/client/state/src/live.ts`.
-- Flue's run `status` (`packages/client/state/src/stream.ts`): library-owned; never mirror it into a machine.
+- Pi Durable's conversation lifecycle in each Person's cell is library-owned; never mirror it into a machine.
 - Existing protections must survive a conversion: Input-request and Approval attempt checks and proposal digests, key-sheet attempt ids, phone rule-text comparison, UUID-keyed upload rows, first-message delivery keys.
 
 ## Inventory snapshot on 24 October 2026 (main 2365c47f)

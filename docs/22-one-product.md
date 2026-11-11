@@ -82,9 +82,8 @@ A Run has exactly one acting Person. The application server is the only path to 
 
 - In a **Private** Thread the Message is delivered as a user turn. The actor is the Thread's creator.
 - In a **shared** Thread the Message is delivered as an attributed signal,
-  `<message person="…" from="Ada Obi">`. Flue renders it to the model as a user turn, keeps the
-  attribution in its own durable history, and exposes it to tools through `useDelivery()`. Clients
-  render it as that Person's Message.
+  `<message person="…" from="Ada Obi">`. The Person's Pi Durable cell owns the
+  conversation history. Clients render the message as that Person's Message.
 - A Watch event is delivered as a signal that names its owner.
 
 The runtime passes the Thread and the acting Person on every product call. The server re-checks that
@@ -199,8 +198,7 @@ handle on a record.
   through as the provider gave it.
 - **One exception, and why.** The cards for an Approval, a question and a service to connect are
   drawn by the clients from the tool result in the conversation, so those three results still
-  carry the reference the card needs. Flue has no way to send a client data the model does not
-  also read.
+  carry the reference the card needs.
 - **One response is for one Person.** In a shared Thread, a message from someone else while Vivid
   is still answering is not joined into that response; it is refused with a sentence, and sent
   again when the answer is done. Otherwise the rest of one Person's request would run with
@@ -350,7 +348,7 @@ partitioned by Company.
 Every read is a live query. Nothing on a screen is fetched and then left to go stale, and no
 client polls.
 
-- **The conversation** is Flue's durable stream, proxied by the server. Every participant in a
+- **The conversation** is the Person's Pi Durable conversation stream, proxied by the server. Every participant in a
   shared Thread observes the same stream and sees the same tokens.
 - **Everything else** is declared twice in `VividRpc` from the same payload and result: `ListThings`
   answers once, and `WatchThings` is a stream that sends the current result and then sends it again
@@ -447,7 +445,7 @@ Each step leaves a product that runs.
    creation and workspace switching; owners on every product table; the Actor and its access
    conditions; Thread audience and participants; invitations and roles.
 2. **The gateway and Runs.** `/api/vivid/*` behind the session; attributed delivery; Run records;
-   settlement observed from Flue; attention states.
+   settlement observed from the Person's cell; attention states.
 3. **Realtime.** Live queries for every read, the change bus, presence, optimistic writes.
 4. **The trust loop.** Input requests, Approvals, rules, the audit record, and their cards.
 5. **Connections on Executor.** The adapter, ownership, `find_tools` and `use_tool`, the connect card.

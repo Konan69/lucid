@@ -31,7 +31,7 @@ All hashes in `skills-lock.json` exclude each skill's `UPSTREAM.md`. External sk
 | product-description | VCOS owner | `11b030f9` | all files byte-identical | Provenance only |
 | prototype | VCOS owner | `7f38dca4` | all files byte-identical | Provenance only |
 | react-useeffect | softaworks/agent-toolkit | `3027f20f` | none | Provenance; content already current |
-| runtime-integration-testing | Vivid local/VCOS doctrine | `local-2026-09-19` | real-runtime doctrine | New per-test PostgreSQL/HTTP/Auth/Flue/connectors/Alchemy guidance with verified rc.116/Flue seams |
+| runtime-integration-testing | Vivid local/VCOS doctrine | `local-2026-09-19` | real-runtime doctrine | Per-test PostgreSQL, HTTP, Auth, Pi/celld, Integrations and Alchemy guidance |
 | tdd | VCOS owner | `7f38dca4` | all files byte-identical | Provenance only |
 | to-issues | VCOS owner | `7f38dca4` | all files byte-identical | Provenance only |
 | to-prd | VCOS owner | `7f38dca4` | all files byte-identical | Provenance only |
@@ -39,5 +39,5 @@ All hashes in `skills-lock.json` exclude each skill's `UPSTREAM.md`. External sk
 | vitest-evals | getsentry/vitest-evals | `8cff207d` | two pnpm install edits | Complete current refresh |
 | app-designer | supplied by the owner as `app-designer.zip` | `local-2026-10-13` | pnpm in place of the other package manager | New: direction by three rendered explorations, slop scan, critic rubric |
 | image-gen | owner's own skill | `local-2026-10-13` | reads the model output one level deeper, as the provider now returns it | New: image assets through Cloudflare unified AI |
-| verify-vivid | Vivid owner | `local-2026-10-21` | ownership and cleanup from `5b9deee3` | Real-model Flue journeys, assistant-scoped DOM counts, disposable SQL, cleanup and mandatory feature verification |
+| verify-vivid | Vivid owner | `local-2026-10-21` | ownership and cleanup from `5b9deee3` | Real-model Pi/celld journeys, assistant-scoped DOM counts, disposable SQL, cleanup and mandatory feature verification |
 | state-machines | Vivid local | `local-2026-10-24` | all local content | Convert client lifecycles to Effect Machine 0.46.0 with gate lint rules and attempt checks for queued outcomes |

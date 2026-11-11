@@ -28,7 +28,7 @@ A static survey the same day found about forty client lifecycles held in `useSta
 Two things to know when writing one:
 
 - Since 0.45, an idle local send commits its state before returning, and atom projections update in the same turn. Since 0.46, entered invocations also run until their first suspension in that turn. Outcomes still arrive in a later turn. The atom bridge queues sends during startup, so adapters need no manual wait for a machine reference. The web still reserves its sign-in tab inside the click because the provider address arrives after a network wait.
-- Snapshot restore restarts a state's work from the beginning. A machine is not durable execution and does not replace a database transaction, an idempotency key, or Flue's submission receipts.
+- Snapshot restore restarts a state's work from the beginning. A machine is not durable execution and does not replace a database transaction, an idempotency key, or Pi Durable's submission receipts.
 
 Not yet run at the decision: either library inside the Expo app on Hermes.
 
@@ -61,7 +61,7 @@ independent of state-machine choice.
 | Connection authorization            | Web and mobile separately manage authorization, retry, errors, returning from sign-in, and Thread continuation. | Best first trial: share the transition controller, retain native platform adapters.     |
 | Library ingestion                   | Mostly linear read, extract, and index work.                                                                    | Keep Effect programs; reconsider for resumable stages, cancellation, or richer retries. |
 | Notification read state, navigation | Mostly simple values and updates.                                                                               | Schemas and direct functions suffice.                                                   |
-| Conversation streaming              | Flue owns conversation execution and lifecycle.                                                                 | Preserve its authority; do not mirror it into a competing machine.                      |
+| Conversation streaming              | Pi Durable owns conversation execution and lifecycle in each Person's cell.                                     | Preserve its authority; do not mirror it into a competing machine.                      |
 
 Local evidence:
 
@@ -101,7 +101,7 @@ guards, so a visual path is not proof of runtime behavior.
 
 Saving a machine snapshot does not provide durable execution. Effect Machine serializes logical
 state, not running fibers, queues, or child processes; decoding does not restart those processes.
-XState restoration restarts invocations, which can repeat external work. Neither replaces Flue
+XState restoration restarts invocations, which can repeat external work. Neither replaces Pi Durable
 submission receipts, idempotency keys, database transactions, or concurrency checks.
 
 Effect Machine's unstable Cluster adapter rejects process-local invokes and commands. Do not
@@ -135,7 +135,7 @@ property tests or sequence tests of state. Prove behavior through database-backe
 tests or a live run through the real runtime.
 
 Persisted server lifecycles require additional race and restart tests through real storage and
-Flue seams. Follow the isolated test-database policy. Keep production scheduling, execution,
+Pi/celld seams. Follow the isolated test-database policy. Keep production scheduling, execution,
 credential handling, and computer-control implementations in their existing owned systems.
 
 ## Sources

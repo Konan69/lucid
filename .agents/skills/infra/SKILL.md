@@ -50,7 +50,7 @@ Do not run Drizzle `generate` during startup or deployment. Generation is a deve
 | Agent runtime | `http://127.0.0.1:5173` |
 | PostgreSQL | `postgresql://vivid:…@127.0.0.1:55433/vivid` |
 
-Keep the Flue runtime as one long-lived process. Do not add replicas or per-request startup.
+Each Person has one Pi Durable cell on celld. See [Runtime cells](../../../docs/27-runtime-cells.md).
 
 ## Failure handling
 

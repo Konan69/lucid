@@ -53,7 +53,6 @@
         "scripts/**/*.{ts,mjs}",
         "infra/**/*.{ts,mjs}",
         "tools/**/*.{ts,mjs}",
-        "!scripts/oneoff/**",
       ],
       "ignoreBinaries": ["celld"],
       // Tooling resolves these through the owning mobile/server package with createRequire.
@@ -117,14 +116,6 @@
       "drizzle": false,
     },
     "packages/agent/skills": { "entry": ["**/*.test.ts"] },
-    "scripts/oneoff": {
-      "entry": ["main.ts", "*.mjs", "*.test.ts", "vitest.config.ts"],
-      "project": ["*.{ts,mjs}"],
-      // This config is invoked from repository root; its test/setup entries are modeled there.
-      "vitest": false,
-      // bundle.mjs resolves the builder through the cells package.
-      "ignoreDependencies": ["esbuild"],
-    },
     "packages/contracts": {},
     "packages/compiler": {},
     "packages/client/rpc": { "entry": ["**/*.test.ts"] },
