@@ -192,11 +192,11 @@ export const SIGNAL_ENTRY = 'vivid.signal'
  * parsing: the envelope itself. `key` is the sending client's own key when a client's send became
  * this signal (a message in a shared Thread); the model never reads an entry's data.
  */
-export const SignalData = Schema.Struct({
+const SignalData = Schema.Struct({
   envelope: SignalEnvelope,
   key: Schema.optionalKey(Schema.String),
 })
-export type SignalData = typeof SignalData.Type
+type SignalData = typeof SignalData.Type
 
 /** A signal placed before 29 October 2026: its tag, string attributes and the words the model read. */
 const EarlierSignalData = Schema.Struct({
@@ -344,7 +344,7 @@ const cueText = (cue: SignalCue) =>
 
 /** Render a signal with its type first, then its ordered attributes and escaped body.
  * Instructions describe shared messages using these tags, so the rendering is a prompt contract. */
-export function signalText(envelope: SignalEnvelope) {
+function signalText(envelope: SignalEnvelope) {
   const tag = signalTypes[envelope.cue._tag]
   const named: ReadonlyArray<readonly [string, string]> = [
     ['type', tag],
