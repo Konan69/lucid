@@ -3,23 +3,48 @@ import Foundation
 import Security
 
 /// Both the module and extension compile this file, keeping the APNs Codable contract identical.
+///
+/// The card's content is `@vivid/contracts` `ActivitySnapshot`, decoded field for field. The face is
+/// static for the card's life: the app draws Vivid as the Person set it up when it starts the card.
 @available(iOS 16.2, *)
-struct VividActivityAttributes: ActivityAttributes {
+struct VividWorkAttributes: ActivityAttributes {
+  /// Vivid's face as the app shows it: fill and eye colours as hex, and the outline's name
+  /// (`@vivid/contracts` `FaceOutline`).
+  struct Face: Codable, Hashable {
+    let fill: String
+    let eyes: String
+    let outline: String
+  }
   struct Approval: Codable, Hashable {
     let id: String
     let digest: String
     let summary: String
     let review: Bool
   }
-  struct Snapshot: Codable, Hashable {
+  enum Phase: String, Codable, Hashable { case Working, Approval, Done, Failed }
+  struct Row: Codable, Hashable, Identifiable {
+    let thread: String
     let title: String
-    let status: String
+    let phase: Phase
+    /// A step while working, the result once done; absent when there is none to show.
+    let line: String?
+    var id: String { thread }
+  }
+  struct ContentState: Codable, Hashable {
+    let rows: [Row]
     let activeCount: Int
     let updatedAt: Double
-    let startedAt: Double?
     let approval: Approval?
   }
-  struct ContentState: Codable, Hashable { let snapshot: Snapshot }
+  let face: Face
+}
+
+/// The card type of binaries 0.3.20 and older, which the server started by push, one per Run.
+/// It is kept only so the app can end those leftover cards once; delete it with the next native
+/// change after 0.3.21.
+@available(iOS 16.2, *)
+struct VividActivityAttributes: ActivityAttributes {
+  struct ContentState: Codable, Hashable {}
 }
 
 /// A shared Keychain item grants native intents the same revocable session as the host app.

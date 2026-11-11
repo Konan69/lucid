@@ -1,4 +1,6 @@
 import { Activities, activitiesLayer } from '../activity/service.ts'
+import { resultOf, stepOf } from '../activity/lines.ts'
+import { readThreadHistory } from '../runtime/history.ts'
 import * as Effect from 'effect/Effect'
 import * as Stream from 'effect/Stream'
 import * as Layer from 'effect/Layer'
@@ -233,16 +235,30 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
     const refresh = activities
       .refresh(run.person.id)
       .pipe(Effect.catch(() => Effect.logWarning('Live Activity refresh failed')))
+    // The step a Run is on lives in the runtime, which tells the server nothing per step, so the
+    // Live Activity reads it from the Thread every few seconds while the Run works. An unchanged
+    // card is not pushed again (`activity/service.ts` `RESEND_UNCHANGED_MS`), so this costs one
+    // read, and a push only when the step moved; it also keeps the card inside its freshness.
+    const readStep = Effect.scoped(readThreadHistory(runtime, run.threadId)).pipe(
+      Effect.flatMap((state) => activities.note(run.threadId, stepOf(state))),
+      Effect.withErrorReporting,
+      Effect.ignore,
+    )
+    yield* activities.note(run.threadId, Option.none())
     yield* updates.pipe(
+      Stream.merge(Stream.tick('12 seconds').pipe(Stream.mapEffect(() => readStep))),
       Stream.runForEach(() => refresh),
       Effect.forkScoped,
     )
-    yield* activities
-      .refresh(run.person.id)
-      .pipe(Effect.catch(() => Effect.logWarning('Live Activity refresh failed')))
     const observed = yield* observedSettlement(runtime, run)
     const { settlement } = observed
     const changed = yield* database.transaction(() => end(run, settlement))
+    // The card shows how the Run ended in Vivid's own first sentence; a Run that did not complete
+    // shows no line, and the card says only that it did not finish.
+    yield* activities.note(
+      run.threadId,
+      Settlement.guards.Completed(settlement) ? resultOf(settlement.reply) : Option.none(),
+    )
     yield* activities
       .refresh(run.person.id)
       .pipe(Effect.catch(() => Effect.logWarning('Live Activity refresh failed')))

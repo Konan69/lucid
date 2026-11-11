@@ -408,7 +408,7 @@ function makeLiveData(session: SignedIn) {
 
   // The same session-owned query feeds the extension; disposal removes both its subscription
   // and the previous Person's snapshot before another account can take up this phone.
-  const stopActivities = followActivities(engine, session)
+  const stopActivities = followActivities(engine, session, live.threads)
   const stopWidget = followWidget(engine, live.threads)
 
   // Connecting an Integration is one machine for the session, made here because this is where

@@ -32,6 +32,7 @@ import {
 } from './data/live'
 import { forgotten, pageOf, type Place } from './data/place'
 import { heardReadAtom } from './data/hearing'
+import { listenForLinks } from './data/links'
 import { listenForPresses } from './data/notifying'
 import { keepPlace, placeIn, placesReadAtom } from './data/placed'
 import { leaveAtom } from './data/signing'
@@ -344,27 +345,30 @@ function usePressedNotifications(
       navigation.dispatch(openPage(stack, { name })),
     )
   }
-  const [listen] = useState(
-    () => () =>
-      listenForPresses(
-        NotificationOpens.match({
-          Thread: ({ threadId }) => {
-            front.open(threadId, false)
-            if (navigation.isReady()) navigation.dispatch(StackActions.popToTop())
-          },
-          Feed: () => show('Feed'),
-          Notifications: () => show('Notifications'),
+  /** Opens where a notification press or a `vivid://` link points (`data/links.ts`). */
+  const open = NotificationOpens.match({
+    Thread: ({ threadId }) => {
+      front.open(threadId, false)
+      if (navigation.isReady()) navigation.dispatch(StackActions.popToTop())
+    },
+    Feed: () => show('Feed'),
+    Notifications: () => show('Notifications'),
+  })
+  const [listen] = useState(() => () => {
+    const stopLinks = listenForLinks(open)
+    const stopPresses = listenForPresses(open, ({ threadId, text, key }) => {
+      void data.run(
+        Effect.gen(function* () {
+          const client = yield* VividRpcClient
+          return yield* client.SendToThread({ threadId, text, key, pictures: [] })
         }),
-        ({ threadId, text, key }) => {
-          void data.run(
-            Effect.gen(function* () {
-              const client = yield* VividRpcClient
-              return yield* client.SendToThread({ threadId, text, key, pictures: [] })
-            }),
-          )
-        },
-      ),
-  )
+      )
+    })
+    return () => {
+      stopLinks()
+      stopPresses()
+    }
+  })
   useSyncExternalStore(listen, NOTHING, NOTHING)
 }
 

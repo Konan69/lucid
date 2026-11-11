@@ -9,6 +9,11 @@ interface Awareness {
   addListener(name: 'token', listener: (value: NativeTokenEvent) => void): { remove(): void }
   configure(server: string, token: string): Promise<void>
   updateWidget(snapshot: string): Promise<void>
+  /**
+   * Starts the one Live Activity if none is up and ends extras; absent in binaries 0.3.20 and older,
+   * which only had cards the server started by push.
+   */
+  arm?(arming: string): Promise<boolean>
   clear(): Promise<void>
 }
 

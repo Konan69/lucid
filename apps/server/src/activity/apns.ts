@@ -32,38 +32,45 @@ const authorization = (credentials: Credentials, seconds: number) =>
     catch: () => new PushRejected({}),
   })
 
-/** Each HTTP/2 exchange owns its socket. Cancellation and every response close both resources. */
+/**
+ * How long a card's content counts as current to the system. Vivid pushes when work changes,
+ * plus a heartbeat while a Run lasts (`threads/delivery.ts`), so ten minutes passes only when the
+ * server has lost touch. The card shows no staleness line (Konan asked for it gone); the date
+ * still tells iOS the content is old. T3 Code's relay uses the same ten minutes
+ * (`infra/relay/src/agentActivity/ApnsClient.ts` `STALE_AFTER_SECONDS`).
+ */
+const STALE_AFTER_SECONDS = 10 * 60
+/** An ended card with an outcome stays long enough to be read on the next glance (T3: five minutes). */
+const DISMISS_AFTER_SECONDS = 5 * 60
+/** An ended card with nothing to show leaves almost at once rather than freezing (T3: fifteen seconds). */
+const EMPTY_DISMISS_AFTER_SECONDS = 15
+
+/**
+ * Each HTTP/2 exchange owns its socket. Cancellation and every response close both resources.
+ * Only `update` and `end` exist: the app starts the card itself (`@vivid/contracts`
+ * `ActivityRegistration`), so the server never sends `start`.
+ */
 const sendActivity = Effect.fn('Activity.send')(function* (
   credentials: Credentials,
   token: string,
-  event: 'start' | 'update' | 'end',
+  event: 'update' | 'end',
   snapshot: ActivitySnapshot,
 ) {
   const seconds = Math.floor((yield* Clock.currentTimeMillis) / 1000)
   const jwt = yield* authorization(credentials, seconds)
-  const content = { snapshot }
   const aps = {
-    start: {
-      timestamp: seconds,
-      event: 'start',
-      'content-state': content,
-      'stale-date': seconds + 300,
-      'attributes-type': 'VividActivityAttributes',
-      attributes: {},
-      'input-push-token': 1,
-      alert: { title: 'Vivid', body: snapshot.title },
-    },
     update: {
       timestamp: seconds,
       event: 'update',
-      'content-state': content,
-      'stale-date': seconds + 300,
+      'content-state': snapshot,
+      'stale-date': seconds + STALE_AFTER_SECONDS,
     },
     end: {
       timestamp: seconds,
       event: 'end',
-      'content-state': content,
-      'dismissal-date': seconds + 60,
+      'content-state': snapshot,
+      'dismissal-date':
+        seconds + (snapshot.rows.length > 0 ? DISMISS_AFTER_SECONDS : EMPTY_DISMISS_AFTER_SECONDS),
     },
   }[event]
   const status = yield* Effect.callback<number, PushUncertain>((resume) => {
@@ -76,7 +83,8 @@ const sendActivity = Effect.fn('Activity.send')(function* (
       authorization: `bearer ${jwt}`,
       'apns-push-type': 'liveactivity',
       'apns-topic': `${credentials.bundle}.push-type.liveactivity`,
-      'apns-priority': event === 'start' ? '10' : '5',
+      // An end is the last word on the card, so it goes at once; updates take the cheap lane.
+      'apns-priority': event === 'end' ? '10' : '5',
     })
     client.once('error', () => resume(Effect.fail(new PushUncertain({}))))
     request.once('error', () => resume(Effect.fail(new PushUncertain({}))))

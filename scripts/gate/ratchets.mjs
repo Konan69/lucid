@@ -164,13 +164,13 @@ export const ratchets = [
     label: 'failures turned into values unrecorded',
     plugin: 'vivid',
     rule: 'no-silent-failure',
-    ceiling: 343,
+    ceiling: 342,
   },
   {
     label: 'ad hoc failure log lines',
     plugin: 'vivid',
     rule: 'no-ad-hoc-failure-log',
-    ceiling: 115,
+    ceiling: 114,
   },
   {
     label: 'refusals renamed to unavailable',

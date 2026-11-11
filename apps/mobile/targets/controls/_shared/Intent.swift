@@ -24,7 +24,7 @@ struct DecideVividApproval: LiveActivityIntent {
   @Parameter(title: "Digest") var digest: String
   @Parameter(title: "Allow") var allow: Bool
   init() {}
-  init(_ approval: VividActivityAttributes.Approval, allow: Bool) {
+  init(_ approval: VividWorkAttributes.Approval, allow: Bool) {
     id = approval.id; digest = approval.digest; self.allow = allow
   }
   func perform() async throws -> some IntentResult {
