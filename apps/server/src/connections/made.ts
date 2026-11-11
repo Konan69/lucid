@@ -1,8 +1,12 @@
 import { appsVersion } from './framework.ts'
-import { ServiceId, type MakeIntegrationRequest } from '@vivid/contracts'
+import { ServiceId, type AccountOrigin, type MakeIntegrationRequest } from '@vivid/contracts'
 
 /** Authored services are distinct from catalogue entries and address imports. */
 export const MADE = 'made:'
+
+/** Whose a service is to the Person: one Vivid made for its own work, or one they connected. */
+export const originOf = (service: string): AccountOrigin =>
+  service.startsWith(MADE) ? 'Vivid' : 'Service'
 
 /** Like IMPORTED's address identity, the name identifies a service; Person scope belongs to its row. */
 export function madeService(name: string) {

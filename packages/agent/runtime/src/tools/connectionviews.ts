@@ -57,10 +57,12 @@ export function integrations(response: FindIntegrationsResponse) {
         // `signedInAs` is who the service says the account is. It is said beside the account's
         // name because a Person may have named the account ("Gmail (Work)"), and may then ask for
         // it by either: the name, or the address behind it.
-        Account: ({ name, account, identity, connected, shared, state, grant }) => ({
+        Account: ({ name, account, identity, connected, shared, state, grant, origin }) => ({
           name: modelText(name),
           account: modelText(account),
-          say_as: modelText(spoken(account, shared)),
+          // An app Vivid made for its own work is never said as something the Person connected.
+          made_by_you: origin === 'Vivid',
+          say_as: origin === 'Vivid' ? null : modelText(spoken(account, shared)),
           signedInAs: identity === null ? null : modelText(identity),
           connected,
           grant,
@@ -75,7 +77,8 @@ export function integrations(response: FindIntegrationsResponse) {
             NeedsAuthorization: () => null,
             Failed: ({ reason }) => modelText(reason),
           }),
-          tell_them: accountMeaning(modelText(spoken(account, shared)), state),
+          tell_them:
+            origin === 'Vivid' ? null : accountMeaning(modelText(spoken(account, shared)), state),
         }),
         Catalog: ({ name, description, connected, authorization }) => ({
           name: modelText(name),

@@ -1,6 +1,6 @@
 import { Schema } from 'effect'
 import { ComputerLifecycle, Device } from './computers.js'
-import { ConnectionState } from './connections.js'
+import { AccountOrigin, ConnectionState } from './connections.js'
 import { ToolName } from './tools.js'
 
 /** A failed fact lookup is unknown, never an empty successful inventory. */
@@ -22,7 +22,9 @@ export const CapabilityComputerFact = fact(
 export const CapabilityDeviceFact = fact(Schema.Array(Device))
 export const CapabilityIntegrationFact = fact(
   Schema.Struct({
-    accounts: Schema.Array(Schema.Struct({ account: Schema.String, state: ConnectionState })),
+    accounts: Schema.Array(
+      Schema.Struct({ account: Schema.String, state: ConnectionState, origin: AccountOrigin }),
+    ),
     setup: Schema.Literals(['Available', 'Unavailable', 'Unknown']),
   }),
 )

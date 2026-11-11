@@ -1,9 +1,18 @@
 {
   "about": "Words from Vivid's own workings that reached a Person in a reply (production, 1 to 11 November 2026), each with what to say instead. One source for scripts/plain.mjs (the gate check on every Person sentence the code writes) and voice.ts (the production callout on every reply). Patterns are case-insensitive JavaScript regular expressions.",
   "words": [
-    { "pattern": "\\bMCP\\b", "instead": "name the app: \"your Notion\"" },
-    { "pattern": "\\bauthori[sz]\\w*", "instead": "\"sign in\" / \"you're signed in\"" },
-    { "pattern": "\\bOAuth\\b", "instead": "\"sign in\"" },
+    {
+      "pattern": "\\bMCP\\b",
+      "instead": "name the app: \"your Notion\""
+    },
+    {
+      "pattern": "\\bauthori[sz]\\w*",
+      "instead": "\"sign in\" / \"you're signed in\""
+    },
+    {
+      "pattern": "\\bOAuth\\b",
+      "instead": "\"sign in\""
+    },
     {
       "pattern": "\\bintegrations?\\b",
       "instead": "name the app: \"your Gmail\", \"your work calendar\""
@@ -12,29 +21,73 @@
       "pattern": "\\bconnections?\\b",
       "instead": "\"i can get into your Gmail\" / \"i can't get into it yet\""
     },
-    { "pattern": "\\bloads?\\b[^.]{0,20}\\btools\\b", "instead": "\"i can't get into it\"" },
+    {
+      "pattern": "\\bloads?\\b[^.]{0,20}\\btools\\b",
+      "instead": "\"i can't get into it\""
+    },
     {
       "pattern": "\\btools? (i|you) (can )?(reach|use|have)\\b",
       "instead": "say what you can do: \"i can read your GitHub\""
     },
-    { "pattern": "\\bcheck-?ins?\\b", "instead": "\"i'll bring it up at 9:30\"" },
-    { "pattern": "\\barmed\\b", "instead": "\"i'll remind you at 9:30\"" },
-    { "pattern": "\\btimers?\\b", "instead": "\"reminder\"" },
-    { "pattern": "\\brevision\\b", "instead": "leave it out" },
-    { "pattern": "\\b[\\w-]+\\.md\\b", "instead": "\"i'll remember that\"" },
-    { "pattern": "`", "instead": "plain text, no code formatting" },
-    { "pattern": "\\bthreads?\\b", "instead": "\"this chat\" / \"our chat about Porto\"" },
-    { "pattern": "\\bblockers?\\b", "instead": "\"what's stopping it\"" },
+    {
+      "pattern": "\\bcheck-ins?\\b",
+      "instead": "\"i'll bring it up at 9:30\""
+    },
+    {
+      "pattern": "\\barmed\\b",
+      "instead": "\"i'll remind you at 9:30\""
+    },
+    {
+      "pattern": "\\btimers?\\b",
+      "instead": "\"reminder\""
+    },
+    {
+      "pattern": "\\brevision\\b",
+      "instead": "leave it out"
+    },
+    {
+      "pattern": "\\b[\\w-]+\\.md\\b",
+      "instead": "\"i'll remember that\""
+    },
+    {
+      "pattern": "`",
+      "instead": "plain text, no code formatting"
+    },
+    {
+      "pattern": "\\bthreads?\\b",
+      "instead": "\"this chat\" / \"our chat about Porto\""
+    },
+    {
+      "pattern": "\\bblockers?\\b",
+      "instead": "\"what's stopping it\""
+    },
     {
       "pattern": "\\b(API|endpoint|webhook|payload|schema|runtime|token)s?\\b",
       "instead": "say what it means for them"
     },
-    { "pattern": "\\b(night|quiet|background) pass\\b", "instead": "\"overnight i looked at…\"" },
-    { "pattern": "\\bscoped\\b", "instead": "\"it only sees…\"" },
-    { "pattern": "\\bnot allowed in this\\b", "instead": "\"i couldn't do that from here\"" },
+    {
+      "pattern": "\\b(night|quiet|background) pass\\b",
+      "instead": "\"overnight i looked at…\""
+    },
+    {
+      "pattern": "\\bscoped\\b",
+      "instead": "\"it only sees…\""
+    },
+    {
+      "pattern": "\\bnot allowed in this\\b",
+      "instead": "\"i couldn't do that from here\""
+    },
     {
       "pattern": "\\b(is|it's|calendar's|gmail's) live\\b",
       "instead": "\"it's in\" / say what you found in it"
+    },
+    {
+      "pattern": "\\bcatalog(ue)?\\b",
+      "instead": "\"i can't connect Notion yet\""
+    },
+    {
+      "pattern": "\\b(linked|unlinked)\\b",
+      "instead": "\"i can get into…\" / \"you're signed in to…\""
     }
   ]
 }

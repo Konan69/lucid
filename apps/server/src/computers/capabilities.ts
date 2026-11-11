@@ -8,6 +8,7 @@ import {
 } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
 import { ConnectionStore } from '../connections/store.ts'
+import { originOf } from '../connections/made.ts'
 import { ComputerStore } from './store.ts'
 import { DeviceRegistry } from './device.ts'
 
@@ -43,6 +44,7 @@ export const getCapabilities = Effect.fn('Capabilities.read')(function* (actor: 
                 accounts: value.connections.map((connection) => ({
                   account: connection.account,
                   state: connection.state,
+                  origin: originOf(connection.service),
                 })),
                 // Setup is provider-specific and discovery remains authoritative. Listing accounts does
                 // not attest operator OAuth configuration for a different, unconnected service.

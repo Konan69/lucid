@@ -24,7 +24,7 @@ import { useUnkeyedTool } from './tools.ts'
 import { namedAccounts } from './names.ts'
 import { stateOf, grantOf, type ConnectionRecord } from './records.ts'
 import { testInput } from './probe.ts'
-import { madeService } from './made.ts'
+import { madeService, originOf } from './made.ts'
 
 /** A made service is stable by name inside the Person's ownership scope. Ready and failed
  * accounts are reused just like imports; only pending authorization may start another trip. */
@@ -154,6 +154,7 @@ export const findIntegrations = Effect.fn('Connections.findIntegrations')(functi
         shared: row.companyId !== null,
         state,
         grant: grantOf(row),
+        origin: originOf(row.service),
       })
     }),
   )

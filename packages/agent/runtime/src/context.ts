@@ -240,7 +240,11 @@ function accountsSaid(fact: typeof CapabilityIntegrationFact.Type) {
     Unavailable: (unavailable) => unavailable,
     Available: ({ value }) => ({
       setup: value.setup,
-      accounts: value.accounts.map(({ account, state }) => {
+      accounts: value.accounts.map(({ account, state, origin }): Schema.Json => {
+        // An app Vivid made for its own work (reminders, check-in timers) is listed so Vivid can
+        // call it, but it is not the Person's: it carries no words for them.
+        if (origin === 'Vivid')
+          return { account: views.modelText(account), made_by_you: true, state }
         const said = views.modelText(spoken(account, false))
         return {
           account: views.modelText(account),
