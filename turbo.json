@@ -250,9 +250,15 @@
       "passThroughEnv": ["VIVID_TEST_DATABASE_URL", "VIVID_GATE_CACHE"]
     },
     "build:updates": {
-      "dependsOn": ["checkinputs", "@vivid/web#checkinputs"],
+      "dependsOn": ["checkinputs"],
       "inputs": [
         "$TURBO_DEFAULT$",
+        "!**/*.md",
+        "!**/*.test.ts",
+        "!**/*.test.tsx",
+        "!**/*.swift",
+        "!**/*.kt",
+        "!**/*.podspec",
         "$TURBO_ROOT$/tsconfig.base.json",
         "$TURBO_ROOT$/scripts/sentry-upload.mjs",
         "$TURBO_ROOT$/patches/**"
