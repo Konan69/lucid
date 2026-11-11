@@ -14,7 +14,7 @@ import { Effect, Option, Schema } from 'effect'
 import * as v from 'valibot'
 import { summary, text } from './inputs.ts'
 import { Scope, type RunTool } from './scope.ts'
-import { modelText } from './views.ts'
+import { modelText, quiet, refused } from './views.ts'
 
 const decodeDocumentCallId = Schema.decodeUnknownEffect(DocumentToolCallId)
 
@@ -61,10 +61,10 @@ function read(outcome: ReadDocumentOutcome) {
       body: modelText(body),
       characters: body.length,
     }),
+    // Vivid picks the right title from the list itself; the Person has nothing to hear.
     Missing: ({ titles }) => ({
-      ok: false,
+      ...refused('No document has that title in this Thread. Choose from these titles.', quiet),
       titles: titles.map(modelText),
-      message: 'No document has that title in this Thread. Choose from these titles.',
     }),
   })
 }

@@ -30,12 +30,13 @@ const encodeActivation = Schema.encodeOption(BuiltinSkillActivationRequired)
 /**
  * A built-in name's refusal as the model reads it: the sentence always, and the typed error beside
  * it when it encodes. The sentence alone still says what to do next, so an error that will not
- * encode costs the model the structured copy and not the answer.
+ * encode costs the model the structured copy and not the answer. A name clash is Vivid's own to
+ * fix, so the Person hears nothing.
  */
 const refusal = <Encoded>(error: Option.Option<Encoded>, message: string) =>
   Option.match(error, {
-    onNone: () => ({ ok: false, message }),
-    onSome: (encoded) => ({ ok: false, error: encoded, message }),
+    onNone: () => views.refused(message, views.quiet),
+    onSome: (encoded) => ({ ...views.refused(message, views.quiet), error: encoded }),
   })
 
 /** Saved procedures resolve only within the acting Person's catalog; storage never schedules work. */

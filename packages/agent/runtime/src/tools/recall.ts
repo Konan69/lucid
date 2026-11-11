@@ -8,7 +8,7 @@ import { catalog, named } from './names.ts'
 import type { ToolResult } from './result.ts'
 import { Scope, type RunTool } from './scope.ts'
 import { defineTool } from './tool.ts'
-import { modelText } from './views.ts'
+import { modelText, plain, refused, type Plain } from './views.ts'
 
 /**
  * The cell these tools read: whose conversations it holds, and their Pi store once it is open.
@@ -24,8 +24,10 @@ const READ_MOST = 20
 /** The most characters of one message a read returns; the rest is marked as cut. */
 const MESSAGE_LONGEST = 1500
 
-/** A refusal the model can say plainly; nothing was read. */
-const refused = (message: string): ToolResult => ({ output: { ok: false, message } })
+/** A refusal, for Vivid and for the Person; nothing was read. */
+const declined = (message: string, tellThem: Plain): ToolResult => ({
+  output: refused(message, tellThem),
+})
 
 /**
  * The Person's own Threads under the names the model uses, or why they cannot be read. Only the
@@ -50,7 +52,11 @@ const ownThreads = Effect.fn('RecallTools.threads')(function* (transcripts: Tran
 
 const NOT_YOURS =
   'Only the person whose conversations these are can have them searched or read; this message is from someone else.'
+const NOT_YOURS_PLAIN = plain(
+  'those conversations are private to whoever had them, so i can’t look through them here.',
+)
 const UNREADABLE = 'Earlier conversations could not be read right now. Try again in a moment.'
+const UNREADABLE_PLAIN = plain('i couldn’t look back through our earlier conversations just now.')
 
 /**
  * A message as the model reads it: who said it, when (null where the conversation stamped no
@@ -87,7 +93,7 @@ function searchTool(runTool: RunTool, transcripts: Transcripts) {
       return runTool(
         Effect.gen(function* () {
           const threads = yield* ownThreads(transcripts)
-          if (Option.isNone(threads)) return refused(NOT_YOURS)
+          if (Option.isNone(threads)) return declined(NOT_YOURS, NOT_YOURS_PLAIN)
           const { current, named: inventory } = threads.value
           const harness = yield* transcripts.harness
           const byId = new Map<string, { readonly thread: Thread; readonly name: string }>(
@@ -104,7 +110,7 @@ function searchTool(runTool: RunTool, transcripts: Transcripts) {
             Effect.asSome,
             Effect.catchTag('PiRejected', () => Effect.succeedNone),
           )
-          if (Option.isNone(found)) return refused(UNREADABLE)
+          if (Option.isNone(found)) return declined(UNREADABLE, UNREADABLE_PLAIN)
           const results = found.value.hits.flatMap((hit) => {
             const place = byId.get(hit.threadId)
             if (place === undefined) return []
@@ -158,7 +164,7 @@ function readTool(runTool: RunTool, transcripts: Transcripts) {
       return runTool(
         Effect.gen(function* () {
           const threads = yield* ownThreads(transcripts)
-          if (Option.isNone(threads)) return refused(NOT_YOURS)
+          if (Option.isNone(threads)) return declined(NOT_YOURS, NOT_YOURS_PLAIN)
           const thread = yield* Result.match(
             named(
               threads.value.named.map(({ item, name }) => ({ name, item })),
@@ -176,7 +182,7 @@ function readTool(runTool: RunTool, transcripts: Transcripts) {
             Effect.asSome,
             Effect.catchTag('PiRejected', () => Effect.succeedNone),
           )
-          if (Option.isNone(page)) return refused(UNREADABLE)
+          if (Option.isNone(page)) return declined(UNREADABLE, UNREADABLE_PLAIN)
           // `earlier` is null once the page reaches the start of the conversation.
           return {
             output: {

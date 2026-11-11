@@ -39,7 +39,11 @@ describe('explicit tool authority', () => {
         }),
       )
       expect(result).toEqual({
-        output: { ok: false, message: 'There is no person behind this message to act for.' },
+        output: {
+          ok: false,
+          message: 'There is no person behind this message to act for.',
+          tell_them: 'something went wrong with that message. could you send it again?',
+        },
         terminate: false,
       })
     }),

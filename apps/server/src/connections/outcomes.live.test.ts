@@ -123,13 +123,13 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration acceptance rec
               expect(words.output).toMatchObject({
                 ok: true,
                 output: answer,
-                message: expect.stringContaining('queued, not confirmed yet'),
+                message: expect.stringContaining('has not confirmed it is done yet'),
               })
               expect(words.receipts).toEqual([receipt])
               const repeated = yield* sending
               expect(repeated.outcome._tag).toBe('Repeated')
               expect(toolOutcome(repeated).output).toMatchObject({
-                message: expect.stringContaining('queued, not confirmed yet'),
+                message: expect.stringContaining('has not confirmed it is done yet'),
               })
               expect(JSON.stringify(toolOutcome(repeated).output)).not.toContain('already done')
             }
@@ -152,7 +152,7 @@ describe.skipIf(!enabled || !testDatabaseConfigured)('Integration acceptance rec
             expect(yield* decodeReceipt(saved.receipt)).toEqual(result.outcome.receipt)
             expect(toolOutcome(result).output).toMatchObject({
               ok: true,
-              message: 'The service answered that the action is done.',
+              message: 'It is done: the service said it did it.',
             })
           }).pipe(Effect.provide(context))
         }).pipe(Effect.scoped),

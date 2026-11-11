@@ -5,6 +5,7 @@ import { Tool, CopySignInOutcome, CopySignInRequest, UseWindowRequest } from '@v
 import { Effect, Option, Result, Schema } from 'effect'
 import { Scope, type RunTool } from './scope.ts'
 import { pictureResult } from './picture.ts'
+import { plain, quiet, refused, type Plain } from './views.ts'
 
 const input = Schema.Struct({
   ...CopySignInRequest.fields,
@@ -54,17 +55,72 @@ export const signInMessage = (request: CopySignInRequest, outcome: CopySignInOut
       'The copy receipt was lost. It may have copied cookies. Check the site before asking to repeat it.',
   })
 
+/** Sign-ins that cannot be brought across from this browser: signing in on Vivid's own computer is
+ * the way left, which the Person does in the window Vivid shows them. */
+const cannotCopy = (request: CopySignInRequest) =>
+  plain(
+    `i can’t copy your ${request.site} sign-in from that browser. you could sign in on my computer instead.`,
+  )
+
+/**
+ * What each outcome means for the Person, beside `signInMessage` for Vivid: cookies, encryption
+ * keys, partitions and receipts are how the copy works, so the Person hears what did not happen
+ * and the one thing they can do. A copied sign-in is not yet proof Vivid is signed in, so it says
+ * nothing until the site is read.
+ */
+const signInMeaning = (request: CopySignInRequest, outcome: CopySignInOutcome): Plain =>
+  CopySignInOutcome.match(outcome, {
+    InvalidSite: () => quiet,
+    Copied: () => quiet,
+    NotAnswered: () =>
+      plain(
+        'your computer didn’t answer, so i didn’t copy anything. ask me again when you’re ready to allow it.',
+      ),
+    BrowserLocked: ({ browser }) =>
+      plain(`quit ${browser} completely, then tell me and i’ll copy your ${request.site} sign-in.`),
+    PermissionDenied: ({ browser }) =>
+      plain(
+        `your computer didn’t let me read ${browser}’s sign-ins. allow it when it asks, then ask me again.`,
+      ),
+    KeyUnavailable: () => cannotCopy(request),
+    UnsupportedEncryption: () => cannotCopy(request),
+    UnsupportedCookieScope: () => cannotCopy(request),
+    SourceMissing: ({ browser }) =>
+      plain(
+        `i couldn’t find that ${browser} profile. which browser and profile do you use for ${request.site}?`,
+      ),
+    Unreadable: () => cannotCopy(request),
+    NothingToCopy: () =>
+      plain(
+        `you’re not signed in to ${request.site} in that browser, so there was nothing to copy.`,
+      ),
+    Declined: () => quiet,
+    NotConnected: () =>
+      plain(
+        'your computer isn’t connected to me right now. open the vivid app on it and ask me again.',
+      ),
+    Busy: () => quiet,
+    RunRequired: () => quiet,
+    Unavailable: () => plain(`i couldn’t copy your ${request.site} sign-in right now.`),
+    Rejected: () =>
+      plain(
+        `copying your ${request.site} sign-in didn’t go through cleanly, so i haven’t tried again.`,
+      ),
+    OutcomeUnknown: () =>
+      plain(
+        `i can’t tell whether your ${request.site} sign-in copied, so i haven’t done it again.`,
+      ),
+  })
+
 /** The RPC success schema cannot contain a cookie. BrowserLocked ends the turn, giving the
  * Person time to quit before another request, rather than retrying against the same lock. */
 const program = Effect.fn('ComputerTool.copySignIn')(function* (request: CopySignInRequest) {
   const outcome = yield* (yield* Scope).client.CopySignIn(request)
+  const message = signInMessage(request, outcome)
   return {
-    output: {
-      ok: CopySignInOutcome.guards.Copied(outcome),
-      site: request.site,
-      outcome,
-      message: signInMessage(request, outcome),
-    },
+    output: CopySignInOutcome.guards.Copied(outcome)
+      ? { ok: true, site: request.site, outcome, message }
+      : { ...refused(message, signInMeaning(request, outcome)), site: request.site, outcome },
     terminate: CopySignInOutcome.isAnyOf([
       'BrowserLocked',
       'PermissionDenied',
@@ -93,7 +149,7 @@ export function signInModelTool(runTool: RunTool) {
               return Promise.resolve(
                 pictureResult(
                   {
-                    output: { ok: false, message: 'The sign-in copy request is invalid.' },
+                    output: refused('The sign-in copy request is invalid.', quiet),
                     terminate: false,
                   },
                   Option.none(),

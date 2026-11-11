@@ -412,7 +412,7 @@ function personal(facts: CapabilityFacts, kind: 'apps' | 'pages' | 'signins'): A
   return online.some((ability) => ability[kind])
     ? Availability.cases.Available.make({})
     : Availability.cases.Unsupported.make({
-        reason: 'The connected desktop does not advertise this ability.',
+        reason: 'Their connected computer cannot do this.',
       })
 }
 /** Only Computer-backed work wakes on use. Integration discovery remains available while
@@ -441,7 +441,8 @@ const requirements = {
         return Availability.cases.Available.make({})
       case 'Unavailable':
         return Availability.cases.Unsupported.make({
-          reason: 'Integration operator setup is unavailable.',
+          reason:
+            'Connecting new services is not switched on for this Vivid; whoever runs it can switch it on.',
         })
       case 'Unknown':
         return Availability.cases.Unknown.make({})
@@ -470,7 +471,7 @@ function connectedAccount(facts: CapabilityFacts): Availability {
   if (accounts.some((account) => ConnectionState.guards.NeedsAuthorization(account.state)))
     return Availability.cases.NeedsPermission.make({})
   return Availability.cases.TemporarilyUnavailable.make({
-    reason: 'No Integration account is ready.',
+    reason: 'None of their connected accounts is working right now.',
   })
 }
 
@@ -480,14 +481,14 @@ function computerAvailability(facts: CapabilityFacts): Availability {
     return Availability.cases.Unknown.make({})
   if (facts.computer.value.heldByPerson)
     return Availability.cases.TemporarilyUnavailable.make({
-      reason: 'The Person holds the keyboard.',
+      reason: 'They are using the computer themselves right now.',
     })
   return ComputerLifecycle.match<Availability>(facts.computer.value.state, {
     Absent: () => Availability.cases.WakeOnUse.make({}),
     Stopped: () => Availability.cases.WakeOnUse.make({}),
     Running: () => Availability.cases.Available.make({}),
     Starting: () =>
-      Availability.cases.TemporarilyUnavailable.make({ reason: 'The Computer is starting.' }),
+      Availability.cases.TemporarilyUnavailable.make({ reason: 'The computer is starting up.' }),
     Failed: ({ reason }) => Availability.cases.TemporarilyUnavailable.make({ reason }),
   })
 }

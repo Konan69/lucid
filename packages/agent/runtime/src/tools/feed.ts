@@ -5,6 +5,7 @@ import * as v from 'valibot'
 import { drawingFaults } from '../agents/displays.ts'
 import { Scope, type RunTool } from './scope.ts'
 import { summary, text } from './inputs.ts'
+import { quiet, refused } from './views.ts'
 
 /**
  * The Feed is the only way work Vivid does on its own reaches the Person. This wording is the
@@ -86,11 +87,17 @@ const postOf = (
     }),
   )
 
-/** The model sees whether its card is new or replaced, never the card's or Thread's identity. */
+/**
+ * The model sees whether its card is new or replaced, never the card's or Thread's identity. The
+ * words are ones a reply can repeat as they are: the Person knows their feed, not cards being
+ * posted to it.
+ */
 const resultOf = (outcome: PostOutcome) =>
   PostOutcome.match(outcome, {
-    Posted: () => ({ output: { ok: true, message: 'The card is on the Person’s Feed.' } }),
-    Updated: () => ({ output: { ok: true, message: 'The card on the Feed now says this.' } }),
+    Posted: () => ({ output: { ok: true, message: 'It is on their feed now.' } }),
+    Updated: () => ({
+      output: { ok: true, message: 'What was on their feed about this now says this.' },
+    }),
   })
 
 export function feedTools(runTool: RunTool) {
@@ -108,10 +115,10 @@ export function feedTools(runTool: RunTool) {
             const invalid = data.sources.find((source) => Option.isNone(checkSource(source)))
             if (invalid !== undefined)
               return {
-                output: {
-                  ok: false,
-                  message: `“${invalid.url}” is not a full http or https address. Give links exactly as you obtained them, or leave sources empty.`,
-                },
+                output: refused(
+                  `“${invalid.url}” is not a full http or https address. Give links exactly as you obtained them, or leave sources empty.`,
+                  quiet,
+                ),
               }
             // A drawing the screens' parser rejects is said back to the model, as a chat display
             // is (`correction.ts`), so it draws the card again instead of posting a broken one.
@@ -137,10 +144,7 @@ export function feedTools(runTool: RunTool) {
             // The server refused a display that draws nothing; the model draws it again.
             Effect.catchTag('FeedDisplayInvalid', () =>
               Effect.succeed({
-                output: {
-                  ok: false,
-                  message: 'The display has no root statement: start it with root = …',
-                },
+                output: refused('The display has no root statement: start it with root = …', quiet),
               }),
             ),
           ),
