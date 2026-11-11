@@ -67,7 +67,7 @@ export async function pages(state, id, directory, browser) {
           part.output.ok === true,
       )
       const limited =
-        /(?:couldn.t|cannot|can.t|unable|could not).{0,100}(?:read|access|open|load)|needs? (?:a |the )?browser/isu.test(
+        /(?:couldn.t|cannot|can.t|unable|could not).{0,100}(?:read|access|open|load)|needs? (?:a |the )?(?:real )?browser/isu.test(
           words,
         )
       NodeAssert.ok(
