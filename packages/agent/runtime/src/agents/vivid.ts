@@ -143,6 +143,15 @@ const KNOWING = [
 ]
 
 /**
+ * The last thing read before every reply. The voice rules open the prompt, then about 7,500 words
+ * of mechanics follow (tools, displays, memory), and the replies drifted back into that register
+ * (verify runs, 11 November 2026). Muse closes its rules the same way, with one short pass the
+ * reply must survive; it repeats nothing new, it only brings the voice back into view last.
+ */
+const BEFORE_SENDING =
+  'Read your reply once as they will see it. It is in their words, with nothing about tools, connections, sign-ins, timers, files or errors; say what those mean for them instead. It leads with the answer, says each thing once and is as short as the moment allows. No long dashes, no "label: value" lines, no stock lines and no offer at the end. It sounds like you, a friend who enjoys this, not a help desk.'
+
+/**
  * The instruction for one response, from the context frozen for it. The lines and their order
  * are main's `Vivid()`: the voice, the name line, the date line, then every rule.
  */
@@ -152,6 +161,7 @@ function instructions(response: Pick<Kept, 'acting' | 'context'>) {
   const timezone = context.timezone.length > 0 ? context.timezone : 'UTC'
   const at = Option.getOrElse(context.asOf, () => Date.now())
   return [
+    '## Who you are and how you talk',
     ...VOICE,
     // The name this Person or their Company gave Vivid, as text; nothing while it is still Vivid.
     ...namedAs(context.name),
@@ -160,15 +170,24 @@ function instructions(response: Pick<Kept, 'acting' | 'context'>) {
     response.acting
       ? `Today is ${today(timezone, at)} in the ${timezone} time zone.`
       : 'There is no person behind this message, so you cannot act for anyone. Say that something went wrong and that they should send their message again.',
+    '## What you can reach right now',
     ...capabilityInstructions(context.capabilities),
+    '## Deciding',
     ...DECIDING,
+    '## Acting for them',
     ...ACTING,
+    '## Tools',
     ...TOOLS,
     connectionTools.instructions,
+    '## Displays',
     DISPLAYS,
     documentTools.instructions,
+    '## Memory',
     ...KEEPING_MEMORY,
+    '## What you know',
     ...KNOWING,
+    '## Before you send',
+    BEFORE_SENDING,
   ].join('\n')
 }
 

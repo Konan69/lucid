@@ -110,7 +110,11 @@ describe('the runtime over HTTP', () => {
         expect(model.said).toMatchObject({ role: 'user', content: 'hello' })
         // The instruction, the context for this response and the skill catalogue, in that order,
         // each separated by one blank line and none of it wrapped in a tag.
-        expect(model.prompt.startsWith('You are Vivid: one persistent teammate')).toBe(true)
+        expect(
+          model.prompt.startsWith(
+            '## Who you are and how you talk\nYou are Vivid: one persistent teammate',
+          ),
+        ).toBe(true)
         const [instruction, context, skills] = [
           model.prompt.indexOf('\nToday is '),
           model.prompt.indexOf('\n\nContext for this response (saved facts may be stale'),
