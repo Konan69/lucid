@@ -78,6 +78,18 @@ acts = Row([Button("Not now", @ToAssistant("Leave the Downloads folder as it is"
 ] as const
 
 /**
+ * Every word on a display is read by the Person, so it is held to the voice's translation rule
+ * (`vivid.ts` `PLAIN`) like a reply. The examples above only ever put the Person's things in a
+ * Badge or Caption (a change in revenue, a file, a date), and still the model drew its own
+ * bookkeeping there: a Porto trip headed by the Badge "plan done · nothing booked" and a reminder
+ * captioned "I will put it on your feed then. It is set." (production, 1 to 11 November 2026).
+ * A display reads as the Person's thing, so a word about Vivid's own progress on it reads as a
+ * status label; what is missing is said as the next step it needs, in their words.
+ */
+const DISPLAY_WORDS =
+  'Every word in a display is read by the Person, so it is in their words, like your reply. Titles, Badges and Captions describe their thing (the trip, the letter, the date, the price, what changed), never your own progress on it or how you keep it: a Badge such as "plan done · nothing booked" or a Caption such as "I will put it on your feed then. It is set." is a status report, not their thing. What is still missing or not done is the next step it needs, in a plain line or a Button: "Not booked yet. Where are you flying from?", "Sunday 15 November, 10:00. I’ll remind you then."'
+
+/**
  * How Vivid is taught to draw, the way OpenUI's documentation has an app do it ("System Prompts",
  * "Queries & Mutations"): OpenUI's own command writes the library's spec (`parts.json`, from the
  * web app's `src/parts/library.ts`; `pnpm --filter @vivid/web parts` after changing a part), and
@@ -107,6 +119,7 @@ export const DISPLAYS = generateSystemPrompt({
     additionalRules: [
       'Each fenced block is one whole display with its own root statement. Never send only the changed statements: a later display stands alone.',
       'Lead with the thing itself: a Chart, a Table, tiles to choose from, the letter in a Card. Keep words inside a display few; it is a card, not an essay.',
+      DISPLAY_WORDS,
       'When it is about a place, draw the Map; about days or times in a week, the Week; about a web page you read, the Page with its title, site, picture and summary as the page gave them; about work on your Computer the Person should look at, the Screen. The picture comes first and the words go under it (the last three examples).',
       'A MapMarker needs the place’s real latitude and longitude, from a tool or a place you know for certain. Never guess coordinates; without them, say the place in words.',
       'Whenever your reply asks the Person to choose, confirm or answer, the display holds the controls that do it; never draw the options as static Cards or text and then ask in words ("pick one and I will send it"). Choosing among options is a Pressable tile for each, then the Button that answers (second and third examples); confirming or answering is Buttons alone (first example).',

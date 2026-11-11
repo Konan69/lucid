@@ -75,6 +75,16 @@ const cardLines = (card: Card) => [
 ]
 
 /**
+ * The work handed over is Vivid's own background working: signals named by their tags, its notes
+ * to itself, the card it posted. The first words of the new Conversation are the Person's first
+ * sight of that work, and a reply that paraphrases the transcript reports the machinery ("The
+ * check-in went to the Feed and the timer is closed out", production 10 November 2026). So the
+ * hand-over says whose side to speak from, with one before and after.
+ */
+const FROM_THEIR_SIDE =
+  'What follows is your own working, written in your words: what woke you, checks and timers, your notes to yourself. The Person saw only the card. Speak about their matter itself, in their words ("Ada sent the contract and it’s signed", "Ada hasn’t sent the contract yet; want me to nudge her?"), never about what ran, what was checked or posted, or where.'
+
+/**
  * The work as Vivid is handed it in the new Conversation: named by its title, never its id, the
  * card the Person pressed, and the work's own words. The Person has said nothing yet, so the
  * order of who speaks is spelt out, as the first Thread's instruction does (`threads/message.ts`).
@@ -92,6 +102,7 @@ const handedOver = (
       Answered: ({ words }) =>
         `The Person answered the card for earlier work on their Feed, "${title}", by pressing "${words}", and came here to see it done. This is a new conversation about that work. Act on their answer now, as you would have if they had said it in the work's own conversation, then say here in a sentence or two what you did, or what stopped you.`,
     }),
+    FROM_THEIR_SIDE,
     ...card.flatMap(cardLines),
     ['The work so far, oldest first:', ...transcriptOf(history)].join('\n'),
   ].join('\n\n')
