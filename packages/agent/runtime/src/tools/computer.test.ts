@@ -234,6 +234,7 @@ describe('browser model target and image result', () => {
       BrowseOutcome.cases.NotConnected.make({}),
       {
         ok: false,
+        tell_them: expect.any(String),
         message: expect.stringContaining('desktop app is not connected'),
       },
       false,
@@ -242,6 +243,7 @@ describe('browser model target and image result', () => {
       BrowseOutcome.cases.NotAllowed.make({}),
       {
         ok: false,
+        tell_them: expect.any(String),
         message: expect.stringContaining('has not allowed Vivid'),
       },
       false,
@@ -250,6 +252,7 @@ describe('browser model target and image result', () => {
       BrowseOutcome.cases.AddressRefused.make({}),
       {
         ok: false,
+        tell_them: expect.any(String),
         message: expect.stringContaining('address cannot be opened'),
       },
       false,
@@ -258,6 +261,7 @@ describe('browser model target and image result', () => {
       BrowseOutcome.cases.Busy.make({}),
       {
         ok: false,
+        tell_them: expect.any(String),
         message: expect.stringContaining('busy with an earlier action'),
       },
       false,
@@ -266,19 +270,25 @@ describe('browser model target and image result', () => {
       BrowseOutcome.cases.Stopped.make({}),
       {
         ok: false,
+        tell_them: expect.any(String),
         message: expect.stringContaining('Person took control'),
       },
       true,
     ],
     [
       BrowseOutcome.cases.PageGone.make({}),
-      { ok: false, message: expect.stringContaining('page is gone') },
+      {
+        ok: false,
+        tell_them: expect.any(String),
+        message: expect.stringContaining('page is gone'),
+      },
       false,
     ],
     [
       BrowseOutcome.cases.Unsupported.make({}),
       {
         ok: false,
+        tell_them: expect.any(String),
         message: expect.stringContaining('does not support this browser action'),
       },
       false,
@@ -287,6 +297,7 @@ describe('browser model target and image result', () => {
       BrowseOutcome.cases.RunRequired.make({}),
       {
         ok: false,
+        tell_them: expect.any(String),
         message: expect.stringContaining('work that asked for it has ended'),
       },
       true,
@@ -295,6 +306,7 @@ describe('browser model target and image result', () => {
       BrowseOutcome.cases.OutcomeUnknown.make({}),
       {
         ok: false,
+        tell_them: expect.any(String),
         message: expect.stringContaining('action may or may not have happened'),
       },
       false,
@@ -305,6 +317,7 @@ describe('browser model target and image result', () => {
       }),
       {
         ok: false,
+        tell_them: expect.any(String),
         reason: 'The Person’s computer could not complete this action.',
         message: expect.stringContaining('Computer is unavailable'),
       },
@@ -314,6 +327,7 @@ describe('browser model target and image result', () => {
       BrowseOutcome.cases.Blocked.make({ rule: 'Never submit' }),
       {
         ok: false,
+        tell_them: expect.any(String),
         rule: 'Never submit',
         message: expect.stringContaining('rule forbids this action'),
       },

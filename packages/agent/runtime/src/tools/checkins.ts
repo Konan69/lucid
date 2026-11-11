@@ -182,7 +182,7 @@ export function checkinTools(runTool: RunTool) {
     defineTool({
       name: Tool.update_checkin,
       description:
-        'Change when a named check-in next runs, keeping its source. Call this after a still-open chosen check to select its next time, or to change the Person’s timing request. It becomes Awaiting again. Arm the timer Integration with the returned operationKey and read its actual receipt before saying it is scheduled.',
+        'Change when a named check-in next runs, keeping its source. Call this after a still-open chosen check to select its next time, or to change the Person’s timing request. It becomes Awaiting again. Arm the timer Integration with the returned operationKey and read its actual receipt before telling them when you will bring it up (“i’ll bring it up at 9:31”).',
       input: v.object({ summary, name: text('The exact check-in Watch name.', 200), timing }),
       run({ data, signal }) {
         return runTool(

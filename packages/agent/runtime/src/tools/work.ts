@@ -100,7 +100,7 @@ export function workTools(runTool: RunTool) {
     defineTool({
       name: Tool.list_work,
       description:
-        'List everything you have going for the Person besides this reply: replies still working, commands still running in the background on your Computer, Watches and Integrations you made, each with whether it is going, stalled or failing and why. Read it when asked what you are doing in the background, and before saying something is still working. Report a stall as a stall.',
+        'List everything you have going for the Person besides this reply: replies still working, commands still running in the background on your Computer, Watches and Integrations you made, each with whether it is going, stalled or failing and why. Read it when asked what you are doing in the background, and before saying something is still working. Report a stall as a stall, in their words: say what each thing is for them (“the reminder about Dana”, “keeping an eye on your inbox”) and what is wrong with it, never Watch, Integration, subscription, runtime or Run.',
       input: v.object({ summary }),
       run({ signal }) {
         return runTool(

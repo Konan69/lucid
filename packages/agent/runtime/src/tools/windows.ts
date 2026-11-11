@@ -16,6 +16,7 @@ import { windowOutcome } from './outcomes.ts'
 import { pictureResult } from './picture.ts'
 import { warnFailure } from './result.ts'
 import { Scope, type RunTool } from './scope.ts'
+import { quiet, refused } from './views.ts'
 
 /** Model words retain the contract constraints while opaque IDs remain computer-supplied. */
 const action = <Fields extends Schema.Struct.Fields, const Kind extends string>(
@@ -122,7 +123,7 @@ export function personComputerModelTool(runTool: RunTool) {
               return Promise.resolve(
                 pictureResult(
                   {
-                    output: { ok: false, message: 'The app request is invalid.' },
+                    output: refused('The app request is invalid.', quiet),
                     terminate: false,
                   },
                   Option.none(),

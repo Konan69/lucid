@@ -5,7 +5,11 @@ import * as v from 'valibot'
 import { Scope, type RunTool } from './scope.ts'
 import { summary, text } from './inputs.ts'
 
-/** The model sees delivery evidence, not target credentials, notification ids or recipient identity. */
+/**
+ * The model sees delivery evidence, not target credentials, notification ids or recipient identity.
+ * Each message says how far it got in words a reply can repeat ("it's in your notifications"),
+ * because "push", "target" and "push service" are how it is delivered, not what the Person sees.
+ */
 const resultOf = (outcome: NotifyPersonOutcome) =>
   NotifyPersonOutcome.match(outcome, {
     Created: ({ push }) =>
@@ -15,7 +19,8 @@ const resultOf = (outcome: NotifyPersonOutcome) =>
             ok: true,
             status: 'present',
             acceptedTargets: 0,
-            message: 'The notification is in the app. The Person is present, so no push was sent.',
+            message:
+              'It is in their notifications. They are in the app right now, so their phone was not buzzed.',
           },
         }),
         NoTargets: () => ({
@@ -23,7 +28,8 @@ const resultOf = (outcome: NotifyPersonOutcome) =>
             ok: true,
             status: 'no-targets',
             acceptedTargets: 0,
-            message: 'The notification is in the app. No active push target could receive it.',
+            message:
+              'It is in their notifications in the app, but none of their devices could be buzzed.',
           },
         }),
         Attempted: ({ accepted, failed, uncertain }) => ({
@@ -34,7 +40,7 @@ const resultOf = (outcome: NotifyPersonOutcome) =>
             failedTargets: failed,
             uncertainTargets: uncertain,
             message:
-              'Accepted means the push service received it, not that the Person saw it. Do not repeat an uncertain delivery.',
+              'It is in their notifications and their phone was sent an alert; that does not mean they have seen it. Do not send an alert that may already have gone again.',
           },
         }),
       }),

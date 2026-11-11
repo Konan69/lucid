@@ -11,6 +11,7 @@ import {
   type WindowView,
   type WindowRefusal,
 } from '@vivid/contracts'
+import { plain, quiet, refused, translate, type Plain } from './views.ts'
 import * as views from './views.ts'
 import type { ToolResult } from './result.ts'
 
@@ -28,13 +29,19 @@ function approval({
   }
 }
 
-/** A rule is authoritative, so the model receives its exact wording rather than a retry suggestion. */
+/**
+ * A rule is authoritative, so the model receives its exact wording rather than a retry suggestion.
+ * The rule is one the Person (or their Company) wrote, so the Person hears that it was their rule
+ * that stopped it, not that "a rule forbids this action".
+ */
 function blocked({ rule }: { readonly rule: string }): ToolResult {
   return {
     output: {
-      ok: false,
+      ...refused(
+        `A rule forbids this action: “${rule}”.`,
+        plain(`that goes against one of your rules (“${rule}”), so i didn’t do it.`),
+      ),
       rule: views.modelText(rule),
-      message: views.modelText(`A rule forbids this action: “${rule}”.`),
     },
   }
 }
@@ -43,20 +50,28 @@ function blocked({ rule }: { readonly rule: string }): ToolResult {
 function unavailable({ reason }: { readonly reason: string }): ToolResult {
   return {
     output: {
-      ok: false,
+      ...refused(
+        `The Computer is unavailable: ${reason}.`,
+        plain('my computer isn’t working right now, so i couldn’t do that.'),
+      ),
       reason: views.modelText(reason),
-      message: views.modelText(`The Computer is unavailable: ${reason}.`),
     },
   }
 }
 
+/**
+ * Whether something may have happened, for the Person: nothing is retried until it is checked, so
+ * the sentence says only that it is not known and that it was not done twice.
+ */
+const unsure = plain('i can’t tell yet whether that went through, so i haven’t done it again.')
+
 /** A lost receipt preserves uncertainty and never turns a possible side effect into retry permission. */
 function outcomeUnknown(): ToolResult {
   return {
-    output: {
-      ok: false,
-      message: 'The action may or may not have happened; do not retry without asking the person.',
-    },
+    output: refused(
+      'The action may or may not have happened; do not retry without asking the person.',
+      unsure,
+    ),
   }
 }
 
@@ -67,22 +82,26 @@ function outcomeUnknown(): ToolResult {
  */
 function writeUnknown(receipt: ActionReceipt): ToolResult {
   return {
-    output: {
-      ok: false,
-      message:
-        'The action was sent and its answer was lost, so it may or may not have happened. Do not send it again; tell the Person its result is not known yet.',
-    },
+    output: refused(
+      'The action was sent and its answer was lost, so it may or may not have happened. Do not send it again; tell the Person its result is not known yet.',
+      unsure,
+    ),
     terminate: true,
     receipts: [receipt],
   }
 }
 
-/** What each applied receipt proves, in the words the model reports to the Person. */
+/**
+ * What each applied receipt proves, in words the model can repeat to the Person as they are:
+ * "accepted" and "queued" are the service's states, and replies that echoed them ("it's queued")
+ * told the Person nothing they could use. Each sentence still says exactly how far it got.
+ */
+const accepted = 'It is on its way: the service took it but has not confirmed it is done yet.'
 const appliedWords = (receipt: ActionApplied) =>
   ActionApplied.match(receipt, {
-    Accepted: () => 'The service accepted the action; it is queued, not confirmed yet.',
-    Completed: () => 'The service answered that the action is done.',
-    Delivered: () => 'The service answered that the action is done and confirmed it arrived.',
+    Accepted: () => accepted,
+    Completed: () => 'It is done: the service said it did it.',
+    Delivered: () => 'It is done, and the service confirmed it arrived.',
   })
 
 /** Provider records pass through untouched; settle bounds them without removing provider authority.
@@ -93,13 +112,13 @@ export function toolOutcome(result: IntegrationResult): ToolResult {
       output: {
         ok: true,
         output,
-        message: 'The service accepted the action; it is queued, not confirmed yet.',
+        message: accepted,
       },
       receipts: receipt === null ? [] : [receipt],
     }),
     Completed: ({ output, receipt }) =>
       receipt === null
-        ? { output: { ok: true, output, message: 'The action completed.' } }
+        ? { output: { ok: true, output, message: 'It is done.' } }
         : { output: { ok: true, output, message: appliedWords(receipt) }, receipts: [receipt] },
     Repeated: ({ receipt }) => ({
       output: {
@@ -114,43 +133,52 @@ export function toolOutcome(result: IntegrationResult): ToolResult {
     }),
     ApprovalRequired: approval,
     Blocked: blocked,
+    // Each refusal says, for the Person, what did not happen and the one thing that changes it.
+    // A rejection is worded by the service (usually about the call's input, which Vivid corrects),
+    // so its meaning is left to the model to translate.
     ScopeRequired: ({ required, granted }) => ({
       output: {
-        ok: false,
+        ...refused(
+          'This operation requires additional access. Do not substitute another account.',
+          plain(
+            'that account hasn’t given me access to do that. signing in to it again and allowing it would.',
+          ),
+        ),
         required,
         granted,
-        message: 'This operation requires additional access. Do not substitute another account.',
       },
     }),
     PermissionDeclined: ({ classes }) => ({
       output: {
-        ok: false,
-        classes,
-        message:
+        ...refused(
           'The person has not allowed access to these data classes. Do not try another tool to bypass this decision.',
+          plain('you haven’t let me see that kind of information, so i left it alone.'),
+        ),
+        classes,
       },
     }),
     Unsupported: ({ capability }) => ({
       output: {
-        ok: false,
+        ...refused(
+          'This Integration does not support this capability.',
+          plain('i can’t do that through that account.'),
+        ),
         capability,
-        message: 'This Integration does not support this capability.',
       },
     }),
     ConnectionNotReady: ({ serviceName, grant }) => ({
       output: {
-        ok: false,
+        ...refused(
+          `${serviceName} needs connecting; offer it to the person with connect.`,
+          plain(`i can’t get into your ${serviceName} yet. it needs connecting first.`),
+        ),
         serviceName: views.modelText(serviceName),
         grant,
-        message: views.modelText(
-          `${serviceName} needs connecting; offer it to the person with connect.`,
-        ),
       },
     }),
     Rejected: ({ message, problems }) => ({
       output: {
-        ok: false,
-        message: views.modelText(`The service rejected the action: ${message}.`),
+        ...refused(`The service rejected the action: ${message}.`, translate),
         problems: problems.map(views.modelText),
       },
     }),
@@ -159,58 +187,69 @@ export function toolOutcome(result: IntegrationResult): ToolResult {
   return { ...projected, integration: result }
 }
 
+/**
+ * What the Person hears when their own computer cannot be used: the desktop app is the thing they
+ * open, so the sentence names it and nothing about connections or devices.
+ */
+const notConnected = plain(
+  'your computer isn’t connected to me right now. open the vivid app on it and ask me again.',
+)
+/** An earlier step is still running; Vivid waits for it, and the Person has nothing to do. */
+const busy = quiet
+
 /** Browser results keep the page outline and authorization decisions supplied by the server. */
 export function browseOutcome(outcome: BrowseOutcome): ToolResult {
   return BrowseOutcome.match<ToolResult>(outcome, {
     NotConnected: () => ({
-      output: {
-        ok: false,
-        message: 'The Person’s desktop app is not connected. Ask them to connect it.',
-      },
+      output: refused(
+        'The Person’s desktop app is not connected. Ask them to connect it.',
+        notConnected,
+      ),
     }),
     AddressRefused: () => ({
-      output: {
-        ok: false,
-        message:
-          'That page or address cannot be opened on the Person’s computer. Use a public web address.',
-      },
+      output: refused(
+        'That page or address cannot be opened on the Person’s computer. Use a public web address.',
+        plain('i can’t open that address on your computer.'),
+      ),
     }),
     NotAllowed: () => ({
-      output: {
-        ok: false,
-        message:
-          'The Person has not allowed Vivid to use their computer. While its Vivid desktop app is open, they are asked over the message box: tell them to press Allow there, then try again.',
-      },
+      output: refused(
+        'The Person has not allowed Vivid to use their computer. While its Vivid desktop app is open, they are asked over the message box: tell them to press Allow there, then try again.',
+        plain(
+          'i need your ok to use your computer. press allow in the vivid app on it, then ask me again.',
+        ),
+      ),
     }),
     Busy: () => ({
-      output: {
-        ok: false,
-        message: 'The Person’s computer is busy with an earlier action. Wait for it to finish.',
-      },
+      output: refused(
+        'The Person’s computer is busy with an earlier action. Wait for it to finish.',
+        busy,
+      ),
     }),
     Stopped: () => ({
-      output: {
-        ok: false,
-        message: 'The Person took control of the page. Stop and do not retry by yourself.',
-      },
+      output: refused(
+        'The Person took control of the page. Stop and do not retry by yourself.',
+        plain('you took over, so i’ve stopped there.'),
+      ),
       terminate: true,
     }),
     PageGone: () => ({
-      output: { ok: false, message: 'The page is gone. Ask the Person to open it again.' },
+      output: refused(
+        'The page is gone. Ask the Person to open it again.',
+        plain('that page closed. open it again and tell me when it’s there.'),
+      ),
     }),
     Unsupported: () => ({
-      output: {
-        ok: false,
-        message:
-          'The Person’s computer does not support this browser action. Ask the Person to do it.',
-      },
+      output: refused(
+        'The Person’s computer does not support this browser action. Ask the Person to do it.',
+        plain('i can’t do that step on your computer. could you do that bit yourself?'),
+      ),
     }),
     RunRequired: () => ({
-      output: {
-        ok: false,
-        message:
-          'Nothing was sent, because the work that asked for it has ended. Ask the Person before trying again.',
-      },
+      output: refused(
+        'Nothing was sent, because the work that asked for it has ended. Ask the Person before trying again.',
+        quiet,
+      ),
       terminate: true,
     }),
     Completed: ({ result }) => ({
@@ -240,16 +279,36 @@ export function desktopOutcome(outcome: DesktopOutcome): ToolResult {
   })
 }
 
-/** Every native refusal gives a distinct fixed next step; Stop is a termination, never a retry. */
+/**
+ * Every native refusal gives a distinct fixed next step for Vivid, and what it means for the
+ * Person; Stop is a termination, never a retry. A gone window or a stale look is Vivid's to fix.
+ */
 const windowRefusals = {
-  Stopped: 'The person stopped Vivid on their computer. Stop and do not retry.',
-  Elevated:
-    'Windows does not let Vivid type into an administrator window. Ask the person to do that step.',
-  WindowGone: 'The window is gone. List the windows again.',
-  LookStale: 'This look is stale. Look at the window again before acting.',
-  NotInFront: 'Windows would not bring this window forward. Ask the person to bring it forward.',
-  Unsupported: 'This computer cannot do that action. Ask the person to do it.',
-} satisfies Record<WindowRefusal, string>
+  Stopped: {
+    message: 'The person stopped Vivid on their computer. Stop and do not retry.',
+    tellThem: plain('you stopped me, so i’ve left it there.'),
+  },
+  Elevated: {
+    message:
+      'Windows does not let Vivid type into an administrator window. Ask the person to do that step.',
+    tellThem: plain(
+      'that window needs admin rights, so i can’t type into it. could you do that step?',
+    ),
+  },
+  WindowGone: { message: 'The window is gone. List the windows again.', tellThem: quiet },
+  LookStale: {
+    message: 'This look is stale. Look at the window again before acting.',
+    tellThem: quiet,
+  },
+  NotInFront: {
+    message: 'Windows would not bring this window forward. Ask the person to bring it forward.',
+    tellThem: plain('i couldn’t bring that window to the front. could you click on it for me?'),
+  },
+  Unsupported: {
+    message: 'This computer cannot do that action. Ask the person to do it.',
+    tellThem: plain('i can’t do that step on your computer. could you do that bit yourself?'),
+  },
+} satisfies Record<WindowRefusal, { readonly message: string; readonly tellThem: Plain }>
 
 /** Only text metadata belongs in JSON; the same native image adapter carries the window picture. */
 const windowView = ({ window, app, look, width, height, outline, truncated }: WindowView) => ({
@@ -313,34 +372,38 @@ export function windowOutcome(outcome: WindowOutcome): ToolResult {
   return WindowOutcome.match<ToolResult>(outcome, {
     Completed: ({ result }) => windowResult(result),
     Refused: ({ reason }) => ({
-      output: { ok: false, reason, message: windowRefusals[reason] },
+      output: {
+        ...refused(windowRefusals[reason].message, windowRefusals[reason].tellThem),
+        reason,
+      },
       terminate: reason === 'Stopped',
     }),
     NotConnected: () => ({
-      output: {
-        ok: false,
-        message: 'The person’s desktop app is not connected. Ask them to connect it.',
-      },
+      output: refused(
+        'The person’s desktop app is not connected. Ask them to connect it.',
+        notConnected,
+      ),
     }),
     Busy: () => ({
-      output: {
-        ok: false,
-        message: 'The person’s computer is busy with an earlier action. Wait for it to finish.',
-      },
+      output: refused(
+        'The person’s computer is busy with an earlier action. Wait for it to finish.',
+        busy,
+      ),
     }),
     RunRequired: () => ({
-      output: {
-        ok: false,
-        message:
-          'Nothing was sent because the Run that asked has ended. Stop and ask the person before trying again.',
-      },
+      output: refused(
+        'Nothing was sent because the Run that asked has ended. Stop and ask the person before trying again.',
+        quiet,
+      ),
       terminate: true,
     }),
     Unavailable: ({ reason }) => ({
       output: {
-        ok: false,
+        ...refused(
+          `Apps are unavailable on the person’s computer: ${reason}`,
+          plain('i can’t use the apps on your computer right now.'),
+        ),
         reason: views.modelText(reason),
-        message: `Apps are unavailable on the person’s computer: ${views.modelText(reason)}`,
       },
     }),
     OutcomeUnknown: outcomeUnknown,

@@ -35,6 +35,20 @@ function failureView(failure: CodeFailure): Schema.Json {
 }
 
 /**
+ * What a failed program means for the Person. A program that threw, timed out or ran over a limit
+ * is Vivid's own code to fix, so they hear nothing; only a Computer that could not run it, or a
+ * server too busy to start it, stops what they asked for.
+ */
+const failureMeaning = (failure: CodeFailure): views.Plain =>
+  CodeFailure.match(failure, {
+    Threw: () => views.quiet,
+    TimedOut: () => views.quiet,
+    OverLimit: () => views.quiet,
+    Unavailable: () => views.plain('my computer isn’t available right now, so i couldn’t do that.'),
+    Busy: () => views.plain('i’m tied up with other work right now. ask me again in a minute.'),
+  })
+
+/**
  * Parent receipts expose completed/uncertain work; the existing Approval card remains top-level.
  * The model reads each call's purpose and ending; the journal's receipts for the writes the
  * program sent stay in the result's metadata, where a reconciliation can find them.
@@ -72,17 +86,32 @@ function codeResult(
       terminate: true,
     }),
     Blocked: ({ rule }) => ({
-      output: { ok: false, rule: views.modelText(rule), calls },
+      output: {
+        ...views.refused(
+          `A rule stopped the program: “${rule}”.`,
+          views.plain(`that goes against one of your rules (“${rule}”), so i didn’t do it.`),
+        ),
+        rule: views.modelText(rule),
+        calls,
+      },
       terminate: true,
     }),
     Failed: ({ failure, logs, logsTruncated }) => ({
-      output: { ok: false, failure: failureView(failure), calls, logs, logsTruncated },
+      output: {
+        ...views.refused(`The program failed: ${failure._tag}.`, failureMeaning(failure)),
+        failure: failureView(failure),
+        calls,
+        logs,
+        logsTruncated,
+      },
     }),
     OutcomeUnknown: () => ({
       output: {
-        ok: false,
+        ...views.refused(
+          'An action may have happened. Do not retry without asking the Person.',
+          views.plain('i can’t tell yet whether that went through, so i haven’t done it again.'),
+        ),
         calls,
-        message: 'An action may have happened. Do not retry without asking the Person.',
       },
       terminate: true,
     }),
@@ -101,16 +130,26 @@ function pageOutcome(outcome: ReadPageOutcome): ToolResult {
         truncated,
       },
     }),
+    // A page that needs a real browser is Vivid's to open another way, so the Person hears
+    // nothing; any other refusal means the page could not be read at all.
     Refused: ({ reason }): ToolResult => {
       if (reason === 'needs a browser to show its content' || reason === 'blocked by a bot check')
         return {
           output: {
-            ok: false,
+            ...views.refused(`The page could not be read here: ${reason}.`, views.quiet),
             reason,
             next: 'Open the requested address with browse on the Computer.',
           },
         }
-      return { output: { ok: false, reason } }
+      return {
+        output: {
+          ...views.refused(
+            `The page could not be read: ${reason}.`,
+            views.plain('i couldn’t open that page.'),
+          ),
+          reason,
+        },
+      }
     },
   })
 }

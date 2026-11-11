@@ -179,7 +179,7 @@ export function projectTools(runTool: RunTool) {
                 ok: true,
                 name: modelText(project.name),
                 parent,
-                message: 'Created the Project. Threads have not been moved.',
+                message: 'Created the Project. This conversation stays where it is.',
               },
             }
           }),
