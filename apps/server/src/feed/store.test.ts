@@ -1107,23 +1107,26 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
           database.run(database.select().from(threads).where(eq(threads.personId, test.ada)))
         const before = yield* mine()
 
-        const opened = yield* resumeFeedItem(
-          {
-            person: test.person,
-            workspace: Workspace.cases.Personal.make({}),
-            by: 'person',
-            threadId: Option.none(),
-            helper: Option.none(),
-          },
-          {
-            work,
-            conversation: ThreadId.make(crypto.randomUUID()),
-            key: crypto.randomUUID(),
-            opening: FeedOpening.cases.Looking.make({}),
-          },
+        // Read as an Exit: making a copy reads the runtime's history, which this suite does not run.
+        const opened = yield* Effect.exit(
+          resumeFeedItem(
+            {
+              person: test.person,
+              workspace: Workspace.cases.Personal.make({}),
+              by: 'person',
+              threadId: Option.none(),
+              helper: Option.none(),
+            },
+            {
+              work,
+              conversation: ThreadId.make(crypto.randomUUID()),
+              key: crypto.randomUUID(),
+              opening: FeedOpening.cases.Looking.make({}),
+            },
+          ),
         )
 
-        expect(opened.thread.id).toBe(work)
+        expect(Exit.isSuccess(opened) && opened.value.thread.id).toBe(work)
         expect((yield* mine()).map((row) => row.id)).toEqual(before.map((row) => row.id))
       }).pipe(Effect.scoped),
     )
