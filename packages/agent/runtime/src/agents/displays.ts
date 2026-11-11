@@ -16,7 +16,9 @@ export const drawingFaults = (program: string) =>
   parser
     .parse(program)
     .meta.errors.map((error) =>
-      error.statementId === undefined ? error.message : `\`${error.statementId}\`: ${error.message}`,
+      error.statementId === undefined
+        ? error.message
+        : `\`${error.statementId}\`: ${error.message}`,
     )
 
 /**
@@ -61,6 +63,11 @@ root = Col([head, lines, acts], 3)
 head = Row([Col([Caption("Lumen Studios · Invoice 0142"), Title("₦420,000", "2xl")], 0), Spacer(), Badge("Due Friday", "warning")], 3, "end")
 lines = Table(["Item", "Amount"], [["Brand film, final cut", "₦350,000"], ["Two revision rounds", "₦70,000"]])
 acts = Row([Button("Not now", @ToAssistant("Do not pay Lumen Studios yet"), "ghost"), Button("Pay it", @ToAssistant("Pay Lumen Studios invoice 0142"))], 2, null, "end")`,
+  `A drawn Feed card about something someone owes the Person: who, what, since when, and the Buttons. Nothing else:
+
+root = Col([head, acts], 3)
+head = Row([Col([Caption("Ada Obi · asked on 7 Nov"), Title("The September report", "lg")], 0), Spacer(), Badge("No reply", "warning")], 3, "end")
+acts = Row([Button("Leave it", @ToAssistant("Leave Ada's report for now"), "ghost"), Button("Nudge Ada", @ToAssistant("Send Ada a nudge about the September report"))], 2, null, "end")`,
   `A drawn Feed card about the week: the strip of days with the day it is about marked, the one line it needs, the Buttons:
 
 root = Col([week, Caption("Nothing on the calendar for the audit call you took on 7 Nov."), acts], 2)
@@ -146,6 +153,7 @@ export const DISPLAYS = generateSystemPrompt({
     additionalRules: [
       ...LIVE_DATA,
       'Lead with the picture or the thing, then at most one short line of words per block: a Caption under a picture, a Text for the one thing a picture cannot say. A display is a card, not an essay; a paragraph inside one is a mistake.',
+      'Draw each kind of thing in its own shape, from the example closest to it; never borrow another kind’s shape. A Table holds two rows or more; one fact is a Title or a Caption, not a one-row Table.',
       'Say each fact once. When a Title, a Badge, a Table or a picture shows an amount, a time, a name or a date, no Text or Caption says it again, and no Button label repeats it ("Pay it", not "Pay ₦420,000").',
       'The surface already draws the display on a card of its own. Never wrap the whole display in a Card; Card groups one block inside a larger display.',
       'Every page read_page returns lists its pictures, the page’s own lead picture first. Use those addresses for Image and for a Page’s picture, and the page’s own address for a Page. An address must come from a page or tool result you read or from the Person; never make one up. When you have no address for a picture, leave the picture out rather than describe it.',
