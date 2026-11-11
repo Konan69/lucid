@@ -204,6 +204,35 @@ export function approval(item: { readonly approvalId: string; readonly summary: 
   }
 }
 
+/**
+ * Every refusal speaks twice. `message` is for Vivid, in the system's words: what went wrong and
+ * what to do next. `tell_them` is what the same fact means for the Person, already in their words
+ * ("i can't get into your agency notion yet. sign in again and pick mirabel's workspace."), so
+ * the reply never has to paraphrase a status, a setting or an error name. Both are required: a
+ * refusal written for only one reader is how "the connection never finished authorizing, so it
+ * loads zero tools" reached a Person (production, 11 November 2026). When nothing about the
+ * refusal is the Person's business (a malformed call Vivid fixes itself), `tell_them` says so and
+ * the voice rule keeps it out of the reply.
+ */
+export function refused(message: string, tellThem: Plain) {
+  return { ok: false, message: modelText(message), tell_them: modelText(tellThem.text) }
+}
+
+/**
+ * A sentence for the Person, distinct from a sentence for Vivid at the type level so a refusal
+ * cannot pass its system message twice. `quiet` marks a refusal the Person never hears about.
+ */
+export interface Plain {
+  readonly text: string
+}
+export const plain = (text: string): Plain => ({ text })
+export const quiet: Plain = plain('Nothing to tell them; fix the call and carry on.')
+/** For a refusal whose message is worded elsewhere (the server's InvalidRequest, a provider's
+ * reason), so its meaning for the Person cannot be written here. */
+export const translate: Plain = plain(
+  'If this stops what they asked for, tell them in their own words what did not happen and the one thing that would fix it.',
+)
+
 /** Vivid text omits opaque references and image URLs; email addresses remain usable contact data. */
 export function modelText(value: string) {
   // Match addresses before references: even a UUID-shaped mailbox remains a usable address.
