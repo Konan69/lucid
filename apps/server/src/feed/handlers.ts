@@ -60,12 +60,11 @@ export const feedHandlers = {
         Effect.fail(new Forbidden({ message: 'Posting to the Feed needs an acting Run.' })),
       ),
     )
-    // Conversations show their reply in the Thread; only Background work composes a Feed post.
+    // Any Thread the Person owns may post, a Conversation as well as Background work: the Feed
+    // already lists both (bbd12e6c7), and a card from a chat is how something found there waits
+    // for the Person to approve or put away later (11 November 2026: "why is posting to feeds
+    // not allowed in threads").
     const thread = yield* requireThread(auth.threadId, auth.person.id)
-    if (thread.place !== 'Background')
-      return yield* new Forbidden({
-        message: 'The Person is in this conversation: answer here instead of posting to the Feed.',
-      })
     return yield* (yield* Database).transaction(() =>
       Effect.gen(function* () {
         const outcome = yield* (yield* FeedStore).post({

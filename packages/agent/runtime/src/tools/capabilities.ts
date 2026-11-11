@@ -211,7 +211,8 @@ const definitions: ReadonlyArray<{
     mount: ({ runTool }) => revisionTools(runTool),
   },
   {
-    description: 'Put relevant background findings on the Person’s Feed.',
+    description:
+      'Put a card on the Person’s Feed: background findings, or something from a conversation that waits on their answer or approval.',
     requirement: 'Product',
     mount: ({ runTool }) => feedTools(runTool),
   },
