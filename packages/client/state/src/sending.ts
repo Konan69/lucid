@@ -15,6 +15,8 @@ import {
   type Impact,
   type IncidentHop,
   type IncidentSource,
+  type MeResponse,
+  type ThreadListResponse,
   type ConversationState,
   type Run,
   type ThreadAttention,
@@ -31,7 +33,9 @@ import {
   Schema,
 } from 'effect'
 import { AsyncResult, Atom, type AtomRegistry } from 'effect/reactivity'
-import type { Live } from './live.js'
+import { draftPlace } from './drafts.js'
+import type { Live, LiveResult } from './live.js'
+import { workspaceKey } from './threads.js'
 
 /** One sending machine for every client. Words draw immediately, then keep their identity
  * when conversation state confirms them. `Sending` owns the server call, so a late answer
@@ -98,12 +102,16 @@ export const Unsent = Schema.Struct({
 export interface Unsent extends Schema.Schema.Type<typeof Unsent> {}
 
 /**
- * Every Thread's unsent words as a client keeps them between runs of the app, by Thread. Until
- * this was kept they lived only in the machine, so an app closed under words that did not arrive
- * lost them, and the "Try again" under the Run they never started said the message before them.
- * Each app keeps it where it keeps drafts (the phone's files, the browser's storage).
+ * Every Thread's unsent words as a client keeps them between runs of the app. Until this was kept
+ * they lived only in the machine, so an app closed under words that did not arrive lost them, and
+ * the "Try again" under the Run they never started said the message before them. Each app keeps
+ * it where it keeps drafts (the phone's files, the browser's storage).
+ *
+ * The key is the place a Thread's words are kept for a Person in a workspace (`draftPlace`), as
+ * drafts are, so words are handed back only to the Person who wrote them, where they wrote them:
+ * a second Person signed in on the same device never gets them, a shared Thread included.
  */
-export const Kept = Schema.Record(ThreadId, Schema.Array(Unsent))
+export const Kept = Schema.Record(Schema.String, Schema.Array(Unsent))
 export type Kept = typeof Kept.Type
 
 const decodeKept = Schema.decodeUnknownOption(Schema.fromJsonString(Kept))
@@ -963,14 +971,13 @@ export const makeSending = (services: Layer.Layer<Delivering>, keeping: Keeping)
     watching.push(watched(keeping, thread, made))
     return made
   }
+  // Declared before this, because a store that answers at once restores while it is called.
+  watching.push(
+    restoring(keeping, (thread, unsent) =>
+      tell(keeping.registry, inThread(thread), SendingEvents.Restore({ unsent })),
+    ),
+  )
   return Object.assign(inThread, {
-    /** Hands each Thread's kept words to its machine (`SendingEvents.Restore`). */
-    restore: (kept: Kept): void => {
-      for (const [thread, unsent] of Record.toEntries(kept)) {
-        if (unsent.length > 0)
-          tell(keeping.registry, inThread(thread), SendingEvents.Restore({ unsent }))
-      }
-    },
     /** Session departure, unlike screen departure, ends every machine and its invoked work. */
     forget: (registry: AtomRegistry.AtomRegistry): void => {
       for (const stop of watching.splice(0)) stop()
@@ -980,11 +987,106 @@ export const makeSending = (services: Layer.Layer<Delivering>, keeping: Keeping)
   })
 }
 
-/** Where an app keeps its Threads' unsent words (`Kept`), and the registry its machines run in. */
+/** Who is signed in, the workspace they are in, and its Threads, as the server has said them. */
+export interface Whereabouts {
+  readonly person: string
+  readonly workspace: string
+  readonly threads: ReadonlySet<ThreadId>
+}
+
+/**
+ * Whereabouts from a session's own `WatchMe` and `WatchThreads` answers, never what a device kept
+ * of them: none until the server has answered both.
+ */
+export const whereaboutsOf = (
+  me: Atom.Atom<LiveResult<MeResponse>>,
+  threads: Atom.Atom<LiveResult<ThreadListResponse>>,
+): Atom.Atom<Option.Option<Whereabouts>> =>
+  Atom.make((get) => {
+    const who = get(me)
+    const listed = get(threads)
+    return AsyncResult.isSuccess(who) && AsyncResult.isSuccess(listed)
+      ? Option.some({
+          person: who.value.person.id,
+          workspace: workspaceKey(who.value.workspace),
+          threads: new Set(listed.value.threads.map((thread) => thread.id)),
+        })
+      : Option.none()
+  })
+
+/** Where an app keeps its Threads' unsent words (`Kept`), and what its machines run in. */
 export interface Keeping {
   readonly registry: AtomRegistry.AtomRegistry
-  /** Keeps one Thread's unsent words as they now stand; none left removes the Thread's entry. */
-  readonly keep: (thread: ThreadId, unsent: ReadonlyArray<Unsent>) => void
+  readonly whereabouts: Atom.Atom<Option.Option<Whereabouts>>
+  /**
+   * One change to the store, one at a time: `revise` is given what the store holds when the
+   * change's turn comes, and answers what it should hold. A store that refuses has not kept it.
+   */
+  readonly change: (revise: (kept: Kept) => Kept) => Effect.Effect<Kept>
+  /** Runs a change, which goes on without whatever asked for it. */
+  readonly launch: (program: Effect.Effect<void>) => void
+}
+
+/** The place one Thread's words are kept for the Person where they are (`Kept`). */
+const placeOf = (where: Whereabouts, thread: ThreadId): string =>
+  draftPlace(where.person, { workspace: where.workspace, thread: Option.some(thread) })
+
+/** What is kept, with one place's words as they now stand; none left removes the place. */
+const placed = (kept: Kept, place: string, unsent: ReadonlyArray<Unsent>): Kept =>
+  unsent.length > 0 ? Record.set(kept, place, unsent) : Record.remove(kept, place)
+
+/** The kept words of the Person where they are, by the Thread the words were sent to. */
+const keptHere = (kept: Kept, where: Whereabouts) =>
+  Record.toEntries(kept).flatMap(([place, unsent]) =>
+    Option.match(Option.fromUndefinedOr(unsent[0]), {
+      onNone: () => [],
+      onSome: ({ delivery }) =>
+        place === placeOf(where, delivery.thread) ? [[delivery.thread, unsent] as const] : [],
+    }),
+  )
+
+/** What is kept, without the words of Threads the Person's list here no longer has. */
+const pruned = (kept: Kept, where: Whereabouts): Kept =>
+  keptHere(kept, where)
+    .filter(([thread]) => !where.threads.has(thread))
+    .reduce((rest, [thread]) => Record.remove(rest, placeOf(where, thread)), kept)
+
+/**
+ * Hands the Person's kept words to their Threads' machines (`SendingEvents.Restore`) once the
+ * server has said who and where they are, and again for each workspace they move to.
+ *
+ * Words of a Thread no longer in the list (deleted, or no longer theirs) are dropped first, but
+ * only for the session's first whereabouts: on a workspace switch the Person and the Thread list
+ * are two answers, and a list from the workspace being left would drop every word of the new one.
+ */
+const restoring = (
+  keeping: Keeping,
+  restore: (thread: ThreadId, unsent: ReadonlyArray<Unsent>) => void,
+): (() => void) => {
+  const done = new Set<string>()
+  return keeping.registry.subscribe(
+    keeping.whereabouts,
+    (now) => {
+      if (Option.isNone(now)) return
+      const where = now.value
+      const scope = `${where.person}\n${where.workspace}`
+      if (done.has(scope)) return
+      const first = done.size === 0
+      done.add(scope)
+      keeping.launch(
+        keeping
+          .change((kept) => (first ? pruned(kept, where) : kept))
+          .pipe(
+            Effect.flatMap((kept) =>
+              Effect.sync(() => {
+                for (const [thread, unsent] of keptHere(kept, where)) restore(thread, unsent)
+              }),
+            ),
+          ),
+      )
+    },
+    { immediate: true },
+  )
 }
 
 /**
@@ -1009,12 +1111,16 @@ const signatureOf = (unsent: ReadonlyArray<Unsent>): string =>
 const watched = (keeping: Keeping, thread: ThreadId, machine: SendingAtoms): (() => void) => {
   let last = ''
   return keeping.registry.subscribe(stateOf(machine), (state) => {
-    if (Option.isNone(state)) return
+    // Words are kept under the Person and workspace the server says now: nothing is sent before
+    // it has said them.
+    const where = keeping.registry.get(keeping.whereabouts)
+    if (Option.isNone(state) || Option.isNone(where)) return
     const unsent = heldUnsent(state.value)
     const now = signatureOf(unsent)
     if (now === last) return
     last = now
-    keeping.keep(thread, unsent)
+    const place = placeOf(where.value, thread)
+    keeping.launch(Effect.asVoid(keeping.change((kept) => placed(kept, place, unsent))))
   })
 }
 export type SendingAtoms = ReturnType<ReturnType<typeof makeSending>>

@@ -11,7 +11,8 @@ import {
   type Following,
   type LiveQuery,
 } from '@vivid/state'
-import { Effect, Layer, Option, Record } from 'effect'
+import { Effect, Layer, Option } from 'effect'
+import { start } from './app'
 import { heldConversations } from './conversation'
 import { kept } from './kept'
 import { live } from './live'
@@ -43,14 +44,16 @@ export const conversationOf = (id: ThreadId): LiveQuery<Following> => followed.g
 const UNSENT = 'vivid-unsent'
 
 /**
- * Keeps one Thread's unsent words. The rest are read back first, so a Thread another tab keeps
- * is not written over; a store that refuses leaves the words in this page's memory only.
+ * One change to the kept unsent words. What the store holds is read back first, so words another
+ * tab kept are not written over; a store that refuses leaves them in this page's memory only.
  */
-function keepUnsent(thread: ThreadId, unsent: ReadonlyArray<sending.Unsent>): void {
-  const others = Record.remove(sending.readKept(kept.read(UNSENT)), thread)
-  const text = sending.writeKept(unsent.length > 0 ? Record.set(others, thread, unsent) : others)
-  if (Option.isSome(text)) kept.write(UNSENT, text.value)
-}
+const changeUnsent = (revise: (held: sending.Kept) => sending.Kept) =>
+  Effect.sync(() => {
+    const next = revise(sending.readKept(kept.read(UNSENT)))
+    const text = sending.writeKept(next)
+    if (Option.isSome(text)) kept.write(UNSENT, text.value)
+    return next
+  })
 
 /** How this page hands a delivery to the server: `SendToThread` on its socket. */
 const transport = sending.delivering(engine.run, recording)
@@ -61,12 +64,13 @@ const machines = sending.makeSending(
     create: (request) =>
       transport.create(request).pipe(Effect.tap(() => Effect.sync(() => engine.reopen()))),
   }),
-  { registry: engine.registry, keep: keepUnsent },
+  {
+    registry: engine.registry,
+    whereabouts: sending.whereaboutsOf(live.me.answers, live.threads.answers),
+    change: changeUnsent,
+    launch: start,
+  },
 )
-
-// Words that did not arrive before the page was last closed are the Thread's again, to be sent
-// under their own keys.
-machines.restore(sending.readKept(kept.read(UNSENT)))
 
 /**
  * This page's conversations: the one used last and three before it. Each is a subscription on

@@ -1,6 +1,6 @@
-import type { ThreadId } from '@vivid/contracts'
-import { sending, type Live } from '@vivid/state'
-import { Effect, Layer, Option, Record, Semaphore } from 'effect'
+import type { MeResponse, ThreadId, ThreadListResponse } from '@vivid/contracts'
+import { sending, type Live, type LiveResult } from '@vivid/state'
+import { Effect, Layer, Option, Semaphore } from 'effect'
 import type { Atom } from 'effect/reactivity'
 import { launch, start } from './app'
 import { keepFile, recallFile } from './storage'
@@ -60,36 +60,36 @@ const recalled = recallFile(FILE).pipe(
 const file = Semaphore.makeUnsafe(1)
 
 /**
- * Keeps one Thread's unsent words, so they are there to send again after the app is closed. The
- * other Threads' are read back from the file first and kept as they were. A store that refuses
- * leaves the words in the machine for this run only.
+ * One change to the kept unsent words, in the file's turn and read from it when that turn comes,
+ * so a change asked for earlier never lands over a newer one. A store that refuses leaves the
+ * words in the machines for this run only.
  */
-const keepUnsent = (thread: ThreadId, unsent: ReadonlyArray<sending.Unsent>) =>
+const changeUnsent = (revise: (held: sending.Kept) => sending.Kept) =>
   Semaphore.withPermit(
     file,
     Effect.gen(function* () {
-      const others = Record.remove(yield* recalled, thread)
-      const text = sending.writeKept(
-        unsent.length > 0 ? Record.set(others, thread, unsent) : others,
-      )
+      const next = revise(yield* recalled)
+      const text = sending.writeKept(next)
       if (Option.isSome(text)) yield* keepFile(FILE, text.value)
-    }).pipe(Effect.catchTag('StorageUnavailable', () => Effect.void)),
+      return next
+    }).pipe(Effect.catchTag('StorageUnavailable', () => Effect.succeed<sending.Kept>({}))),
   )
 
+/** The session's own answers that say who is signed in, where, and that workspace's Threads. */
+interface WhereaboutsSources {
+  readonly me: Atom.Atom<LiveResult<MeResponse>>
+  readonly threads: Atom.Atom<LiveResult<ThreadListResponse>>
+}
+
 /** A session's sending: every Thread's machine, which outlives the screen that sent. */
-export function makeSending(engine: Live) {
+export function makeSending(engine: Live, server: WhereaboutsSources) {
   const transport = sending.delivering(engine.run, recording)
   const machines = sending.makeSending(Layer.succeed(sending.Delivering, transport), {
     registry: engine.registry,
-    keep: (thread, unsent) => void launch(keepUnsent(thread, unsent)),
+    whereabouts: sending.whereaboutsOf(server.me, server.threads),
+    change: changeUnsent,
+    launch,
   })
-  // Words that did not arrive before the app last closed are their Thread's again, to be sent
-  // under their own keys. Read in the file's turn, so a change this session makes first is in it.
-  launch(
-    Semaphore.withPermit(file, recalled).pipe(
-      Effect.flatMap((kept) => Effect.sync(() => machines.restore(kept))),
-    ),
-  )
   const stateIn = (thread: ThreadId) => sending.stateOf(machines(thread))
 
   return {
