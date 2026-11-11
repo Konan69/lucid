@@ -52,6 +52,7 @@
         "$TURBO_ROOT$/packages/**/tsconfig*.json",
         "$TURBO_ROOT$/scripts/lint.mjs",
         "$TURBO_ROOT$/scripts/oxlint-plugin-vivid.mjs",
+        "$TURBO_ROOT$/scripts/gate/waits.json",
         "$TURBO_ROOT$/scripts/boundary.mjs",
         "$TURBO_ROOT$/tools/oxlint/**",
         "$TURBO_ROOT$/apps/web/src/styles/**"

@@ -1,6 +1,14 @@
 import * as NodeEvents from 'node:events'
+import * as NodePath from 'node:path'
+import * as NodeURL from 'node:url'
 import { visitorKeys } from 'oxc-parser'
 import { noCrossPackageImport } from './boundary.mjs'
+import legacyWaits from './gate/waits.json' with { type: 'json' }
+
+const repositoryRoot = NodePath.resolve(
+  NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
+  '..',
+)
 
 // Each runner has a `With` form that takes a Context first (`Effect.runPromiseWith(context)(program)`).
 // It starts an Effect exactly as the plain form does, so every rule about runners covers both.
@@ -957,8 +965,17 @@ const isSettlementCallback = (node) =>
   node.parent.arguments.includes(node) &&
   settlementMethods.has(propertyName(node.parent.callee))
 
+/** Function names keep legacy identities stable when unrelated lines move. */
+const waitOwner = (node) => {
+  if (node.id?.name !== undefined) return node.id.name
+  const parent = node.parent
+  return parent?.type === 'VariableDeclarator' && parent.id.type === 'Identifier'
+    ? parent.id.name
+    : undefined
+}
+
 /**
- * A setter `useState` returned, called from the far side of a wait.
+ * React setters and already-declared local helpers called from the far side of a wait.
  *
  * `const [busy, setBusy] = useState(false)` followed by `await save(); setBusy(false)` holds a
  * lifecycle in a component and moves it from a continuation that does not know whether the
@@ -971,28 +988,41 @@ const isSettlementCallback = (node) =>
  * callback given to `then`, `catch` or `finally`. Setters are recognised by the `useState`
  * destructuring in the same file; one that reaches a function as a prop is not followed.
  *
- * This reads syntax, not types, so it cannot tell a lifecycle from a harmless note. It is a
- * warning with a ratchet for that reason: the count may only go down, and a new screen that needs
- * the pattern has to take a finding away first.
+ * Legacy sites are named in waits.json. Unlisted writes fail even when another site was fixed;
+ * stale entries must be removed. This reads syntax, so lifecycle classification still needs review.
  *
- * What it does not follow, so its silence is not proof: a helper that sets state and is called
- * after the wait (`const end = () => setBusy(false); await send(); end()`), a setter reached
- * through a prop, and two bindings of one name in a file (names are tracked for the file). It
+ * Helpers are followed in source order, in the same file. Wrappers such as useCallback, object
+ * methods, props and aliases remain outside this rule; names are still tracked for the file. It
  * also reads a function top to bottom and not path by path, so a setter after a branch that
  * waited and returned is reported although that path never waited. The machine in
  * `packages/client/state` is what makes a lifecycle safe; this only counts the old shape.
  */
 const reactNoStateAfterWait = rule(
   'Do not move React state from the far side of a wait.',
-  '`{{setter}}` is called after this function has waited, with nothing to say the answer still belongs to the attempt on screen: an older answer can write over a newer press. A lifecycle with async work is a machine in packages/client/state (see connecting.ts), and a value the server owns is a live query.',
-  (report) => {
+  '`{{setter}}` is called after a wait at site `{{site}}`, which is not grandfathered in scripts/gate/waits.json. Put the lifecycle in packages/client/state with state-owned invokes (see connecting.ts); server-owned values belong in live queries.',
+  (report, context) => {
     const setters = new Set()
-    // One entry per function being visited, innermost last: whether it has waited yet.
+    const file = NodePath.relative(repositoryRoot, context.filename).split(NodePath.sep).join('/')
+    const listed = legacyWaits[file] ?? {}
+    const found = new Map()
+    // Each function owns its wait marker; nested synchronous callbacks do not inherit it.
     const waited = []
-    const enter = (node) => waited.push(isSettlementCallback(node))
+    const enter = (node) =>
+      waited.push({ name: waitOwner(node), waited: isSettlementCallback(node) })
     const leave = () => waited.pop()
     const wait = () => {
-      if (waited.length > 0) waited[waited.length - 1] = true
+      if (waited.length > 0) waited[waited.length - 1].waited = true
+    }
+    /** Multiplicity prevents a second write in the same handler borrowing the first's allowance. */
+    const late = (node, setter) => {
+      const owner = waited
+        .map((entry) => entry.name)
+        .filter((name) => name !== undefined)
+        .join('.')
+      const site = `${owner}:${setter}`
+      const count = (found.get(site) ?? 0) + 1
+      found.set(site, count)
+      if (count > (listed[site] ?? 0)) report(node, { setter, site })
     }
     return {
       VariableDeclarator(node) {
@@ -1017,8 +1047,25 @@ const reactNoStateAfterWait = rule(
         if (node.delegate) wait()
       },
       CallExpression(node) {
+        if (settlementMethods.has(propertyName(node.callee))) {
+          for (const argument of node.arguments) {
+            if (argument.type === 'Identifier' && setters.has(argument.name))
+              late(argument, argument.name)
+          }
+        }
         if (node.callee?.type !== 'Identifier' || !setters.has(node.callee.name)) return
-        if (waited.at(-1) === true) report(node, { setter: node.callee.name })
+        const current = waited.at(-1)
+        if (current?.name !== undefined) setters.add(current.name)
+        if (current?.waited === true) late(node, node.callee.name)
+      },
+      'Program:exit'(program) {
+        for (const [site, count] of Object.entries(listed)) {
+          if ((found.get(site) ?? 0) < count)
+            context.report({
+              node: program,
+              message: `scripts/gate/waits.json lists ${count} late writes at ${site}; this file has ${found.get(site) ?? 0}. Lower or delete that legacy entry.`,
+            })
+        }
       },
     }
   },

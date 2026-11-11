@@ -183,13 +183,13 @@ void test('the CLI consumes an existing lint log and exits nonzero for a loose c
 /** Exercise the gate's own reducer with the same logs it receives from cached or executed lint tasks. */
 void test('the lint stage enforces decreases and exact measured ceilings', (t) => {
   const repo = repository(t, table(18))
-  const rule = ratchets.find((entry) => entry.rule === 'react-no-state-after-wait')
+  const rule = ratchets.find((entry) => entry.rule === 'keep-incident-cause')
   // Every other ratcheted rule is held at its ceiling, so only this one is loose.
   const held = ratchets
     .filter((entry) => entry !== rule && entry.ceiling > 0)
     .map((entry) => `  ⚠ ${entry.plugin}(${entry.rule}): held.\n`.repeat(entry.ceiling))
     .join('')
-  const output = `${held}${'  ⚠ vivid(react-no-state-after-wait): move the lifecycle.\n'.repeat(
+  const output = `${held}${'  ⚠ vivid(keep-incident-cause): move the lifecycle.\n'.repeat(
     rule.ceiling - 1,
   )}`
   const lint = { name: 'lint', failed: [], output }
@@ -199,13 +199,32 @@ void test('the lint stage enforces decreases and exact measured ceilings', (t) =
   const complete = {
     name: 'lint',
     failed: [],
-    output: `${output}  ⚠ vivid(react-no-state-after-wait): one more.\n`,
+    output: `${output}  ⚠ vivid(keep-incident-cause): one more.\n`,
   }
   applyRatchets([complete], { root: repo.root, ceilingsBase: 'HEAD', env: environment() })
   assert.deepEqual(complete.failed, [])
   repo.write(table(28))
   applyRatchets([complete], { root: repo.root, ceilingsBase: 'HEAD', env: environment() })
   assert.match(complete.failed.join('\n'), /ceiling 18 -> 28/u)
+})
+
+/** A converted handler cannot purchase permission for a different late write. */
+void test('the lint stage rejects a same-count replacement of legacy wait sites', (t) => {
+  const repo = repository(t, table(18))
+  const waits = NodePath.join(repo.root, 'scripts/gate/waits.json')
+  NodeFS.writeFileSync(NodePath.join(repo.root, 'a.tsx'), 'old handler')
+  NodeFS.writeFileSync(NodePath.join(repo.root, 'b.tsx'), 'new handler')
+  NodeFS.writeFileSync(waits, JSON.stringify({ 'a.tsx': { 'A.save:setBusy': 1 } }))
+  repo.git(['add', '.'])
+  repo.git(['commit', '--quiet', '-m', 'existing wait site'])
+  const base = repo.git(['rev-parse', 'HEAD'])
+  NodeFS.writeFileSync(waits, JSON.stringify({ 'b.tsx': { 'B.save:setBusy': 1 } }))
+  const result = repo.run([base])
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /B\.save:setBusy.*0 -> 1/u)
+  const lint = { name: 'lint', failed: [], output: '' }
+  applyRatchets([lint], { root: repo.root, ceilingsBase: base, env: environment() })
+  assert.match(lint.failed.join('\n'), /B\.save:setBusy.*0 -> 1/u)
 })
 
 void test('failed lint cannot recommend lowering from a partial log', (t) => {

@@ -10,6 +10,7 @@ import { parseSync } from 'oxc-parser'
 import { countFindings } from './gate/ratchets.mjs'
 
 const tablePath = 'scripts/gate/ratchets.mjs'
+const waitsPath = 'scripts/gate/waits.json'
 const hookPath = '.husky/pre-push'
 const Ceiling = Schema.Struct({
   plugin: Schema.NonEmptyString,
@@ -18,6 +19,14 @@ const Ceiling = Schema.Struct({
 })
 const isLiteral = Schema.is(Schema.Union([Schema.String, Schema.Number]))
 const decodeCeiling = Schema.decodeUnknownResult(Ceiling)
+const decodeWaits = Schema.decodeUnknownResult(
+  Schema.fromJsonString(
+    Schema.Record(
+      Schema.NonEmptyString,
+      Schema.Record(Schema.NonEmptyString, Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
+    ),
+  ),
+)
 
 /** Git failures must not look like an empty baseline and silently permit every raise. */
 function git(root, args, environment = process.env) {
@@ -145,9 +154,49 @@ function workingCeilings(root) {
   return tableCeilings(NodeFS.readFileSync(NodePath.join(root, tablePath), 'utf8'))
 }
 
+/** The legacy list is input: malformed data must never turn into an empty allowance. */
+function parseWaits(source) {
+  const decoded = decodeWaits(source)
+  if (Result.isFailure(decoded)) throw new Error(`ceilings: invalid ${waitsPath}`)
+  return decoded.success
+}
+
+/** Absence is legitimate only for comparison commits that predate site-level enforcement. */
+function waitsAt(root, revision, environment) {
+  const file = git(root, ['ls-tree', '-r', '--name-only', revision, '--', waitsPath], environment)
+  return file === ''
+    ? undefined
+    : parseWaits(git(root, ['show', `${revision}:${waitsPath}`], environment))
+}
+
+/** Sites may disappear, but converting one handler cannot purchase debt in another. */
+function grownWaits(root, before) {
+  const path = NodePath.join(root, waitsPath)
+  if (!NodeFS.existsSync(path))
+    return before === undefined ? [] : [`${waitsPath} is missing; restore the legacy site list.`]
+  const after = parseWaits(NodeFS.readFileSync(path, 'utf8'))
+  const failures = []
+  for (const [file, sites] of Object.entries(after)) {
+    if (!NodeFS.existsSync(NodePath.join(root, file)))
+      failures.push(`${file} is gone; delete its entries from ${waitsPath}.`)
+    const previous = before === undefined ? sites : before[file]
+    for (const [site, count] of Object.entries(sites)) {
+      const old = previous === undefined ? 0 : (previous[site] ?? 0)
+      if (count > old)
+        failures.push(
+          `${file} ${site}: ${old} -> ${count}. ${waitsPath} only shrinks; put the lifecycle in packages/client/state with state-owned invokes.`,
+        )
+    }
+  }
+  return failures
+}
+
 /** The working tree matters for local gates and the CLI, including an uncommitted raise. */
 export function checkRaises(root, base, environment) {
-  return raisedCeilings(readCeilings(root, base, environment), workingCeilings(root))
+  return [
+    ...raisedCeilings(readCeilings(root, base, environment), workingCeilings(root)),
+    ...grownWaits(root, waitsAt(root, base, environment)),
+  ]
 }
 
 /** The CLI measures an existing log. The gate supplies these same fields from checkRatchets. */
