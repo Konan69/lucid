@@ -43,6 +43,7 @@ import * as RpcClient from 'effect/rpc/RpcClient'
 import * as RpcGroup from 'effect/rpc/RpcGroup'
 import * as RpcSerialization from 'effect/rpc/RpcSerialization'
 import * as RpcServer from 'effect/rpc/RpcServer'
+import { requestProtocolLayer } from '../rpc/requests.ts'
 import { ObservabilityConfiguration } from '../config.ts'
 import { faultRoutes } from '../http/faults.ts'
 import { threads } from '../threads/tables.ts'
@@ -2223,6 +2224,58 @@ it.effect('starts a transaction where work arrives from another process, named b
       expect(flagsOf('Probe.arrived')).toEqual([0x300])
       expect(flagsOf('Probe.child')).toEqual([0x100])
       expect(flagsOf('Probe.alone')).toEqual([0])
+    }),
+  ),
+)
+
+it.effect('exports the HTTP RPC call as a segment under the payload client span', () =>
+  withReceiver(
+    Effect.gen(function* () {
+      const routes = RpcServer.layer(probes).pipe(
+        Layer.provide(requestProtocolLayer),
+        Layer.provide(probes.toLayer({ Echo: ({ note }) => Effect.succeed(note) })),
+        Layer.provide(RpcSerialization.layerNdjson),
+      )
+      const { collect, flush } = yield* observed({
+        ...plain,
+        routes: Layer.mergeAll(routes, HttpRouter.add('GET', '/plain', HttpServerResponse.empty())),
+      })
+      const client = yield* HttpClient.HttpClient
+      const traceId = '4bf92f3577b34da6a3ce929d0e0e4736'
+      const parent = '00f067aa0ba902b7'
+      const response = yield* client
+        .execute(
+          HttpClientRequest.post('/api/rpc').pipe(
+            HttpClientRequest.setHeader(
+              'traceparent',
+              '00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01',
+            ),
+            HttpClientRequest.bodyText(
+              JSON.stringify({
+                _tag: 'Request',
+                id: '1',
+                tag: 'Echo',
+                payload: { note: 'hello' },
+                headers: [],
+                traceId,
+                spanId: parent,
+                sampled: true,
+              }) + '\n',
+              'application/ndjson',
+            ),
+          ),
+        )
+        .pipe(Effect.provideService(HttpClient.TracerPropagationEnabled, false))
+      expect(yield* response.text).toContain('hello')
+      yield* client
+        .get('/plain')
+        .pipe(Effect.provideService(HttpClient.TracerPropagationEnabled, false))
+      yield* flush
+      const { spans } = yield* collect()
+      const calls = spanNamed(spans, 'Echo')
+      expect(calls).toHaveLength(1)
+      expect(calls[0]).toMatchObject({ traceId, parentSpanId: parent, flags: 0x300, name: 'Echo' })
+      expect(spanNamed(spans, 'GET /plain')).toHaveLength(1)
     }),
   ),
 )
