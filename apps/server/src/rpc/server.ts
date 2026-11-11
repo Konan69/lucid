@@ -31,7 +31,7 @@ import { pushHandlers } from '../push/handlers.ts'
 import { ruleHandlers } from '../rules/handlers.ts'
 import { searchHandlers } from '../search/handlers.ts'
 import { messageSearchLayer } from '../search/messages.ts'
-import { locationHandlers, settingsHandlers } from '../settings/handlers.ts'
+import { locationHandlers, settingsHandlers, setWakingHours } from '../settings/handlers.ts'
 import { skillHandlers } from '../skills/handlers.ts'
 import { childHandlers, followUpHandlers } from '../runs/handlers.ts'
 import { threadHandlers } from '../threads/handlers.ts'
@@ -66,6 +66,7 @@ const rpcHandlersLayer = Layer.mergeAll(
     'StopAllWork',
     'ShareLocation',
     'FollowUpChildRun',
+    'SetWakingHours',
   ).toLayer({
     ...artifactHandlers,
     ...channelHandlers,
@@ -110,6 +111,7 @@ const rpcHandlersLayer = Layer.mergeAll(
   VividRpc.toLayerHandler('StopAllWork', workHandlers.StopAllWork),
   VividRpc.toLayerHandler('ShareLocation', locationHandlers.ShareLocation),
   VividRpc.toLayerHandler('FollowUpChildRun', followUpHandlers.FollowUpChildRun),
+  VividRpc.toLayerHandler('SetWakingHours', setWakingHours),
 ).pipe(
   Layer.provide(
     Layer.mergeAll(draftStoreLayer, feedStoreLayer, actionLookupLayer, messageSearchLayer),

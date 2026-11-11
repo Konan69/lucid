@@ -56,6 +56,7 @@ function normaliseReply(text) {
 }
 
 const missing = {
+  pacing: 'Contact hours have no Settings control; run feature pacing and browser feed.',
   handoff: 'No proof-owned Computer',
   checkin: 'No browser recipe for a check-in yet; feature checkin proves its timer and Feed post',
   monitoring: 'Monitoring has no browser surface; feature monitoring proves the Sentry receipt',

@@ -12,7 +12,7 @@ import {
 } from '@vivid/contracts'
 import { describe, expect, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
-import { Effect, Option, Ref, Result, Schema, Layer } from 'effect'
+import { Effect, Exit, Option, Ref, Result, Schema, Layer } from 'effect'
 import { Clock } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import {
@@ -34,6 +34,8 @@ import { testDatabaseConfigured } from '../database/testdb.ts'
 import { feedHandlers } from '../feed/handlers.ts'
 import { feedStoreLayer } from '../feed/store.ts'
 import { paceOnce } from '../feed/pace.ts'
+import { setWakingHours } from '../settings/handlers.ts'
+import { settingsStoreLayer } from '../settings/store.ts'
 import { owedHandlers } from '../owed/handlers.ts'
 import { owedStoreLayer } from '../owed/store.ts'
 import { recordNotice } from '../notifications/notifier.ts'
@@ -64,9 +66,12 @@ const withPush = <A, E, R>(program: Effect.Effect<A, E, R>) =>
 const withFeed = <A, E, R>(program: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
     const context = yield* Layer.build(
-      Layer.mergeAll(feedStoreLayer, notificationStoreLayer, owedStoreLayer).pipe(
-        Layer.provideMerge(pushTestLayer),
-      ),
+      Layer.mergeAll(
+        feedStoreLayer,
+        notificationStoreLayer,
+        owedStoreLayer,
+        settingsStoreLayer,
+      ).pipe(Layer.provideMerge(pushTestLayer)),
     )
     return yield* program.pipe(Effect.provide(context))
   }).pipe(Effect.scoped)
@@ -599,7 +604,7 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
       ),
     )
     it.effect(
-      'a Feed post is silent until a quiet waking moment; an urgent one sounds at once',
+      'spoken contact hours hold ordinary notices until eleven; urgent notices bypass them',
       () =>
         withFeed(
           Effect.gen(function* () {
@@ -633,20 +638,19 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
             yield* paceOnce()
             yield* deliverOwed()
             expect(yield* Ref.get(probe.sent)).toEqual([])
-            // At ten in the morning, with nobody looking and no conversation going, it is told once,
-            // quietly; a second pass the same day tells nothing more.
+            // A spoken start-time correction is persisted by the same handler as the runtime tool.
+            const correction = yield* Effect.exit(
+              Effect.suspend(() =>
+                setWakingHours({ start: 660, end: 1290 }).pipe(
+                  Effect.provideService(AuthContext, auth),
+                ),
+              ),
+            )
+            expect(Exit.isSuccess(correction)).toBe(true)
             yield* TestClock.adjust('10 hours')
             yield* paceOnce()
-            yield* paceOnce()
             yield* deliverOwed()
-            const quiet = yield* Ref.get(probe.sent)
-            expect(quiet).toHaveLength(1)
-            expect(quiet[0]).toMatchObject({
-              title: post.title,
-              body: post.words,
-              opens: feed,
-              sound: 'Quiet',
-            })
+            expect(yield* Ref.get(probe.sent)).toEqual([])
             // An urgent post is told at once with sound, and the same post retried is that notice.
             const urgent = PostRequest.cases.Said.make({
               ...post,
@@ -660,11 +664,20 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
             yield* posting
             yield* deliverOwed()
             const all = yield* Ref.get(probe.sent)
-            expect(all).toHaveLength(2)
-            expect(all[1]).toMatchObject({ body: urgent.words, opens: feed, sound: 'Audible' })
+            expect(all).toHaveLength(1)
+            expect(all[0]).toMatchObject({ body: urgent.words, opens: feed, sound: 'Audible' })
+            // Repost ordinary work; at eleven the saved window admits it, quietly and only once.
+            yield* feedHandlers.Post(post).pipe(Effect.provideService(AuthContext, auth))
+            yield* TestClock.adjust('59 minutes')
+            yield* paceOnce()
+            yield* paceOnce()
+            yield* deliverOwed()
+            const quiet = yield* Ref.get(probe.sent)
+            expect(quiet).toHaveLength(2)
+            expect(quiet[1]).toMatchObject({ body: post.words, opens: feed, sound: 'Quiet' })
             expect(yield* listedKinds()).toEqual([
-              { kind: 'needs-you', opens: feed },
               { kind: 'posted', opens: feed },
+              { kind: 'needs-you', opens: feed },
             ])
           }),
         ),

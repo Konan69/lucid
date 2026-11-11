@@ -79,6 +79,7 @@ export const ToolName = Schema.Literals([
   'read_thread',
   'list_work',
   'stop_all_work',
+  'set_waking_hours',
 ])
 export type ToolName = typeof ToolName.Type
 

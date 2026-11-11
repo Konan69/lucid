@@ -66,6 +66,7 @@
         "src/library/extraction/main.ts",
         "src/library/fixtures/**/main.ts",
         "tests/startup/main.ts",
+        "tests/pacing/main.ts",
         "src/runtime/vitest.ts",
         "**/*.test.ts",
         "*drizzle.config.ts",
