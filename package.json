@@ -38,6 +38,7 @@
     "lint:root": "node scripts/lint.mjs",
     "format:root": "oxfmt --check .",
     "gate": "node scripts/gate.mjs",
+    "verify": "node scripts/verify.mjs",
     "check": "node scripts/types.mjs"
   },
   "devDependencies": {

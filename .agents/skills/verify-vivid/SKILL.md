@@ -25,6 +25,15 @@ Set `VIVID_VERIFY_KEY_FILE` to an explicit private env file, or export the provi
 
 `VIVID_VERIFY_MODEL` selects a shipped model id. With a key available the default is a real model, preferring the shipped default `opencode-go/glm-5.3-flash` when its key exists. Explicit `rehearsal/script` proves plumbing only. Every feature file states its model requirement. Read [boundaries](references/boundaries.md) for unavailable external authorities.
 
+## One call
+
+```sh
+pnpm verify feed settings            # on the Cloudbox devbox-pick prints, or --host <alias>
+.agents/skills/verify-vivid/verify run feed settings   # in this checkout (the PC host)
+```
+
+`pnpm verify` sends this checkout's commit (or a snapshot of uncommitted work) to a warm verify tree on the Cloudbox, the gate's own mechanism (`scripts/gate/cloud.mjs` `runInTree`): no separate checkout, and dependencies install only when a manifest or the lockfile changed. `verify run` launches, requires a worthy doctor, runs `feature` and `browser` for each named feature against that one launch, always runs cleanup, and writes `run.json` in the evidence directory. It exits 0 only when every step proved its feature. Use the step commands below to debug one step.
+
 ## Launch and doctor
 
 ```sh
