@@ -30,7 +30,7 @@ Require the Watch row to be gone through cascade deletion, its exact provider su
 
 ## Prove dismissing and resuming the card
 
-After removal the HTTP journey dismisses the delivered card as its X does (`MarkFeedCard` done) and reads the Feed twice: both reads must show it Settled, and the background Thread must have no new Run. It then sends `ResumeFeedItem` for the card's work twice with the same Conversation id and key. Both answers must name that one Conversation, it must settle exactly one Run, hold exactly one `carry-on` hand-over carrying the card's title and a reply from Vivid, and the background Thread must still have no new Run. `dismiss-resume.json` records the reads, Run counts and Conversation. This proves the server path only; the phone swipe and the card press on web and phone need their own device and browser runs.
+After removal the HTTP journey dismisses the delivered card as its X does (`DismissFeedItem`) and reads the Feed twice: both reads must show it Settled, and the background Thread must have no new Run. It then sends `ResumeFeedItem` for the card's work twice with the same Conversation id and key. Both answers must name that one Conversation, it must settle exactly one Run, hold exactly one `carry-on` hand-over carrying the card's title and a reply from Vivid, and the background Thread must still have no new Run. `dismiss-resume.json` records the reads, Run counts and Conversation. This proves the server path only; the phone swipe and the card press on web and phone need their own device and browser runs.
 
 ## Evidence
 

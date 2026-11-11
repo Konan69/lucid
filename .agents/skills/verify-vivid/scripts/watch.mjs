@@ -529,14 +529,14 @@ const backgroundRuns = (state, proof, directory, name) =>
   )
 
 /**
- * The card's X puts it away and says nothing to Vivid: `MarkFeedCard` done starts no Run and the
+ * The card's X puts it away and says nothing to Vivid: `DismissFeedItem` starts no Run and the
  * card reads Settled on every later read. Pressing it then makes one new Conversation, the same one
  * for the same press sent twice, where Vivid is handed the work as a `carry-on` and answers, while
  * the work's own Thread takes no new Run.
  */
 async function dismissedAndResumed(state, proof, directory) {
   const before = await backgroundRuns(state, proof, directory, 'dismiss-runs-before')
-  await rpc(state, 'MarkFeedCard', { card: proof.feed, state: 'done' }, directory, 'dismiss')
+  await rpc(state, 'DismissFeedItem', { work: proof.background }, directory, 'dismiss')
   const reads = []
   for (const name of ['dismissed-feed', 'dismissed-feed-again'])
     reads.push(await rpc(state, 'ListFeed', undefined, directory, name))

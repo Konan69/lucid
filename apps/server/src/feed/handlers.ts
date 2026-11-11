@@ -1,7 +1,9 @@
 import * as Effect from 'effect/Effect'
 import {
   Forbidden,
+  NotFound,
   PostRequest,
+  type DismissFeedItemRequest,
   type MarkFeedCardRequest,
   type ResumeFeedItemRequest,
 } from '@vivid/contracts'
@@ -12,7 +14,7 @@ import { requireThread } from '../threads/access.ts'
 import { actingRun } from '../threads/runs.ts'
 import { Database } from '../database/client.ts'
 import { resumeFeedItem } from './resume.ts'
-import { FeedStore, markTold } from './store.ts'
+import { dismissFeedItem, FeedStore, markTold } from './store.ts'
 
 /** What a notice quotes of a post: a said card's words; a drawn card is its drawing, with none. */
 const bodyOf = (post: PostRequest) =>
@@ -31,6 +33,14 @@ export const feedHandlers = {
   /** The Person looked at a card or dealt with it. */
   MarkFeedCard: Effect.fn('Rpc.MarkFeedCard')(function* (request: typeof MarkFeedCardRequest.Type) {
     return yield* (yield* FeedStore).mark((yield* requireActor()).person.id, request)
+  }),
+  /** The Person put an item away, posted or not: it leaves the Feed and nothing is said to Vivid. */
+  DismissFeedItem: Effect.fn('Rpc.DismissFeedItem')(function* (request: DismissFeedItemRequest) {
+    const person = (yield* requireActor()).person.id
+    const work = yield* requireThread(request.work, person)
+    // Only the Person's own Threads are on their Feed (`read.ts` `mine`).
+    if (work.personId !== person) return yield* new NotFound({ message: 'Thread not found' })
+    return yield* dismissFeedItem(person, work.id)
   }),
   /** Pressing a Feed item is a Person's act: a new Conversation about its work (`resume.ts`). */
   ResumeFeedItem: Effect.fn('Rpc.ResumeFeedItem')(function* (request: ResumeFeedItemRequest) {

@@ -29,7 +29,7 @@ type Presses = { readonly presses: ReadonlyMap<FeedCardId, feed.Press> }
 /** Titles are notification context, not delivery state; the machine owns whether a send failed. */
 const closing = new Map<FeedCardId, string>()
 
-/** `SendToThread` says a card's words under the press's key; `MarkFeedCard` closes a card. */
+/** `SendToThread` says a card's words under the press's key; `DismissFeedItem` puts an item away. */
 const sending = Layer.succeed(feed.Sending, {
   send: Effect.fn('Feed.send')(function* ({ card, thread, pressed }: feed.Delivery) {
     please()
@@ -48,7 +48,7 @@ const sending = Layer.succeed(feed.Sending, {
         Effect.gen(function* () {
           const title = Option.fromUndefinedOr(closing.get(card))
           closing.delete(card)
-          const closed = yield* changing((client) => client.MarkFeedCard({ card, state: 'done' }))
+          const closed = yield* changing((client) => client.DismissFeedItem({ work: thread }))
           if (Result.isFailure(closed)) {
             Option.map(title, (words) => say(`“${words}” couldn’t be closed.`))
             return yield* new feed.SendRefused({ card })

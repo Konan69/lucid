@@ -803,7 +803,7 @@ function Waiting({
           <Swipe
             // A send that did not get through brings the card back where it was, not where it was thrown.
             key={feed.failed(item, press) ? 'again' : 'first'}
-            sides={sidesOf(post, asked, { onSay: onAnswer, onDone, onOpen })}
+            sides={sidesOf(post, asked, { onSay: onAnswer, onDone, onOpen, onResume })}
             held={Option.exists(press, feed.Press.$is('Sending'))}
           >
             <Card
@@ -930,43 +930,45 @@ function Unstarted() {
 }
 
 /**
- * What a swipe does on a waiting card, from what the card already offers (9 November 2026: swipe
- * the Feed's cards like a deck of cards). Right is the answer, left the way out, each in the card's
- * own words:
+ * What a swipe does on a waiting card. Every card swipes both ways, the same on each (the owner,
+ * 11 November 2026: "its stupid that some cards have swipe some dont"):
  *
- * - Left, on any posted card, dismisses it: the card is put away and nothing is said to Vivid, so
- *   no Run starts (the owner, 11 November 2026: "dismiss x should dismiss and ignore completely").
- *   It used to say the card's first button in its Thread, which woke Vivid and brought the card
- *   back with whatever it posted next.
- * - Right on a said card says its last button (the answer); on a card with none, or a drawn card
- *   whose answers live in the drawing, it puts the card away ("Done").
- * - Nothing posted (an ask read from its Thread, with no card row the server can mark): right
- *   opens the Thread, where it is answered, and the card settles back.
- * - An Approval to decide: no swipe. A consequential yes is pressed, never flung.
+ * - Left puts any item away (`DismissFeedItem`), posted or not, an Approval included; nothing is
+ *   said to Vivid and nothing waiting in the Thread is answered or cancelled ("dismiss x should
+ *   dismiss and ignore completely").
+ * - Right on a said card with buttons is its answer: a new chat opens where Vivid acts on it ("it
+ *   should always open in chat for now when i swipe yes or click the approval button").
+ * - Right on an Approval or a question opens the Thread that asked it, where it is answered: a new
+ *   chat could not answer it, and a consequential yes is pressed there, never flung.
+ * - Right on a card with nothing to answer, drawn or said without buttons, opens a new chat about
+ *   its work.
  */
 function sidesOf(
   post: Option.Option<FeedPost>,
   asked: Option.Option<Approval>,
-  reply: Pick<Reply, 'onSay' | 'onDone'> & { readonly onOpen: () => void },
+  reply: Pick<Reply, 'onSay' | 'onDone'> & {
+    readonly onOpen: () => void
+    readonly onResume: () => void
+  },
 ): Sides {
-  const done: Side = { words: 'Done', run: reply.onDone, ends: 'away' }
+  // Left puts any item away, the same on every card; nothing is said to Vivid.
   const dismiss: Side = { words: 'Dismiss', run: reply.onDone, ends: 'away' }
+  // An Approval or a question is answered where it was asked, so right opens that Thread.
   const open: Side = { words: 'Open', run: reply.onOpen, ends: 'back' }
+  // A card with nothing to answer opens a new chat about its work.
+  const talk: Side = { words: 'Open', run: reply.onResume, ends: 'back' }
   const say = (words: FeedAction): Side => ({ words, run: () => reply.onSay(words), ends: 'away' })
-  if (Option.isSome(asked)) return { answer: Option.none(), away: Option.none() }
-  return Option.match(post, {
-    onNone: () => ({ answer: Option.some(open), away: Option.none() }),
-    onSome: (made) => ({
-      answer: Option.some(
-        FeedPost.match(made, {
-          Drawn: () => done,
+  const answer = Option.isSome(asked)
+    ? open
+    : Option.match(post, {
+        onNone: () => open,
+        onSome: FeedPost.match({
+          Drawn: () => talk,
           Said: ({ actions }) =>
-            Option.match(Array.last(actions), { onNone: () => done, onSome: say }),
+            Option.match(Array.last(actions), { onNone: () => talk, onSome: say }),
         }),
-      ),
-      away: Option.some(dismiss),
-    }),
-  })
+      })
+  return { answer: Option.some(answer), away: Option.some(dismiss) }
 }
 
 /** How the Person answers a waiting card. A card Vivid is still working on takes no answer. */

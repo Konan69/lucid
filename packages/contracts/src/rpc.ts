@@ -64,6 +64,7 @@ import {
   FeedDisplayInvalid,
   FeedResponse,
   MarkFeedCardRequest,
+  DismissFeedItemRequest,
   PostOutcome,
   PostRequest,
   ResumeFeedItemRequest,
@@ -393,6 +394,8 @@ const NotifyPerson = Rpc.make('NotifyPerson', {
 const ListFeed = Rpc.make('ListFeed', { ...call, success: FeedResponse })
 const WatchFeed = Rpc.make('WatchFeed', { ...live, success: FeedResponse })
 const MarkFeedCard = Rpc.make('MarkFeedCard', { ...call, payload: MarkFeedCardRequest })
+/** One Feed item put away, posted or not; it says nothing to Vivid. */
+const DismissFeedItem = Rpc.make('DismissFeedItem', { ...call, payload: DismissFeedItemRequest })
 /** A new Conversation about a Feed item's work, answered once Vivid has been handed it there. */
 const ResumeFeedItem = Rpc.make('ResumeFeedItem', {
   ...call,
@@ -1452,6 +1455,7 @@ export const VividRpc = RpcGroup.make(
   ListFeed,
   WatchFeed,
   MarkFeedCard,
+  DismissFeedItem,
   ResumeFeedItem,
   Post,
   Dream,

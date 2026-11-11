@@ -93,17 +93,20 @@ export function Card({
           {title}
         </button>
         <time className="ms-auto shrink-0 text-ink-3 tabular-nums">{when(at, now)}</time>
-        {Option.exists(post, FeedPost.guards.Drawn) && Option.isSome(reply) && (
-          <Button
-            variant="ghost"
-            size="xs"
-            className="-me-2"
-            disabled={reply.value.held}
-            onClick={reply.value.onDone}
-          >
-            Done
-          </Button>
-        )}
+        {/* Every waiting item can be put away: a drawn card, and an Approval or a question Vivid
+            posted no card for, have no button of their own that does it. */}
+        {(Option.isNone(post) || Option.exists(post, FeedPost.guards.Drawn)) &&
+          Option.isSome(reply) && (
+            <Button
+              variant="ghost"
+              size="xs"
+              className="-me-2"
+              disabled={reply.value.held}
+              onClick={reply.value.onDone}
+            >
+              Done
+            </Button>
+          )}
       </div>
       {/* Where the card came from, in Vivid's words, under the title: Muse's rule that every
           unasked item says where it came from. A card from before it was kept says nothing. */}

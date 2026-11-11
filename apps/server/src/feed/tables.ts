@@ -62,3 +62,22 @@ export const feedCards = pgTable(
       .where(sql`${table.urgency} = 'ordinary' and ${table.toldAt} is null`),
   ],
 )
+
+/**
+ * Feed items the Person put away that Vivid never posted a card for: a question or an Approval
+ * read straight from its Thread, which has no card row to mark done. One per Thread; putting it
+ * away again moves the time. Like a done card's `updatedAt`, `dismissedAt` covers what was waiting
+ * then, and only an ask made after it brings the item back (`read.ts` `stageOf`). A card posted
+ * later has its own row, which then decides.
+ */
+export const feedDismissals = pgTable(
+  'vivid_feed_dismissals',
+  {
+    threadId: threadColumn('thread_id')
+      .primaryKey()
+      .references(() => threads.id, { onDelete: 'cascade' }),
+    personId: personColumn().notNull(),
+    dismissedAt: epoch('dismissed_at').notNull(),
+  },
+  (table) => [index('vivid_feed_dismissals_person').on(table.personId)],
+)

@@ -214,6 +214,16 @@ export const ResumeFeedItemRequest = Schema.Struct({
 })
 export interface ResumeFeedItemRequest extends Schema.Schema.Type<typeof ResumeFeedItemRequest> {}
 
+/**
+ * The Person puts one Feed item away (the X, the left swipe): whatever it is, a posted card, a
+ * question or an Approval read from its Thread, it leaves the Feed and stays away until something
+ * newer happens there. Nothing is said to Vivid and nothing waiting in the Thread is answered (the
+ * owner, 11 November 2026: "dismiss x should dismiss and ignore completely"; "its stupid that some
+ * cards have swipe some dont").
+ */
+export const DismissFeedItemRequest = Schema.Struct({ work: ThreadId })
+export interface DismissFeedItemRequest extends Schema.Schema.Type<typeof DismissFeedItemRequest> {}
+
 /** What a Person does to a card from the Feed. */
 export const MarkFeedCardRequest = Schema.Struct({
   card: FeedCardId,

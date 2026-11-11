@@ -29,7 +29,7 @@ export {
   executorMembers,
 } from '../connections/tables.ts'
 export { draftGenerations, drafts } from '../drafts/tables.ts'
-export { feedCards } from '../feed/tables.ts'
+export { feedCards, feedDismissals } from '../feed/tables.ts'
 export { memoryForgets } from '../forget/tables.ts'
 export { handoffs, inputRequests } from '../inputs/tables.ts'
 export { libraryChunks, libraryDocuments, libraryFolders } from '../library/tables.ts'

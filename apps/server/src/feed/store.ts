@@ -12,7 +12,7 @@ import {
   NotFound,
   PostOutcome,
   PostRequest,
-  type MarkFeedCardRequest,
+  MarkFeedCardRequest,
   type PersonId,
   type RunId,
   type ThreadId,
@@ -26,7 +26,7 @@ import { StoredRunOrigin, StoredRunOriginColumn } from '../threads/conversation.
 import { deliveredOnFeed } from '../threads/runs.ts'
 import { runs } from '../threads/tables.ts'
 import { cardIdOf, readFeed } from './read.ts'
-import { feedCards } from './tables.ts'
+import { feedCards, feedDismissals } from './tables.ts'
 
 /**
  * Whether a display draws: OpenUI finds exactly one whole program in it, found the way drawing
@@ -170,6 +170,37 @@ const makeStore = (database: Database['Service']) => {
 
   return { list, display, post, mark }
 }
+
+/**
+ * The Person puts one Feed item away (`DismissFeedItem`). A posted card is marked done, as Done
+ * marks it, with the same delivery receipt. An item Vivid posted nothing for, a question or an
+ * Approval read from its Thread, has no card to mark, so it gets a dismissal instead, moved to now
+ * if it had one. The caller has already checked the Person owns the Thread.
+ */
+export const dismissFeedItem = Effect.fn('Feed.dismiss')(function* (
+  person: PersonId,
+  thread: ThreadId,
+) {
+  const posted = yield* (yield* FeedStore)
+    .mark(person, MarkFeedCardRequest.make({ card: cardIdOf(thread), state: 'done' }))
+    .pipe(
+      Effect.as(true),
+      // Impact: Routine, no card row means Vivid never posted for this Thread; it is put away as a dismissal below.
+      Effect.catchTag('NotFound', () => Effect.succeed(false)),
+    )
+  if (posted) return
+  const database = yield* Database
+  const now = yield* Clock.currentTimeMillis
+  yield* database.transaction((tx) =>
+    Effect.gen(function* () {
+      yield* tx
+        .insert(feedDismissals)
+        .values({ threadId: thread, personId: person, dismissedAt: now })
+        .onConflictDoUpdate({ target: feedDismissals.threadId, set: { dismissedAt: now } })
+      yield* announce(tx, feedTopic(person))
+    }),
+  )
+})
 
 export class FeedStore extends Context.Service<FeedStore, ReturnType<typeof makeStore>>()(
   'vivid/FeedStore',

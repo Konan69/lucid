@@ -54,9 +54,8 @@ const sending = (data: LiveData) =>
           Effect.map(say(data, { id: thread, body: words, key, pictures: [] }), Result.isSuccess),
         Done: () =>
           Effect.map(
-            Effect.promise(() =>
-              data.change((client) => client.MarkFeedCard({ card, state: 'done' })),
-            ),
+            // Posted or not, the item is put away and nothing is said to Vivid.
+            Effect.promise(() => data.change((client) => client.DismissFeedItem({ work: thread }))),
             Result.isSuccess,
           ),
       })

@@ -20,7 +20,7 @@ import { decodeStored, type Database } from '../database/client.ts'
 import { handoffs, inputRequests, openHandoffStatuses } from '../inputs/tables.ts'
 import { readableBy } from '../threads/access.ts'
 import { runs, threads } from '../threads/tables.ts'
-import { feedCards } from './tables.ts'
+import { feedCards, feedDismissals } from './tables.ts'
 
 /**
  * Reading the Feed: every readable Thread owned by the Person that is still open or settled in the
@@ -68,6 +68,8 @@ interface Row {
   readonly from: string
   readonly settled: number
   readonly card: typeof feedCards.$inferSelect | null
+  /** When the Person put away an item that has no card (`feedDismissals`), if they did. */
+  readonly dismissed: number | null
 }
 
 /** What one Thread is waiting on the Person for, and since when. */
@@ -90,7 +92,7 @@ const mine = (person: PersonId) => and(eq(threads.personId, person), readableBy(
  * A Run settling touches its Thread (`threads/store.ts`), so this covers the last Run too. It is the
  * one rule: the history window, the history order and cap, and the `at` a Settled item shows.
  */
-const settledAt = sql<number>`greatest(${threads.updatedAt}, coalesce(${feedCards.updatedAt}, 0))`
+const settledAt = sql<number>`greatest(${threads.updatedAt}, coalesce(${feedCards.updatedAt}, 0), coalesce(${feedDismissals.dismissedAt}, 0))`
 
 const fields = {
   thread: threads.id,
@@ -98,6 +100,7 @@ const fields = {
   // Postgres sends the bigint `greatest` as text.
   settled: settledAt.mapWith(Number),
   card: feedCards,
+  dismissed: feedDismissals.dismissedAt,
 }
 
 /**
@@ -148,6 +151,7 @@ const readThreads = Effect.fn('Feed.readThreads')(function* (
       .select(fields)
       .from(threads)
       .leftJoin(feedCards, eq(feedCards.threadId, threads.id))
+      .leftJoin(feedDismissals, eq(feedDismissals.threadId, threads.id))
       .where(and(mine(person), stillOpen(now)))
       .orderBy(desc(threads.updatedAt)),
   )
@@ -156,6 +160,7 @@ const readThreads = Effect.fn('Feed.readThreads')(function* (
       .select(fields)
       .from(threads)
       .leftJoin(feedCards, eq(feedCards.threadId, threads.id))
+      .leftJoin(feedDismissals, eq(feedDismissals.threadId, threads.id))
       .where(and(mine(person), not(stillOpen(now)), gte(settledAt, now - SETTLED_WINDOW), workDone))
       .orderBy(desc(settledAt))
       .limit(HISTORY_LIMIT),
@@ -234,6 +239,15 @@ const readAsks = Effect.fn('Feed.readAsks')(function* (
 })
 
 /**
+ * When the Person put this item away, if they did: a done card's time, or, for an item Vivid posted
+ * no card for, its dismissal. Only an ask made after that is news.
+ */
+const putAwayAt = (row: Row): number | null => {
+  if (row.card === null) return row.dismissed
+  return row.card.state === 'done' ? row.card.updatedAt : null
+}
+
+/**
  * Which stage one owned Thread is in. Waiting on the Person wins over a Run going, because
  * a Run stopped on an Approval or a question is still open while it waits; then a Run going;
  * then a card not put away; anything else is settled.
@@ -251,8 +265,8 @@ const stageOf = (
 ): FeedItem => {
   const base = { card: cardIdOf(row.thread), thread: row.thread, from: row.from }
   const cardOpen = row.card !== null && row.card.state !== 'done'
-  const askedSince =
-    asks.asking.length > 0 && (row.card === null || cardOpen || asks.since > row.card.updatedAt)
+  const putAway = putAwayAt(row)
+  const askedSince = asks.asking.length > 0 && (putAway === null || asks.since > putAway)
   if (askedSince || (cardOpen && post !== null && Option.isNone(working)))
     return FeedItem.cases.Waiting.make({
       ...base,
