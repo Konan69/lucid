@@ -66,7 +66,7 @@ const machines = sending.makeSending(
   }),
   {
     registry: engine.registry,
-    whereabouts: sending.whereaboutsOf(live.me.answers, live.threads.answers),
+    whereabouts: sending.whereaboutsOf(live.me.answers),
     change: changeUnsent,
     launch: start,
   },

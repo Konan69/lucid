@@ -16,7 +16,6 @@ import {
   type IncidentHop,
   type IncidentSource,
   type MeResponse,
-  type ThreadListResponse,
   type ConversationState,
   type Run,
   type ThreadAttention,
@@ -987,30 +986,23 @@ export const makeSending = (services: Layer.Layer<Delivering>, keeping: Keeping)
   })
 }
 
-/** Who is signed in, the workspace they are in, and its Threads, as the server has said them. */
+/** Who is signed in and the workspace they are in, as the server has said them. */
 export interface Whereabouts {
   readonly person: string
   readonly workspace: string
-  readonly threads: ReadonlySet<ThreadId>
 }
 
 /**
- * Whereabouts from a session's own `WatchMe` and `WatchThreads` answers, never what a device kept
- * of them: none until the server has answered both.
+ * Whereabouts from a session's own `WatchMe` answer, never what a device kept of it: none until
+ * the server has answered.
  */
 export const whereaboutsOf = (
   me: Atom.Atom<LiveResult<MeResponse>>,
-  threads: Atom.Atom<LiveResult<ThreadListResponse>>,
 ): Atom.Atom<Option.Option<Whereabouts>> =>
   Atom.make((get) => {
     const who = get(me)
-    const listed = get(threads)
-    return AsyncResult.isSuccess(who) && AsyncResult.isSuccess(listed)
-      ? Option.some({
-          person: who.value.person.id,
-          workspace: workspaceKey(who.value.workspace),
-          threads: new Set(listed.value.threads.map((thread) => thread.id)),
-        })
+    return AsyncResult.isSuccess(who)
+      ? Option.some({ person: who.value.person.id, workspace: workspaceKey(who.value.workspace) })
       : Option.none()
   })
 
@@ -1045,19 +1037,13 @@ const keptHere = (kept: Kept, where: Whereabouts) =>
     }),
   )
 
-/** What is kept, without the words of Threads the Person's list here no longer has. */
-const pruned = (kept: Kept, where: Whereabouts): Kept =>
-  keptHere(kept, where)
-    .filter(([thread]) => !where.threads.has(thread))
-    .reduce((rest, [thread]) => Record.remove(rest, placeOf(where, thread)), kept)
-
 /**
  * Hands the Person's kept words to their Threads' machines (`SendingEvents.Restore`) once the
  * server has said who and where they are, and again for each workspace they move to.
  *
- * Words of a Thread no longer in the list (deleted, or no longer theirs) are dropped first, but
- * only for the session's first whereabouts: on a workspace switch the Person and the Thread list
- * are two answers, and a list from the workspace being left would drop every word of the new one.
+ * Nothing is dropped by the Thread list: it is capped (500) and leaves out Background Threads
+ * (`apps/server/src/threads/store.ts` `makeList`), so pruning by it lost words a Person still had.
+ * Words of a Thread that is gone stay keyed to it and are never restored anywhere else.
  */
 const restoring = (
   keeping: Keeping,
@@ -1071,11 +1057,10 @@ const restoring = (
       const where = now.value
       const scope = `${where.person}\n${where.workspace}`
       if (done.has(scope)) return
-      const first = done.size === 0
       done.add(scope)
       keeping.launch(
         keeping
-          .change((kept) => (first ? pruned(kept, where) : kept))
+          .change((kept) => kept)
           .pipe(
             Effect.flatMap((kept) =>
               Effect.sync(() => {

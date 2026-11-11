@@ -86,7 +86,7 @@ export function makeSending(engine: Live, server: WhereaboutsSources) {
   const transport = sending.delivering(engine.run, recording)
   const machines = sending.makeSending(Layer.succeed(sending.Delivering, transport), {
     registry: engine.registry,
-    whereabouts: sending.whereaboutsOf(server.me, server.threads),
+    whereabouts: sending.whereaboutsOf(server.me),
     change: changeUnsent,
     launch,
   })
