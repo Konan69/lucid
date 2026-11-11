@@ -10,7 +10,7 @@ metadata:
     is a private hold with no attendees and no notification, only meaning-changing gaps are
     asked, and the connector's own event link is the report. Changed for Vivid: the work comes from the
     Project's next step (`read_project`) and the Person's to-dos (`list_todos`), the calendar is
-    reached through a connected Integration, and a recurring plan is a Routine.
+    reached through a connected Integration, and recurring planning uses a timer Integration with a Watch.
 ---
 
 This is the Person's own time for their own work. Each block is a private hold on their calendar: no attendees, no invitation, no message to anyone. A meeting with other people is the find-time-and-schedule procedure instead.
@@ -23,4 +23,4 @@ What changes the meaning needs grounding or one question with `ask_person`: whic
 
 Propose the blocks as a short list: the work, the weekday and date, the local start and end, and why that slot. Put the most pressing work first: a dated to-do before its date, then the Project's next step. Confirm the list before writing, and recheck the free time just before each write, because a slot may have filled. Each write follows the normal permission and Approval path for that exact action.
 
-After writing, read each block back and check its time and calendar against what was confirmed. Report the time in the Person's zone and the link the calendar returned for each; the link is the proof. A failed or uncertain write is not a block: read the calendar before any retry, and never say time is set aside when it is not. When the Person wants this done regularly ("plan my week every Sunday evening"), offer to make it a Routine with the make-an-integration procedure rather than promising to remember.
+After writing, read each block back and check its time and calendar against what was confirmed. Report the time in the Person's zone and the link the calendar returned for each; the link is the proof. A failed or uncertain write is not a block: read the calendar before any retry, and never say time is set aside when it is not. When the Person wants this done regularly ("plan my week every Sunday evening"), use the make-an-integration procedure and its schedules reference to create or reuse a timer Integration in their timezone, then watch its event with the planning work as the instruction. Read their current work and availability again on each occurrence. Confirm the schedule and Watch exist before saying it is set.
