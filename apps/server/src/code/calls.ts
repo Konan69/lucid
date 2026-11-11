@@ -329,7 +329,22 @@ const dispatch = Effect.fn('Code.dispatch')(function* (
       return ReadPageOutcome.match(outcome, {
         Read: ({ address, title, text: content, truncated }) =>
           returned({ ok: true, address, title, text: content, truncated }, 'Read a public page'),
-        Refused: ({ reason }) => returned({ ok: false, reason }, 'Read a public page', 'refused'),
+        Refused: ({ reason }) => {
+          if (
+            reason === 'needs a browser to show its content' ||
+            reason === 'blocked by a bot check'
+          )
+            return returned(
+              {
+                ok: false,
+                reason,
+                next: 'Open the requested address with browse on the Computer.',
+              },
+              'Read a public page',
+              'refused',
+            )
+          return returned({ ok: false, reason }, 'Read a public page', 'refused')
+        },
       })
     }
   }

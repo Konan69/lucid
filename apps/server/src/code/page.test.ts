@@ -1,7 +1,9 @@
 import * as NodeHttp from 'node:http'
 import { describe, expect, layer } from '@effect/vitest'
-import { Clock, Deferred, Effect, Fiber, Predicate, Queue, Result } from 'effect'
+import { Clock, Deferred, Effect, Fiber, Predicate, Queue, Result, Layer } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
+import { PageReader, pageReaderLayer } from './page.ts'
+import { PageResolver } from './address.ts'
 import { PageNetwork, pageNetworkLayer } from './network.ts'
 
 /** Public seam tests use deliberate DNS/HTTP Layers; the socket adapter is separately exercised for real. */
@@ -127,6 +129,79 @@ layer(pageNetworkLayer)((tests) => {
         }
         response.end()
         expect((yield* Fiber.join(reading)).body).toBe('onetwothree')
+      }).pipe(Effect.scoped),
+  )
+})
+
+/** Exercise conversion and refusal through the production reader, rather than testing the detector. */
+layer(
+  pageReaderLayer.pipe(
+    Layer.provide(
+      Layer.merge(
+        Layer.effect(
+          PageNetwork,
+          Effect.gen(function* () {
+            const network = yield* PageNetwork
+            return PageNetwork.of({
+              request: (url) => network.request(url, { address: '127.0.0.1', family: 4 }),
+            })
+          }),
+        ).pipe(Layer.provide(pageNetworkLayer)),
+        Layer.succeed(
+          PageResolver,
+          PageResolver.of({
+            resolve: () => Effect.succeed([{ address: '93.184.215.14', family: 4 }]),
+          }),
+        ),
+      ),
+    ),
+  ),
+)((it) => {
+  it.effect(
+    'refuses script notices and the DuckDuckGo challenge while retaining ordinary content',
+    () =>
+      Effect.gen(function* () {
+        // DuckDuckGo text fetched from https://html.duckduckgo.com/html/?q=namespace+jobs on 2026-11-11.
+        const fixtures = [
+          [
+            'JavaScript must be enabled in order to use Notion.\nPlease enable JavaScript to continue.',
+            'needs a browser to show its content',
+          ],
+          ['You need to enable JavaScript to run this app.', 'needs a browser to show its content'],
+          [
+            'Unfortunately, bots use DuckDuckGo too. Please complete the following challenge to confirm this search was made by a human.',
+            'blocked by a bot check',
+          ],
+        ] as const
+        const server = NodeHttp.createServer((request, response) => {
+          response.setHeader('Content-Type', 'text/html')
+          const fixture = fixtures[Number(request.url?.slice(1))]
+          response.end(
+            `<html><body>${fixture === undefined ? 'An ordinary article.' : fixture[0]}</body></html>`,
+          )
+        })
+        yield* Effect.acquireRelease(
+          Effect.callback<void>((resume) => {
+            server.listen(0, '127.0.0.1', () => resume(Effect.void))
+          }),
+          () =>
+            Effect.callback<void>((resume) => {
+              server.closeAllConnections()
+              server.close(() => resume(Effect.void))
+            }),
+        )
+        const address = server.address()
+        if (address === null || Predicate.isString(address))
+          return yield* Effect.die('Missing test listener')
+        const reader = yield* PageReader
+        for (const [index, fixture] of fixtures.entries()) {
+          expect(
+            yield* reader.read({ address: `http://page.test:${address.port}/${index}` }),
+          ).toEqual({ _tag: 'Refused', reason: fixture[1] })
+        }
+        expect(
+          yield* reader.read({ address: `http://page.test:${address.port}/article` }),
+        ).toMatchObject({ _tag: 'Read', text: 'An ordinary article.' })
       }).pipe(Effect.scoped),
   )
 })
