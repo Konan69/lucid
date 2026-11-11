@@ -17,7 +17,7 @@ workspace source + shared rules/configs → Turbo task hash
 - Cache the root TypeScript graph alongside package graphs. Retain incremental build info as outputs, including the RPC client's explicit cache location. Include shared root configuration in build hashes. Explicit root source globs must exclude dependency shims, task logs, build info, native output, and local state; otherwise running a check changes its own next hash.
 - Serialize checks through Turbo. Native TypeScript uses `--checkers 1`; build-mode typechecks also use `--builders 1`. Oxlint defaults to one worker, and tsrslint owns its internal worker count. The gate can raise Oxlint's worker count through `VIVID_LINT_THREADS` while keeping package checks serialized.
 - Run cached declaration and typecheck tasks in project mode through `scripts/types.mjs`. Turbo prepares referenced declarations first; project mode compares file contents against incremental data on a cache miss. Build mode can wrongly skip a changed source file whose timestamp predates restored output. Direct package commands use a forced, serialized build so their references are prepared without Turbo. Split packages check production through `types` and tests through `typecheck`; RPC has no test project and rechecks its declaration project.
-- Keep automatic Turbo worktree cache sharing. Do not add a cacheDir that would disable it. Persist `.turbo/cache` in CI; no remote cache provider is configured.
+- Keep automatic Turbo worktree cache sharing. Do not add a cacheDir that would disable it. A Cloudbox gate keeps one Turbo cache for its warm trees; no remote cache provider is configured.
 - Fix commands always execute and are never cached.
 
 ## The gate
@@ -32,7 +32,7 @@ export PATH="$HOME/.local/bin:$PATH"
 celld --version
 ```
 
-`pnpm gate` (`scripts/gate.mjs`) is the one definition of the checks. Its stages are in `scripts/gate/stages.mjs`, the lint ratchets in `scripts/gate/ratchets.mjs`; the push hook, a run on another machine and each GitHub job select stages from it.
+`pnpm gate` (`scripts/gate.mjs`) is the one definition of the checks. Its stages are in `scripts/gate/stages.mjs`, the lint ratchets in `scripts/gate/ratchets.mjs`; the push hook and a run on a Cloudbox select stages from it. There is no GitHub workflow that gates (removed 11 November 2026).
 
 ```text
 policy (5 checks, together, always run)
@@ -57,7 +57,7 @@ tests lane:  tooling, test per package               beside the checks lane
 - A file whose key already passed is replayed with its counts, so the verdict still reports the whole suite. A failed file is never recorded.
 - An import graph cannot see everything. A module that starts another program, reads files by its own location or the working directory, imports a computed path, or loads modules by its own means makes every test that reaches it "wide": that test is keyed on Turbo's hash of the whole package task and runs whenever anything in the package or its dependencies changed. Test code that touches the file system at all is wide too. `node scripts/test.mjs --plan` in a package lists the wide files and the reason for each. In the server package 27 of 168 files are wide.
 - A type-only change runs no test: erased imports are not in the graph, and typecheck is the stage that owns types.
-- `--all` (or `VIVID_TEST_ALL=1`) runs every file and trusts no record. GitHub's job for the default branch does that, so a dependency the keys miss is caught there at the latest.
+- `--all` (or `VIVID_TEST_ALL=1`) runs every file and trusts no record. Nothing runs it automatically since GitHub's gate jobs were removed; run it on a Cloudbox (`pnpm gate --host <box>` with `VIVID_TEST_ALL=1`) when a change could reach a file through a dependency the keys miss.
 - The records are small files named by key, shared by every checkout on a machine through the gate's cache directory.
 
 On a remote machine the gate keeps one warm tree per concurrent gate (one for every four cores) and takes the first free one, whatever the branch; it writes a `.boxignore` beside them so a Boat machine does not snapshot dependency trees or caches. One tree per branch, without that file, filled a machine's disk in a day.

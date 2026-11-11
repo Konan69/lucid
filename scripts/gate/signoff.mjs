@@ -3,18 +3,17 @@ import * as NodeChildProcess from 'node:child_process'
 /**
  * Signing off: telling GitHub that the commit about to be pushed has already passed the gate.
  *
- * The gate runs where the work is (this machine, or a warm tree on the gate host), and GitHub
- * then ran every stage again on cold machines for the same commit. A passed gate now leaves a
- * commit status named `gate` on that commit, and the Quality workflow reads it first and skips
- * its own run when it is there (`.github/workflows/quality.yml`, job `signoff`). A commit pushed
- * without one (no hook, `HUSKY=0`, a pull request from elsewhere) is still gated by GitHub.
+ * The gate runs where the work is (this machine, or a warm tree on a Cloudbox); there is no
+ * GitHub workflow that gates (removed 11 November 2026: the boxes are the CI). A passed gate
+ * leaves a commit status named `gate` on that commit, so GitHub shows which commits passed. A
+ * commit pushed without one (no hook, `HUSKY=0`) carries no status and was never gated.
  *
  * The idea is Basecamp's `gh-signoff` (run CI locally, then mark the commit green yourself).
  * Theirs signs a commit that is already on GitHub. Ours signs in the push hook, before the
- * push, so the status is there when the workflow starts; see `publish` for what that needs.
+ * push, so the status is there as soon as the commit is; see `publish` for what that needs.
  */
 
-/** The status GitHub's workflow looks for. One name, shared with `quality.yml`. */
+/** The status name GitHub shows on a commit that passed the gate. */
 const CONTEXT = 'gate'
 
 /**

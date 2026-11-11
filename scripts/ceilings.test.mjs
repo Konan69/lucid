@@ -25,19 +25,11 @@ function environment() {
   return env
 }
 
-/** Execute the workflow's fetch command so the shallow-clone proof covers the CI shell too. */
+/** A depth-1 tree fetches exactly the comparison commit it was given, as a remote warm tree does. */
 function fetchComparison(root, base, env) {
-  const workflow = NodeFS.readFileSync(
-    new URL('../.github/workflows/quality.yml', import.meta.url),
-    'utf8',
-  )
-  const fetch = workflow.match(
-    /      - name: Fetch the ceiling comparison commit\n        if: matrix.stages == 'lint'\n        run: \|\n((?: {10}.+\n)+)/u,
-  )
-  assert.notEqual(fetch, null, 'the lint job must fetch its explicit comparison commit')
-  return NodeChildProcess.spawnSync('bash', ['-e', '-c', fetch[1]], {
+  return NodeChildProcess.spawnSync('git', ['fetch', '--no-tags', '--depth=1', 'origin', base], {
     cwd: root,
-    env: { ...env, CEILINGS_BASE: base },
+    env,
     encoding: 'utf8',
   })
 }
@@ -309,18 +301,6 @@ void test('depth-1 lint requires an explicit fetched base and still rejects a ra
     () => lintCeilingBase(root, parse(['full', '--only', 'lint']), env),
     /--ceilings-base/u,
   )
-})
-
-/** GitHub uses an all-zero before SHA for a new branch, which cannot authorize a comparison. */
-void test('the CI fetch fails closed for an absent base and a new branch', (t) => {
-  const repo = repository(t, table(18))
-  for (const base of ['', '0'.repeat(40)]) {
-    const result = fetchComparison(repo.root, base, environment())
-    assert.equal(result.status, 1)
-    assert.match(result.stdout, /::error::ceilings: this event has no comparison commit/u)
-    assert.match(result.stdout, /--ceilings-base/u)
-    assert.equal(result.stderr, '')
-  }
 })
 
 void test('a historical table uses its own ceiling with a recorded lint log', (t) => {
