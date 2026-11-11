@@ -2252,6 +2252,7 @@ it.effect('exports the HTTP RPC call as a segment under the payload client span'
             ),
             HttpClientRequest.bodyText(
               JSON.stringify({
+                // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- Effect 4.0.2 exposes RequestEncoded as an interface; its private binary schema cannot construct a JSON request.
                 _tag: 'Request',
                 id: '1',
                 tag: 'Echo',

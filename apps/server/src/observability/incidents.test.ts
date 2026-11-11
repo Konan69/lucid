@@ -166,8 +166,9 @@ it.live(
         Effect.provide(context),
       )
       const sent = yield* events
-      expect(sent).toHaveLength(2)
-      expect(sent[0]?.message).toBe('AdmissionFailed')
-      expect(sent[1]?.tags?.['vivid.operation']).toBe('Probe.history')
+      expect(sent.map((event) => event.message)).toEqual(['AdmissionFailed', undefined])
+      expect(
+        sent.map((event) => (event.tags === undefined ? undefined : event.tags['vivid.operation'])),
+      ).toEqual([undefined, 'Probe.history'])
     }).pipe(Effect.scoped),
 )
