@@ -68,7 +68,12 @@ export function Posted({
     >
       <View onLayout={(event) => onHeight(event.nativeEvent.layout.height)}>
         <Swipe
-          sides={sidesOf(post, Option.none(), { ...reply, onOpen: () => undefined })}
+          // Already in the chat: a side that would open it leaves the card where it is.
+          sides={sidesOf(post, Option.none(), {
+            ...reply,
+            onOpen: () => undefined,
+            onResume: () => undefined,
+          })}
           held={false}
         >
           <Card
