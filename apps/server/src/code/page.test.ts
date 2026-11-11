@@ -159,7 +159,7 @@ layer(
   ),
 )((it) => {
   it.effect(
-    'refuses script notices and the DuckDuckGo challenge while retaining ordinary content',
+    'refuses script notices and the DuckDuckGo challenge, and lists a page’s own pictures',
     () =>
       Effect.gen(function* () {
         // DuckDuckGo text fetched from https://html.duckduckgo.com/html/?q=namespace+jobs on 2026-11-11.
@@ -174,9 +174,24 @@ layer(
             'blocked by a bot check',
           ],
         ] as const
+        // A restaurant page as such pages are written: a relative og:image, its alt, a logo, a
+        // tracking pixel, a sized icon, an SVG, a lazy body photo and the lead photo repeated.
+        const pictured = [
+          '<html><head><title>Nok by Alara</title>',
+          '<meta property="og:image" content="/media/dining-room.jpg?w=1200&amp;q=80">',
+          '<meta property="og:image:alt" content="The dining room at Nok by Alara">',
+          '</head><body><img src="/assets/logo.png" alt="Nok"><img src="https://t.example/pixel.gif">',
+          '<img src="/media/star.png" width="16" height="16"><img src="/media/map.svg">',
+          "<img data-src='/media/terrace.jpg' alt='The terrace at dusk'>",
+          '<img src="/media/dining-room.jpg?w=1200&q=80" alt="Again"><p>Dinner from 6 PM.</p></body></html>',
+        ].join('')
         const server = NodeHttp.createServer((request, response) => {
           response.setHeader('Content-Type', 'text/html')
           if (request.url === undefined) throw new Error('Expected the fixture request path')
+          if (request.url === '/pictured') {
+            response.end(pictured)
+            return
+          }
           const fixture = fixtures[Number(request.url.slice(1))]
           response.end(
             `<html><body>${fixture === undefined ? 'An ordinary article.' : fixture[0]}</body></html>`,
@@ -209,8 +224,18 @@ layer(
             title: '',
             text: 'An ordinary article.',
             truncated: false,
+            pictures: [],
           }),
         )
+        const origin = `http://page.test:${address.port}`
+        const page = yield* reader.read({ address: `${origin}/pictured` })
+        expect(ReadPageOutcome.guards.Read(page) && page.pictures).toEqual([
+          {
+            address: `${origin}/media/dining-room.jpg?w=1200&q=80`,
+            alt: 'The dining room at Nok by Alara',
+          },
+          { address: `${origin}/media/terrace.jpg`, alt: 'The terrace at dusk' },
+        ])
       }).pipe(Effect.scoped),
   )
 })

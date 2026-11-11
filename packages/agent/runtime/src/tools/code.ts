@@ -17,7 +17,7 @@ declare const tools: {
 find_tools(input: {query: string, limit?: number}): Promise<{tools: {account: string, tool: string, description: string, effect: "read" | "write" | "destructive", call: string, signature: string}[], unconnected: {service: string, description: string}[]}>;
 use_tool(input: {account: string, tool: string, input: Json, summary: string, rationale: string}): Promise<{ok: true, output: Json} | {ok: false, reason: string}>;
 browse(input: {action: BrowserAction, summary: string}): Promise<{ok: true, result: {title: string, outline: string, truncated: boolean}} | {ok: false, reason: string}>;
-read_page(input: {address: string}): Promise<{ok: true, address: string, title: string, text: string, truncated: boolean} | {ok: false, reason: string}>;
+read_page(input: {address: string}): Promise<{ok: true, address: string, title: string, text: string, truncated: boolean, pictures: {address: string, alt: string}[]} | {ok: false, reason: string}>;
 };
 declare const accounts: {[account: string]: {[tool: string]: (input: Json, about: {summary: string, rationale: string}) => Promise<{ok: true, output: Json} | {ok: false, reason: string}>}};
 BrowserAction is defined by this JSON Schema: ${JSON.stringify(Schema.toJsonSchemaDocument(BrowserAction).schema)}
@@ -92,13 +92,17 @@ function codeResult(
 /** Public text is projected just like a Computer page; no credential or session can enter this call. */
 function pageOutcome(outcome: ReadPageOutcome): ToolResult {
   return ReadPageOutcome.match<ToolResult>(outcome, {
-    Read: ({ address, title, text: content, truncated }) => ({
+    Read: ({ address, title, text: content, truncated, pictures }) => ({
       output: {
         ok: true,
         address: views.modelText(address),
         title: views.modelText(title),
         text: views.modelText(content),
         truncated,
+        pictures: pictures.map((picture) => ({
+          address: views.modelText(picture.address),
+          alt: views.modelText(picture.alt),
+        })),
       },
     }),
     Refused: ({ reason }): ToolResult => {
@@ -144,7 +148,7 @@ export function codeTools(runTool: RunTool) {
     defineTool({
       name: Tool.read_page,
       description:
-        'Read any public web page as text, without a Computer or signed-in browser. Returns title, headings, paragraphs, lists and links.',
+        'Read any public web page as text, without a Computer or signed-in browser. Returns title, headings, paragraphs, lists and links, and the page’s pictures (its lead picture first) for a display’s Image or Page.',
       input: v.object({ summary, address: text('The public http or https page address.', 4000) }),
       run({ data, signal }) {
         return runTool(

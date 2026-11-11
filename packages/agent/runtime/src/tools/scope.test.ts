@@ -68,6 +68,7 @@ it.live('keeps the resolver’s Person and Thread attribution on the HTTP RPC ca
                 title: 'Example',
                 text: 'Page',
                 truncated: false,
+                pictures: [],
               }),
             ),
         }),

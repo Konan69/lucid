@@ -178,6 +178,15 @@ export const ReadPageRefusal = Schema.Literals([
 ] as const)
 export type ReadPageRefusal = typeof ReadPageRefusal.Type
 
+/**
+ * A picture a page shows, as the page gave it: its absolute address and what it says it shows.
+ * Vivid draws a place, a product or a page with it (`Image`, `Page`), so a display never has to
+ * guess an address (11 November 2026: no display in production had a picture, because nothing
+ * Vivid read ever gave it one).
+ */
+export const PagePicture = Schema.Struct({ address: Schema.String, alt: Schema.String })
+export interface PagePicture extends Schema.Schema.Type<typeof PagePicture> {}
+
 export const ReadPageOutcome = Schema.TaggedUnion({
   Read: {
     /** Where the page really was, after any redirects. */
@@ -186,6 +195,8 @@ export const ReadPageOutcome = Schema.TaggedUnion({
     /** The page as readable text: headings, paragraphs, lists and links, no markup. */
     text: Schema.String,
     truncated: Schema.Boolean,
+    /** The page's own lead picture first (its og:image), then the large pictures in its body. */
+    pictures: Schema.Array(PagePicture),
   },
   Refused: { reason: ReadPageRefusal },
 })

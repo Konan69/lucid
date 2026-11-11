@@ -5,6 +5,7 @@ import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { budgets, bytes } from './budgets.ts'
 import { PageFailure, pageResolverLayer, pageUrl, resolvePage } from './address.ts'
 import { PageNetwork, pageNetworkLayer, type PageResponse } from './network.ts'
+import { picturesOf } from './pictures.ts'
 
 const titleText = compile({
   baseElements: { selectors: ['title'], returnDomByDefault: false },
@@ -91,7 +92,12 @@ const readDocument = Effect.fn('Code.readDocument')(function* (url: URL, respons
   const refusal = interstitial(converted.text)
   if (Option.isSome(refusal)) return yield* new PageFailure({ reason: refusal.value })
   const bounded = textLimit(converted.text)
-  return ReadPageOutcome.cases.Read.make({ address: url.href, title: converted.title, ...bounded })
+  return ReadPageOutcome.cases.Read.make({
+    address: url.href,
+    title: converted.title,
+    ...bounded,
+    pictures: html ? picturesOf(response.body, url, converted.title) : [],
+  })
 })
 
 /** Each Location is parsed, resolved, checked and pinned again before the next request starts. */
