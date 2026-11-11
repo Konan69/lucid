@@ -179,8 +179,9 @@ function grownWaits(root, before) {
   for (const [file, sites] of Object.entries(after)) {
     if (!NodeFS.existsSync(NodePath.join(root, file)))
       failures.push(`${file} is gone; delete its entries from ${waitsPath}.`)
+    const previous = before === undefined ? sites : before[file]
     for (const [site, count] of Object.entries(sites)) {
-      const old = before === undefined ? count : (before[file]?.[site] ?? 0)
+      const old = previous === undefined ? 0 : (previous[site] ?? 0)
       if (count > old)
         failures.push(
           `${file} ${site}: ${old} -> ${count}. ${waitsPath} only shrinks; put the lifecycle in packages/client/state with state-owned invokes.`,
