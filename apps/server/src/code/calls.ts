@@ -129,7 +129,7 @@ const connection = Effect.fn('Code.useConnection')(function* (
         value: {
           ok: true,
           output,
-          message: 'The service accepted the action; it is queued, not confirmed yet.',
+          message: 'It is on its way: the service took it but has not confirmed it is done yet.',
           ...evidence,
         },
         summary: request.summary,
