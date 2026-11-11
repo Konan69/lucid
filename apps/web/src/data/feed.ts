@@ -1,11 +1,12 @@
 import { useAtomValue } from '@effect/atom-react'
 import { VividRpcClient } from '@vivid/client-runtime'
-import { FeedItem, type FeedCardId } from '@vivid/contracts'
+import { FeedItem, ThreadId, type FeedCardId } from '@vivid/contracts'
 import { feed } from '@vivid/state'
 import { Effect, Layer, Option, Result } from 'effect'
 import { Atom, AsyncResult } from 'effect/reactivity'
 import { create } from 'zustand'
 import { change } from './app'
+import { router } from '../router'
 import { changing, live } from './live'
 import { say } from './said'
 import { engine } from './runtime'
@@ -137,6 +138,46 @@ export function answer(item: feed.Waiting, words: string) {
 export function close(item: feed.Waiting, title: string) {
   closing.set(item.card, title)
   press(item, feed.Settling.Done())
+}
+
+/**
+ * `ResumeFeedItem` makes a new Conversation about an item's work and hands it to Vivid there; the
+ * page then shows it. A refusal or a lost answer is the machine's `Unstarted`, which keeps the
+ * attempt's ids for the next press.
+ */
+const resuming = Layer.succeed(feed.Resuming, {
+  start: Effect.fn('Feed.resume')(function* (attempt: feed.ResumeAttempt) {
+    const started = yield* changing((client) => client.ResumeFeedItem(attempt))
+    if (Result.isFailure(started)) return yield* new feed.ResumeRefused({ attempt })
+    void router.navigate({ to: '/t/$id', params: { id: started.success.thread.id } })
+  }),
+})
+
+/** The page's one resume machine, mounted on first use and kept for the page's life. */
+const resumer = feed.makeResume(resuming)
+let resumerMounted = false
+const resumeMachine = () => {
+  if (!resumerMounted) engine.registry.mount(resumer.snapshot)
+  resumerMounted = true
+  return resumer
+}
+
+/** Where a press on this item's work stands (`feed.resumedOf`). */
+export const useResumed = (work: ThreadId): feed.Resumed => {
+  const result = useAtomValue(resumeMachine().result)
+  return AsyncResult.isSuccess(result) ? feed.resumedOf(result.value, work) : 'still'
+}
+
+/** Starts a new Conversation about an item's work and opens it (`feed.Resuming`). */
+export function resume(work: ThreadId) {
+  engine.registry.set(
+    resumeMachine().send,
+    feed.ResumeEvents.Resume({
+      work,
+      conversation: ThreadId.make(crypto.randomUUID()),
+      key: crypto.randomUUID(),
+    }),
+  )
 }
 
 /** Each post on a reused card gets its own seen report for this page. */

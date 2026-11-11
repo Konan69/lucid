@@ -1,11 +1,17 @@
 import * as Effect from 'effect/Effect'
-import { Forbidden, PostRequest, type MarkFeedCardRequest } from '@vivid/contracts'
-import { requireActor, requireVivid } from '../auth/access.ts'
+import {
+  Forbidden,
+  PostRequest,
+  type MarkFeedCardRequest,
+  type ResumeFeedItemRequest,
+} from '@vivid/contracts'
+import { requireActor, requirePerson, requireVivid } from '../auth/access.ts'
 import { live } from '../live/query.ts'
 import { notifyPosted } from '../notifications/attention.ts'
 import { requireThread } from '../threads/access.ts'
 import { actingRun } from '../threads/runs.ts'
 import { Database } from '../database/client.ts'
+import { resumeFeedItem } from './resume.ts'
 import { FeedStore, markTold } from './store.ts'
 
 /** What a notice quotes of a post: a said card's words; a drawn card is its drawing, with none. */
@@ -25,6 +31,11 @@ export const feedHandlers = {
   /** The Person looked at a card or dealt with it. */
   MarkFeedCard: Effect.fn('Rpc.MarkFeedCard')(function* (request: typeof MarkFeedCardRequest.Type) {
     return yield* (yield* FeedStore).mark((yield* requireActor()).person.id, request)
+  }),
+  /** Pressing a Feed item is a Person's act: a new Conversation about its work (`resume.ts`). */
+  ResumeFeedItem: Effect.fn('Rpc.ResumeFeedItem')(function* (request: ResumeFeedItemRequest) {
+    yield* requirePerson()
+    return yield* resumeFeedItem(yield* requireActor(), request)
   }),
   /**
    * Vivid putting a card on the Feed, from the Run it is in: the Person and the Thread come from

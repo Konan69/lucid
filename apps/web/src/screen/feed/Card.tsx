@@ -7,6 +7,9 @@ import { Button } from '../../ui/button'
 
 const when = makeWhen(thisReader())
 
+/** What on a card answers a press itself, so the card's own press leaves it alone. */
+const OWN = 'a, button, input, select, textarea, label, summary, [role="button"], [contenteditable]'
+
 /** How the Person answers a waiting card. A card Vivid is still working on takes no answer. */
 export interface Reply {
   /** A press is on its way: nothing more can be pressed. */
@@ -64,10 +67,19 @@ export function Card({
     <Said words={words} actions={actions} reply={reply} />
   )
   return (
+    // A press anywhere on the card does what its title does. The title stays the one control a
+    // keyboard or screen reader uses; a press on anything of its own (a button, a link, a field
+    // of a drawn form) or one that ends a text selection stays with that.
     <article
       ref={seen}
       aria-label={title}
-      className="overflow-hidden rounded-composer bg-surface-3 p-4 edge"
+      onClick={(event) => {
+        if (event.target instanceof Element && event.target.closest(OWN) !== null) return
+        const selection = document.getSelection()
+        if (selection !== null && !selection.isCollapsed) return
+        onOpen()
+      }}
+      className="group cursor-pointer overflow-hidden rounded-composer bg-surface-3 p-4 edge"
     >
       {/* What the card is about, which opens its Thread, then when, always at the trailing edge.
           The post's own title says it once; the drawing and the words under it do not repeat it
@@ -76,7 +88,7 @@ export function Card({
         <button
           type="button"
           onClick={onOpen}
-          className="min-w-0 cursor-pointer truncate rounded-row text-start font-strong text-ink-2 decoration-ink-4 underline-offset-4 hover:text-ink hover:underline focus-visible:outline-offset-2"
+          className="min-w-0 cursor-pointer truncate rounded-row text-start font-strong text-ink-2 decoration-ink-4 underline-offset-4 group-hover:text-ink group-hover:underline focus-visible:outline-offset-2"
         >
           {title}
         </button>

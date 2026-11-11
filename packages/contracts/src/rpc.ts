@@ -66,6 +66,7 @@ import {
   MarkFeedCardRequest,
   PostOutcome,
   PostRequest,
+  ResumeFeedItemRequest,
 } from './feed.js'
 import {
   NotifyPersonOutcome,
@@ -392,6 +393,12 @@ const NotifyPerson = Rpc.make('NotifyPerson', {
 const ListFeed = Rpc.make('ListFeed', { ...call, success: FeedResponse })
 const WatchFeed = Rpc.make('WatchFeed', { ...live, success: FeedResponse })
 const MarkFeedCard = Rpc.make('MarkFeedCard', { ...call, payload: MarkFeedCardRequest })
+/** A new Conversation about a Feed item's work, answered once Vivid has been handed it there. */
+const ResumeFeedItem = Rpc.make('ResumeFeedItem', {
+  ...call,
+  payload: ResumeFeedItemRequest,
+  success: ThreadResponse,
+})
 const Post = Rpc.make('Post', {
   ...call,
   error: Schema.Union([RpcFailure, FeedDisplayInvalid]),
@@ -1445,6 +1452,7 @@ export const VividRpc = RpcGroup.make(
   ListFeed,
   WatchFeed,
   MarkFeedCard,
+  ResumeFeedItem,
   Post,
   Dream,
   WatchNotifications,

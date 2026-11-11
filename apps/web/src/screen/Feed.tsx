@@ -14,7 +14,16 @@ import { Check } from 'lucide-react'
 import { Option } from 'effect'
 import { useState } from 'react'
 import { useApprovalDecision } from '../data/approvals'
-import { answer, close, pressOn, seenWhenShown, usePleased, usePresses } from '../data/feed'
+import {
+  answer,
+  close,
+  pressOn,
+  resume,
+  seenWhenShown,
+  useResumed,
+  usePleased,
+  usePresses,
+} from '../data/feed'
 import { useStandings } from '../data/owed'
 import { live, LiveState, useLive, useLiveValue } from '../data/live'
 import { startThread } from '../data/threads'
@@ -169,7 +178,9 @@ export function FeedView({
                   item={item}
                   asked={askedOf(item)}
                   now={now}
-                  onOpen={() => onOpen(item.thread)}
+                  onOpen={() =>
+                    feed.answeredInPlace(item) ? onOpen(item.thread) : resume(item.thread)
+                  }
                 />
               ))}
             </section>
@@ -178,19 +189,9 @@ export function FeedView({
 
         <aside className="mt-8 flex min-w-0 flex-col gap-3 pb-6 lg:sticky lg:top-6 lg:col-span-2 lg:col-start-4 lg:row-start-2 lg:self-start">
           {view.working.map((item) => (
-            <Card
-              key={item.card}
-              card={item.card}
-              at={item.since}
-              post={Option.fromNullOr(item.post)}
-              ask={{ title: item.from, words: 'Vivid is working on this now.' }}
-              asked={Option.none()}
-              reply={Option.none()}
-              now={now}
-              onOpen={() => onOpen(item.thread)}
-            />
+            <Working key={item.card} item={item} now={now} />
           ))}
-          <Handled settled={view.settled} now={now} onOpen={onOpen} />
+          <Handled settled={view.settled} now={now} onOpen={resume} />
         </aside>
       </div>
       {/* The composer rests at the foot of the column the cards are in, and what scrolls under it
@@ -271,6 +272,7 @@ function Waiting({
         {feed.failed(item, press) && (
           <p className="pb-2 text-label text-danger">Not sent. Try again.</p>
         )}
+        <Unstarted work={item.thread} />
         <Card
           card={item.card}
           at={item.at}
@@ -293,7 +295,35 @@ function Waiting({
   )
 }
 
-/** What is already handled: lines, not cards, each opening its Thread. */
+/** Work Vivid is doing now; a press starts a new Conversation about it. */
+function Working({ item, now }: { item: feed.Working; now: number }) {
+  return (
+    <div>
+      <Unstarted work={item.thread} />
+      <Card
+        card={item.card}
+        at={item.since}
+        post={Option.fromNullOr(item.post)}
+        ask={{ title: item.from, words: 'Vivid is working on this now.' }}
+        asked={Option.none()}
+        reply={Option.none()}
+        now={now}
+        onOpen={() => resume(item.thread)}
+      />
+    </div>
+  )
+}
+
+/**
+ * Said over an item whose press did not start its new Conversation; pressing it again tries the
+ * same one (`feed.Resuming`).
+ */
+function Unstarted({ work }: { work: ThreadId }) {
+  if (useResumed(work) !== 'unstarted') return null
+  return <p className="pb-2 text-label text-danger">Couldn’t start a chat about this. Try again.</p>
+}
+
+/** What is already handled: lines, not cards, each starting a new Conversation about its work. */
 function Handled({
   settled,
   now,

@@ -1,5 +1,5 @@
 import { useAtomValue } from '@effect/atom-react'
-import type { FeedCardId } from '@vivid/contracts'
+import { ThreadId, type FeedCardId } from '@vivid/contracts'
 import { feed } from '@vivid/state'
 import { Effect, Layer, Option, Result } from 'effect'
 import { AsyncResult, Atom } from 'effect/reactivity'
@@ -89,6 +89,34 @@ export function answer(data: LiveData, item: feed.Waiting, words: string): void 
 /** Settle a card through the session's product transport and shared press machine. */
 export function close(data: LiveData, item: feed.Waiting): void {
   press(data, item, feed.Settling.Done())
+}
+
+/**
+ * The Feed screen's resume machine (`feed.Resuming`): `ResumeFeedItem` through the session's
+ * socket and, once the server has made the Conversation, `open` puts it in front. The screen owns
+ * it because opening a Thread is the screen's navigation; leaving the screen ends it.
+ */
+export const makeResume = (data: LiveData, open: (thread: ThreadId) => void) =>
+  feed.makeResume(
+    Layer.succeed(feed.Resuming, {
+      start: Effect.fn('Feed.resume')(function* (attempt: feed.ResumeAttempt) {
+        const started = yield* data.changing((client) => client.ResumeFeedItem(attempt))
+        if (Result.isFailure(started)) return yield* new feed.ResumeRefused({ attempt })
+        open(started.success.thread.id)
+      }),
+    }),
+  )
+
+/** Starts a new Conversation about an item's work, with fresh ids for a new attempt. */
+export function resume(data: LiveData, machine: feed.ResumeAtoms, work: ThreadId): void {
+  data.registry.set(
+    machine.send,
+    feed.ResumeEvents.Resume({
+      work,
+      conversation: ThreadId.make(randomUUID()),
+      key: randomUUID(),
+    }),
+  )
 }
 
 /** Seen reports belong to a session, so signing in again can report each post afresh. */

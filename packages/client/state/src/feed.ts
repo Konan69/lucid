@@ -195,6 +195,15 @@ export const askedWords = (item: Waiting): string =>
     : 'Vivid has a question for you. Open it to answer.'
 
 /**
+ * Whether pressing a waiting item opens the work's own Thread instead of a new Conversation: it
+ * has nothing posted and only says the work stopped on a question or an Approval (`askedWords`),
+ * which is answered only in the Thread that asked it. Every other item starts a new Conversation
+ * about its work (`Resuming`).
+ */
+export const answeredInPlace = (item: Waiting): boolean =>
+  item.post === null && item.asking.length > 0
+
+/**
  * The Approval a waiting card stopped on, to decide on the card (#129): the oldest one still
  * pending in its Thread among `inbox`, the Approvals waiting on this Person (`WatchInbox`), as
  * the Thread's own banner would put it up first (`approvalUp`). One asked of somebody else is not
@@ -374,3 +383,120 @@ const PressMachine = Machine.make({
 export const makePress = (services: Layer.Layer<Sending>) =>
   AtomMachine.bind(Atom.runtime(services)).make(PressMachine)
 export type PressAtoms = ReturnType<typeof makePress>
+
+/**
+ * Pressing a Feed item starts a new Conversation about its work, in which Vivid is handed that
+ * work and speaks first (`ResumeFeedItem`, `apps/server/src/feed/resume.ts`). The presser makes
+ * the Conversation's id and the hand-over's key; a press that did not get through keeps both, so
+ * pressing the same work again finds what the server may already have made instead of making a
+ * second. One machine per surface: while one press is on its way no other is taken.
+ */
+const ResumeAttempt = Schema.Struct({
+  work: ThreadId,
+  conversation: ThreadId,
+  key: Schema.String,
+})
+export interface ResumeAttempt extends Schema.Schema.Type<typeof ResumeAttempt> {}
+
+/** The server refused, or its answer was lost. The attempt it was about comes back with it. */
+export class ResumeRefused extends Schema.TaggedError<ResumeRefused>()(
+  'FeedResumeRefused',
+  { attempt: ResumeAttempt },
+  { title: 'FeedResumeRefused' },
+) {}
+
+/** A surface asks the server and, once it has answered, shows the new Conversation. */
+export interface ResumingService {
+  readonly start: (attempt: ResumeAttempt) => Effect.Effect<void, ResumeRefused>
+}
+
+/** How the current surface starts a Conversation from the Feed and opens it. */
+export class Resuming extends Context.Service<Resuming, ResumingService>()(
+  '@vivid/state/feed/Resuming',
+) {}
+
+const ResumeStates = Machine.state({
+  states: {
+    Idle: {},
+    /** The server is making the Conversation; no other press is taken. */
+    Starting: { fields: ResumeAttempt.fields },
+    /** It did not get through; the item says so and a press tries again. */
+    Unstarted: { fields: ResumeAttempt.fields },
+  },
+})
+export type ResumeState = Parameters<typeof ResumeStates.matches>[0]
+
+/** A press on one item, with a fresh Conversation id and key for a new attempt. */
+export const ResumeEvents = Machine.events({ Resume: ResumeAttempt.fields })
+
+const attemptOf = (held: ResumeAttempt): ResumeAttempt =>
+  ResumeAttempt.make({ work: held.work, conversation: held.conversation, key: held.key })
+const sameAttempt = Schema.toEquivalence(ResumeAttempt)
+
+const ResumeMachine = Machine.make({
+  id: 'FeedResume',
+  root: ResumeStates,
+  events: ResumeEvents,
+  branches: {
+    started: { idle: { target: 'Idle' }, unstarted: { target: 'Unstarted' } },
+  },
+  effects: {
+    start: (attempt: ResumeAttempt) =>
+      Resuming.use((service) => service.start(attempt)).pipe(Effect.as(attempt)),
+  },
+}).handle({
+  initial: { target: 'Idle' },
+  states: {
+    Idle: {
+      on: { Resume: { target: 'Starting', data: ({ event }) => attemptOf(event) } },
+    },
+    Starting: {
+      invoke: {
+        src: 'start',
+        input: ({ state }) => attemptOf(state),
+        // Each outcome names its attempt: one about another attempt is declined.
+        onDone: {
+          branches: 'started',
+          declinable: true,
+          resolve: (context) =>
+            sameAttempt(context.output, attemptOf(context.state))
+              ? context.select.idle()
+              : context.decline(),
+        },
+        onFailure: {
+          branches: 'started',
+          declinable: true,
+          resolve: (context) =>
+            sameAttempt(context.error.attempt, attemptOf(context.state))
+              ? context.select.unstarted({ data: context.error.attempt })
+              : context.decline(),
+        },
+      },
+    },
+    Unstarted: {
+      on: {
+        Resume: {
+          target: 'Starting',
+          // The same work pressed again is the same attempt; another item is a new one.
+          data: ({ state, event }) =>
+            event.work === state.work ? attemptOf(state) : attemptOf(event),
+        },
+      },
+    },
+  },
+})
+
+/** Where a press on this item stands: on its way, not through, or nothing to say. */
+export type Resumed = 'starting' | 'unstarted' | 'still'
+export const resumedOf = (state: ResumeState, work: ThreadId): Resumed => {
+  if (Option.exists(ResumeStates.get(state, 'Starting'), (held) => held.work === work))
+    return 'starting'
+  if (Option.exists(ResumeStates.get(state, 'Unstarted'), (held) => held.work === work))
+    return 'unstarted'
+  return 'still'
+}
+
+/** Creates one surface's resume machine with that surface's way of asking and opening. */
+export const makeResume = (services: Layer.Layer<Resuming>) =>
+  AtomMachine.bind(Atom.runtime(services)).make(ResumeMachine)
+export type ResumeAtoms = ReturnType<typeof makeResume>

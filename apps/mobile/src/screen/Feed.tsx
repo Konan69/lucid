@@ -1,3 +1,4 @@
+import { useAtomValue } from '@effect/atom-react'
 import {
   DisplaySource,
   FeedPost,
@@ -9,11 +10,12 @@ import {
 import { allowing, feed, makeWhen, owed, thisReader, todos, type DeviceWaiting } from '@vivid/state'
 import { Check } from 'lucide-react-native'
 import { Array, Data, Option } from 'effect'
+import { AsyncResult } from 'effect/reactivity'
 import { useState, type ReactNode } from 'react'
 import { FlatList, Pressable, View, type ViewToken } from 'react-native'
 import Animated, { LinearTransition, ReduceMotion } from 'react-native-reanimated'
 import { useApprovalDecision, useInbox } from '../data/approvals'
-import { answer, close, markSeen, usePleased, usePresses } from '../data/feed'
+import { answer, close, makeResume, markSeen, resume, usePleased, usePresses } from '../data/feed'
 import { closeOwed, useStandings } from '../data/owed'
 import { closeTodo, useTodoStandings } from '../data/todos'
 import { LiveState, useLive, useLiveData, useLiveValue } from '../data/live'
@@ -115,6 +117,7 @@ export function Feed() {
   const date = today.format(now)
 
   const inbox = useInbox()
+  const { unstarted, onResume } = useResume(openThread)
 
   // A card that a press has folded leaves the list until Vivid posts again.
   const shown = view.waiting.filter(
@@ -192,19 +195,14 @@ export function Feed() {
             ),
             Computer: ({ waiting: asking }) => <Computer waiting={asking} now={now} />,
             Handled: ({ items: settled }) => (
-              <Handled items={settled} now={now} onOpen={(thread) => openThread(thread)} />
+              <Handled items={settled} now={now} onOpen={onResume} />
             ),
             Working: ({ item }) => (
-              <Card
-                card={item.card}
-                at={item.since}
-                post={Option.fromNullOr(item.post)}
-                ask={{ title: item.from, words: 'Vivid is working on this now.' }}
-                asked={Option.none()}
-                reply={Option.none()}
+              <Working
+                item={item}
                 now={now}
-                remember={Option.none()}
-                onOpen={() => openThread(item.thread)}
+                unstarted={unstarted(item.thread)}
+                onResume={() => onResume(item.thread)}
               />
             ),
             Waiting: ({ item }) => (
@@ -216,6 +214,10 @@ export function Feed() {
                 onAnswer={(words) => answer(data, item, words)}
                 onDone={() => close(data, item)}
                 onOpen={() => openThread(item.thread)}
+                unstarted={unstarted(item.thread)}
+                onResume={() =>
+                  feed.answeredInPlace(item) ? openThread(item.thread) : onResume(item.thread)
+                }
               />
             ),
           })
@@ -672,6 +674,8 @@ function Waiting({
   onAnswer,
   onDone,
   onOpen,
+  unstarted,
+  onResume,
 }: {
   item: feed.Waiting
   /** The Approval the work stopped on that this Person decides, if it did (`feed.approvalOf`). */
@@ -680,7 +684,12 @@ function Waiting({
   now: number
   onAnswer: (words: string) => void
   onDone: () => void
+  /** Opens the work's own Thread, where an ask is answered (the swipe's "Open"). */
   onOpen: () => void
+  /** A press on this item did not start its new Conversation. */
+  unstarted: boolean
+  /** A press on the card: a new Conversation about its work, or its Thread (`answeredInPlace`). */
+  onResume: () => void
 }) {
   const post = Option.fromNullOr(item.post)
   // Folded by a press on this post: it takes no room and no touch, but stays mounted, so its
@@ -703,6 +712,7 @@ function Waiting({
           Not sent. Try again.
         </Label>
       )}
+      {unstarted && <Unstarted />}
       <Swipe
         // A send that did not get through brings the card back where it was, not where it was thrown.
         key={feed.failed(item, press) ? 'again' : 'first'}
@@ -729,7 +739,7 @@ function Waiting({
           })}
           now={now}
           remember={Option.some({ post: feed.revisionOf(item) })}
-          onOpen={onOpen}
+          onOpen={onResume}
         />
       </Swipe>
     </Animated.View>
@@ -737,13 +747,70 @@ function Waiting({
 }
 
 /**
+ * Pressing an item starts a new Conversation about its work and puts it in front (`makeResume`).
+ * The screen owns the machine, because putting a Thread in front is its navigation.
+ */
+function useResume(openThread: (thread: ThreadId) => void) {
+  const data = useLiveData()
+  const [resumer] = useState(() => makeResume(data, openThread))
+  const resuming = useAtomValue(resumer.result)
+  return {
+    unstarted: (work: ThreadId) =>
+      AsyncResult.isSuccess(resuming) && feed.resumedOf(resuming.value, work) === 'unstarted',
+    onResume: (work: ThreadId) => resume(data, resumer, work),
+  }
+}
+
+/** Work Vivid is doing now; a press starts a new Conversation about it. */
+function Working({
+  item,
+  now,
+  unstarted,
+  onResume,
+}: {
+  item: feed.Working
+  now: number
+  unstarted: boolean
+  onResume: () => void
+}) {
+  return (
+    <View>
+      {unstarted && <Unstarted />}
+      <Card
+        card={item.card}
+        at={item.since}
+        post={Option.fromNullOr(item.post)}
+        ask={{ title: item.from, words: 'Vivid is working on this now.' }}
+        asked={Option.none()}
+        reply={Option.none()}
+        now={now}
+        remember={Option.none()}
+        onOpen={onResume}
+      />
+    </View>
+  )
+}
+
+/** Said over an item whose press did not start its new Conversation; pressing it again tries it. */
+function Unstarted() {
+  return (
+    <Label size="label" tone="status-danger" style={{ paddingBottom: 8 }}>
+      Couldn’t start a chat about this. Try again.
+    </Label>
+  )
+}
+
+/**
  * What a swipe does on a waiting card, from what the card already offers (9 November 2026: swipe
  * the Feed's cards like a deck of cards). Right is the answer, left the way out, each in the card's
- * own words, so a swipe never does anything its buttons do not say:
+ * own words:
  *
- * - Said with two buttons or more: right says the last (the answer), left the first (the way out).
- * - Said with one button: right says it, left puts the card away ("Done").
- * - Drawn: its answers live in the drawing, so right puts it away and left is closed.
+ * - Left, on any posted card, dismisses it: the card is put away and nothing is said to Vivid, so
+ *   no Run starts (the owner, 11 November 2026: "dismiss x should dismiss and ignore completely").
+ *   It used to say the card's first button in its Thread, which woke Vivid and brought the card
+ *   back with whatever it posted next.
+ * - Right on a said card says its last button (the answer); on a card with none, or a drawn card
+ *   whose answers live in the drawing, it puts the card away ("Done").
  * - Nothing posted (an ask read from its Thread, with no card row the server can mark): right
  *   opens the Thread, where it is answered, and the card settles back.
  * - An Approval to decide: no swipe. A consequential yes is pressed, never flung.
@@ -754,26 +821,21 @@ function sidesOf(
   reply: Pick<Reply, 'onSay' | 'onDone'> & { readonly onOpen: () => void },
 ): Sides {
   const done: Side = { words: 'Done', run: reply.onDone, ends: 'away' }
+  const dismiss: Side = { words: 'Dismiss', run: reply.onDone, ends: 'away' }
   const open: Side = { words: 'Open', run: reply.onOpen, ends: 'back' }
   const say = (words: FeedAction): Side => ({ words, run: () => reply.onSay(words), ends: 'away' })
   if (Option.isSome(asked)) return { answer: Option.none(), away: Option.none() }
   return Option.match(post, {
     onNone: () => ({ answer: Option.some(open), away: Option.none() }),
-    onSome: FeedPost.match({
-      Drawn: () => ({ answer: Option.some(done), away: Option.none() }),
-      Said: ({ actions }) =>
-        Option.match(Array.last(actions), {
-          onNone: () => ({ answer: Option.some(done), away: Option.none() }),
-          onSome: (last) => ({
-            answer: Option.some(say(last)),
-            away: Option.some(
-              Array.head(actions).pipe(
-                Option.filter(() => actions.length > 1),
-                Option.match({ onNone: () => done, onSome: say }),
-              ),
-            ),
-          }),
+    onSome: (made) => ({
+      answer: Option.some(
+        FeedPost.match(made, {
+          Drawn: () => done,
+          Said: ({ actions }) =>
+            Option.match(Array.last(actions), { onNone: () => done, onSome: say }),
         }),
+      ),
+      away: Option.some(dismiss),
     }),
   })
 }
@@ -864,9 +926,14 @@ function Card({
     <Said words={words} actions={actions} reply={reply} />
   )
   return (
-    <View
-      accessibilityLabel={title}
-      style={{
+    // A press anywhere on the card does what its title does. A press on anything of its own (a
+    // button, the drawing's controls and fields) is taken by that first, as the innermost
+    // touchable answers; `accessible={false}` keeps those reachable one by one, with the title
+    // the control a screen reader uses.
+    <Pressable
+      accessible={false}
+      onPress={onOpen}
+      style={({ pressed }) => ({
         borderRadius: 24,
         borderCurve: 'continuous',
         borderWidth: EDGE,
@@ -874,7 +941,8 @@ function Card({
         backgroundColor: c.card,
         padding: 16,
         overflow: 'hidden',
-      }}
+        opacity: pressed ? 0.85 : 1,
+      })}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 22 }}>
         {/* What the card is about, which opens its Thread, then when at the trailing edge; the
@@ -933,7 +1001,7 @@ function Card({
         }),
       })}
       {Option.isSome(post) && Option.getOrNull(asked)}
-    </View>
+    </Pressable>
   )
 }
 
@@ -1044,7 +1112,7 @@ function Choice({
   )
 }
 
-/** What is already handled: lines, not cards, each opening its Thread. */
+/** What is already handled: lines, not cards, each starting a new Conversation about its work. */
 function Handled({
   items,
   now,

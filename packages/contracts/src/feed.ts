@@ -187,6 +187,20 @@ export class FeedDisplayInvalid extends Schema.TaggedError<FeedDisplayInvalid>()
   { title: 'The card’s display draws nothing' },
 ) {}
 
+/**
+ * A Person pressing a Feed item to talk about its work: a new Conversation, private to them, in
+ * which Vivid is handed that work and speaks first (the owner, 11 November 2026: "Start a new chat
+ * with the work's context"). The work's own Thread is left as it is. `conversation` is the new
+ * Conversation's id and `key` its first delivery's, both made once per press by the client, so a
+ * press sent again after a lost answer finds the same Conversation and the same Run.
+ */
+export const ResumeFeedItemRequest = Schema.Struct({
+  work: ThreadId,
+  conversation: ThreadId,
+  key: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
+})
+export interface ResumeFeedItemRequest extends Schema.Schema.Type<typeof ResumeFeedItemRequest> {}
+
 /** What a Person does to a card from the Feed. */
 export const MarkFeedCardRequest = Schema.Struct({
   card: FeedCardId,

@@ -28,6 +28,10 @@ After real Remove, the fixture emits another event. Executor's supported `execut
 
 Require the Watch row to be gone through cascade deletion, its exact provider subscription to be absent or stopped, the second provider event to exist without a queued delivery, and no new Run. A fresh signed delivery for the removed Watch must answer 410. On the old product, the same journey records the Watch still Active and follows the unwanted second delivery to settlement before reporting failure.
 
+## Prove dismissing and resuming the card
+
+After removal the HTTP journey dismisses the delivered card as its X does (`MarkFeedCard` done) and reads the Feed twice: both reads must show it Settled, and the background Thread must have no new Run. It then sends `ResumeFeedItem` for the card's work twice with the same Conversation id and key. Both answers must name that one Conversation, it must settle exactly one Run, hold exactly one `carry-on` hand-over carrying the card's title and a reply from Vivid, and the background Thread must still have no new Run. `dismiss-resume.json` records the reads, Run counts and Conversation. This proves the server path only; the phone swipe and the card press on web and phone need their own device and browser runs.
+
 ## Evidence
 
 The HTTP evidence is under `watch/`, browser evidence under `browser/watch/`. Each has its own verdict. `proof.json` records the first provider receipt, the end code, Watch id, background Run id, Feed card id, item and the posted notice's id; `posted-notifications.json` holds the notice list that carried it. The browser's `notifications.json` holds what the worker showed. `redelivery.json` records the redelivery's status, Run count and card; `after-remove-card.json` the card after removal. `provider-state.json` records the exact subscription, second event and deliveries. `post-removal.json` records every removal assertion. Browser snapshots and `feed.png` and `feed-reloaded.png` show the delivered card; `thread-event.png` and `thread-event-reloaded.png` show its Thread's event row.

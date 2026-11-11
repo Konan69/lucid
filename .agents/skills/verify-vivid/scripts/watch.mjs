@@ -516,6 +516,86 @@ export async function watch(state, id, directory) {
   await disconnected(state, proof, directory, () =>
     rpc(state, 'RemoveConnection', { id: integration.connection.id }, directory),
   )
+  await dismissedAndResumed(state, proof, directory)
+}
+
+/** The Runs in the delivered card's background Thread, read from their run-owned rows. */
+const backgroundRuns = (state, proof, directory, name) =>
+  watchRows(
+    state,
+    { table: 'vivid_runs', field: 'thread_id', id: proof.background },
+    directory,
+    name,
+  )
+
+/**
+ * The card's X puts it away and says nothing to Vivid: `MarkFeedCard` done starts no Run and the
+ * card reads Settled on every later read. Pressing it then makes one new Conversation, the same one
+ * for the same press sent twice, where Vivid is handed the work as a `carry-on` and answers, while
+ * the work's own Thread takes no new Run.
+ */
+async function dismissedAndResumed(state, proof, directory) {
+  const before = await backgroundRuns(state, proof, directory, 'dismiss-runs-before')
+  await rpc(state, 'MarkFeedCard', { card: proof.feed, state: 'done' }, directory, 'dismiss')
+  const reads = []
+  for (const name of ['dismissed-feed', 'dismissed-feed-again'])
+    reads.push(await rpc(state, 'ListFeed', undefined, directory, name))
+  const dismissed = reads.map((feed) => feed.items.find((item) => item.card === proof.feed))
+  const afterDismiss = await backgroundRuns(state, proof, directory, 'dismiss-runs-after')
+  const request = {
+    work: proof.background,
+    conversation: crypto.randomUUID(),
+    key: crypto.randomUUID(),
+  }
+  const first = await rpc(state, 'ResumeFeedItem', request, directory, 'resume')
+  const again = await rpc(state, 'ResumeFeedItem', request, directory, 'resume-again')
+  const detail = await settled(state, request.conversation, 1, 'Completed', directory)
+  const page = await history(state, request.conversation, directory, 'resumed-history')
+  const handed = page.messages.filter(
+    (message) => message.signal !== undefined && message.signal.tagName === 'carry-on',
+  )
+  const replies = page.messages.filter(
+    (message) =>
+      message.purpose === 'assistant' &&
+      message.parts.some((part) => part.type === 'text' && part.text.trim().length > 0),
+  )
+  const afterResume = await backgroundRuns(state, proof, directory, 'resume-runs-after')
+  await json(directory + '/dismiss-resume.json', {
+    dismissed,
+    runs: {
+      before: before.length,
+      afterDismiss: afterDismiss.length,
+      afterResume: afterResume.length,
+    },
+    conversation: first.thread,
+    again: again.thread.id,
+    resumedRuns: detail.runs.length,
+    handed: handed.length,
+    replies: replies.length,
+  })
+  for (const item of dismissed)
+    NodeAssert.equal(item && item._tag, 'Settled', 'A dismissed card came back')
+  NodeAssert.equal(afterDismiss.length, before.length, 'Dismissing a card started a Run')
+  NodeAssert.equal(
+    first.thread.id,
+    request.conversation,
+    'Resume did not make the asked Conversation',
+  )
+  NodeAssert.equal(
+    again.thread.id,
+    request.conversation,
+    'The same press made a second Conversation',
+  )
+  NodeAssert.equal(detail.runs.length, 1, 'The same press started a second Run')
+  NodeAssert.equal(handed.length, 1, 'Vivid was not handed the work once')
+  NodeAssert.ok(
+    handed[0].parts.some(
+      (part) => part.type === 'text' && part.text.includes(proof.item.post.title),
+    ),
+    'The hand-over does not carry the work',
+  )
+  NodeAssert.ok(replies.length > 0, 'Vivid did not answer in the new Conversation')
+  NodeAssert.equal(afterResume.length, before.length, 'Resuming started a Run in the work’s Thread')
 }
 
 /** An Until Watch ends only after a live provider read and its own admitted completion tool. */
