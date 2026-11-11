@@ -197,9 +197,11 @@ layer(
           return yield* Effect.die('Missing test listener')
         const reader = yield* PageReader
         for (const [index, fixture] of fixtures.entries()) {
-          expect(
-            yield* reader.read({ address: `http://page.test:${address.port}/${index}` }),
-          ).toEqual(ReadPageOutcome.cases.Refused.make({ reason: fixture[1] }))
+          const outcome = yield* reader.read({
+            address: `http://page.test:${address.port}/${index}`,
+          })
+          expect(ReadPageOutcome.guards.Refused(outcome)).toBe(true)
+          expect(outcome).toMatchObject({ reason: fixture[1] })
         }
         expect(yield* reader.read({ address: `http://page.test:${address.port}/article` })).toEqual(
           ReadPageOutcome.cases.Read.make({

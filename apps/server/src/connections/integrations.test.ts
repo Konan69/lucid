@@ -285,6 +285,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
               reason: 'Provider resource missing',
             }),
           )
+          expect(failed).toMatchObject({ reason: 'Provider resource missing' })
           const found = yield* connectionHandlers
             .FindIntegrations({ query: 'OpenSignIn' })
             .pipe(Effect.provideService(AuthContext, auth))
