@@ -3,8 +3,9 @@ import * as NodeFS from 'node:fs'
 import * as NodeURL from 'node:url'
 
 /**
- * The gate exports through the image's publisher. Each miss replaces its private output so old
- * runtime versions and publish timestamps cannot accumulate in the next Turbo cache entry.
+ * The gate exports through the image's publisher, without Hermes bytecode (`--no-bytecode` in
+ * `publish.mjs` says why). Each miss replaces its private output so old runtime versions and
+ * publish timestamps cannot accumulate in the next Turbo cache entry.
  */
 const directory = NodeURL.fileURLToPath(new URL('../.cache/updates', import.meta.url))
 NodeFS.rmSync(directory, { recursive: true, force: true })
@@ -17,7 +18,7 @@ const environment = { ...process.env, TMPDIR: temporary, CI: '1', EXPO_NO_TELEME
 delete environment.SENTRY_AUTH_TOKEN
 const result = NodeChildProcess.spawnSync(
   process.execPath,
-  [NodeURL.fileURLToPath(new URL('./publish.mjs', import.meta.url)), directory],
+  [NodeURL.fileURLToPath(new URL('./publish.mjs', import.meta.url)), directory, '--no-bytecode'],
   { stdio: 'inherit', env: environment },
 )
 if (result.error !== undefined) throw result.error

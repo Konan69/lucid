@@ -3,6 +3,7 @@ import * as NodePath from 'node:path'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeProcess from 'node:process'
 import * as NodeURL from 'node:url'
+import * as NodeUtil from 'node:util'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 
@@ -23,8 +24,23 @@ import * as Schema from 'effect/Schema'
  */
 const root = NodeURL.fileURLToPath(new URL('../', import.meta.url))
 const platforms = ['ios', 'android']
-const target = process.argv[2]
-if (target === undefined) throw new Error('Usage: node scripts/publish.mjs <updates directory>')
+const usage = 'Usage: node scripts/publish.mjs <updates directory> [--no-bytecode]'
+const { positionals, values } = NodeUtil.parseArgs({
+  args: process.argv.slice(2),
+  allowPositionals: true,
+  options: { 'no-bytecode': { type: 'boolean', default: false } },
+})
+const [target] = positionals
+if (target === undefined || positionals.length !== 1) throw new Error(usage)
+/**
+ * `--no-bytecode` is the gate's export (`export.mjs`): it checks that the update resolves and
+ * bundles, and skips Hermes bytecode, which the image still compiles. Expo compiles one platform at
+ * a time (`buildHermesBundleAsync` in `@expo/metro-config` 57.0.12 waits on the build before it),
+ * and that compile was 53 to 92 s of each platform's 55 to 100 s on cloudbox-konan2 (11 November
+ * 2026), with the Metro bundle 2 to 7 s from a warm cache. Neither failed export in the 75 gate
+ * runs from 26 October to 11 November reached Hermes: both stopped at resolution.
+ */
+const bytecode = values['no-bytecode'] ? ['--no-bytecode'] : []
 
 /** Runs one command in the app directory and returns what it printed; a failure ends the publish. */
 function capture(command, args) {
@@ -91,6 +107,7 @@ const exported = NodeChildProcess.spawnSync(
     // bundles; `metadata.json` does not list them, so the app never downloads them.
     '--source-maps',
     'external',
+    ...bytecode,
   ],
   { cwd: root, stdio: 'inherit', shell: NodeProcess.platform === 'win32' },
 )
