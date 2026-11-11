@@ -1,3 +1,4 @@
+import { ReadPageRefusal } from '@vivid/contracts'
 import * as NodeDns from 'node:dns'
 import * as NodeNet from 'node:net'
 import ipaddr from 'ipaddr.js'
@@ -7,11 +8,7 @@ import { Context, Duration, Effect, Layer, Schema } from 'effect'
 export class PageFailure extends Schema.TaggedError<PageFailure>()(
   'PageFailure',
   {
-    reason: Schema.Literals([
-      'not a public web address',
-      'could not be reached',
-      'not a readable page',
-    ] as const),
+    reason: ReadPageRefusal,
   },
   { title: 'Public page refusal' },
 ) {}

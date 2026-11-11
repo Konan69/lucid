@@ -173,6 +173,8 @@ export const ReadPageRefusal = Schema.Literals([
   'not a public web address',
   'could not be reached',
   'not a readable page',
+  'needs a browser to show its content',
+  'blocked by a bot check',
 ] as const)
 export type ReadPageRefusal = typeof ReadPageRefusal.Type
 

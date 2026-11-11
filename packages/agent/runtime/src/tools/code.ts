@@ -101,7 +101,17 @@ function pageOutcome(outcome: ReadPageOutcome): ToolResult {
         truncated,
       },
     }),
-    Refused: ({ reason }) => ({ output: { ok: false, reason } }),
+    Refused: ({ reason }): ToolResult => {
+      if (reason === 'needs a browser to show its content' || reason === 'blocked by a bot check')
+        return {
+          output: {
+            ok: false,
+            reason,
+            next: 'Open the requested address with browse on the Computer.',
+          },
+        }
+      return { output: { ok: false, reason } }
+    },
   })
 }
 

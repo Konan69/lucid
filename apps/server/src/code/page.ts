@@ -41,6 +41,25 @@ function textLimit(text: string) {
   return { text: result, truncated: size > budgets.pageText }
 }
 
+/** Only short interstitials are refused, so an article quoting a notice remains readable. */
+function interstitial(text: string) {
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  if (normalized.length > 2000) return Option.none()
+  if (
+    /^(?:JavaScript must be enabled in order to use Notion\. Please enable JavaScript to continue\.|You need to enable JavaScript to run this app\.)$/i.test(
+      normalized,
+    )
+  )
+    return Option.some('needs a browser to show its content' as const)
+  if (
+    /Unfortunately, bots use DuckDuckGo too\.|Please complete the following challenge to confirm this search was made by a human\./i.test(
+      normalized,
+    )
+  )
+    return Option.some('blocked by a bot check' as const)
+  return Option.none()
+}
+
 /** HTML conversion is bounded at input and DOM traversal; an absent title is genuine empty text. */
 const readDocument = Effect.fn('Code.readDocument')(function* (url: URL, response: PageResponse) {
   if (
@@ -60,6 +79,8 @@ const readDocument = Effect.fn('Code.readDocument')(function* (url: URL, respons
     }),
     catch: () => new PageFailure({ reason: 'not a readable page' }),
   })
+  const refusal = interstitial(converted.text)
+  if (Option.isSome(refusal)) return yield* new PageFailure({ reason: refusal.value })
   const bounded = textLimit(converted.text)
   return ReadPageOutcome.cases.Read.make({ address: url.href, title: converted.title, ...bounded })
 })
