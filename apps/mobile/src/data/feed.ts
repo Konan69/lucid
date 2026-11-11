@@ -6,7 +6,7 @@ import { AsyncResult, Atom } from 'effect/reactivity'
 import { randomUUID } from 'expo-crypto'
 import { confirm } from './haptics'
 import type { LiveData } from './live'
-import { say } from './threads'
+import { carryOn, say } from './threads'
 
 type Presses = { readonly presses: ReadonlyMap<FeedCardId, feed.Press> }
 type Pleased = { readonly pleased: boolean }
@@ -88,6 +88,31 @@ export function answer(data: LiveData, item: feed.Waiting, words: string): void 
 /** Settle a card through the session's product transport and shared press machine. */
 export function close(data: LiveData, item: feed.Waiting): void {
   press(data, item, feed.Settling.Done())
+}
+
+/**
+ * Puts away the card a chat shows of its own work, and tells Vivid there (11 November 2026: "swiping
+ * should trigger a turn", in chat; the Feed page's swipe stays silent). The card is marked done, so
+ * it leaves the Feed too, and Vivid hears it as a carry-on signal, which no surface draws, so the
+ * Person sees no message of theirs, only what Vivid does about it. Each call is its own delivery;
+ * one that lands while Vivid is answering joins that answer.
+ */
+export function putAway(data: LiveData, item: feed.Waiting, title: string): void {
+  confirm()
+  void data.change((client) => client.MarkFeedCard({ card: item.card, state: 'done' }))
+  carryOn(
+    data,
+    item.thread,
+    `The Person put away your card "${title}" here without answering it. Decide what that means for the work, act on it, and say so briefly.`,
+  )
+}
+
+/**
+ * Settles the card a chat shows after the Person answered it there in words: the words are the
+ * chat's own message, so only the card's place on the Feed is closed.
+ */
+export function answered(data: LiveData, item: feed.Waiting): void {
+  void data.change((client) => client.MarkFeedCard({ card: item.card, state: 'done' }))
 }
 
 /**

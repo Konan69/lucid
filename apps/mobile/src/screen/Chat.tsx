@@ -22,6 +22,7 @@ import {
   checking,
   conversationIn,
   draftPlace,
+  feed,
   handing,
   isTooLong,
   lasting,
@@ -44,12 +45,17 @@ import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type Reac
 import { ScrollView, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native'
 import { useIsFocused } from '@react-navigation/native'
 import Animated, {
+  Easing,
+  ReduceMotion,
   scrollTo,
   useAnimatedStyle,
   useAnimatedReaction,
   useAnimatedRef,
+  useDerivedValue,
   useSharedValue,
+  withTiming,
   type AnimatedRef,
+  type DerivedValue,
   type SharedValue,
 } from 'react-native-reanimated'
 import { MessageCircleDashed, Share2, Users } from 'lucide-react-native'
@@ -64,7 +70,8 @@ import { useDrawerOpened } from '../data/drawer'
 import { inFront, onCatchUp } from '../data/foreground'
 import { drawnFrom } from '../data/heard'
 import { heardIn } from '../data/hearing'
-import { LiveState, useLiveData, useLiveValue, useLiveWhen } from '../data/live'
+import { LiveState, useLive, useLiveData, useLiveValue, useLiveWhen } from '../data/live'
+import { answered } from '../data/feed'
 import { offerNotifications } from '../data/notifying'
 import { shareLocation } from '../data/locating'
 import {
@@ -117,6 +124,7 @@ import { Choices } from './chat/Choices'
 import { Filled } from './chat/Form'
 import { Handing, useOpenScreen } from './chat/Handoff'
 import { Message } from './chat/Message'
+import { Posted } from './chat/Posted'
 import { Replied, spokenOf } from './chat/Question'
 import { Opening } from './home/First'
 import { Share } from './chat/Share'
@@ -805,6 +813,89 @@ function RaisedApproval({
   })
 }
 
+/** This chat's card over the composer, once the dock it stands on has been laid out. */
+function Pinned({
+  posted,
+  dock,
+  onSpeak,
+}: {
+  posted: ReturnType<typeof usePosted>
+  dock: Option.Option<number>
+  onSpeak: (words: string) => void
+}) {
+  const data = useLiveData()
+  if (Option.isNone(dock) || Option.isNone(posted.shown)) return null
+  const item = posted.shown.value
+  return (
+    <Posted
+      key={feed.revisionOf(item)}
+      data={data}
+      item={item}
+      now={posted.now}
+      bottom={dock.value + POSTED_GAP}
+      onSpeak={onSpeak}
+      onSettle={() => answered(data, item)}
+      onGone={() => posted.leave(item)}
+      onHeight={posted.measure}
+    />
+  )
+}
+
+/** How far over the composer's dock this chat's card stands. */
+const POSTED_GAP = 8
+
+/** The card's arrival and leaving clock for the conversation's foot (`chat/Posted.tsx`). */
+const POSTED_RISE = {
+  easing: Easing.bezier(0.23, 1, 0.32, 1),
+  reduceMotion: ReduceMotion.System,
+} as const
+
+/**
+ * The card Vivid posted from this Thread that still waits on the Person, as the Feed has it
+ * (`live.feed`), and the room the conversation keeps clear under it. It is drawn only while no
+ * question or Approval is up over the composer (`free`): those are answered first.
+ *
+ * `left` is the one post the Person has just answered or put away here. The card goes on that
+ * press, before the Feed has said so, and a post Vivid makes after it shows again: it is a post's
+ * revision (`feed.revisionOf`), not a state of the card.
+ */
+function usePosted(id: ThreadId, free: boolean) {
+  const data = useLiveData()
+  // How far a banner's choices stand over the foot of the conversation (`chat/Banner.tsx`).
+  const covered = useSharedValue(0)
+  const state = useLive(data.live.feed)
+  const [left, setLeft] = useState<Option.Option<string>>(Option.none())
+  const [height, setHeight] = useState(0)
+  // The moment the chat was opened, which the card's time is said against; read once.
+  const [now] = useState(() => Date.now())
+  const items = LiveState.$is('Ready')(state) ? state.value.items : []
+  const mine = Option.filter(
+    Option.fromUndefinedOr(
+      feed
+        .feedView(items, Option.none())
+        .waiting.find((item) => item.thread === id && item.post !== null),
+    ),
+    (item) => free && !Option.contains(left, feed.revisionOf(item)),
+  )
+  const up = Option.isSome(mine) && height > 0
+  // It rises with the card in 220 ms and settles in 200 when the card goes, on one curve.
+  const own = useDerivedValue(
+    () => withTiming(up ? height + POSTED_GAP : 0, { ...POSTED_RISE, duration: up ? 220 : 200 }),
+    [up, height],
+  )
+  // The conversation keeps clear under its newest words whatever stands over its foot: a banner
+  // (`covered`) or this chat's own card.
+  const room = useDerivedValue(() => covered.get() + own.get())
+  return {
+    covered,
+    shown: mine,
+    now,
+    room,
+    leave: (item: feed.Waiting) => setLeft(Option.some(feed.revisionOf(item))),
+    measure: setHeight,
+  }
+}
+
 /**
  * The height of the composer's dock as it was last laid out, which is what the banner over it
  * is anchored to (`Raised`), and the way to say it was laid out. Nothing until the first
@@ -912,8 +1003,8 @@ function Conversation({
   // What waits on this Person, which rises from behind the composer as a banner (`Raised`).
   const waiting = useWaiting(detail, me.person.id)
   const { allowing, asking } = waiting
-  // How far the choices stand over the foot of the conversation, which keeps that much clear.
-  const covered = useSharedValue(0)
+  // What stands over the foot of the conversation: a banner's choices and this chat's card.
+  const posted = usePosted(id, allowing.free && model.Hold.$is('Free')(asking.hold))
   const [dock, onDock] = useDock()
   const stopping = useStop(id, working)
   const around = useAround(id, detail, shared)
@@ -993,12 +1084,13 @@ function Conversation({
             detail={detail}
             unsent={undelivered}
             settled={settledIds}
-            covered={covered}
+            covered={posted.room}
             foot={Option.getOrElse(dock, () => 0)}
             onContinue={speak}
           />
         </View>
-        <Over id={id} detail={detail} waiting={waiting} dock={dock} covered={covered} />
+        <Over id={id} detail={detail} waiting={waiting} dock={dock} covered={posted.covered} />
+        <Pinned posted={posted} dock={dock} onSpeak={(words) => void speak(words)} />
         <Foot
           typed={typed}
           writing={writing}
@@ -1374,7 +1466,7 @@ interface MessagesProps {
    * How far the banner over the composer (a question's choices, an Approval) stands over the
    * foot of the conversation, in points (`chat/Banner.tsx`). The conversation keeps that much more clear under its newest words.
    */
-  readonly covered: SharedValue<number>
+  readonly covered: DerivedValue<number>
   /**
    * The height of the composer's dock, which floats over the foot of the conversation as T3 Code
    * mobile's does (`ThreadDetailScreen.tsx`, the composer overlay whose height is the list's end
@@ -1802,7 +1894,7 @@ function useReadingPlace(
  * worked out from them, not read from its content size: the room is changing in this very frame,
  * and what the scroller would report is a frame old.
  */
-function useEndRoom(covered: SharedValue<number>, opened: Option.Option<Anchor>) {
+function useEndRoom(covered: DerivedValue<number>, opened: Option.Option<Anchor>) {
   const list = useAnimatedRef<Animated.ScrollView>()
   const body = useSharedValue(0)
   const port = useSharedValue(0)

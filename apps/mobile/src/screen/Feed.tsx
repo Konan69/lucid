@@ -943,7 +943,7 @@ function Unstarted() {
  * - Right on a card with nothing to answer, drawn or said without buttons, opens a new chat about
  *   its work.
  */
-function sidesOf(
+export function sidesOf(
   post: Option.Option<FeedPost>,
   asked: Option.Option<Approval>,
   reply: Pick<Reply, 'onSay' | 'onDone'> & {
@@ -1012,7 +1012,7 @@ function Source({ post }: { post: Option.Option<FeedPost> }) {
  *   like we're containing the model?"); the row's "Done" puts it away.
  * - `Said`: nothing to draw, so the title, a sentence or two, and the card's buttons.
  */
-function Card({
+export function Card({
   card,
   at,
   post,
