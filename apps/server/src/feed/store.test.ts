@@ -641,44 +641,42 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
       }).pipe(Effect.scoped),
     )
 
-    it.effect(
-      'a question with no card is put away by a dismissal and comes back only for a newer one',
-      () =>
-        Effect.gen(function* () {
-          const test = yield* fixture()
-          const database = yield* Database
-          const thread = yield* insertThread(
-            { person: test.ada, place: 'Conversation', company: null, updatedAt: now - hour },
-            'Talking',
-          )
-          const question = (createdAt: number) => ({
-            id: crypto.randomUUID(),
-            threadId: thread,
-            personId: test.ada,
-            questions: [],
-            status: 'waiting',
-            createdAt,
-          })
-          yield* database.run(database.insert(inputRequests).values(question(now - hour)))
-          yield* TestClock.setTime(now)
-          expect((yield* items(test.ada)).map((item) => item._tag)).toEqual(['Waiting'])
+    it.effect('a question with no card stays put away until a newer one', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const database = yield* Database
+        const thread = yield* insertThread(
+          { person: test.ada, place: 'Conversation', company: null, updatedAt: now - hour },
+          'Talking',
+        )
+        const question = (createdAt: number) => ({
+          id: crypto.randomUUID(),
+          threadId: thread,
+          personId: test.ada,
+          questions: [],
+          status: 'waiting',
+          createdAt,
+        })
+        yield* database.run(database.insert(inputRequests).values(question(now - hour)))
+        yield* TestClock.setTime(now)
+        expect((yield* items(test.ada)).map((item) => item._tag)).toEqual(['Waiting'])
 
-          // The X on a question Vivid posted no card for: it leaves, on every later read.
-          yield* dismissFeedItem(test.ada, thread)
-          for (let read = 0; read < 2; read += 1)
-            expect((yield* items(test.ada)).map((item) => item._tag)).toEqual(['Settled'])
-          // Putting it away answered nothing: the question still waits in its Thread.
-          const open = yield* database.run(
-            database
-              .select({ status: inputRequests.status })
-              .from(inputRequests)
-              .where(eq(inputRequests.threadId, thread)),
-          )
-          expect(open).toEqual([{ status: 'waiting' }])
+        // The X on a question Vivid posted no card for: it leaves, on every later read.
+        yield* dismissFeedItem(test.ada, thread)
+        for (let read = 0; read < 2; read += 1)
+          expect((yield* items(test.ada)).map((item) => item._tag)).toEqual(['Settled'])
+        // Putting it away answered nothing: the question still waits in its Thread.
+        const open = yield* database.run(
+          database
+            .select({ status: inputRequests.status })
+            .from(inputRequests)
+            .where(eq(inputRequests.threadId, thread)),
+        )
+        expect(open).toEqual([{ status: 'waiting' }])
 
-          yield* database.run(database.insert(inputRequests).values(question(now + hour)))
-          expect((yield* items(test.ada)).map((item) => item._tag)).toEqual(['Waiting'])
-        }).pipe(Effect.scoped),
+        yield* database.run(database.insert(inputRequests).values(question(now + hour)))
+        expect((yield* items(test.ada)).map((item) => item._tag)).toEqual(['Waiting'])
+      }).pipe(Effect.scoped),
     )
 
     it.effect('a Conversation without a posted card refuses both seen and done marks', () =>
