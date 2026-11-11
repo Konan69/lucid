@@ -65,7 +65,7 @@ catalog:
   '@typeonce/oxlint-plugin-effect-machine': 0.46.0
   '@vitejs/plugin-react': 6.1.1
   alchemy: 2.0.0-beta.81
-  better-auth: 1.7.5
+  better-auth: 1.7.21
   drizzle-kit: 1.0.0-rc.5-ab785fc
   drizzle-orm: 1.0.0-rc.5-ab785fc
   effect: 4.0.2
@@ -189,12 +189,20 @@ minimumReleaseAgeExclude:
   - '@tsc-rs/linux-arm64@0.8.0'
   - '@tsc-rs/win32-arm64@0.8.0'
   - '@tsc-rs/win32-x64@0.8.0'
-  - '@maschwenk/tsrslint@0.1.5'
-  - '@maschwenk/tsrslint-linux-x64@0.1.5'
-  - '@maschwenk/tsrslint-linux-arm64@0.1.5'
-  - '@maschwenk/tsrslint-darwin-arm64@0.1.5'
+  - '@maschwenk/tsrslint@0.1.6'
+  - '@maschwenk/tsrslint-linux-x64@0.1.6'
+  - '@maschwenk/tsrslint-linux-arm64@0.1.6'
+  - '@maschwenk/tsrslint-darwin-arm64@0.1.6'
   - '@typeonce/effect-machine@0.46.0'
   - '@typeonce/oxlint-plugin-effect-machine@0.46.0'
   - react-native-keyboard-controller@1.22.9
+  - '@better-auth/core@1.7.21'
+  - '@better-auth/drizzle-adapter@1.7.21'
+  - '@better-auth/kysely-adapter@1.7.21'
+  - '@better-auth/memory-adapter@1.7.21'
+  - '@better-auth/mongo-adapter@1.7.21'
+  - '@better-auth/prisma-adapter@1.7.21'
+  - '@better-auth/telemetry@1.7.21'
+  - better-auth@1.7.21
 
 preferSymlinkedExecutables: true

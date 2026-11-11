@@ -100,6 +100,7 @@
     "react/hooks": "off",
     "react/jsx-no-constructed-context-values": "off",
     "react/react-in-jsx-scope": "off",
+    "typescript/no-unsafe-enum-assignment": "off",
     "typescript/no-unsafe-type-assertion": "off",
     "typescript/switch-exhaustiveness-check": [
       "error",

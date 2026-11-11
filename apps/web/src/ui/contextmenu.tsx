@@ -63,7 +63,7 @@ function ContextMenuItem({
       data-inset={inset}
       data-variant={variant}
       className={cn(
-        "group/context-menu-item relative flex min-h-8 cursor-pointer items-center gap-2.5 rounded-row px-2.5 py-1 text-label text-ink-2 outline-hidden select-none focus:bg-accent focus:text-accent-foreground focus:not-data-[variant=destructive]:**:text-accent-foreground data-inset:pl-7.5 data-[variant=destructive]:text-destructive focus:data-[variant=destructive]:bg-danger-soft focus:data-[variant=destructive]:text-destructive data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-[variant=destructive]:*:[svg]:text-destructive",
+        "group/context-menu-item relative flex min-h-8 cursor-pointer items-center gap-2.5 rounded-row px-2.5 py-1 text-label text-ink-2 outline-hidden select-none focus:bg-accent focus:text-accent-foreground not-data-[variant=destructive]:focus:**:text-accent-foreground data-inset:pl-7.5 data-[variant=destructive]:text-destructive data-[variant=destructive]:focus:bg-danger-soft data-[variant=destructive]:focus:text-destructive data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-[variant=destructive]:*:[svg]:text-destructive",
         className,
       )}
       {...props}

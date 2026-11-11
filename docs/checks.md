@@ -143,7 +143,9 @@ The former tsgolint backend used approximately 3.6 GiB of private resident memor
 
 ### Rust typed lint
 
-The runner selects `@maschwenk/tsrslint` 0.1.5 through Oxlint's `OXLINT_TSGOLINT_PATH`. A caller's explicit path wins and participates in Turbo's lint cache key. The native binary supports Linux x64, Linux arm64, and macOS arm64. The Go backend and its platform packages are no longer dependencies.
+The runner selects `@maschwenk/tsrslint` 0.1.6 through Oxlint's `OXLINT_TSGOLINT_PATH`. A caller's explicit path wins and participates in Turbo's lint cache key. The native binary supports Linux x64, Linux arm64, and macOS arm64. The Go backend and its platform packages are no longer dependencies.
+
+Oxlint 1.90 added `typescript/no-unsafe-enum-assignment` to the correctness category and sends it to the type-aware backend. tsrslint 0.1.6 has no port of it and stops the whole lint with `unknown rule`, so `.oxlintrc.json` turns it off. The repository declares no TypeScript enum, so the rule has nothing to check. Turn it back on when a tsrslint release implements it.
 
 On 22 October 2026, the eight-core Konan devbox ran the whole lint graph with forced cache misses, one warm-up and five alternating measured runs per side. Both sides exited 0 and ran all 13 scopes.
 
