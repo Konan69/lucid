@@ -13,8 +13,14 @@ import { Check } from 'lucide-react-native'
 import { Array, Data, Option } from 'effect'
 import { AsyncResult } from 'effect/reactivity'
 import { useState, type ReactNode } from 'react'
-import { FlatList, Pressable, View, type ViewToken } from 'react-native'
-import Animated, { LinearTransition, ReduceMotion } from 'react-native-reanimated'
+import { FlatList, Pressable, View, type CellRendererProps, type ViewToken } from 'react-native'
+import Animated, {
+  Easing,
+  FadeIn,
+  FadeOut,
+  LinearTransition,
+  ReduceMotion,
+} from 'react-native-reanimated'
 import { useApprovalDecision, useInbox } from '../data/approvals'
 import { answer, close, makeResume, markSeen, resume, usePleased, usePresses } from '../data/feed'
 import { closeOwed, useStandings } from '../data/owed'
@@ -23,6 +29,7 @@ import { LiveState, useLive, useLiveData, useLiveValue } from '../data/live'
 import { Computer } from './chat/Device'
 import { Decide } from './feed/Decide'
 import { Swipe, type Side, type Sides } from './feed/Swipe'
+import { Toggle } from './feed/Toggle'
 import { Display } from '../parts/display'
 import { HoldMenu } from '../t3/Menu'
 import { useTheme } from '../theme'
@@ -121,11 +128,13 @@ export function Feed() {
   const { unstarted, onResume, onAnswered } = useResume(openThread)
 
   // A card that a press has folded leaves the list until Vivid posts again, and the count with it.
-  const waiting =
-    Option.toArray(view.computer).length +
-    view.waiting.filter((item) => !feed.folds(item, Option.fromUndefinedOr(presses.get(item.card))))
-      .length
+  // A card a press has folded leaves the list, and the count with it, until Vivid posts again.
+  const open = view.waiting.filter(
+    (item) => !feed.folds(item, Option.fromUndefinedOr(presses.get(item.card))),
+  )
+  const waiting = Option.toArray(view.computer).length + open.length
   const rows = rowsOf(view, records, toDo, { zone, waiting })
+  const stack = useStack(open)
 
   // One function for the list's life: FlatList refuses a viewability callback that changes. The
   // session's data does not change while this screen is up, so the first one serves.
@@ -142,7 +151,7 @@ export function Feed() {
     { viewabilityConfig: { viewAreaCoveragePercentThreshold: 80 }, onViewableItemsChanged: seen },
   ])
 
-  const head = <Head date={date} mood={LOOK[feed.feedFace(view, pleased)]} />
+  const head = <Head date={date} mood={LOOK[feed.feedFace(view, pleased)]} toggle={stack.toggle} />
 
   return (
     <Screen>
@@ -164,6 +173,8 @@ export function Feed() {
         // it the date and the greeting stood under the menu button.
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 + foot, gap: 12 }}
+        // Each row is drawn over the rows after it, so the stack's edges sit under its top card.
+        CellRendererComponent={Layered}
         scrollIndicatorInsets={{ bottom: foot }}
         viewabilityConfigCallbackPairs={looked}
         renderItem={({ item: row }) =>
@@ -200,6 +211,8 @@ export function Feed() {
             Waiting: ({ item }) => (
               <Waiting
                 item={item}
+                place={stack.place(item.card)}
+                restacked={stack.used}
                 asked={feed.approvalOf(item, inbox)}
                 press={Option.fromUndefinedOr(presses.get(item.card))}
                 now={now}
@@ -221,6 +234,40 @@ export function Feed() {
       <Foot onHeight={setFoot} />
     </Screen>
   )
+}
+
+/**
+ * List or stack, which is how the Person likes to look at the waiting cards right now; nothing
+ * waits on it, so it is plain state. On the stack each open card has a place: the first is on
+ * top, the rest are edges under it. The toggle is offered once there is more than one to stack.
+ */
+function useStack(open: ReadonlyArray<feed.Waiting>) {
+  const [stacked, setStacked] = useState(false)
+  // Whether the cards have been stacked on this visit: words that mount after that come back off it.
+  const [used, setUsed] = useState(false)
+  const places = new Map(open.map((item, place) => [item.card, place]))
+  return {
+    place: (card: FeedCardId): Option.Option<number> =>
+      stacked ? Option.fromUndefinedOr(places.get(card)) : Option.none(),
+    used,
+    toggle:
+      open.length > 1 || stacked
+        ? Option.some(
+            <Toggle
+              stacked={stacked}
+              onPress={() => {
+                setUsed(true)
+                setStacked((now) => !now)
+              }}
+            />,
+          )
+        : Option.none(),
+  }
+}
+
+/** Each row of the list is drawn over the rows after it, so the stack's edges sit under its top card. */
+function Layered({ index, style, ...cell }: CellRendererProps<Row>) {
+  return <View {...cell} style={[style, { zIndex: 1000 - index }]} />
 }
 
 /**
@@ -353,7 +400,16 @@ function Foot({ onHeight }: { onHeight: (height: number) => void }) {
  * under it. Nothing is said over them: what waits is the list itself, and the caption counts it
  * (the owner, 11 November 2026, of "4 things need you. The rest is handled.": "i dont like this").
  */
-function Head({ date, mood }: { date: string; mood: (typeof LOOK)[keyof typeof LOOK] }) {
+function Head({
+  date,
+  mood,
+  toggle,
+}: {
+  date: string
+  mood: (typeof LOOK)[keyof typeof LOOK]
+  /** List or stack, offered once there is more than one card to stack. */
+  toggle: Option.Option<ReactNode>
+}) {
   return (
     <View
       style={{
@@ -365,9 +421,10 @@ function Head({ date, mood }: { date: string; mood: (typeof LOOK)[keyof typeof L
       }}
     >
       <Face size={32} mood={mood} />
-      <Label size="label" tone="ink-3">
+      <Label size="label" tone="ink-3" style={{ flex: 1 }}>
         {date}
       </Label>
+      {Option.getOrNull(toggle)}
     </View>
   )
 }
@@ -677,6 +734,8 @@ function Track({ record, now }: { record: owed.Waiting; now: number }) {
  */
 function Waiting({
   item,
+  place,
+  restacked,
   asked,
   press,
   now,
@@ -688,6 +747,10 @@ function Waiting({
   onResume,
 }: {
   item: feed.Waiting
+  /** Its place on the stack when the cards are stacked (0 is the top card); none in the list. */
+  place: Option.Option<number>
+  /** The cards have been stacked on this visit, so words that mount now are coming back off it. */
+  restacked: boolean
   /** The Approval the work stopped on that this Person decides, if it did (`feed.approvalOf`). */
   asked: Option.Option<Approval>
   press: Option.Option<feed.Press>
@@ -712,53 +775,103 @@ function Waiting({
   const folded =
     feed.folds(item, press) ||
     Option.exists(asked, (approval) => allowing.sentOn(deciding, approval.id))
+  const { colors: c } = useTheme()
+  // Under the top card on the stack: the card's own shape, slid up under the one above, its
+  // words faded out first. Coming back off the stack its words fade in once it has grown.
+  const under = Option.filter(place, (at) => at > 0)
+  const hidden = folded || Option.isSome(under)
   return (
     <Animated.View
-      pointerEvents={folded ? 'none' : 'auto'}
-      accessibilityElementsHidden={folded}
-      importantForAccessibility={folded ? 'no-hide-descendants' : 'auto'}
-      layout={LinearTransition.duration(360).reduceMotion(ReduceMotion.System)}
-      style={folded ? { height: 0, overflow: 'hidden', opacity: 0 } : undefined}
+      pointerEvents={hidden ? 'none' : 'auto'}
+      accessibilityElementsHidden={hidden}
+      importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
+      layout={STACKING}
+      style={
+        folded
+          ? { height: 0, overflow: 'hidden', opacity: 0 }
+          : Option.match(under, { onNone: () => undefined, onSome: (at) => edgeOf(at, c) })
+      }
     >
-      {feed.failed(item, press) && (
-        <Label size="label" tone="status-danger" style={{ paddingBottom: 8 }}>
-          Not sent. Try again.
-        </Label>
+      {Option.isNone(under) && (
+        <Animated.View entering={restacked ? WORDS_BACK : undefined} exiting={WORDS_LEAVE}>
+          {feed.failed(item, press) && (
+            <Label size="label" tone="status-danger" style={{ paddingBottom: 8 }}>
+              Not sent. Try again.
+            </Label>
+          )}
+          {unstarted && <Unstarted />}
+          <Swipe
+            // A send that did not get through brings the card back where it was, not where it was thrown.
+            key={feed.failed(item, press) ? 'again' : 'first'}
+            sides={sidesOf(post, asked, { onSay: onAnswer, onDone, onOpen })}
+            held={Option.exists(press, feed.Press.$is('Sending'))}
+          >
+            <Card
+              card={item.card}
+              at={item.at}
+              post={post}
+              ask={{ title: item.from, words: feed.askedWords(item) }}
+              asked={Option.map(asked, (approval) => (
+                <Decide approval={approval} />
+              ))}
+              reply={Option.some({
+                // Only a send for this very post holds its buttons: an older post's send still on its
+                // way does not stop the Person answering the one now shown.
+                held: Option.exists(
+                  press,
+                  (held) =>
+                    feed.Press.$is('Sending')(held) && held.revision === feed.revisionOf(item),
+                ),
+                onSay: onAnswer,
+                onDraw,
+                onDone,
+              })}
+              now={now}
+              remember={Option.some({ post: feed.revisionOf(item) })}
+              onOpen={onResume}
+            />
+          </Swipe>
+        </Animated.View>
       )}
-      {unstarted && <Unstarted />}
-      <Swipe
-        // A send that did not get through brings the card back where it was, not where it was thrown.
-        key={feed.failed(item, press) ? 'again' : 'first'}
-        sides={sidesOf(post, asked, { onSay: onAnswer, onDone, onOpen })}
-        held={Option.exists(press, feed.Press.$is('Sending'))}
-      >
-        <Card
-          card={item.card}
-          at={item.at}
-          post={post}
-          ask={{ title: item.from, words: feed.askedWords(item) }}
-          asked={Option.map(asked, (approval) => (
-            <Decide approval={approval} />
-          ))}
-          reply={Option.some({
-            // Only a send for this very post holds its buttons: an older post's send still on its
-            // way does not stop the Person answering the one now shown.
-            held: Option.exists(
-              press,
-              (held) => feed.Press.$is('Sending')(held) && held.revision === feed.revisionOf(item),
-            ),
-            onSay: onAnswer,
-            onDraw,
-            onDone,
-          })}
-          now={now}
-          remember={Option.some({ post: feed.revisionOf(item) })}
-          onOpen={onResume}
-        />
-      </Swipe>
     </Animated.View>
   )
 }
+
+/**
+ * How a waiting card moves between the list and the stack: its frame slides up under the card
+ * above, or grows back down to its place, on one strong ease-out, while its words leave first and
+ * come back last. Reduced motion takes the end at once.
+ */
+const STACKING = LinearTransition.duration(340)
+  .easing(Easing.bezier(0.23, 1, 0.32, 1))
+  .reduceMotion(ReduceMotion.System)
+const WORDS_LEAVE = FadeOut.duration(120).reduceMotion(ReduceMotion.System)
+const WORDS_BACK = FadeIn.duration(200).delay(180).reduceMotion(ReduceMotion.System)
+
+/** How tall an edge is drawn; the card above covers all of it but its last 12 points. */
+const EDGE_HEIGHT = 48
+/** What of an edge shows under the card above it. */
+const EDGE_SHOWS = 12
+
+/**
+ * A card under the top one, as its edge: the card's own shape, 10 points narrower each side per
+ * place down, pulled up under the card above so 12 points of it show. Two edges show; any card
+ * further down is there but drawn as nothing, taking no room.
+ */
+const edgeOf = (at: number, c: ReturnType<typeof useTheme>['colors']) =>
+  at <= 2
+    ? {
+        height: EDGE_HEIGHT,
+        // The list's 12-point gap, then up under the card above until only EDGE_SHOWS remain.
+        marginTop: -EDGE_HEIGHT,
+        marginHorizontal: 10 * at,
+        borderRadius: 24,
+        borderCurve: 'continuous' as const,
+        borderWidth: EDGE,
+        borderColor: c['line-2'],
+        backgroundColor: c.card,
+      }
+    : { height: 0, marginTop: -EDGE_SHOWS, opacity: 0 }
 
 /**
  * Pressing an item starts a new Conversation about its work and puts it in front (`makeResume`).
