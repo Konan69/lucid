@@ -43,7 +43,9 @@ import {
   oweRunNotice,
 } from '../notifications/delivery.ts'
 import { deliveryRunId } from '../threads/key.ts'
+import { leaks } from '@vivid/agent-runtime/voice'
 import { Incidents, recordFailure } from '../observability/incidents.ts'
+import { Message, VOICE_WORD } from '../observability/messages.ts'
 import { recordRunFailure } from '../runtime/failure.ts'
 import { Runtime, Settlement } from '../runtime/client.ts'
 import { audienceTopics, canSee, findThread, type StoredThread } from './access.ts'
@@ -264,6 +266,9 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
       .pipe(Effect.catch(() => Effect.logWarning('Live Activity refresh failed')))
     // The conditional write owns reporting too: replay and restart observers cannot count twice.
     if (changed) yield* recordEnding(incidents, run, observed)
+    // Counted once per settled reply, behind the same conditional write as its ending.
+    if (changed && Settlement.guards.Completed(settlement))
+      yield* countSystemWords(settlement.reply)
     yield* devices.ended(run.id)
     if (!changed) return
     // Naming lives in the server scope as its own fiber; even a stalled model cannot hold settlement open.
@@ -588,3 +593,16 @@ export const conversationLayer = Layer.effect(Conversation, makeConversation()).
   Layer.provideMerge(deviceLayer),
   Layer.provide(activitiesLayer),
 )
+
+/**
+ * One counted line per system word a settled reply used ("the connection never finished
+ * authorizing", "the check-in is armed": production, 1 to 11 November 2026). Only the word's id
+ * leaves, never the reply, so a regression in Vivid's voice shows as a rising count per word
+ * before a Person has to say it talks like an engineer again (Konan, 11 November 2026).
+ */
+const countSystemWords = (reply: string) =>
+  Effect.forEach(
+    leaks(reply),
+    (word) => Effect.annotateLogs(Effect.logInfo(Message.voice), { [VOICE_WORD]: word }),
+    { discard: true },
+  )

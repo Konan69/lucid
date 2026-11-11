@@ -28,6 +28,7 @@ import * as OtlpTracer from 'effect/observability/OtlpTracer'
 import { ObservabilityConfiguration } from '../config.ts'
 import * as productSchema from '../database/product.ts'
 import { CallAttribute, LiveAttribute, MovedAttribute, QUERY, watchedNames } from '../live/tally.ts'
+import { systemWordIds } from '@vivid/agent-runtime/voice'
 import * as identitySchema from '../database/schema.ts'
 import { Boundary, FailureAttribute, FailureKind, fixedTypeNames, UNTYPED } from './failure.ts'
 import {
@@ -39,7 +40,7 @@ import {
   type Keys,
   REMOTE_PARENT,
 } from './guard.ts'
-import { isCodeName, isMessage, Message, OMITTED } from './messages.ts'
+import { isCodeName, isMessage, Message, OMITTED, VOICE_WORD } from './messages.ts'
 import { INCIDENT_KIND, incidentExport } from './incidents.ts'
 import { refusalExport } from './refusal.ts'
 
@@ -365,6 +366,8 @@ const rulesOf = (): Rules => {
     ['vivid.review.reason', oneOf(['None', ...Object.keys(reviewReasons)])],
     ['vivid.review.outcome', oneOf(['Run', 'Ask'])],
     ['vivid.review.retry', oneOf(['Taken'])],
+    // `threads/delivery.ts`: the id of a system word a settled reply used, from the runtime's list.
+    [VOICE_WORD, oneOf(systemWordIds)],
     [DROPPED_COUNT, integer(0, Number.MAX_SAFE_INTEGER)],
     [PAUSED_SIGNAL, oneOf(Signals)],
     [PAUSED_SECONDS, integer(0, Number.MAX_SAFE_INTEGER)],

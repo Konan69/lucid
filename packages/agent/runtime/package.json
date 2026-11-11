@@ -12,7 +12,8 @@
     "./tooltesting": "./src/tools/tests/harness.ts",
     "./cell": "./src/cell.ts",
     "./memory": "./src/memory.ts",
-    "./context": "./src/context.ts"
+    "./context": "./src/context.ts",
+    "./voice": "./src/voice.ts"
   },
   "engines": {
     "node": ">=22.19.0"

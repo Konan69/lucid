@@ -63,8 +63,13 @@ export const Message = {
   moved: 'Changes counted',
   /** `live/tally.ts`: how many times one call was made on the live socket in the last minute. */
   called: 'Calls counted',
+  /** `threads/delivery.ts`: a settled reply used a system word a Person should never hear. */
+  voice: 'Reply used a system word',
 } as const
 export type Message = (typeof Message)[keyof typeof Message]
+
+/** The attribute a `Message.voice` line names: one word id from `@vivid/agent-runtime/voice`. */
+export const VOICE_WORD = 'vivid.voice.word'
 
 /**
  * What stands in for a log body, a span name or an event name that is not on the allowlist. The

@@ -38,7 +38,6 @@ import {
   SIGNAL_ENTRY,
 } from './delivery.ts'
 import { Memory, type MemoryWriter } from './memory.ts'
-import { calloutLeaks } from './voice.ts'
 import { pi, threadOf, type PiRejected } from './threads.ts'
 import type { ToolFailure } from './tools/result.ts'
 
@@ -301,8 +300,6 @@ const capture = Effect.fn('Learning.capture')(function* (
     .map((entry) => prose(entry, 'assistant'))
     .filter(Boolean)
     .join('\n\n')
-  // Every settled reply passes here once, so this is where a leaked system word is counted.
-  yield* calloutLeaks(reply)
   const replyWroteMemory = current.some(wroteMemory)
   const groups = new Map<PersonId, Group>()
   for (const input of inputs) {
