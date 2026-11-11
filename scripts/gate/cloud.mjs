@@ -45,15 +45,17 @@ const sshOptions = [
  */
 export const snapshotIgnore = ['node_modules/', '.cache/', '.turbo/', 'runs/', 'cache/']
 
-/** Prefer the first free warm tree to retain deterministic cache reuse. If all are busy,
- * blocking flock waiters compete for every slot. Exec retains only the chosen descriptor;
- * the kernel frees all contenders and the run lease when their owner exits. */
+/** Prefer the first free warm tree of the run's family to retain deterministic cache reuse. If
+ * all are busy, blocking flock waiters compete for every slot. Exec retains only the chosen
+ * descriptor; the kernel frees all contenders and the run lease when their owner exits. A gate
+ * (`slot`) gets one tree per four cores; a verification (`verify`) holds one tree and a whole
+ * product stack for minutes, so a machine runs one at a time. */
 const capacityScript = String.raw`
 import fcntl, os, queue, sys, threading
-home, sha, run, label, *args = sys.argv[1:]
+home, family, sha, run, label, *args = sys.argv[1:]
 ready = queue.Queue()
-slots = max(1, len(os.sched_getaffinity(0)) // 4)
-fds = [os.open(f"{home}/trees/slot-{index}.lock", os.O_CREAT | os.O_WRONLY, 0o600) for index in range(slots)]
+slots = 1 if family == 'verify' else max(1, len(os.sched_getaffinity(0)) // 4)
+fds = [os.open(f"{home}/trees/{family}-{index}.lock", os.O_CREAT | os.O_WRONLY, 0o600) for index in range(slots)]
 def acquire(index, fd):
     fcntl.flock(fd, fcntl.LOCK_EX)
     ready.put((index, fd))
@@ -71,13 +73,14 @@ if selected is None:
     selected = ready.get()
 index, fd = selected
 os.dup2(fd, 9, inheritable=True)
-os.environ['VIVID_GATE_SLOT'] = f'slot-{index}'
-os.execvp('bash', ['bash', f'{home}/runs/{run}.sh', sha, run, label, *args])
+os.environ['VIVID_GATE_SLOT'] = f'{family}-{index}'
+os.execvp('bash', ['bash', f'{home}/runs/{run}.sh', family, sha, run, label, *args])
 `
 
 /**
- * The machine's side of a run. The machine keeps a fixed, small number of warm trees, one per
- * gate it will run at once (one for every four cores), not one per branch: a tree is a worktree
+ * The machine's side of a run: one command, run in a warm tree at the commit that was sent. The
+ * machine keeps a fixed, small number of warm trees per family (`slot` for gates, `verify` for
+ * verify-vivid), not one per branch: a tree is a worktree
  * of the repository the client pushes to, moved to the wanted commit by git, so its
  * dependencies and TypeScript build info stay, and Turbo's cache and the passed-test records are
  * one directory for every tree. A run takes the first free tree and waits when none is.
@@ -92,7 +95,7 @@ os.execvp('bash', ['bash', f'{home}/runs/{run}.sh', sha, run, label, *args])
  */
 export const remoteScript = String.raw`
 set -euo pipefail
-sha="$1"; run="$2"; label="$3"; shift 3
+family="$1"; sha="$2"; run="$3"; label="$4"; shift 4
 home="$HOME/vivid-gate/fast"; log="$home/runs/$run.log"
 mkdir -p "$home/trees" "$home/runs" "$home/cache/turbo"
 printf '%s\n' @IGNORE@ > "$home/.boxignore"
@@ -105,7 +108,7 @@ exec 8>"$home/runs/$run.lock"
 flock -x 8
 cat > "$home/runs/$run.sh" <<'RUN'
 set -uo pipefail
-sha="$1"; run="$2"; label="$3"; shift 3
+family="$1"; sha="$2"; run="$3"; label="$4"; shift 4
 home="$HOME/vivid-gate/fast"
 export PATH="$HOME/.local/bin:$PATH" HUSKY=0 ELECTRON_SKIP_BINARY_DOWNLOAD=1
 export VIVID_GATE_CACHE="$home/cache/turbo"
@@ -128,15 +131,15 @@ if [ "$(cat .cache/gate/installed 2>/dev/null)" != "$stamp" ]; then
   echo "$stamp" > .cache/gate/installed
 fi
 capped=""
-if systemd-run --user --scope -q --slice=vividgate true 2>/dev/null; then
+if [ "$family" = slot ] && systemd-run --user --scope -q --slice=vividgate true 2>/dev/null; then
   systemctl --user set-property --runtime vividgate.slice MemoryHigh=9G MemoryMax=11G 2>/dev/null || true
   capped="systemd-run --user --scope -q --slice=vividgate -p MemoryMax=8G"
 fi
-$capped node scripts/gate.mjs "$@" --here --sha "$label"
+$capped "$@"
 finish $?
 RUN
 touch "$log"
-setsid nohup python3 -c @CAPACITY@ "$home" "$sha" "$run" "$label" "$@" > "$log" 2>&1 < /dev/null &
+setsid nohup python3 -c @CAPACITY@ "$home" "$family" "$sha" "$run" "$label" "$@" > "$log" 2>&1 < /dev/null &
 echo $! > "$home/runs/$run.pid"
 `
   .replace('@IGNORE@', snapshotIgnore.map((rule) => `'${rule}'`).join(' '))
@@ -260,7 +263,7 @@ export function shellWord(argument) {
   return `'${argument.replaceAll("'", `'\\''`)}'`
 }
 
-function ssh(host, script, args, stdio) {
+export function ssh(host, script, args, stdio) {
   const words = args.map((argument) => shellWord(argument))
   return NodeChildProcess.spawnSync('ssh', [...sshOptions, host, 'bash', '-s', '--', ...words], {
     input: script,
@@ -273,7 +276,7 @@ function ssh(host, script, args, stdio) {
  * git sends only the objects the machine lacks; the first push creates the repository. The push
  * hook is skipped: this push is how the gate reaches its tree, and the hook is the gate.
  */
-function push(root, host, target, environment) {
+export function push(root, host, target, environment) {
   const remote = `ssh://${host}/~/vivid-gate/fast/repo.git`
   const env = { ...environment, GIT_SSH_COMMAND: `ssh ${sshOptions.join(' ')}` }
   const send = () => git(root, ['push', '--quiet', '--force', '--no-verify', remote, target], env)
@@ -328,12 +331,49 @@ export function refusedHost(resolved) {
   return undefined
 }
 
+/**
+ * Where a gate or a verification runs when the caller named no host: `VIVID_GATE_HOST`, else the
+ * Cloudbox that `devbox-pick` prints with at least `megabytes` free (it reads load and memory,
+ * packs work onto running boxes and starts a stopped one only when none has room). `undefined` means run here: no picker on PATH,
+ * or it found no box. The Cloudboxes are the CI since 11 November 2026; until then the push hook
+ * gated on the developer's PC unless a host was set, 450 runs from 1 to 11 November on a PC whose
+ * load reached 22 to 27 on 16 cores.
+ */
+export function placedHost(environment, megabytes) {
+  const named = environment.VIVID_GATE_HOST
+  if (named !== undefined && named !== '') return named
+  const picked = NodeChildProcess.spawnSync('devbox-pick', [], {
+    encoding: 'utf8',
+    env: { ...environment, DEVBOX_MIN_MB: String(megabytes) },
+    stdio: ['ignore', 'pipe', 'inherit'],
+  })
+  if (picked.error !== undefined || picked.status !== 0) return undefined
+  const host = picked.stdout.trim().split('\n').at(-1)
+  return host === undefined || host === '' ? undefined : host
+}
+
 /** Ask ssh what a host name resolves to and stop before anything is sent to a refused machine. */
-function admitHost(host) {
+export function admitHost(host) {
   const resolved = NodeChildProcess.spawnSync('ssh', ['-G', host], { encoding: 'utf8' })
   if (resolved.status !== 0) throw new Error(`ssh does not know the host ${host}`)
   const reason = refusedHost(resolved.stdout)
   if (reason !== undefined) throw new Error(`the gate will not run on ${host}: ${reason}`)
+}
+
+/**
+ * Run `command` in a warm tree of `family` on `host`, at `sha` (already sent with `push` as
+ * `refs/gate/<name>`), stream its log and return its exit code. The gate and verify-vivid both
+ * reach a machine through this, so the tree, install, retention and lease rules live here once.
+ */
+export function runInTree(root, { host, family, name, sha, label, command }) {
+  const run = `${name}-${runIdentifier()}`
+  const started = Date.now()
+  const start = ssh(host, remoteScript, [family, sha, run, label, ...command], 'pipe')
+  if (start.status !== 0) throw new Error(`could not start the run: ${start.stderr.trim()}`)
+  const exit = follow(host, run)
+  const seconds = ((Date.now() - started) / 1000).toFixed(1)
+  process.stdout.write(`tree ${name} on ${host}, ${label}, ${seconds}s from command\n`)
+  return exit
 }
 
 /**
@@ -344,8 +384,6 @@ export function runCloud(root, options, environment) {
   admitHost(options.host)
   const name = treeName(root, environment, options.name)
   const { sha, label } = snapshot(root, environment, options.committed)
-  const run = `${name}-${runIdentifier()}`
-  const started = Date.now()
   push(root, options.host, `${sha}:refs/gate/${name}`, environment)
   // An explicit base need not be an ancestor of the commit; the warm tree must have it to compare.
   if (options.base !== undefined)
@@ -360,10 +398,6 @@ export function runCloud(root, options, environment) {
     forwarded.push('--proof-branch', options.proof.branch)
     if (options.proof.enabled) forwarded.push('--proof-base', options.proof.base)
   }
-  const start = ssh(options.host, remoteScript, [sha, run, label, ...forwarded], 'pipe')
-  if (start.status !== 0) throw new Error(`could not start the run: ${start.stderr.trim()}`)
-  const exit = follow(options.host, run)
-  const seconds = ((Date.now() - started) / 1000).toFixed(1)
-  process.stdout.write(`tree ${name} on ${options.host}, ${label}, ${seconds}s from command\n`)
-  return exit
+  const command = ['node', 'scripts/gate.mjs', ...forwarded, '--here', '--sha', label]
+  return runInTree(root, { host: options.host, family: 'slot', name, sha, label, command })
 }

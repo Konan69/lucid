@@ -3,8 +3,8 @@ set -eu
 
 # The gate is one tool: scripts/gate.mjs. Its stages are in scripts/gate/stages.mjs and the lint
 # warning ratchets in scripts/gate/ratchets.mjs; this hook, the Cloudbox run and GitHub all call
-# it. `--committed` gates the commit being pushed, without uncommitted work. With VIVID_GATE_HOST
-# set, the run happens in a warm tree on that machine instead of this one.
+# it. `--committed` gates the commit being pushed, without uncommitted work. The run happens in a
+# warm tree on VIVID_GATE_HOST, else the Cloudbox devbox-pick prints, else here.
 # origin/main is available here; the Cloudbox receives only the refs its gate needs.
 # Git supplies every updated ref, including branches other than the checkout's HEAD.
 while read -r local_ref local_sha remote_ref remote_sha; do

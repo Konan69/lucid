@@ -106,11 +106,15 @@ void test('a lock is exclusive, and the kernel frees it when its owner ends', as
   NodeFS.writeFileSync(active, 'still owned\n')
   NodeFS.utimesSync(active, new Date(0), new Date(0))
   const env = { ...withoutRepositoryEnvironment(process.env), HOME: home }
-  const started = NodeChildProcess.spawnSync('bash', ['-s', '--', 'absent', 'cleanup', 'label'], {
-    input: remoteScript,
-    env,
-    encoding: 'utf8',
-  })
+  const started = NodeChildProcess.spawnSync(
+    'bash',
+    ['-s', '--', 'slot', 'absent', 'cleanup', 'label'],
+    {
+      input: remoteScript,
+      env,
+      encoding: 'utf8',
+    },
+  )
   assert.equal(started.status, 0, started.stderr)
   const followed = NodeChildProcess.spawnSync('bash', ['-s', '--', 'cleanup'], {
     input: followScript,
@@ -171,15 +175,18 @@ void test('the machine keeps a fixed set of warm trees and tells Boat what not t
     [first, 'run-a'],
     [second, 'run-b'],
   ]) {
-    assert.equal(bash(remoteScript, [sha, run, 'label', 'full']).status, 0)
+    assert.equal(bash(remoteScript, ['slot', sha, run, 'label', 'true']).status, 0)
     const followed = bash(followScript, [run])
     assert.equal(followed.status, 0, followed.stdout + followed.stderr)
     assert.match(followed.stdout, /slot-0/u)
   }
+  // A verification takes a tree of its own family, never a gate's.
+  assert.equal(bash(remoteScript, ['verify', first, 'run-v', 'label', 'true']).status, 0)
+  assert.match(bash(followScript, ['run-v']).stdout, /verify-0/u)
   const trees = NodeFS.readdirSync(NodePath.join(fast, 'trees')).filter(
     (name) => !name.endsWith('.lock'),
   )
-  assert.deepEqual(trees, ['slot-0'])
+  assert.deepEqual(trees.toSorted(), ['slot-0', 'verify-0'])
   assert.equal(git(NodePath.join(fast, 'trees/slot-0'), ['rev-parse', 'HEAD'], env), second)
   assert.deepEqual(
     NodeFS.readFileSync(NodePath.join(fast, '.boxignore'), 'utf8').trim().split('\n'),

@@ -5,7 +5,7 @@ import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as NodeUtil from 'node:util'
 import { ceilingBase } from './ceilings.mjs'
-import { runCloud } from './gate/cloud.mjs'
+import { placedHost, runCloud } from './gate/cloud.mjs'
 import { runFocused } from './gate/focused.mjs'
 import { runLocal } from './gate/local.mjs'
 import { signable, signoff } from './gate/signoff.mjs'
@@ -31,7 +31,8 @@ const usage = `usage: pnpm gate [full|affected|focused <test files...>] [options
                        with origin/main). CI uses the pull request base or pre-push commit.
   --proof-base <commit> --proof-branch <name>
                        proof: caller's merge base and branch for detached CI/remote trees
-  --host <ssh host>    run in a warm tree on that machine (default: $VIVID_GATE_HOST)
+  --host <ssh host>    run in a warm tree on that machine (default: $VIVID_GATE_HOST, else
+                       the Cloudbox devbox-pick prints, else this checkout)
   --here               run in this checkout even when a host is set
   --name <tree>        the warm tree's name on the host (default: the branch name)
   --committed          gate HEAD as committed, without uncommitted changes
@@ -52,6 +53,9 @@ export function withoutRepositoryEnvironment(environment) {
   for (const name of names.stdout.split('\n')) if (name !== '') delete cleaned[name]
   return cleaned
 }
+
+/** Free memory a gate needs on a Cloudbox: lint and typecheck peak near 3.6 GiB (docs/checks.md). */
+const gateMegabytes = 4096
 
 /** Split and validate `--only`; an unknown stage is an error, never a silently empty gate. */
 function selectStages(only) {
@@ -164,8 +168,9 @@ async function main(argv, environment) {
     return 2
   }
   const env = withoutRepositoryEnvironment(environment)
-  const host = options.host === undefined ? env.VIVID_GATE_HOST : options.host
-  const remote = host !== undefined && host !== '' && !options.here
+  const host = options.here ? undefined : (options.host ?? placedHost(env, gateMegabytes))
+  const remote = host !== undefined
+  if (!remote && !options.here) process.stdout.write('no Cloudbox available; gating here\n')
   const ceilingsBase = lintCeilingBase(repositoryRoot, options, env)
   const proof =
     options.mode !== 'focused' && selectStages(options.only).includes('proof')
