@@ -12,6 +12,7 @@ import {
   Context,
   Deferred,
   Effect,
+  ErrorReporter,
   Layer,
   Option,
   PubSub,
@@ -1036,6 +1037,18 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         expect(settled.state._tag).toBe('Failed')
         expect(yield* Queue.size(browser.requests)).toBe(0)
       }).pipe(Effect.scoped, (program) => scopedCase(personBrowserLayer, program, 'fresh')),
+    )
+
+    it.effect(
+      'a recorded Computer failure escaping the store is ignored by boundary reporters',
+      () =>
+        Effect.gen(function* () {
+          const { first } = yield* fixture()
+          const result = yield* (yield* ComputerStore).read(first.id, '/test').pipe(Effect.result)
+          if (Result.isSuccess(result)) expect.fail('The provider fixture refuses file reads')
+          expect(result.failure._tag).toBe('MachineOperationFailed')
+          expect(ErrorReporter.isIgnored(result.failure)).toBe(true)
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('direct cloud actions expose corrupt persistence instead of a provider outage', () =>

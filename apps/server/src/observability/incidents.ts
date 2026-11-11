@@ -9,7 +9,17 @@ import {
   type IncidentCause,
   type IncidentHop,
 } from '@vivid/contracts'
-import { Context, Effect, Layer, Option, Predicate, Result, Schema, Struct } from 'effect'
+import {
+  Context,
+  Effect,
+  ErrorReporter,
+  Layer,
+  Option,
+  Predicate,
+  Result,
+  Schema,
+  Struct,
+} from 'effect'
 import type * as SchemaAST from 'effect/SchemaAST'
 import { isSpanId, isTraceId } from './guard.ts'
 import { isCodeName, Message } from './messages.ts'
@@ -74,6 +84,16 @@ export interface IncidentsService {
 }
 
 export class Incidents extends Context.Service<Incidents, IncidentsService>()('vivid/Incidents') {}
+
+/** Records the outcome before its error escapes, so a boundary cannot open a second issue. */
+export const recordFailure = <E extends object>(
+  incidents: IncidentsService,
+  incident: Incident,
+  failure: E,
+) =>
+  incidents
+    .record(incident)
+    .pipe(Effect.map(() => Object.defineProperty(failure, ErrorReporter.ignore, { value: true })))
 
 /** The attribute an Incident's part is written under, on the span, the log line and the issue. */
 const attribute = (name: string) => `vivid.incident.${name}`

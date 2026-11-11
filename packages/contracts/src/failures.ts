@@ -93,8 +93,8 @@ export class RuntimeUnavailable extends Schema.TaggedError<RuntimeUnavailable>()
 ) {}
 
 /**
- * The conversation runtime answered and refused this delivery, so the Run `runId` never started
- * and the same delivery sent again is refused again. `cause` names the server's hop and then the
+ * Admission failed on the server or was refused by the runtime, so the Run `runId` never started
+ * and has ended Failed. `cause` names the server's hop and, for a runtime refusal, the
  * cell's (a field that did not decode, a contract mismatch), so a client that reports it, and
  * the Incident recorded for it, say why without the request's words.
  */

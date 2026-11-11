@@ -39,7 +39,7 @@ import {
   oweRunNotice,
 } from '../notifications/delivery.ts'
 import { deliveryRunId } from '../threads/key.ts'
-import { Incidents } from '../observability/incidents.ts'
+import { Incidents, recordFailure } from '../observability/incidents.ts'
 import { recordRunFailure } from '../runtime/failure.ts'
 import { Runtime, Settlement } from '../runtime/client.ts'
 import { audienceTopics, canSee, findThread, type StoredThread } from './access.ts'
@@ -340,20 +340,32 @@ const admissionCause = (error: { readonly _tag: string }): IncidentCause =>
  * with the failure's cause. The Run's ending decides the outcome, so a replay that finds the Run
  * already ended says nothing.
  */
-const admissionFailed = Effect.fn('Conversation.admissionFailed')(function* (
+const admissionFailed = (
   services: { readonly runs: RunStore['Service']; readonly incidents: Incidents['Service'] },
   failed: Omit<Extract<Incident, { readonly _tag: 'AdmissionFailed' }>, '_tag' | 'cause'>,
-  error: { readonly _tag: string },
-) {
-  const changed = yield* services.runs.end(
-    failed.runId,
-    RunEnding.cases.Failed.make({ reason: 'Delivery' }),
-  )
-  if (changed)
-    yield* services.incidents.record(
-      Incident.cases.AdmissionFailed.make({ ...failed, cause: admissionCause(error) }),
+) =>
+  Effect.fn('Conversation.admissionFailed')(function* (
+    error: DeliveryRefused | RuntimeUnavailable | NotFound | DatabaseInfrastructureError,
+  ) {
+    // A committed reservation owns the failure notice even when its scope query failed.
+    const response =
+      error instanceof DeliveryRefused ||
+      error instanceof RuntimeUnavailable ||
+      error instanceof NotFound
+        ? error
+        : DeliveryRefused.make({ runId: failed.runId, cause: admissionCause(error) })
+    const changed = yield* services.runs.end(
+      failed.runId,
+      RunEnding.cases.Failed.make({ reason: 'Delivery' }),
     )
-})
+    if (changed)
+      yield* recordFailure(
+        services.incidents,
+        Incident.cases.AdmissionFailed.make({ ...failed, cause: admissionCause(error) }),
+        response,
+      )
+    return yield* response
+  })
 
 /** Producers keep durable receipts and retry on their own schedule; Busy never waits in-process. */
 const makeDeliver = (admit: ConversationService['admit'], runs: RunStore['Service']) =>
@@ -497,7 +509,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
           scope: deliveryScope,
         })
       }).pipe(
-        Effect.tapError((error) => admissionFailed({ runs, incidents }, failed, error)),
+        Effect.catch(admissionFailed({ runs, incidents }, failed)),
         Effect.onInterrupt(() => runs.end(id, RunEnding.cases.Failed.make({ reason: 'Delivery' }))),
       )
       // Replays returned above. Only a newly reserved ordinary message accepted by the runtime

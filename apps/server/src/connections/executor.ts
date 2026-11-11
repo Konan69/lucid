@@ -3,6 +3,8 @@ import { FailureAttribute, observeFailures } from '../observability/failure.ts'
 import * as NodeCrypto from 'node:crypto'
 import {
   ActionEffect,
+  IncidentCause,
+  incidentHop,
   IntegrationPause,
   IntegrationResponse,
   ConnectionId,
@@ -279,17 +281,18 @@ interface ListedTool {
 const approvalEvidence = { approvalAnswered: Schema.optionalKey(Schema.Literal(true)) }
 export const ExecutorCallOutcome = Schema.TaggedUnion({
   Paused: { ...approvalEvidence, pause: IntegrationPause },
-  UncertainPause: { ...approvalEvidence },
+  UncertainPause: { ...approvalEvidence, failure: Schema.optional(IncidentCause) },
   Expired: { ...approvalEvidence },
   Accepted: { ...approvalEvidence, value: Schema.Json },
   Completed: { ...approvalEvidence, value: Schema.Json },
   Rejected: {
     ...approvalEvidence,
+    failure: Schema.optional(IncidentCause),
     message: Schema.String,
     problems: Schema.Array(Schema.String).pipe(Schema.withConstructorDefault(Effect.succeed([]))),
   },
   NotReady: { ...approvalEvidence },
-  OutcomeUnknown: { ...approvalEvidence },
+  OutcomeUnknown: { ...approvalEvidence, failure: Schema.optional(IncidentCause) },
 })
 const errorContext = { service: Schema.Literal('connections'), tool: Schema.NullOr(Schema.String) }
 /** MCP and OpenAPI URL registration need Executor's own public-only egress, since it resolves
@@ -329,7 +332,7 @@ export class ExecutorNotReady extends Schema.TaggedError<ExecutorNotReady>()(
 /** Safe instructions describe failures known to precede tool execution. */
 export class ExecutorRejected extends Schema.TaggedError<ExecutorRejected>()(
   'ExecutorRejected',
-  { ...errorContext, message: Schema.String },
+  { ...errorContext, message: Schema.String, failure: Schema.optional(IncidentCause) },
   { title: 'Connection request rejected' },
 ) {}
 /** HostedTools.call (apps/hosted/server/src/contracts/tools.ts) returns SDK InputInvalid
@@ -2699,13 +2702,25 @@ function makeResolveRemovalAccount(http: ExecutorHttp) {
   })
 }
 
-/** A discovery failure precedes dispatch and therefore leaves the call safe to correct or retry. */
-function discoveryFailed() {
+/** The adapter's closed failure tag survives recovery into a tool outcome. */
+const callCause = (error: { readonly _tag: string }): IncidentCause => [
+  incidentHop({
+    service: 'executor',
+    operation: 'Executor.call',
+    tag: error._tag,
+    status: Option.none(),
+    issues: [],
+  }),
+]
+
+/** Discovery failed before dispatch; a retry cannot repeat an outward action. */
+function discoveryFailed(error: { readonly _tag: string }) {
   return Effect.fail(
     ExecutorRejected.make({
       service: 'connections',
       tool: null,
       message: 'Tool discovery failed before the action was sent. Retry discovery.',
+      failure: callCause(error),
     }),
   )
 }
@@ -2727,7 +2742,6 @@ function makeCall(
       if (ExecutorReferences.guards.ReconnectRequired(references))
         return ExecutorCallOutcome.cases.NotReady.make({})
       const catalog = yield* discover(references).pipe(
-        observeFailures('http'),
         Effect.catchTags({
           ExecutorTransportFailure: discoveryFailed,
           ExecutorExecutionUncertain: discoveryFailed,
@@ -2755,7 +2769,6 @@ function makeCall(
         )
         .pipe(
           Effect.map(completedCall),
-          observeFailures('http'),
           Effect.catchTag('ExecutorApprovalUnsupported', () =>
             callPaused(http, mcp, {
               references,
@@ -2777,16 +2790,20 @@ function makeCall(
                 }),
               ),
             // REST supplies no elicitation handler. App code may have acted before ctx.elicit failed; never issue it again.
-            ExecutorExecutionUncertain: ({ cause }) =>
+            ExecutorExecutionUncertain: (error) =>
               Effect.succeed(
-                cause === 'Elicitation'
-                  ? ExecutorCallOutcome.cases.UncertainPause.make({})
-                  : ExecutorCallOutcome.cases.OutcomeUnknown.make({}),
+                error.cause === 'Elicitation'
+                  ? ExecutorCallOutcome.cases.UncertainPause.make({ failure: callCause(error) })
+                  : ExecutorCallOutcome.cases.OutcomeUnknown.make({ failure: callCause(error) }),
               ),
-            ExecutorTransportFailure: () =>
-              Effect.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({})),
-            ExecutorResponseInvalid: () =>
-              Effect.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({})),
+            ExecutorTransportFailure: (error) =>
+              Effect.succeed(
+                ExecutorCallOutcome.cases.OutcomeUnknown.make({ failure: callCause(error) }),
+              ),
+            ExecutorResponseInvalid: (error) =>
+              Effect.succeed(
+                ExecutorCallOutcome.cases.OutcomeUnknown.make({ failure: callCause(error) }),
+              ),
           }),
         )
     },
@@ -2803,8 +2820,8 @@ function makeCall(
             )
             return ExecutorCallOutcome.cases.NotReady.make({})
           }),
-          ExecutorRejected: ({ message }) =>
-            Effect.succeed(ExecutorCallOutcome.cases.Rejected.make({ message })),
+          ExecutorRejected: ({ message, failure }) =>
+            Effect.succeed(ExecutorCallOutcome.cases.Rejected.make({ message, failure })),
         }),
         Effect.tap((outcome) => Effect.annotateCurrentSpan('vivid.executor.outcome', outcome._tag)),
       ),

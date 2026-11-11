@@ -23,6 +23,8 @@ export const requestProtocolLayer = Layer.effect(RpcServer.Protocol)(
       )
     })
     yield* router.add('POST', '/api/rpc', bounded())
-    return protocol
+    // Effect 4.0.2's HTTP protocol disables payload span propagation. Vivid accepts the same
+    // traced envelopes as its socket endpoint, so each RPC tag starts its own remote segment.
+    return RpcServer.Protocol.of({ ...protocol, supportsSpanPropagation: true })
   }),
 )

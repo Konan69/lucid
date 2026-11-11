@@ -62,6 +62,7 @@ import {
   hop,
   Incidents,
   incidentsLayer,
+  recordFailure,
   type IncidentsService,
 } from '../observability/incidents.ts'
 import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
@@ -1242,12 +1243,14 @@ const unusableSaid =
   <A, E extends { readonly _tag: string }, R>(effect: Effect.Effect<A, E, R>) =>
     Effect.tapError(effect, (failure) =>
       unusable(failure)
-        ? incidents.record(
+        ? recordFailure(
+            incidents,
             Incident.cases.ComputerFailed.make({
               personId: person,
               step: 'Use',
               cause: causeOf(hop('server', 'ComputerStore.execute', failure._tag)),
             }),
+            failure,
           )
         : Effect.void,
     )

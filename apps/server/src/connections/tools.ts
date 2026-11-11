@@ -15,6 +15,9 @@ import {
   IntegrationPause,
   type ActionEffect,
   InvalidRequest,
+  Incident,
+  ServiceUnavailable,
+  incidentHop,
   NotFound,
   ProposedAction,
   ServiceAuthorization,
@@ -35,6 +38,7 @@ import {
   displayCallPolicy,
   displayCallRefusal,
 } from '@vivid/contracts'
+import { Incidents, recordFailure, recorder } from '../observability/incidents.ts'
 import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { requireCompany, type Actor } from '../auth/access.ts'
 import { workspaceIn } from '../auth/session.ts'
@@ -690,12 +694,47 @@ const runConnection = Effect.fn('Connections.run')(
       Option.isSome(operation) && effect !== 'read'
         ? yield* prepareReconciliation(row, target, operation.value)
         : target
+    const incidents = yield* Incidents
     const dispatched = yield* (yield* operationsOf(row))
       .call({ references: row.references, tool: sending.tool, input: sending.input })
       .pipe(
-        Effect.mapError((error) =>
-          isResourceMissing(error) || isApprovalUnsupported(error) ? error : executorFailure(error),
+        Effect.catch(
+          Effect.fnUntraced(function* (error) {
+            const failure =
+              isResourceMissing(error) || isApprovalUnsupported(error)
+                ? error
+                : executorFailure(error)
+            if (failure instanceof ServiceUnavailable)
+              yield* recordFailure(
+                incidents,
+                Incident.cases.IntegrationFailed.make({
+                  personId: actor.person.id,
+                  connectionId: row.id,
+                  cause: [
+                    incidentHop({
+                      service: 'executor',
+                      operation: 'Executor.call',
+                      tag: error._tag,
+                      status: Option.none(),
+                      issues: [],
+                    }),
+                  ],
+                }),
+                failure,
+              )
+            return yield* failure
+          }),
         ),
+      )
+    // Infrastructure recovered into a receipt still lost the Person's work. Ordinary service
+    // rejections carry no failure chain and remain refusals the Person can correct.
+    if ('failure' in dispatched && dispatched.failure !== undefined)
+      yield* incidents.record(
+        Incident.cases.IntegrationFailed.make({
+          personId: actor.person.id,
+          connectionId: row.id,
+          cause: dispatched.failure,
+        }),
       )
     const resolved = yield* resolveApproval(actor, sending, { ...call, outcome: dispatched })
     if (Result.isFailure(resolved)) return resolved.failure
@@ -707,6 +746,7 @@ const runConnection = Effect.fn('Connections.run')(
   },
   (effect, actor, row) =>
     effect.pipe(
+      Effect.provideService(Incidents, recorder),
       Effect.catchTag(
         'ExecutorResourceMissing',
         Effect.fn('Connections.missing')(function* ({ resource }) {
