@@ -42,7 +42,7 @@ const rowSchemas = {
 
 /** Receiver.threadOf derives this stable background identity on main and PR 77. Compare it
  * with the public Feed and SQL, so the event receipt cannot be mistaken for another occurrence. */
-const threadFor = (watchId, receipt) =>
+export const threadFor = (watchId, receipt) =>
   'watch-' +
   NodeCrypto.createHash('sha256')
     .update(watchId + '\n' + receipt)
@@ -75,8 +75,8 @@ export async function watchRows(state, { table, field, id }, directory, name) {
 }
 
 /** The public live Feed carries the typed delivery receipt. A deadline can fail, never pass. */
-export async function posted(state, marker, directory) {
-  const hasMarker = (candidate) => candidate.post && candidate.post.title.includes(marker)
+export async function posted(state, thread, directory) {
+  const hasMarker = (candidate) => candidate.post && candidate.thread === thread
   const feed = await observe(state, {
     tag: 'WatchFeed',
     payload: null,
@@ -255,7 +255,7 @@ export async function occurrence(state, { id, integration, marker, away }, direc
     { app: integration.app, words: longWords(marker, end), name: 'provider-receipt' },
     directory,
   )
-  const item = await posted(state, marker, directory)
+  const item = await posted(state, threadFor(watching.id, receipt), directory)
   // The card is the drawing: a drawn post, whose display holds the receipt, with no words or bar.
   NodeAssert.equal(item.post._tag, 'Drawn', 'Feed card was said in words, not drawn')
   NodeAssert.ok(item.post.display.includes(receipt), 'Feed display did not draw the receipt')
@@ -455,7 +455,7 @@ export async function disconnected(state, proof, directory, remove) {
     directory,
   )
   if (rows.some((row) => row.state === 'Active')) {
-    const item = await posted(state, receipt, directory)
+    const item = await posted(state, threadFor(proof.watch, receipt), directory)
     await settled(state, item.thread, 1, 'Completed', directory)
   }
   const status = await removedDelivery(proof, { callback, receipt }, directory)
