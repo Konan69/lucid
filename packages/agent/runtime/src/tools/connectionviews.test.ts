@@ -30,6 +30,7 @@ describe('Integration failure views', () => {
           shared: true,
           state: ConnectionState.cases.Failed.make({ reason: 'Provider resource missing' }),
           grant: ConnectionGrant.cases.Unverified.make({}),
+          origin: 'Service',
         }),
       ],
     })

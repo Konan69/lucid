@@ -619,6 +619,16 @@ export interface FindIntegrationsRequest extends Schema.Schema.Type<
 > {}
 
 /** Names are the runtime's only handles; disconnected catalogue entries have no account yet. */
+/**
+ * Whose an account is in the Person's eyes. `Service` is one they connected (their Gmail, their
+ * Notion). `Vivid` is an app Vivid made for its own work (`made:` services: the reminders and
+ * check-in timers behind "remind me sunday"); the Person never connected it, so a reply that
+ * listed it ("the only things linked right now are your Reminders and your Timers", verify run
+ * 11 November 2026) talked about Vivid's machinery as if it were theirs.
+ */
+export const AccountOrigin = Schema.Literals(['Service', 'Vivid'])
+export type AccountOrigin = typeof AccountOrigin.Type
+
 export const ConnectionMatch = Schema.TaggedUnion({
   Account: {
     name: Schema.String,
@@ -629,6 +639,7 @@ export const ConnectionMatch = Schema.TaggedUnion({
     shared: Schema.Boolean,
     state: ConnectionState,
     grant: ConnectionGrant,
+    origin: AccountOrigin,
   },
   Catalog: {
     name: Schema.String,
