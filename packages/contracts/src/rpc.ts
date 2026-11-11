@@ -396,7 +396,7 @@ const WatchFeed = Rpc.make('WatchFeed', { ...live, success: FeedResponse })
 const MarkFeedCard = Rpc.make('MarkFeedCard', { ...call, payload: MarkFeedCardRequest })
 /** One Feed item put away, posted or not; it says nothing to Vivid. */
 const DismissFeedItem = Rpc.make('DismissFeedItem', { ...call, payload: DismissFeedItemRequest })
-/** The chat about a Feed item's work: the Conversation itself, or a new one Vivid is handed it in. */
+/** A new Conversation about a Feed item's work, answered once Vivid has been handed it there. */
 const ResumeFeedItem = Rpc.make('ResumeFeedItem', {
   ...call,
   payload: ResumeFeedItemRequest,
