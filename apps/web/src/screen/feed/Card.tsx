@@ -1,5 +1,5 @@
 import { DisplaySource, FeedPost, type FeedAction, type FeedCardId } from '@vivid/contracts'
-import { makeWhen, thisReader } from '@vivid/state'
+import { feed, makeWhen, thisReader } from '@vivid/state'
 import { Option } from 'effect'
 import type { ReactNode, Ref } from 'react'
 import { Display } from '../../parts/Display'
@@ -63,6 +63,7 @@ export function Card({
   onOpen: () => void
 }) {
   const title = Option.match(post, { onNone: () => ask.title, onSome: (made) => made.title })
+  const heading = feed.headingOf(post, ask.title)
   const said = (words: string, actions: Option.Option<ReadonlyArray<FeedAction>>) => (
     <Said words={words} actions={actions} reply={reply} />
   )
@@ -81,16 +82,17 @@ export function Card({
       }}
       className="group cursor-pointer overflow-hidden rounded-composer bg-surface-3 p-4 edge"
     >
-      {/* What the card is about, which opens its Thread, then when, always at the trailing edge.
-          The post's own title says it once; the drawing and the words under it do not repeat it
-          (29 October 2026: "repeating", then "date on the right always", "you lost context"). */}
+      {/* What heads the card, which opens its Thread, then when, always at the trailing edge
+          (29 October 2026: "date on the right always", "you lost context"). A said card is
+          headed by its title; a drawn card by where it came from, since its drawing is the
+          thing the title would name again (`feed.headingOf`). */}
       <div className="flex min-h-5.5 items-center gap-2 text-label">
         <button
           type="button"
           onClick={onOpen}
           className="min-w-0 cursor-pointer truncate rounded-row text-start font-strong text-ink-2 decoration-ink-4 underline-offset-4 group-hover:text-ink group-hover:underline focus-visible:outline-offset-2"
         >
-          {title}
+          {heading}
         </button>
         <time className="ms-auto shrink-0 text-ink-3 tabular-nums">{when(at, now)}</time>
         {/* Every waiting item can be put away: a drawn card, and an Approval or a question Vivid
@@ -108,15 +110,12 @@ export function Card({
             </Button>
           )}
       </div>
-      {/* Where the card came from, in Vivid's words, under the title: Muse's rule that every
-          unasked item says where it came from. A card from before it was kept says nothing. */}
-      {Option.match(
-        Option.flatMap(post, (made) => Option.fromNullOr(made.from)),
-        {
-          onNone: () => null,
-          onSome: (from) => <p className="mt-0.5 truncate text-label text-ink-3">From {from}</p>,
-        },
-      )}
+      {/* Where a said card came from, in Vivid's words, under its title: Muse's rule that every
+          unasked item says where it came from. A drawn card says it in its heading. */}
+      {Option.match(feed.sourceOf(post), {
+        onNone: () => null,
+        onSome: (from) => <p className="mt-0.5 truncate text-label text-ink-3">From {from}</p>,
+      })}
       {Option.match(post, {
         onNone: () => Option.getOrElse(asked, () => said(ask.words, Option.none())),
         onSome: FeedPost.match({

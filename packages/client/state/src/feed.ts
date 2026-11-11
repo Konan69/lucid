@@ -5,6 +5,7 @@ import {
   FeedCardId,
   FeedItem,
   FeedOpening,
+  FeedPost,
   type Approval,
   ThreadId,
   FeedResponse as FeedResponseSchema,
@@ -203,6 +204,27 @@ export const askedWords = (item: Waiting): string =>
  */
 export const answeredInPlace = (item: Waiting): boolean =>
   item.post === null && item.asking.length > 0
+
+/**
+ * The words in a card's header, which open its Thread. A said card is headed by its title, and
+ * where it came from goes under it (`sourceOf`). A drawn card's drawing is the thing itself, and
+ * its title would say again what the drawing shows (11 November 2026, of a card titled "Pay
+ * ₦420,000 to Lumen Studios?" over the invoice: "this is duplicating"), so it is headed by where
+ * it came from, or by its Thread's title for a card posted before cards said so. The title stays
+ * the card's name where it is read aloud and listed.
+ */
+export const headingOf = (post: Option.Option<FeedPost>, thread: string): string =>
+  Option.match(post, {
+    onNone: () => thread,
+    onSome: FeedPost.match({
+      Drawn: ({ from }) => (from === null ? thread : `From ${from}`),
+      Said: ({ title }) => title,
+    }),
+  })
+
+/** Where a said card came from, in Vivid's words, for the line under its title. */
+export const sourceOf = (post: Option.Option<FeedPost>): Option.Option<string> =>
+  Option.flatMap(Option.filter(post, FeedPost.guards.Said), ({ from }) => Option.fromNullOr(from))
 
 /**
  * The Approval a waiting card stopped on, to decide on the card (#129): the oldest one still

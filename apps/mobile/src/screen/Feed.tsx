@@ -988,21 +988,19 @@ interface Reply {
 }
 
 /**
- * Where a card came from, in Vivid's words, under its title: Muse's rule that every unasked item
- * says where it came from (`FeedFrom`). No post, or a card from before it was kept, says nothing.
+ * Where a said card came from, in Vivid's words, under its title: Muse's rule that every unasked
+ * item says where it came from (`FeedFrom`). A drawn card says it in its heading
+ * (`feed.headingOf`); no post, or a card from before it was kept, says nothing.
  */
 function Source({ post }: { post: Option.Option<FeedPost> }) {
-  return Option.match(
-    Option.flatMap(post, (made) => Option.fromNullOr(made.from)),
-    {
-      onNone: () => null,
-      onSome: (from) => (
-        <Label size="label" tone="ink-3" numberOfLines={1} style={{ marginTop: 2 }}>
-          From {from}
-        </Label>
-      ),
-    },
-  )
+  return Option.match(feed.sourceOf(post), {
+    onNone: () => null,
+    onSome: (from) => (
+      <Label size="label" tone="ink-3" numberOfLines={1} style={{ marginTop: 2 }}>
+        From {from}
+      </Label>
+    ),
+  })
 }
 
 /**
@@ -1059,6 +1057,7 @@ function Card({
     Option.map(remember, ({ post }) => remembered.set(card, { post, chosen: next }))
   }
   const title = Option.match(post, { onNone: () => ask.title, onSome: (made) => made.title })
+  const heading = feed.headingOf(post, ask.title)
   const said = (words: string, actions: Option.Option<ReadonlyArray<FeedAction>>) => (
     <Said words={words} actions={actions} reply={reply} />
   )
@@ -1082,9 +1081,10 @@ function Card({
       })}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 22 }}>
-        {/* What the card is about, which opens its Thread, then when at the trailing edge; the
-            drawing and the words under it do not repeat the title (29 October 2026: "date on the
-            right always", "you lost context"). */}
+        {/* What heads the card, which opens its Thread, then when at the trailing edge (29
+            October 2026: "date on the right always", "you lost context"). A said card is headed
+            by its title; a drawn card by where it came from, since its drawing is the thing the
+            title would name again (`feed.headingOf`). */}
         <Pressable
           accessibilityRole="link"
           accessibilityHint="Opens the conversation"
@@ -1093,7 +1093,7 @@ function Card({
           style={({ pressed }) => ({ flex: 1, opacity: pressed ? 0.6 : 1 })}
         >
           <Label size="label" tone="ink-2" numberOfLines={1} style={{ fontWeight: '600' }}>
-            {title}
+            {heading}
           </Label>
         </Pressable>
         <Label size="label" tone="ink-3" style={{ fontVariant: ['tabular-nums'] }}>
