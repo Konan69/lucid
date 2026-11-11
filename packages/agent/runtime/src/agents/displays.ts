@@ -135,18 +135,6 @@ const LIVE_DATA = [
 ]
 
 /**
- * Every word on a display is read by the Person, so it is held to the voice's translation rule
- * (`vivid.ts` `PLAIN`) like a reply. The examples above only ever put the Person's things in a
- * Badge or Caption (a change in revenue, a file, a date), and still the model drew its own
- * bookkeeping there: a Porto trip headed by the Badge "plan done · nothing booked" and a reminder
- * captioned "I will put it on your feed then. It is set." (production, 1 to 11 November 2026).
- * A display reads as the Person's thing, so a word about Vivid's own progress on it reads as a
- * status label; what is missing is said as the next step it needs, in their words.
- */
-const DISPLAY_WORDS =
-  'Every word in a display is read by the Person, so it is in their words, like your reply. Titles, Badges and Captions describe their thing (the trip, the letter, the date, the price, what changed), never your own progress on it or how you keep it: a Badge such as "plan done · nothing booked" or a Caption such as "I will put it on your feed then. It is set." is a status report, not their thing. What is still missing or not done is the next step it needs, in a plain line or a Button: "Not booked yet. Where are you flying from?", "Sunday 15 November, 10:00. I’ll remind you then."'
-
-/**
  * How Vivid is taught to draw, the way OpenUI's documentation has an app do it ("System Prompts"):
  * OpenUI's own command writes the library's spec (`parts.json`, from the web app's
  * `src/parts/library.ts`; `pnpm --filter @vivid/web parts` after changing a part), and
@@ -163,8 +151,7 @@ export const DISPLAYS = generateSystemPrompt({
       'Displays. When an answer has a shape, draw the thing itself instead of describing it: a place is a Map, days and times are a Week, a page you read is a Page with its picture, something with a look (a venue, a dish, a product, a building) is its Image, numbers over time or categories are a Chart, a comparison is a Table, options are tiles to press, a letter is the letter, an invoice or a booking is the document with its amount and its lines. Put the display in your reply with at most one short sentence before it. The display carries the content: never say in words what it shows, never write a sentence inside it that repeats it, and never invent data to fill one. Plain words are only for a short answer, a single fact, or a question.',
     additionalRules: [
       ...LIVE_DATA,
-      DISPLAY_WORDS,
-      'Lead with the picture or the thing, then at most one short line of words per block: a Caption under a picture, a Text for the one thing a picture cannot say. A display is a card, not an essay; a paragraph inside one is a mistake.',
+      'Lead with the picture or the thing, then at most one short line of words per block: a Caption under a picture, a Text for the one thing a picture cannot say. A display is a card, not an essay; a paragraph inside one is a mistake. Every word on it is the Person’s thing in their words, never your own progress or bookkeeping on it: what is missing is the next step (“Not booked yet. Where are you flying from?”), never a status label such as “plan done · nothing booked”.',
       'Draw each kind of thing in its own shape, from the example closest to it; never borrow another kind’s shape. A Table holds two rows or more; one fact is a Title or a Caption, not a one-row Table.',
       'Say each fact once. Every part of a display must tell the Person something no other part, and nothing around the display, already tells them; when two parts say the same thing, keep the one that shows it best and delete the other. ("Pay it", not "Pay ₦420,000" under a ₦420,000 Title.)',
       'The surface already draws the display on a card of its own. Never wrap the whole display in a Card; Card groups one block inside a larger display.',
