@@ -1,3 +1,6 @@
+import { addresses } from './addresses.mjs'
+import { pages } from './pages.mjs'
+import { completion } from './completion.mjs'
 import { approve, changed, deny } from './approval.mjs'
 import { asksBrowser } from './asks.mjs'
 import { outcome } from './outcome.mjs'
@@ -56,6 +59,7 @@ function normaliseReply(text) {
 }
 
 const missing = {
+  retry: 'Needs a server whose sign-in can be made to fail; see features/addresses.md.',
   handoff: 'No proof-owned Computer',
   checkin: 'No browser recipe for a check-in yet; feature checkin proves its timer and Feed post',
   monitoring: 'Monitoring has no browser surface; feature monitoring proves the Sentry receipt',
@@ -64,6 +68,9 @@ const missing = {
   'texting-discord': 'No browser recipe for Text Vivid Discord connect yet',
 }
 const recipes = {
+  addresses: { check: 'addresses' },
+  pages: { check: 'pages' },
+  completion: { check: 'completion' },
   code: { check: 'code' },
   approve: { check: 'approve' },
   asks: { check: 'asks' },
@@ -116,6 +123,21 @@ const recipes = {
   },
 }
 const specialRecipes = {
+  addresses: {
+    drive: addresses,
+    scope:
+      'Public DeepWiki address, second working account, trailing slash deduplication and Settings list.',
+  },
+  pages: {
+    drive: pages,
+    scope:
+      'Public Notion script notice refusal and ordinary example.com reading through the composer.',
+  },
+  completion: {
+    drive: completion,
+    scope:
+      'One stored and rendered completion notice for joined messages, then one ordinary message, while away.',
+  },
   asks: {
     drive: asksBrowser,
     scope:

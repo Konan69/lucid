@@ -28,3 +28,5 @@ Browser grants notifications to the web origin through Chrome's `Browser.grantPe
 - The first-message offer needs a never-answered permission and a press inside a gesture; granting through CDP answers it first.
 - Pressing a notification needs a drawn system notification; headless Chrome draws none to press.
 - The phone registers an Expo push token, which needs the app's Expo project (`extra.eas.projectId`) and Firebase credentials in the build; a build without a project reads Unsupported in Settings. An iPhone build signed with a personal team (`VIVID_IOS_PERSONAL_TEAM=1`) has no push entitlement. The desktop app has no Web Push and shows system notifications only while it runs. Each needs its own device run.
+
+[Completion notification counts](completion.md) has the production Threads regression journeys.

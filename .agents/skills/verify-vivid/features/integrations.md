@@ -11,3 +11,5 @@ The source is `.agents/skills/verify-vivid/scripts/integrations.mjs`. Verify Pul
 The browser recipe (`.agents/skills/verify-vivid/scripts/accessbrowser.mjs` `integrationsBrowser`) connects Verify Pulse from Settings with its key typed inside the account's card (Settings must be the only dialog), opens the account's access panel and checks it says the grant the server holds, then sends the same direct read through the composer and checks the reply's footer says the partial read (only part of it reached Vivid, with the account and its time), before and after reload. It removes its Connection in finally.
 
 Still blocked: data-class switches and the PermissionDeclined card need a disposable Google account (Verify Pulse has no data classes); the ScopeRequired card has no server outcome to drive yet; Google partial consent, revoked versus expired authority and reviewed pagination need a disposable Google registration and account; phone and desktop native journeys need separate clients. Record these as blocked, never verified.
+
+[Accounts added by address and failed retry](addresses.md) has the production Threads regression journeys.

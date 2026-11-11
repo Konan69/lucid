@@ -23,6 +23,9 @@ Read the touched feature before launching. A verdict belongs to the recorded com
 - [Documents](document.md).
 - [Watches](watch.md).
 - [Mail and Calendar behaviour](behaviour.md).
+- [Accounts added by address and failed retry](addresses.md).
+- [Public page reading](pages.md).
+- [Completion notification counts](completion.md).
 - [Integration grants and coverage](integrations.md).
 - [Check-ins](checkin.md).
 - [Library](library.md).

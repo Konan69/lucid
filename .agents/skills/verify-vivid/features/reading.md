@@ -33,3 +33,5 @@ The browser leaves for the fifty-second Thread again. The public `chat` helper s
 - Phone and desktop native entry points need runs on those clients. The web result does not prove mobile navigation, native suspend, or device restart.
 
 Root owns Launch, Doctor, both recipe runs, Cleanup, and the independent review at the final head. Syntax and lint checks alone leave these journeys unverified.
+
+[Public page reading](pages.md) has the production Threads regression journeys.

@@ -1,3 +1,6 @@
+import { addresses } from './addresses.mjs'
+import { pages } from './pages.mjs'
+import { completion } from './completion.mjs'
 import { approve, changed, deny } from './approval.mjs'
 import { asksFeature } from './asks.mjs'
 import { outcome } from './outcome.mjs'
@@ -40,6 +43,10 @@ const { pictureAddress } = await import(web.resolve('@vivid/state'))
 
 import { textingDiscordProof, textingDiscordBlocked } from './textingdiscord.mjs'
 export const features = [
+  'addresses',
+  'pages',
+  'completion',
+  'retry',
   'capabilities',
   'computer',
   'first',
@@ -579,6 +586,9 @@ async function code(state, id, directory) {
   await ranProgram(state, page, asked, directory)
 }
 const recipes = {
+  addresses,
+  pages,
+  completion,
   monitoring,
   capabilities,
   computer,
@@ -619,6 +629,8 @@ const recipes = {
   helperstop,
 }
 const blocked = {
+  retry:
+    'Needs a server whose sign-in can be made to fail; database-backed coverage is apps/server/src/connections/integrations.test.ts (replace a Failed personal account).',
   handoff:
     'No proof-owned Computer: a handoff is prepared and filled on a disposable Person Computer.',
   ...discordBlocked(),
