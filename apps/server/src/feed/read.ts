@@ -237,6 +237,11 @@ const readAsks = Effect.fn('Feed.readAsks')(function* (
  * Which stage one owned Thread is in. Waiting on the Person wins over a Run going, because
  * a Run stopped on an Approval or a question is still open while it waits; then a Run going;
  * then a card not put away; anything else is settled.
+ *
+ * A card the Person put away covers what was waiting when they did: an Approval or a question
+ * already open then does not bring it back (the owner, 11 November 2026: "dismiss x should dismiss
+ * and ignore completely"). Putting it away stamps the card's `updatedAt` (`FeedStore.mark`), so
+ * only an ask made after that is news. The ask itself is untouched and still waits in its Thread.
  */
 const stageOf = (
   row: Row,
@@ -246,7 +251,9 @@ const stageOf = (
 ): FeedItem => {
   const base = { card: cardIdOf(row.thread), thread: row.thread, from: row.from }
   const cardOpen = row.card !== null && row.card.state !== 'done'
-  if (asks.asking.length > 0 || (cardOpen && post !== null && Option.isNone(working)))
+  const askedSince =
+    asks.asking.length > 0 && (row.card === null || cardOpen || asks.since > row.card.updatedAt)
+  if (askedSince || (cardOpen && post !== null && Option.isNone(working)))
     return FeedItem.cases.Waiting.make({
       ...base,
       at: Math.max(asks.since, row.card === null ? 0 : row.card.updatedAt),

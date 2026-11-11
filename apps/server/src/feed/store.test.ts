@@ -968,6 +968,55 @@ describe.skipIf(!testDatabaseConfigured)('Feed', () => {
         }).pipe(Effect.scoped),
     )
 
+    it.effect(
+      'a card put away stays away over a question already waiting, and comes back for a newer one',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          const database = yield* Database
+          const store = yield* FeedStore
+          const thread = yield* background(test.ada, now - 2 * hour)
+          const run = yield* watched(test.ada, thread, now - 2 * hour)
+          const question = (createdAt: number) => ({
+            id: crypto.randomUUID(),
+            threadId: thread,
+            personId: test.ada,
+            questions: [],
+            status: 'waiting',
+            createdAt,
+          })
+          yield* TestClock.setTime(now - hour)
+          yield* store.post({ person: test.ada, thread, postedBy: run, request: firstPost })
+          yield* database.run(database.insert(inputRequests).values(question(now - hour)))
+
+          yield* TestClock.setTime(now)
+          yield* store.mark(
+            test.ada,
+            MarkFeedCardRequest.make({ card: cardIdOf(thread), state: 'done' }),
+          )
+          const settled = FeedItem.cases.Settled.make({
+            card: cardIdOf(thread),
+            thread,
+            from: 'Mail',
+            at: now,
+            post: shown(firstPost, recorded(thread, run)),
+          })
+          // Read again, as a refresh or a reconnect does: the old question does not revive it.
+          expect(yield* items(test.ada)).toEqual([settled])
+          // Putting it away answered nothing: the question still waits in its Thread.
+          const open = yield* database.run(
+            database
+              .select({ status: inputRequests.status })
+              .from(inputRequests)
+              .where(eq(inputRequests.threadId, thread)),
+          )
+          expect(open).toEqual([{ status: 'waiting' }])
+
+          yield* database.run(database.insert(inputRequests).values(question(now + hour)))
+          expect((yield* items(test.ada)).map((item) => item._tag)).toEqual(['Waiting'])
+        }).pipe(Effect.scoped),
+    )
+
     it.effect('marking another Person’s card is NotFound and leaves it as it was', () =>
       Effect.gen(function* () {
         const test = yield* fixture()
