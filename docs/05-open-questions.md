@@ -12,7 +12,7 @@ Undecided as of 2026-09-02.
    per-user in v1.
 4. **What "connectors" become in the UI.** The "what do you use every day" grid answers it once.
    Everything after that is an in-thread ask. The audit view the user can open later is undesigned.
-5. **Runtime acceptance gaps.** Flue Node is selected, but durable approval, tool-produced vision,
+5. **Runtime acceptance gaps.** One Pi Durable cell per Person on celld is selected, but durable approval, tool-produced vision,
    phone reconnection, computer integration, and kill/restart behavior still need proof before the
    runtime can be called production-ready.
 6. **Project inheritance.** Child projects inherit members, permissions, context, and connections.

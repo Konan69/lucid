@@ -26,7 +26,7 @@ Launch passes only the token file path to the supervisor. The supervisor reads i
 VIVID_VERIFY_DISCORD_TOKEN_FILE=/private/discord-bot VIVID_VERIFY_DEVBOX=<alias> VIVID_VERIFY_KEY_FILE=/private/verify.env \
   .agents/skills/verify-vivid/verify launch
 VIVID_VERIFY_DISCORD_TOKEN_FILE=/private/discord-bot VIVID_VERIFY_DISCORD_USER_TOKEN_FILE=/private/discord-tester \
-  VIVID_VERIFY_DISCORD_CHANNEL=<channel> .agents/skills/verify-vivid/verify feature texting-discord flue-<id>
+  VIVID_VERIFY_DISCORD_CHANNEL=<channel> .agents/skills/verify-vivid/verify feature texting-discord pi-<id>
 ```
 
 1. Discord REST reads `/users/@me` for the bot and the tester. A second bot gateway session opens and reaches READY before anything is sent. Discord pushes the bot's own messages to it, so every reply is awaited on that delivery, not polled.

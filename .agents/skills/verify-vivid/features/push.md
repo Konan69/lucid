@@ -15,8 +15,8 @@ When Vivid notifies the Person (`notify_person`), puts a card on the Feed from a
 After Launch and Doctor on the unchanged commit, with a real model:
 
 ```sh
-.agents/skills/verify-vivid/verify feature push flue-<id>
-.agents/skills/verify-vivid/verify browser push flue-<id>
+.agents/skills/verify-vivid/verify feature push pi-<id>
+.agents/skills/verify-vivid/verify browser push pi-<id>
 ```
 
 HTTP checks that `GetPushKey` answers an 87-character public key and that `ListPushTargets` decodes.

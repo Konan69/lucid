@@ -14,7 +14,7 @@ Effect owns domain logic and orchestration. Promise interop is limited to unsafe
 
 Use `Effect.tryPromise` narrowly around Promise-only database, SDK, Web Crypto, platform runtime, actor/RPC, and framework APIs. Map unknown failures into a specific `Schema.TaggedError` at that adapter. For outgoing HTTP, follow `HTTP_CLIENTS.md` instead of wrapping raw `fetch`.
 
-Use `Effect.runPromise` only where an HTTP, Flue, Expo, CLI, or plain Node test boundary must return a Promise. Core helpers, services, loops, and orchestration return Effect.
+Use `Effect.runPromise` only where an HTTP, celld, Expo, CLI, or plain Node test boundary must return a Promise. Core helpers, services, loops, and orchestration return Effect.
 
 Keep an async framework callback as a thin wrapper:
 
@@ -39,14 +39,14 @@ Never destructure a method from an SDK, runtime stub, browser object, or service
 - Never invent fallback values to force a decode. Model real absence with optional keys, `NullOr`, `Option`, or a tagged variant.
 - Encode schema-owned values at wire and database egress. Do not use `JSON.parse(JSON.stringify(...))` or `toPlainJson`.
 - Use `drizzle-orm/effect-schema` for Drizzle row contracts. Give JSONB fields named schema-backed payloads rather than generic JSON records.
-- Web, native, and Flue wire values should be plain `Schema.Struct` values. Keep runtime class instances inside one process.
+- Web, native, and cell wire values should be plain `Schema.Struct` values. Keep runtime class instances inside one process.
 - Keep Zod only at an established legacy boundary; do not introduce it into an Effect-owned subsystem.
 
 Use one typed error system inside a subsystem. Expected failures use specific tagged errors with enough operation, provider, Company, and resource context for recovery and diagnosis. Preserve interruption when handling broad causes.
 
 ## Runtime Ownership And Concurrency
 
-Runtime memory is a warm cache, not durable truth. PostgreSQL owns durable application facts and Flue owns durable conversation state. Put shared state under the runtime whose lifecycle matches the required sharing scope; do not use request-owned state when reuse must cross requests.
+Runtime memory is a warm cache, not durable truth. PostgreSQL owns durable application facts and Pi Durable owns durable conversation state in each Person's cell. Put shared state under the runtime whose lifecycle matches the required sharing scope; do not use request-owned state when reuse must cross requests.
 
 Prefer Effect primitives over Promise coordination:
 
@@ -73,7 +73,7 @@ Read config through Effect `Config` or adapt the framework environment once at t
 
 Test product behavior and the real seam that can regress, not Effect primitives or schema invariants themselves.
 
-When correctness depends on Flue transport, PostgreSQL persistence, Expo native behavior, or cross-runtime serialization, test the real repository seam. A Node-only mock cannot prove platform behavior.
+When correctness depends on Pi/celld transport, PostgreSQL persistence, Expo native behavior, or cross-runtime serialization, test the real repository seam. A Node-only mock cannot prove platform behavior.
 
 Good tests exercise:
 

@@ -86,15 +86,11 @@ The full model and remaining questions are in [Company and projects](12-company-
   It may supervise child processes internally; those are not separately deployed services.
 - The local baseline requires no cloud account: file-backed SQLite, local artifacts, filesystem,
   subprocesses, and browser access. The same program may run on a laptop, container, or VM.
-- **Flue Node is the selected agent runtime.** Its coordinator, submission journal, leases, durable
-  conversation stream, and restart reconciliation are the durability engine. SQLite stores their
-  evidence; SQLite alone is not the engine. Always configure a file path because Flue's default
-  in-memory SQLite does not survive process exit.
-- Flue owns canonical agent conversation state. Vivid wraps Flue observation in a shared client
-  store and maps that view model into AI Elements. Do not put `useChat` between the clients and
-  Flue or maintain a second canonical message array.
+- Each Person has one Pi Durable Harness over celld Durable Object SQLite. Pi owns canonical
+  conversation state, queues, deduplication, waits, abort, and restart. See [Runtime cells](27-runtime-cells.md).
+- Do not maintain a second canonical message array beside Pi Durable.
 - Effect structures Vivid's product services and may run durable product jobs such as schedules or
-  connector ingestion. It does not wrap or duplicate Flue agent-turn recovery.
+  connector ingestion. It does not wrap or duplicate Pi Durable agent-turn recovery.
 - WorkflowAgent, Workflow SDK, Nitro, and a required Postgres World are not part of the selected
   runtime. They remain evaluated alternatives in the research record.
 - Cloudflare is optional infrastructure, not the canonical runtime. Do not require Workers,
@@ -131,6 +127,6 @@ The full model and remaining questions are in [Company and projects](12-company-
 - Whether Today and Library are the final sidebar destinations.
 - The final main-screen hierarchy, active/selected treatment, and thread grouping.
 - The complete settings scope beyond theme.
-- How Vivid closes Flue's acceptance gaps: durable approval, tool-produced vision, per-submission
+- Runtime acceptance proof for durable approval, tool-produced vision, per-submission
   control, phone reconnection, computer integration, and packaging.
 - The final desktop and mobile delivery sequence.

@@ -78,9 +78,7 @@ single attempt stopped at the database preflight before a model call; Google set
 remain operator prerequisites. The `connect` tool now ends an unconnected offer's turn instead
 of leaving the model to keep discovering. Focused runtime tests checked the card receipt,
 termination and Computer session metadata (21 tests passed). No row above was promoted to
-working end to end. Flue `defineTool` still shares Approval card handles with model-visible
-output; strict identifier isolation needs native content/details registration in the runtime
-instruction owner's lane.
+working end to end.
 
 Run these proofs serially with the existing stack, from the server package, using
 `pnpm exec vitest run --config src/runtime/vitest.ts` and exactly one of
@@ -119,13 +117,13 @@ same disposable database as the stack; the proof never falls back to an applicat
 ## Known limits
 
 - An empty completion from the model is not caught: Vivid has no retry layer of its own, the
-  gateway fails over between providers and Flue retries transient errors.
+  gateway fails over between providers.
 - Pictures in a reply load automatically, so a page Vivid read could have it show a picture whose
   address carries Thread content elsewhere. Loading on tap or through the server would close it.
 - Adding by address depends on the operator running Executor with public-only egress.
 
 - Installation, revision history and imported provenance persistence remain outside #12 phase 1.
-  All 22 built-ins always mount through Flue’s native catalogue and `activate_skill`. Vivid saves
+  Built-ins are registered with the Pi Durable Harness in each Person's cell. Vivid saves
   and reuses verified procedures itself; People never see, name, edit or manage skills. Built-in
   names are reserved and saved procedures never replace them. Saved Person/Company procedures
   keep the authorized `read_skill` path because native catalogue snapshots persist in shared Thread

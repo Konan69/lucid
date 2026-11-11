@@ -45,7 +45,6 @@
     ".windsurf/**",
     "tools/oxlint/anti-slop/**",
     "scripts/__fixtures__/**",
-    "scripts/oneoff/**",
     "scripts/oxlint-plugin-vivid.mjs",
     "apps/mobile/android/**",
     "apps/mobile/vendor/**",

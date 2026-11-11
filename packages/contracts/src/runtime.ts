@@ -268,7 +268,7 @@ const HistoryMessage = Schema.Union([
     durationMs: Schema.optionalKey(Schema.Finite),
   }),
 ])
-export const RuntimeHistoryDraft = Schema.Struct({
+const RuntimeHistoryDraft = Schema.Struct({
   kind: Schema.NonEmptyString,
   model: Schema.optionalKey(Schema.Array(HistoryMessage)),
   data: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
