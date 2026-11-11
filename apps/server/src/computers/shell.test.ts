@@ -301,9 +301,9 @@ describe.skipIf(!testDatabaseConfigured || !peerAvailable)("Vivid's own Computer
           return undefined
         }).pipe(Effect.scoped),
     )
-    it.effect(
-      'writes, edits and reads a file and runs a command with the runtime tools, and only then wakes the Computer',
-      () =>
+    it.effect.each(['write', 'edit', 'read', 'shell', 'grep', 'glob', 'missing'] as const)(
+      'uses %s through the runtime tools and wakes only when called',
+      (operation) =>
         Effect.gen(function* () {
           const { server, wakes, machine } = yield* standIn()
           const store = computerStoreLayer.pipe(
@@ -373,41 +373,72 @@ describe.skipIf(!testDatabaseConfigured || !peerAvailable)("Vivid's own Computer
             result: () => Promise<A>,
           ) => Effect.promise(result).pipe(Effect.map(textOf))
 
-          // Relative paths are under the Computer's home, as they are for a person at a shell.
-          yield* said(() =>
-            write.execute('call', { path: 'work/notes.md', content: 'Buy milk\nCall Ada\n' }),
-          )
-          expect(yield* Ref.get(wakes)).toBe(1)
+          // Existing files belong to this case's fresh Computer, without waking it for setup.
           const notes = NodePath.join(server.home, 'work/notes.md')
-          expect(NodeFS.readFileSync(notes, 'utf8')).toBe('Buy milk\nCall Ada\n')
-
-          yield* said(() =>
-            edit.execute('call', {
-              path: 'work/notes.md',
-              oldText: 'Call Ada',
-              newText: 'Call Grace',
-            }),
-          )
-          expect(yield* said(() => read.execute('call', { path: 'work/notes.md' }))).toContain(
-            'Call Grace',
-          )
-          const counted = yield* said(() =>
-            bash.execute('call', {
-              command: 'pwd; wc -l < work/notes.md; grep -c Grace work/notes.md',
-            }),
-          )
-          expect(counted.trim().split(/\s+/)).toEqual([server.home, '2', '1'])
-          expect(yield* said(() => grep.execute('call', { pattern: 'Grace' }))).toContain(
-            'notes.md',
-          )
-          expect(yield* said(() => glob.execute('call', { pattern: '*.md' }))).toContain(
-            'work/notes.md',
-          )
-
-          // A refusal by the machine is a sentence for the model, not a crash.
-          const missing = yield* said(() => read.execute('call', { path: 'absent.txt' }))
-          expect(missing).toContain('There is no file at that path.')
-          // One wake served every call.
+          if (operation !== 'write') {
+            NodeFS.mkdirSync(NodePath.dirname(notes), { recursive: true })
+            NodeFS.writeFileSync(
+              notes,
+              operation === 'edit' ? 'Buy milk\nCall Ada\n' : 'Buy milk\nCall Grace\n',
+            )
+          }
+          switch (operation) {
+            case 'write':
+              // Relative paths are under the Computer's home, as they are for a person at a shell.
+              yield* said(() =>
+                write.execute('call', { path: 'work/notes.md', content: 'Buy milk\nCall Ada\n' }),
+              )
+              expect(yield* Ref.get(wakes)).toBe(1)
+              expect(NodeFS.readFileSync(notes, 'utf8')).toBe('Buy milk\nCall Ada\n')
+              break
+            case 'edit':
+              yield* said(() =>
+                edit.execute('call', {
+                  path: 'work/notes.md',
+                  oldText: 'Call Ada',
+                  newText: 'Call Grace',
+                }),
+              )
+              expect(yield* said(() => read.execute('call', { path: 'work/notes.md' }))).toContain(
+                'Call Grace',
+              )
+              break
+            case 'read':
+              expect(yield* said(() => read.execute('call', { path: 'work/notes.md' }))).toContain(
+                'Call Grace',
+              )
+              break
+            case 'shell': {
+              const counted = yield* said(() =>
+                bash.execute('call', {
+                  command: 'pwd; wc -l < work/notes.md; grep -c Grace work/notes.md',
+                }),
+              )
+              expect(counted.trim().split(/\s+/)).toEqual([server.home, '2', '1'])
+              break
+            }
+            case 'grep':
+              expect(yield* said(() => grep.execute('call', { pattern: 'Grace' }))).toContain(
+                'notes.md',
+              )
+              break
+            case 'glob':
+              expect(yield* said(() => glob.execute('call', { pattern: '*.md' }))).toContain(
+                'work/notes.md',
+              )
+              break
+            case 'missing': {
+              // A refusal by the machine is a sentence for the model, not a crash.
+              const missing = yield* said(() => read.execute('call', { path: 'absent.txt' }))
+              expect(missing).toContain('There is no file at that path.')
+              break
+            }
+            default: {
+              const unhandled: never = operation
+              expect.fail(unhandled)
+            }
+          }
+          // One wake served every call in this case.
           expect(yield* Ref.get(wakes)).toBe(1)
         }).pipe(Effect.scoped),
     )
