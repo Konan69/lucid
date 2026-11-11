@@ -1,4 +1,4 @@
-import type { MeResponse, ThreadId, ThreadListResponse } from '@vivid/contracts'
+import type { MeResponse, ThreadId } from '@vivid/contracts'
 import { sending, type Live, type LiveResult } from '@vivid/state'
 import { Effect, Layer, Option, Semaphore } from 'effect'
 import type { Atom } from 'effect/reactivity'
@@ -49,6 +49,7 @@ const FILE = 'unsent.json'
  * open kept none.
  */
 const recalled = recallFile(FILE).pipe(
+  // Impact: Recovered, the phone's store would not open; the machines start empty and still send.
   Effect.catchTag('StorageUnavailable', () => Effect.succeed(Option.none<string>())),
   Effect.map(sending.readKept),
 )
@@ -72,13 +73,15 @@ const changeUnsent = (revise: (held: sending.Kept) => sending.Kept) =>
       const text = sending.writeKept(next)
       if (Option.isSome(text)) yield* keepFile(FILE, text.value)
       return next
-    }).pipe(Effect.catchTag('StorageUnavailable', () => Effect.succeed<sending.Kept>({}))),
+    }).pipe(
+      // Impact: Recovered, the words stay in the machines for this run; only a restart loses them.
+      Effect.catchTag('StorageUnavailable', () => Effect.succeed<sending.Kept>({})),
+    ),
   )
 
-/** The session's own answers that say who is signed in, where, and that workspace's Threads. */
+/** The session's own answer that says who is signed in and where. */
 interface WhereaboutsSources {
   readonly me: Atom.Atom<LiveResult<MeResponse>>
-  readonly threads: Atom.Atom<LiveResult<ThreadListResponse>>
 }
 
 /** A session's sending: every Thread's machine, which outlives the screen that sent. */

@@ -6,9 +6,11 @@ import { Resource } from 'alchemy'
 import { isResolved } from 'alchemy/Diff'
 import * as Provider from 'alchemy/Provider'
 import { RailwayEnvironment } from 'alchemy/Railway'
+import * as Arr from 'effect/Array'
 import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
+import * as Order from 'effect/Order'
 import * as Redacted from 'effect/Redacted'
 import * as Schedule from 'effect/Schedule'
 import * as Schema from 'effect/Schema'
@@ -277,9 +279,10 @@ const variableDigests = Effect.fn('Infra.Release.variables')(function* (props: R
     answers.variables,
   )
   return Object.fromEntries(
-    Object.entries(variables)
-      .toSorted(([a], [b]) => a.localeCompare(b))
-      .map(([name, value]) => [name, NodeCrypto.createHash('sha256').update(value).digest('hex')]),
+    Arr.sort(
+      Object.entries(variables),
+      Order.mapInput(Order.String, ([name]: readonly [string, string]) => name),
+    ).map(([name, value]) => [name, NodeCrypto.createHash('sha256').update(value).digest('hex')]),
   )
 })
 

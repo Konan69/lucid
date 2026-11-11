@@ -119,7 +119,11 @@ const worker = async () => {
   return `${expected} published and selected by the fleet`
 }
 
-/** Read-back evidence each step must return before the following step can run. */
+/**
+ * Read-back evidence each step must return before the following step can run. Exported for the
+ * policy check that reads this table from source (`scripts/gate/readback.mjs`).
+ * @public
+ */
 export const predeploySteps = [
   { name: 'migrate', step: migrate, readBack: 'Drizzle auth and product migration journal' },
   { name: 'maps', step: maps, readBack: 'Sentry CLI upload receipt for each project' },
