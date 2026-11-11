@@ -99,8 +99,10 @@ function pageOutcome(outcome: ReadPageOutcome): ToolResult {
         title: views.modelText(title),
         text: views.modelText(content),
         truncated,
+        // A picture's address is given whole: model text hides image addresses
+        // (`views.modelText`), and a display can only draw a picture by its address.
         pictures: pictures.map((picture) => ({
-          address: views.modelText(picture.address),
+          address: picture.address,
           alt: views.modelText(picture.alt),
         })),
       },
