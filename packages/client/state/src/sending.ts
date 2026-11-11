@@ -1092,19 +1092,25 @@ const signatureOf = (unsent: ReadonlyArray<Unsent>): string =>
  * Keeps a Thread's unsent words each time they change, for as long as its machine lives. A
  * machine starts with none, which is not a change: the store keeps what it had until the machine
  * holds something else, so starting a machine before the kept words were read never erases them.
+ *
+ * The words are kept under the Person and workspace the Thread was used in, read the first time
+ * its machine moves (a send starts there), and never again: a workspace switch while a send is
+ * on its way must not file its words, or their later removal, under the new workspace.
  */
 const watched = (keeping: Keeping, thread: ThreadId, machine: SendingAtoms): (() => void) => {
   let last = ''
+  let owner = Option.none<string>()
   return keeping.registry.subscribe(stateOf(machine), (state) => {
-    // Words are kept under the Person and workspace the server says now: nothing is sent before
-    // it has said them.
-    const where = keeping.registry.get(keeping.whereabouts)
-    if (Option.isNone(state) || Option.isNone(where)) return
+    if (Option.isNone(owner))
+      owner = Option.map(keeping.registry.get(keeping.whereabouts), (where) =>
+        placeOf(where, thread),
+      )
+    if (Option.isNone(state) || Option.isNone(owner)) return
     const unsent = heldUnsent(state.value)
     const now = signatureOf(unsent)
     if (now === last) return
     last = now
-    const place = placeOf(where.value, thread)
+    const place = owner.value
     keeping.launch(Effect.asVoid(keeping.change((kept) => placed(kept, place, unsent))))
   })
 }
