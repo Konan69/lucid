@@ -8,7 +8,7 @@ A Person contribution and a streamed reply from the selected model persist throu
 
 ## How to get to it (user POV)
 
-Sign in to the disposable account and open the Thread created by the public CreateThread RPC. Send Hello Vivid. Signup and New thread controls are separate, unproved entry points.
+Sign in to the disposable account and open the Thread created by the public CreateThread RPC. HTTP sends Hello Vivid; the browser sends a long-reply prompt and reloads while it streams. Signup and New thread controls are separate, unproved entry points.
 
 ## Driving it with verify-vivid
 

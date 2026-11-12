@@ -1,6 +1,6 @@
 # Teaching a task
 
-Model requirement: a real model with `EXPLABS_API_KEY` for the server memory/title model and a key for the chosen runtime model. Rehearsal cannot prove this feature and both recipes block in rehearsal mode.
+Model requirement: a real model. The server's title model uses `OPENROUTER_API_KEY`; the runtime model needs its own key. Rehearsal cannot prove this feature and both recipes block in rehearsal mode.
 
 ## What it proves
 
