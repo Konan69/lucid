@@ -9,6 +9,7 @@ import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import type { WatchArguments } from '@vivid/contracts'
 import { ExecutorCaller } from '../connections/executor.ts'
 import { requiredSetting, settingSecret } from '../config.ts'
+import { waking } from '../connections/wake.ts'
 
 /**
  * Executor's app events, from the subscriber's side: `events/list`, `events/subscribe` and
@@ -354,6 +355,6 @@ const makeExecutorEvents = (transport: HttpClient.HttpClient, config: ExecutorSe
 export const executorEventsLayer = Layer.effect(
   ExecutorEvents,
   Effect.gen(function* () {
-    return makeExecutorEvents(yield* HttpClient.HttpClient, yield* executorSettings())
+    return makeExecutorEvents(waking(yield* HttpClient.HttpClient), yield* executorSettings())
   }),
 )
