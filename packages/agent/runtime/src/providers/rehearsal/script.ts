@@ -28,7 +28,7 @@ const Receipt = Schema.fromJsonString(
     result: Schema.optionalKey(
       Schema.Union([Schema.Finite, Schema.Struct({ title: Schema.String })]),
     ),
-    catalog: Schema.optionalKey(Schema.String),
+    services: Schema.optionalKey(Schema.String),
     remembered: Schema.optionalKey(Schema.String),
     added: Schema.optionalKey(Schema.Boolean),
     account: Schema.optionalKey(Schema.String),
@@ -91,7 +91,7 @@ function resultWords(result: ToolResultMessage): string {
     if (value.failure !== undefined) return `That didn’t finish: ${failureWords(value.failure)}.`
     return 'That didn’t finish; the tool reported a failure.'
   }
-  if (value.catalog === 'unavailable') return 'The integration catalogue is unavailable right now.'
+  if (value.services === 'unavailable') return 'I can’t see which apps I can add right now.'
   return successWords(result.toolName, value)
 }
 

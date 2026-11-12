@@ -50,7 +50,8 @@ export function accountMeaning(said: string, state: ConnectionState) {
  * account carries how to say it (`say_as`) and what its state means for the Person (`tell_them`). */
 export function integrations(response: FindIntegrationsResponse) {
   return {
-    catalog: response.catalog,
+    // `services` says whether the list of services this Vivid can add could be read.
+    services: response.catalog,
     omittedAccounts: response.omittedAccounts,
     integrations: response.integrations.map((entry) =>
       ConnectionMatch.match<Schema.Json>(entry, {
