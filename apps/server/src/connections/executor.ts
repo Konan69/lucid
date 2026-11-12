@@ -40,6 +40,7 @@ import type * as HttpBody from 'effect/http/HttpBody'
 import { mcpCalls, McpCallOutcome, encodeIntegrationResponse } from './mcp.ts'
 import { toolRejectionMessage, validationProblems } from './message.ts'
 import { retainCatalog } from './catalog.ts'
+import { waking } from './wake.ts'
 import { accountBranch } from './envelope.ts'
 import { requiredSetting, settingSecret } from '../config.ts'
 import { ConnectionSource } from './address.ts'
@@ -3300,7 +3301,7 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
   const publicOnly = yield* Config.Boolean('VIVID_EXECUTOR_PUBLIC_ONLY').pipe(
     Config.withDefault(false),
   )
-  const transport = yield* HttpClient.HttpClient
+  const transport = waking(yield* HttpClient.HttpClient)
   const google = yield* loadGoogleClient()
   /** The one place a credential is put on a request: every client, the installation's and each
    * member's, is built here and differs only in the bearer it sends. */

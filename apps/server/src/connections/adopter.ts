@@ -15,6 +15,7 @@ import {
   type ExecutorActiveReferences,
 } from './executor.ts'
 import { requiredSetting, settingSecret } from '../config.ts'
+import { waking } from './wake.ts'
 
 const Group = Schema.Struct({ id: AdoptionGroupId, revision: Schema.String })
 const Groups = Schema.Struct({ groups: Schema.Array(Group) })
@@ -29,7 +30,7 @@ const context = { service: 'connections' as const, tool: null }
 const makeTransport = Effect.fn('Adopter.transport')(function* () {
   const { url, organization } = yield* executorAddress()
   const key = yield* requiredSetting('VIVID_EXECUTOR_KEY', settingSecret, 'the Executor API key')
-  const client = HttpClient.withScope(yield* HttpClient.HttpClient)
+  const client = HttpClient.withScope(waking(yield* HttpClient.HttpClient))
   const base = `${url}/api/organizations/${encodeURIComponent(organization)}`
   /** Validate each public API answer; transport and policy failures never expose foreign payloads. */
   const exchange = <A, I>(schema: Schema.Codec<A, I>) =>

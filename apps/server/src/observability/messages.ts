@@ -35,6 +35,8 @@ export const Message = {
   memberReused: 'Executor member reused',
   memberRefused: 'Executor member refused',
   executorNotReady: 'Executor selection not ready',
+  /** `connections/wake.ts`: Executor refused a connection while Railway woke it; the call retries. */
+  executorWaking: 'Executor waking',
   connectionRemoved: 'Integration removed',
   /** `computers/store.ts`: the provider did not answer a read; the read answered from the record. */
   computerUnobserved: 'Computer could not be observed',
