@@ -12,7 +12,7 @@ Lose the connection, type a message and press Send. The Thread shows Not sent. R
 
 ## Driving it with verify-vivid
 
-After Launch and Doctor, run `verify browser unsent <run>`. The browser goes offline, sends through the composer, and waits for Not sent. and the words in browser storage. Public history must not hold the words. Back online, it reloads, finds the restored words and line, presses Send again, and requires one completed Run whose history holds the words once. The line and the stored entry must be gone, including after a final reload. `verify feature unsent` reports blocked: the words live only in the client.
+After Launch and Doctor, run `verify browser unsent <run>`. The browser goes offline, sends through the composer, and waits for Not sent. and the words in browser storage. Public history must not hold the words. Back online, it reloads, finds the restored words and line, presses Send again, and requires one completed Run whose history holds the words once, under the same delivery key the browser stored, with a non-empty assistant answer that the Thread still shows after the final reload. The line and the stored entry must be gone, including after a final reload. `verify feature unsent` reports blocked: the words live only in the client.
 
 ## Gotchas
 
