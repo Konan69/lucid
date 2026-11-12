@@ -6,7 +6,7 @@ import { openRunDatabase } from './database.mjs'
 import * as Schema from 'effect/Schema'
 import { logged, readTestCounts, runIdentifier, stopChildrenOnSignal } from './process.mjs'
 import { checkRatchets, effectRule } from './ratchets.mjs'
-import { holdSlot, takeLock, treeLockName } from './slots.mjs'
+import { takeLock, treeLockName } from './slots.mjs'
 import { stageOfTask, stages } from './stages.mjs'
 
 /** Where Vitest writes each package's counts; a Turbo output, so a cache hit restores it. */
@@ -246,6 +246,9 @@ function workspaceDirectories(root) {
  * Run the selected stages in this tree. Policy, the checks lane and the tests lane start
  * together. The database is one empty database for this run alone and is dropped when the run
  * ends, pass or fail; without one the gate fails here instead of skipping the database suites.
+ * The machine's gate slot is the caller's (`scripts/gate.mjs`): the tooling tests run stages in
+ * fixtures from inside a gate that already holds one, and on a four-core box, which has one slot,
+ * a slot taken here waited on its own gate forever (cloudbox-konan3, 12 November 2026).
  */
 export async function runLocal(root, selection, environment) {
   const runId = runIdentifier()
@@ -256,12 +259,7 @@ export async function runLocal(root, selection, environment) {
   const releaseTree = await takeLock(treeLockName(root))
   if (releaseTree === undefined) throw new Error('a gate is already running in this tree')
   try {
-    const releaseSlot = await holdSlot((message) => process.stdout.write(`${message}\n`))
-    try {
-      return await runStages(root, selection, environment, { runId, directory })
-    } finally {
-      releaseSlot()
-    }
+    return await runStages(root, selection, environment, { runId, directory })
   } finally {
     releaseTree()
   }

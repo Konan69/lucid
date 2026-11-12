@@ -1,6 +1,6 @@
 /**
- * The one definition of the gate. The push hook, the Cloudbox run and each GitHub job select
- * stages from this table through `scripts/gate.mjs`; none of them lists a check of its own.
+ * The one definition of the gate. The push hook and the Cloudbox run select stages from this
+ * table through `scripts/gate.mjs`; neither lists a check of its own.
  *
  * A stage is either `commands` (policy checks that read the whole repository in a second or two
  * and so always run) or Turbo `tasks` (hashed per package, replayed when their inputs are

@@ -162,6 +162,7 @@ assert.equal(process.env.EXPO_NO_TELEMETRY, '1')
 assert.equal(os.tmpdir(), path.resolve('.cache/metro'))
 assert.equal(fs.statSync(os.tmpdir()).isDirectory(), true)
 assert.equal(process.argv[2], path.resolve('.cache/updates'))
+assert.equal(process.argv[3], '--no-bytecode')
 `,
     )
     const exported = NodeChildProcess.spawnSync(

@@ -3,7 +3,6 @@ import * as NodeAssert from 'node:assert/strict'
 import * as NodeFS from 'node:fs'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
-import * as YAML from 'yaml'
 import { stages } from './gate/stages.mjs'
 
 const assert = NodeAssert
@@ -16,19 +15,6 @@ const Task = Schema.Struct({
 })
 const Turbo = Schema.Struct({ tasks: Schema.Record(Schema.String, Task) })
 const Manifest = Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) })
-
-const Workflow = Schema.Struct({
-  jobs: Schema.Struct({
-    checks: Schema.Struct({
-      strategy: Schema.Struct({
-        matrix: Schema.Struct({
-          include: Schema.Array(Schema.Struct({ stages: Schema.String })),
-        }),
-      }),
-    }),
-  }),
-})
-const decodeWorkflow = Schema.decodeUnknownResult(Workflow)
 
 /** Invalid task declarations must stop the gate before Turbo can replay an incomplete hash. */
 function read(schema, path) {
@@ -113,28 +99,12 @@ function checkBuild(tasks) {
   }
 }
 
-/** A missing local signoff still needs production builds in the GitHub quality matrix. */
-function checkWorkflow() {
-  const workflow = Result.getOrThrow(
-    decodeWorkflow(
-      YAML.parse(
-        NodeFS.readFileSync(new URL('../.github/workflows/quality.yml', import.meta.url), 'utf8'),
-      ),
-    ),
-  )
-  assert.ok(
-    workflow.jobs.checks.strategy.matrix.include.some((job) => job.stages === 'build'),
-    '.github/workflows/quality.yml: add the build stage to checks.strategy.matrix.include',
-  )
-}
-
 const { tasks } = read(Turbo, '../turbo.json')
 const { scripts } = read(Manifest, '../package.json')
 checkStages(tasks, scripts)
 checkOverrides(tasks)
 checkTestEnvironment(tasks)
 checkBuild(tasks)
-checkWorkflow()
 // The runtime library and its native cell entry both participate in the generic checks.
 const runtime = read(Manifest, '../packages/agent/runtime/package.json')
 for (const task of ['types', 'typecheck', 'lint', 'test'])

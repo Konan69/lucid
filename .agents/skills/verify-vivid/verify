@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
+if [[ "${1:-}" == run ]]; then
+  shift
+  exec node .agents/skills/verify-vivid/scripts/run.mjs "$@"
+fi
 if [[ "${1:-}" == android ]]; then
   shift
   exec node .agents/skills/verify-vivid/scripts/android.mjs "$@"
