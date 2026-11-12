@@ -9,7 +9,9 @@
     "apps/mobile/vendor/**",
   ],
   // These binaries are host prerequisites, not packages to add to a manifest.
-  "ignoreBinaries": ["mkfifo", "ssh-keygen", "agent-browser"],
+  // `devbox-pick` is the developer's Cloudbox picker (`scripts/gate/cloud.mjs` `placedHost`); absent, the
+  // gate runs here.
+  "ignoreBinaries": ["mkfifo", "ssh-keygen", "agent-browser", "devbox-pick"],
   "includeEntryExports": true,
   // Declaration emit and import types need the explicitly documented public names.
   "tags": ["-@public"],
