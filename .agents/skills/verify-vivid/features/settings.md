@@ -8,7 +8,7 @@ Personal Settings places General, What Vivid knows, Text Vivid, and Devices unde
 
 The [Memory screen](../../../../apps/web/src/screen/settings/Memory.tsx) shows what the Person's cell remembers: the standing pages Vivid has written, then the newest lines, read through `GetMemoryIndex` each time Settings opens. The recipe compares the visible list with the current index and checks for obsolete Memory section headings. It does not check the content, recall, or privacy of model memory.
 
-The [Integration catalog](../../../../apps/web/src/screen/settings/Connections.tsx) places popular services under purpose headings. A typed search returns one Results group in catalog order. [purpose.ts](../../../../packages/client/state/src/purpose.ts) is shared with the phone. The shipped public RPC is `FindServices`, not `ListServices`.
+The [Integration catalog](../../../../apps/web/src/screen/settings/Connections.tsx) places popular services under purpose headings. A typed search returns one Results group in the order `searchCatalog` ranks it ([curation.ts](../../../../apps/server/src/connections/curation.ts)): the exact name, then a priority service the query names by name or category, then other name words, then category and description. [purpose.ts](../../../../packages/client/state/src/purpose.ts) is shared with the phone. The shipped public RPC is `FindServices`, not `ListServices`.
 
 ## Run the recipes
 
