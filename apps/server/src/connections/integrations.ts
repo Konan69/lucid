@@ -18,6 +18,7 @@ import {
 import { Array as Arr, Effect, Option, Order } from 'effect'
 import { requireAdmin, type Actor } from '../auth/access.ts'
 import { ConnectionAddress, type ConnectionAddressInvalid, publicAddress } from './address.ts'
+import { searchWords } from './curation.ts'
 import { IMPORTED } from './logo.ts'
 import { ConnectionStore, ToolDiscovery } from './store.ts'
 import { useUnkeyedTool } from './tools.ts'
@@ -105,11 +106,9 @@ export const authorIntegration = Effect.fn('Connections.authorIntegration')(func
   })
 })
 
-/** Match names and descriptions; query words support requests such as “Google calendar”. */
-function matches(query: string, name: string, description: string) {
-  const words = query.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []
-  const text = `${name} ${description}`.toLowerCase()
-  return words.length === 0 || words.some((word) => text.includes(word))
+/** An account matches when it shares a search word with the query, or the query has none. */
+function matches(query: ReadonlySet<string>, text: string) {
+  return query.size === 0 || [...searchWords(text)].some((word) => query.has(word))
 }
 
 /** Matching accessible accounts lead, then most recently created accounts fill the 24-account
@@ -121,15 +120,19 @@ export const findIntegrations = Effect.fn('Connections.findIntegrations')(functi
 ) {
   const store = yield* ConnectionStore
   const records = yield* store.records(actor)
+  const words = searchWords(request.query)
   // An account answers to its whole name and to the address behind a name the Person gave it,
   // so "work" and "ada@example.com" both find "Gmail (Work)".
   const named = namedAccounts(records).map((entry) => ({
     row: entry.row,
     account: entry.account,
     matches: matches(
-      request.query,
-      entry.row.serviceName,
-      [entry.account, ...Option.toArray(Option.fromNullOr(entry.row.identity))].join(' '),
+      words,
+      [
+        entry.row.serviceName,
+        entry.account,
+        ...Option.toArray(Option.fromNullOr(entry.row.identity)),
+      ].join(' '),
     ),
   }))
   const ordered = Arr.sort(
@@ -158,27 +161,26 @@ export const findIntegrations = Effect.fn('Connections.findIntegrations')(functi
       })
     }),
   )
-  const catalog = yield* store.catalog().pipe(
+  const catalog = yield* store.search(request.query).pipe(
     Effect.asSome,
     Effect.catchTag('ServiceUnavailable', () => Effect.succeedNone),
   )
   const services = Option.isNone(catalog)
     ? []
-    : catalog.value
-        .filter((entry) => matches(request.query, entry.name, `${entry.description} ${entry.id}`))
-        .slice(0, 24)
-        .map((entry) =>
-          ConnectionMatch.cases.Catalog.make({
-            name: entry.name,
-            description: entry.description,
-            authorization: entry.authorization,
-            connected: records.some((row) => row.service === entry.id && row.status === 'ready'),
-          }),
-        )
+    : catalog.value.services.slice(0, 24).map((entry) =>
+        ConnectionMatch.cases.Catalog.make({
+          name: entry.name,
+          description: entry.description,
+          authorization: entry.authorization,
+          connected: records.some((row) => row.service === entry.id && row.status === 'ready'),
+        }),
+      )
   return {
     integrations: [...accounts, ...services],
     omittedAccounts: Math.max(0, records.length - accounts.length),
-    catalog: Option.isSome(catalog) ? ('available' as const) : ('unavailable' as const),
+    // Unavailable also when the catalog holds only Vivid's own services: Executor's feed failed
+    // or listed nothing, and the model must not read that as "no such Integration".
+    catalog: Option.isSome(catalog) ? catalog.value.feed : ('unavailable' as const),
   }
 })
 

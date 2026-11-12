@@ -184,30 +184,6 @@ export const ServiceAuthorization = Schema.TaggedUnion({
 })
 export type ServiceAuthorization = typeof ServiceAuthorization.Type
 
-/** Catalogue judgements describe usefulness separately from this installation's credentials. */
-export const ServiceCuration = Schema.Struct({
-  kind: Schema.Literals([
-    'mail',
-    'calendar',
-    'files',
-    'notes',
-    'chat',
-    'meetings',
-    'tasks',
-    'crm',
-    'finance',
-    'social',
-    'shopping',
-    'travel',
-    'design',
-    'developer',
-    'data',
-    'other',
-  ]),
-  auth: Schema.Literals(['OneTap', 'OperatorSetup', 'PersonKey', 'None', 'Unknown']),
-  worksNow: Schema.Boolean,
-})
-
 /** One service Vivid can be connected to, from the catalog. */
 export const Service = Schema.Struct({
   id: ServiceId,
@@ -216,8 +192,6 @@ export const Service = Schema.Struct({
   /** The address of the service's logo image, or null when no registrable domain is available. */
   mark: Schema.NullOr(Schema.String),
   authorization: ServiceAuthorization,
-  /** Absent for a Person-supplied address, which has no catalogue judgement. */
-  curation: Schema.optionalKey(ServiceCuration),
 }).annotate({ identifier: 'Service', title: 'Integration' })
 export interface Service extends Schema.Schema.Type<typeof Service> {}
 

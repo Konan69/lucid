@@ -74,6 +74,7 @@ import { operationsOf } from './members.ts'
 import { prepareReconciliation } from './reconcile.ts'
 import { callableTool, discoveredTool } from '../code/signatures.ts'
 import { executorFailure } from './errors.ts'
+import { searchWords } from './curation.ts'
 import { ConnectionStore, ToolDiscovery } from './store.ts'
 import { decisionConfigured, isDecisionNonEvent } from '../decisions/model.ts'
 import { relevantTools, relevantToolsWithin, RELEVANCE_BUDGET } from './relevance.ts'
@@ -210,22 +211,20 @@ const offeredServices = Effect.fn('Connections.offeredServices')(function* (
   records: readonly ConnectionRecord[],
   query: string,
 ) {
-  const services = yield* store
-    .catalog()
-    .pipe(Effect.catchTag('ServiceUnavailable', () => Effect.succeed<readonly Service[]>([])))
+  // A query with no search words reaches nothing; search would answer with the popular list.
+  if (searchWords(query).size === 0) return { unconnected: [], connected: [] }
+  const services = yield* store.search(query).pipe(
+    Effect.map((found) => found.services),
+    Effect.catchTag('ServiceUnavailable', () => Effect.succeed<readonly Service[]>([])),
+  )
   const has = (service: Service) =>
     records.some((row) => row.service === service.id && row.status === 'ready')
-  const best = (candidates: readonly Service[]) =>
-    rank(candidates, query, 3, (service) => ({
-      own: `${service.name} ${service.description}`,
-      identity: '',
-    }))
   const unconnected = yield* Effect.forEach(
-    best(services.filter((service) => !has(service))),
+    services.filter((service) => !has(service)).slice(0, 3),
     (service) => store.service(service.id),
     { concurrency: 3 },
   ).pipe(Effect.catchTag('ServiceUnavailable', () => Effect.succeed<readonly Service[]>([])))
-  return { unconnected, connected: best(services.filter(has)) }
+  return { unconnected, connected: services.filter(has).slice(0, 3) }
 })
 
 /**
