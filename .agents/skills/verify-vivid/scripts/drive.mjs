@@ -641,8 +641,7 @@ const blocked = {
     'Needs a server whose sign-in can be made to fail; database-backed coverage is apps/server/src/connections/integrations.test.ts (replace a Failed personal account).',
   handoff:
     'No proof-owned Computer: a handoff is prepared and filled on a disposable Person Computer.',
-  unsent:
-    'Unsent words live in the client; run verify browser unsent.',
+  unsent: 'Unsent words live in the client; run verify browser unsent.',
   ...discordBlocked(),
   ...githubBlocked(),
   ...textingDiscordBlocked(),
