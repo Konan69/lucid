@@ -3387,6 +3387,7 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
     catalog: availability.catalog,
     feed: remoteCatalog().pipe(
       Effect.map((entries) => (entries.length > 0 ? 'available' : 'unavailable')),
+      // Impact: Routine, the snapshot's writer already logs each failed feed read; this only says so.
       Effect.catchTag('ServiceUnavailable', () => Effect.succeed('unavailable' as const)),
     ),
     authorization: availability.authorization,
