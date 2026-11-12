@@ -1024,7 +1024,7 @@ export const hostedExecutorFixture = Effect.fn('Executor.HostedTest.fixture')(fu
       ),
     ),
   )
-  return { ...state, configured }
+  return { ...state, configured, url }
 })
 
 /** Requirement-scoped account connections and app removal are the beta.23 public routes. */
