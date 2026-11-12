@@ -18,7 +18,6 @@ import {
 import { Array as Arr, Effect, Option, Order } from 'effect'
 import { requireAdmin, type Actor } from '../auth/access.ts'
 import { ConnectionAddress, type ConnectionAddressInvalid, publicAddress } from './address.ts'
-import { searchWords } from './curation.ts'
 import { IMPORTED } from './logo.ts'
 import { ConnectionStore, ToolDiscovery } from './store.ts'
 import { useUnkeyedTool } from './tools.ts'
@@ -106,9 +105,11 @@ export const authorIntegration = Effect.fn('Connections.authorIntegration')(func
   })
 })
 
-/** An account matches when it shares a search word with the query, or the query has none. */
-function matches(query: ReadonlySet<string>, text: string) {
-  return query.size === 0 || [...searchWords(text)].some((word) => query.has(word))
+/** Match names and descriptions; query words support requests such as “Google calendar”. */
+function matches(query: string, name: string, description: string) {
+  const words = query.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []
+  const text = `${name} ${description}`.toLowerCase()
+  return words.length === 0 || words.some((word) => text.includes(word))
 }
 
 /** Matching accessible accounts lead, then most recently created accounts fill the 24-account
@@ -120,19 +121,15 @@ export const findIntegrations = Effect.fn('Connections.findIntegrations')(functi
 ) {
   const store = yield* ConnectionStore
   const records = yield* store.records(actor)
-  const words = searchWords(request.query)
   // An account answers to its whole name and to the address behind a name the Person gave it,
   // so "work" and "ada@example.com" both find "Gmail (Work)".
   const named = namedAccounts(records).map((entry) => ({
     row: entry.row,
     account: entry.account,
     matches: matches(
-      words,
-      [
-        entry.row.serviceName,
-        entry.account,
-        ...Option.toArray(Option.fromNullOr(entry.row.identity)),
-      ].join(' '),
+      request.query,
+      entry.row.serviceName,
+      [entry.account, ...Option.toArray(Option.fromNullOr(entry.row.identity))].join(' '),
     ),
   }))
   const ordered = Arr.sort(
