@@ -4,7 +4,7 @@ Model requirement: needs a real model. Rehearsal proves plumbing only.
 
 ## Sub-features
 
-One titled Artifact advances from version 1 under the same id. Vivid may revise more than once in the revision Run; every new version must be one of that Run's successful write_document receipts. The third Run must contain a successful read_document tool part reporting the latest version and the added sentence Ready for review. The public latest-version body must also contain that sentence and differ from version 1. Person ListArtifacts reports the latest summary; GetArtifact reads each immutable version, with SQL retaining the stored versions. Since 26 October 2026 the Thread draws no step rows: the browser proves the reply arrived as Vivid's bubbles and that no step list, "more steps" or "Worked" line is drawn, before and after reload. The web currently has no Artifact opener; opening/editing the body is blocked. HTTP versioning alone never proves an editor.
+One titled Artifact advances from version 1 under the same id. Vivid may revise more than once in the revision Run; every new version must be one of that Run's successful write_document receipts. The third Run must contain a successful read_document tool part reporting the latest version and the added sentence Ready for review. The public latest-version body must also contain that sentence and differ from version 1. Person ListArtifacts reports the latest summary; GetArtifact reads each immutable version, with SQL retaining the stored versions. Since 26 October 2026 the Thread draws no step rows: the browser proves the reply arrived as Vivid's bubbles and that no step list, "more steps" or "Worked" line is drawn, before and after reload. The web Thread draws each delivered Artifact as a card whose Open button shows the viewer with versions, Download, Edit and Delete (`apps/web/src/screen/artifact/Card.tsx`, `Viewer.tsx`); this recipe does not drive the viewer. HTTP versioning alone never proves an editor.
 
 ## How to get to it (user POV)
 
@@ -16,13 +16,13 @@ Run `.agents/skills/verify-vivid/verify feature document` after Launch and Docto
 
 ## Gotchas
 
-The document is real SQL data written by the runtime tools. Person edits and version conflict handling are separate RPC entry points. Opening the body in the web is blocked until the product has an Artifact viewer and this skill has its browser recipe.
+The document is real SQL data written by the runtime tools. Person edits and version conflict handling are separate RPC entry points. The [files recipe](files.md) opens the viewer for a workbook; no recipe opens or edits a Markdown document in it.
 
 ## File delivery
 
 The real-model HTTP recipe also creates a one-page Word document on the Computer, exports a PDF, calls inspect_file and checks that its projected tool result contains native image content before publish_file. GetArtifact must retain the PDF output, separate DOCX source, PNG preview and matching render-review digest. Authenticated downloads of every role must match the stored SHA-256 and length. The recipe saves file-artifact.json, file-proof.json and each downloaded file beside the conversation evidence. Markdown tool receipts now carry ArtifactMessage references in client state, while model text retains its title and version.
 
-Current live proof is blocked: no proof-owned Computer. The verifier's Boat adapter is unconfigured. Run this recipe once the orchestrator supplies a Computer-enabled verifier and disposable Computer authority. Do not use the production Computer or create a testing machine without authorization. The PostgreSQL/SSH integration test separately proves publication retries, source mutation isolation and byte-route access/digests. It does not prove LibreOffice rendering or the model's visual review.
+This step needs `VIVID_BOAT_API_KEY` in `VIVID_VERIFY_KEY_FILE`, which gives Launch a disposable Computer; without it `verify feature document` fails at the file step. Never use the production Computer. The PostgreSQL/SSH integration test separately proves publication retries, source mutation isolation and byte-route access/digests. It does not prove LibreOffice rendering or the model's visual review.
 
 ## Workbook publication
 

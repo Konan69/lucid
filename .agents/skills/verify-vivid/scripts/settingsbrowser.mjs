@@ -87,7 +87,7 @@ export async function settingsBrowser(state, id, directory, browser) {
   )
   NodeAssert.deepEqual(navigation, [
     { tag: 'P', text: 'You' },
-    ...['General', 'What Vivid knows', 'Text Vivid', 'Devices'].map((text) => ({
+    ...['General', 'What Vivid knows', 'What Vivid is doing', 'Text Vivid', 'Devices'].map((text) => ({
       tag: 'BUTTON',
       text,
     })),
