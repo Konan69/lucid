@@ -122,7 +122,7 @@ export function inputRequest(item: InputRequest) {
     requestId: item.id,
     questions: Arr.map(item.questions, (question) => modelText(question.question)),
     message:
-      'Asked. Their answer will arrive as a new message; keep working on what does not depend on it.',
+      'Asked; they see the questions on a card. Their answer will arrive as a new message. Keep working on what does not depend on it, or stop without another word.',
   }
 }
 
