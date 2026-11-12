@@ -32,10 +32,12 @@ function assertCatalog(actual, services, query) {
     actual.filter((group) => group.purpose === 'Text Vivid'),
     channels.length === 0 ? [] : [{ purpose: 'Text Vivid', names: channels }],
   )
+  // Discord is both a channel and, for an early-access Person, a catalog service.
+  const order = [...new Set(expected)]
   for (const group of actual)
     NodeAssert.deepEqual(
       group.names,
-      expected.filter((name) => group.names.includes(name)),
+      order.filter((name) => group.names.includes(name)),
     )
 }
 
