@@ -127,6 +127,33 @@ const browserPage = BrowseResult.make({
   tabs: [],
 })
 
+/** One browse refusal or receipt, sent back through the real browser callback for the Person's computer. */
+const browseReceipt = ([outcome, expected, terminate]: readonly [
+  BrowseOutcome,
+  Schema.JsonObject,
+  boolean,
+]) =>
+  Effect.gen(function* () {
+    const transport = yield* fixture()
+    const call = Effect.promise(() =>
+      transport.browser.execute(
+        'browse-call',
+        { action: { kind: 'screenshot' }, summary: 'Look at my page', computer: 'person' },
+        new AbortController().signal,
+      ),
+    )
+    const [result] = yield* Effect.all(
+      [call, browserReply(transport, outcome, BrowseTarget.cases.Person.make({}))],
+      { concurrency: 2 },
+    )
+    expect(
+      result.content.every((block) => block.type === 'text'),
+      outcome._tag,
+    ).toBe(true)
+    expect(result.details, outcome._tag).toEqual(expected)
+    expect(result.terminate, outcome._tag).toBe(terminate)
+  }).pipe(Effect.scoped)
+
 describe('browser model target and image result', () => {
   it.effect.each<Schema.JsonObject>([
     { computer: 'other', action: { kind: 'read' }, summary: 'Read the page' },
@@ -276,24 +303,6 @@ describe('browser model target and image result', () => {
       true,
     ],
     [
-      BrowseOutcome.cases.PageGone.make({}),
-      {
-        ok: false,
-        tell_them: expect.any(String),
-        message: expect.stringContaining('page is gone'),
-      },
-      false,
-    ],
-    [
-      BrowseOutcome.cases.Unsupported.make({}),
-      {
-        ok: false,
-        tell_them: expect.any(String),
-        message: expect.stringContaining('does not support this browser action'),
-      },
-      false,
-    ],
-    [
       BrowseOutcome.cases.RunRequired.make({}),
       {
         ok: false,
@@ -348,27 +357,31 @@ describe('browser model target and image result', () => {
     ],
   ] as const)(
     'preserves each refusal, uncertainty and approval receipt through the real browser callback (case %#)',
-    ([outcome, expected, terminate]) =>
-      Effect.gen(function* () {
-        const transport = yield* fixture()
-        const call = Effect.promise(() =>
-          transport.browser.execute(
-            'browse-call',
-            { action: { kind: 'screenshot' }, summary: 'Look at my page', computer: 'person' },
-            new AbortController().signal,
-          ),
-        )
-        const [result] = yield* Effect.all(
-          [call, browserReply(transport, outcome, BrowseTarget.cases.Person.make({}))],
-          { concurrency: 2 },
-        )
-        expect(
-          result.content.every((block) => block.type === 'text'),
-          outcome._tag,
-        ).toBe(true)
-        expect(result.details, outcome._tag).toEqual(expected)
-        expect(result.terminate, outcome._tag).toBe(terminate)
-      }).pipe(Effect.scoped),
+    (row) => browseReceipt(row),
+  )
+  // A closed page and an unsupported step, apart from the other receipts.
+  it.effect.each([
+    [
+      BrowseOutcome.cases.PageGone.make({}),
+      {
+        ok: false,
+        tell_them: expect.any(String),
+        message: expect.stringContaining('page is gone'),
+      },
+      false,
+    ],
+    [
+      BrowseOutcome.cases.Unsupported.make({}),
+      {
+        ok: false,
+        tell_them: expect.any(String),
+        message: expect.stringContaining('does not support this browser action'),
+      },
+      false,
+    ],
+  ] as const)(
+    'carries a closed page or an unsupported step through the real browser callback (case %#)',
+    (row) => browseReceipt(row),
   )
 })
 
