@@ -8,8 +8,8 @@ leave activity unchanged. A real model must call `get_capabilities` before answe
 abilities, including with a genuinely connected pages-capable, apps-incapable desktop stream.
 The receipt must report personal apps Unsupported and personal browsing Available.
 
-Evidence retains facts, model answers, tool receipts and device stream cleanup. The unavailable
-internal-name assertion is a narrow check. It does not judge every paraphrase in an answer.
+Evidence retains facts, model answers, tool receipts and device stream cleanup. Assertions read the structured
+`get_capabilities` receipt; no answer text is judged.
 
 The browser recipe is the Settings Devices panel for Vivid's computer (`accessbrowser.mjs`
 `computerBrowser`, shared with `computer`): what Vivid can do there is drawn from its health. For

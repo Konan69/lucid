@@ -26,6 +26,6 @@ A full recipe must use a synthetic Person, a disposable Computer provisioned thr
 
 ## Blocked verification
 
-Full HTTP and browser journeys are blocked. The current verify-vivid launch deliberately leaves Boat unconfigured and supplies no connected Computer authority, as documented in `../references/boundaries.md`. Its dispatcher has no egress HTTP or browser recipe. This mapping adds no dispatcher or passing verdict.
+Full HTTP and browser journeys are blocked. With `VIVID_BOAT_API_KEY`, Launch can create a disposable Computer, but no recipe turns egress on and reads the exit through a signed-in desktop. The dispatcher has no egress HTTP or browser recipe. This mapping adds no dispatcher or passing verdict.
 
 The prerequisite is an explicitly connected disposable Boat Computer plus a disposable signed-in desktop exit authority, reachable through the launched server's public authentication and relay. Add a recipe using those authorities before `verify feature egress` or `verify browser egress` can verify this feature. Launch, Doctor, native component results, and a Settings screenshot alone cannot establish full egress. Never use a Person's production Computer for proof infrastructure.

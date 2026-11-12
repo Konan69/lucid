@@ -4,6 +4,7 @@ export const hosts = {
   'cloudbox-konan': 'bx_gu65277z',
   'cloudbox-konan2': 'bx_8b9c35bp',
   'cloudbox-konan3': 'bx_5suus7qp',
+  'cloudbox-konan4': 'bx_u4e5vmtn',
 }
 
 /** The developer PC runs the proof stack in WSL and the Android emulator on Windows' GPU.

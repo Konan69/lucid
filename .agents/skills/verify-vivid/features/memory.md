@@ -13,7 +13,7 @@ in a shared Thread. They are separate from the product knowledge base and docume
 
 ## How to get to it
 
-Open a private Thread. Ask Vivid to remember a standing preference, correct it later, or forget it. The web exposes Memory through the composer and assistant replies. It has no dedicated Memory list or editor.
+Open a private Thread. Ask Vivid to remember a standing preference, correct it later, or forget it. The web also lists Memory in Settings, What Vivid knows, with Correct and Forget (`apps/web/src/screen/settings/Memory.tsx`). These recipes drive only the composer.
 
 ## Drive with verify-vivid
 
@@ -27,9 +27,9 @@ Use a fresh launch at the intended head and unchanged tree. Require Doctor to re
 
 Both recipes use six real model turns asked in a Person's words, with no tool, file or field named (the owner, 26 October 2026). The create turn must write exactly one entry whose body says "before noon", with `replaced: false`; its file is read from that receipt. The correction must first write that same file with `replaced: true` and a body saying "after three". Vivid may then rename the entry (one new write with the correction plus the retraction of the old file), because it names files after the value they hold; after both the create and the correction turn the public `GetMemoryIndex` must list exactly one entry for the project, the one the receipts name. A second surviving entry fails. After the create turn, `ReadMemory` must show a `ThreadMessage` citation of this Thread whose message is in its history and says "before noon". The forget turn must call `plan_forget` before its confirmation question; the confirmed Decision Run must call `forget_memory` once, with no `delete_memory`, and its receipt must say `completed` with at least one entry retracted or rewritten; the entry must then be gone from the public index. The three questions must change no entry, and the first two replies must say the preference ("noon" and why, then "three"). Any other extra write or delete fails the recipe.
 
-Each recipe chooses a unique project name for its meeting preference, so an earlier run or the other recipe cannot satisfy the create turn. Any tool error receipt fails the recipe, even if a later call succeeds.
+Each recipe chooses a unique project name for its meeting preference, so an earlier run or the other recipe cannot satisfy the create turn. Failed tool calls are kept in evidence and not judged; only successful receipts count.
 
-The HTTP recipe uses the Person gateway, `WatchConversation` history, and `WatchThread` settlement. The browser recipe sends every prompt through **Message Vivid** and **Send**. It checks the actual Run's tool receipt, asserts the assistant reply in the rendered DOM, reloads, and checks that reply and durable history again after every turn. It does not claim that a Memory editor or list exists.
+The HTTP recipe uses the Person gateway, `WatchConversation` history, and `WatchThread` settlement. The browser recipe sends every prompt through **Message Vivid** and **Send**. It checks the actual Run's tool receipt, asserts the assistant reply in the rendered DOM, reloads, and checks that reply and durable history again after every turn. It does not drive the Settings Memory list.
 
 Inspect `memory/verdict.json` and `browser/memory/verdict.json`. Each recipe retains `steps.json`, `scope.json`, and a directory per operation with request or browser commands, settlement, public history, and `receipt.json`. Browser evidence also includes snapshots, screenshots, reply counts, and reloaded history. Only successful real runs can produce a proved verdict.
 

@@ -16,4 +16,4 @@ Run `.agents/skills/verify-vivid/verify feature replies` after Launch and Doctor
 
 ## Gotchas
 
-The model chooses whether to offer; a reply with no obvious next step offers none, and the recipe's prompt is written so one exists. A draft is drawn as a letter whose own Send button is the next step, so it offers no pills; the recipe avoids drafts. The prompt is in a Person's words and never names the tool. The phone draws the same offer through `apps/mobile/src/screen/chat/Replies.tsx`; this recipe does not prove it.
+Vivid is told to end almost every reply with suggestions and to leave them out only when a display's buttons are the next step, the conversation is plainly finished, or the answer cannot be guessed, such as an address or a name (`packages/agent/runtime/src/agents/vivid.ts`). A draft is drawn as a letter whose own Send button is the next step, so it offers no pills; the recipe avoids drafts. The prompt is in a Person's words and never names the tool. The phone draws the same offer through `apps/mobile/src/screen/chat/Replies.tsx`; this recipe does not prove it.
