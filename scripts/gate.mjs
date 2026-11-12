@@ -8,6 +8,7 @@ import { ceilingBase } from './ceilings.mjs'
 import { placedHost, runCloud } from './gate/cloud.mjs'
 import { runFocused } from './gate/focused.mjs'
 import { runLocal } from './gate/local.mjs'
+import { holdSlot } from './gate/slots.mjs'
 import { signable, signoff } from './gate/signoff.mjs'
 import { stageNames } from './gate/stages.mjs'
 import { proofSelection } from './proof.mjs'
@@ -196,6 +197,16 @@ export function lintCeilingBase(root, options, environment) {
   return ceilingBase(root, environment)
 }
 
+/** Hold one of this machine's gate slots (`gate/slots.mjs`) while `work` runs. */
+async function slotted(work) {
+  const release = await holdSlot((message) => process.stdout.write(`${message}\n`))
+  try {
+    return await work()
+  } finally {
+    release()
+  }
+}
+
 /** Every stage in this checkout. */
 async function runHere(options, env) {
   const base = changeBase(repositoryRoot, options, env)
@@ -209,15 +220,17 @@ async function runHere(options, env) {
   const outcome =
     options.mode === 'focused'
       ? await runFocused(repositoryRoot, options.files, env)
-      : await runLocal(
-          repositoryRoot,
-          {
-            stages: selectStages(options.only),
-            base,
-            ceilingsBase: options.ceilingsBase,
-            proof: options.proof,
-          },
-          env,
+      : await slotted(() =>
+          runLocal(
+            repositoryRoot,
+            {
+              stages: selectStages(options.only),
+              base,
+              ceilingsBase: options.ceilingsBase,
+              proof: options.proof,
+            },
+            env,
+          ),
         )
   const { text, passed } = report(outcome, label)
   // A remote run's logs are on the remote machine, so a failure brings its evidence with it.
