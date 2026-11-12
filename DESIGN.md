@@ -87,6 +87,30 @@ Anything that ticks (durations, countdowns) is mono tabular.
 - Reduced motion: keep opacity/color, drop movement.
 - High-frequency interactions get instant feedback or ≤150ms opacity/color.
   Motion is never the only feedback channel — every state also has a static cue.
+- A page change moves. When an item takes the Person to another page (a Feed
+  card opening its chat), the item and the page move as one transition: the
+  new page comes in while the item travels into its place there, and both
+  settle together. A cross-fade alone is not a page transition, and nothing
+  snaps when it lands. The owner, 11 November 2026: "page changing should have
+  animations"; "there is no cohesion between the animations ... one item is
+  dropped from one page to another". Screens use the platform's own slide
+  (`apps/mobile/src/ui/stack.ts`).
+- The app's current motion is not the reference for how motion should feel.
+  Before copying it, read the named reference (`animation-vocabulary`,
+  `apple-design`, the platform's own transition) and say what you read. The
+  owner, 11 November 2026: "the apps own could be wrong do research".
+
+## Copy
+
+- Labels say what a thing is or does, in plain words. No chatty or
+  personified lines about Vivid or the Person: "4 to decide.", "The rest is
+  handled.", "Busy with these" and a "Move it" message were all rejected. The
+  owner, 11 November 2026: "stop trying to be punchy follow the vibe"; "stop
+  this cringe humanizing copy".
+- A finished state is a mark where a mark reads: a tick or a dot, not "Done"
+  or "Handled". The owner, 11 November 2026: "tick emoji or dot on the right
+  is better than done".
+- `better-writing` reviews every string against this section.
 
 ## Product rules the UI enforces
 
@@ -95,6 +119,12 @@ Anything that ticks (durations, countdowns) is mono tabular.
 - Automations are said, not built: a sentence, confirmed as a card.
 - Status is computed from the run, never set by hand.
 - Change the surface, not the substrate.
+- A Feed card holds more than text through the displays a reply uses: line
+  items, a route, a meter or a file are an OpenUI display drawn by Vivid
+  (`packages/agent/runtime/src/agents/displays.ts`, the `Drawn` card in
+  `apps/web/src/screen/feed/Card.tsx`), never a component built for one card
+  kind. The owner, 11 November 2026: "the cards should be able to hold more
+  than just text ... we have openui for a reason".
 
 ## Where things live
 
