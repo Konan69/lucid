@@ -97,7 +97,7 @@ import { connections, connectionPermissions } from './tables.ts'
 import { classPolicies } from './permissions.ts'
 import { callbackHash, correlateSignIn } from './correlation.ts'
 import { catalogService, IMPORTED, serviceLogo } from './logo.ts'
-import { loadCuration } from './curation.ts'
+import { searchCatalog } from './curation.ts'
 import { connectionAddressLayer, type ConnectionSource } from './address.ts'
 import { Watches, watchesLayer } from '../watches/lifecycle.ts'
 import { watchStoreLayer } from '../watches/store.ts'
@@ -689,15 +689,17 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
       )
     return authorizedService(service, authorization)
   })
-  /** Search uses only completed availability facts in the adapter's snapshot. A cold sign-in
-   * hint remains optimistic until Begin or Resume supplies a real app definition. The decoded
-   * curation is kept for the life of the store: the file cannot change while the server runs.
-   */
-  const curated = yield* Effect.cached(loadCuration())
-  /** Which services are shown, in what order and how many, is the checked-in curation's decision. */
-  const find = Effect.fn('Connections.findServices')(function* (query: string) {
-    const search = yield* curated
-    return search(yield* catalogServices(), query)
+  /** Search reads the adapter's retained snapshot with its completed availability facts; a cold
+   * sign-in hint stays optimistic until Begin or Resume supplies a real app definition. Every
+   * entry the query reaches comes back, best first, with the size of the whole catalog and
+   * whether Executor's feed is in it or only Vivid's own services are. */
+  const search = Effect.fn('Connections.search')(function* (query: string) {
+    const entries = yield* executor.catalog.pipe(Effect.mapError(executorFailure))
+    return {
+      services: searchCatalog(entries, query).map(catalogService),
+      total: entries.length,
+      feed: yield* executor.feed,
+    }
   })
   /** Offers inspect exactly the chosen service, using the same cached availability as search. */
   const service = Effect.fn('Connections.service')(function* (
@@ -725,9 +727,13 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     discordPeople,
     catalog: catalogServices,
     service,
-    /** Catalog search is independent of ownership and preserves the adapter's retained order. */
-    find: Effect.fn('Connections.search')((query: string) =>
-      find(query).pipe(
+    search,
+    /** The page shows the best 24; catalog search is independent of ownership. */
+    find: Effect.fn('Connections.find')((query: string) =>
+      search(query).pipe(
+        Effect.map(({ services, total }) =>
+          ServiceCatalog.cases.Ready.make({ services: services.slice(0, 24), total }),
+        ),
         Effect.catchTag('ServiceUnavailable', () =>
           Effect.succeed(ServiceCatalog.cases.Unavailable.make({})),
         ),

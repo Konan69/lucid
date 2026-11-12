@@ -158,27 +158,26 @@ export const findIntegrations = Effect.fn('Connections.findIntegrations')(functi
       })
     }),
   )
-  const catalog = yield* store.catalog().pipe(
+  const catalog = yield* store.search(request.query).pipe(
     Effect.asSome,
     Effect.catchTag('ServiceUnavailable', () => Effect.succeedNone),
   )
   const services = Option.isNone(catalog)
     ? []
-    : catalog.value
-        .filter((entry) => matches(request.query, entry.name, `${entry.description} ${entry.id}`))
-        .slice(0, 24)
-        .map((entry) =>
-          ConnectionMatch.cases.Catalog.make({
-            name: entry.name,
-            description: entry.description,
-            authorization: entry.authorization,
-            connected: records.some((row) => row.service === entry.id && row.status === 'ready'),
-          }),
-        )
+    : catalog.value.services.slice(0, 24).map((entry) =>
+        ConnectionMatch.cases.Catalog.make({
+          name: entry.name,
+          description: entry.description,
+          authorization: entry.authorization,
+          connected: records.some((row) => row.service === entry.id && row.status === 'ready'),
+        }),
+      )
   return {
     integrations: [...accounts, ...services],
     omittedAccounts: Math.max(0, records.length - accounts.length),
-    catalog: Option.isSome(catalog) ? ('available' as const) : ('unavailable' as const),
+    // Unavailable also when the catalog holds only Vivid's own services: Executor's feed failed
+    // or listed nothing, and the model must not read that as "no such Integration".
+    catalog: Option.isSome(catalog) ? catalog.value.feed : ('unavailable' as const),
   }
 })
 

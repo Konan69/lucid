@@ -157,6 +157,7 @@ const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
         }),
       ]
     }).pipe(Effect.withSpan('Executor.Test.catalog')),
+    feed: Effect.succeed('available'),
   })
 }
 

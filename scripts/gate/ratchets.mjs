@@ -158,7 +158,7 @@ export const ratchets = [
     label: 'failures replaced without their cause',
     plugin: 'vivid',
     rule: 'keep-incident-cause',
-    ceiling: 424,
+    ceiling: 423,
   },
   {
     label: 'failures turned into values unrecorded',

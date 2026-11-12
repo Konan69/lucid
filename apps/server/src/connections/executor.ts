@@ -46,7 +46,14 @@ import { requiredSetting, settingSecret } from '../config.ts'
 import { ConnectionSource } from './address.ts'
 import { keyedFiles, KeyedTransport } from './keyed.ts'
 import { discordAppName, discordFiles, discordServiceId } from './discord.ts'
-import { keyedService, keyedServices, keyedAddress, personalKeyAuthorization } from './curation.ts'
+import {
+  curateCatalog,
+  hiddenPackage,
+  keyedAddress,
+  keyedService,
+  keyedServices,
+  personalKeyAuthorization,
+} from './curation.ts'
 import { ExecutorSourceUnsupported, ExecutorImportQueryUnsupported } from './source.ts'
 
 import {
@@ -219,6 +226,9 @@ export const ExecutorServiceEntry = Schema.Struct({
    * not service domains, so catalog entries keep domain null and retain the image address. */
   domain: Schema.NullOr(Schema.String),
   icon: Schema.NullOr(Schema.String).pipe(Schema.withConstructorDefault(Effect.succeed(null))),
+  /** The feed's category ("email", "crm"), which search reads. Authored services have none of
+   * their own and take the category of the feed app they supersede (`curateCatalog`). */
+  category: Schema.NullOr(Schema.String).pipe(Schema.withConstructorDefault(Effect.succeed(null))),
   authorization: ServiceAuthorization,
 })
 const SignInReferences = Schema.Union([
@@ -637,6 +647,9 @@ export interface ExecutorService {
     readonly returnAddress: string
   }) => Effect.Effect<ServiceAuthorization, ExecutorFailure>
   readonly catalog: Effect.Effect<readonly (typeof ExecutorServiceEntry.Type)[], ExecutorFailure>
+  /** Whether Executor's app feed answered with apps this server lists. `catalog` keeps Vivid's
+   * own services when the feed fails or lists nothing, so only this tells the two apart. */
+  readonly feed: Effect.Effect<'available' | 'unavailable'>
   /** The operations on one Connection's app and account, each sent as `caller`. */
   readonly as: (caller: ExecutorCaller) => ExecutorConnectionOperations
 }
@@ -1096,6 +1109,7 @@ function catalogEntry(entry: typeof WireCatalogEntry.Type) {
     description: entry.description,
     domain: null,
     icon: icon === undefined ? null : icon.src,
+    category: entry.category === undefined ? null : entry.category,
     authorization: catalogAuthorization(entry),
   })
 }
@@ -1761,7 +1775,8 @@ function makeCatalog(http: ExecutorHttp) {
       // and a span apiece was 27,000 spans an hour with one Person. `Executor.catalog` is the span.
       Effect.fnUntraced(
         function* (entry) {
-          return [catalogEntry(yield* decodeCatalogEntry(entry))]
+          const decoded = yield* decodeCatalogEntry(entry)
+          return hiddenPackage(decoded.package) ? [] : [catalogEntry(decoded)]
         },
         (effect, entry) =>
           effect.pipe(
@@ -3332,26 +3347,23 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
     const remote = yield* remoteCatalog().pipe(
       Effect.catchTag('ServiceUnavailable', () => Effect.succeed([])),
     )
-    return [
-      ...googleCatalog,
-      ...keyedCatalog,
-      ExecutorServiceEntry.make({
-        id: discordServiceId,
-        name: 'Discord',
-        description:
-          'Create a bot at discord.com/developers/applications, copy its token, and invite it to your server.',
-        domain: 'discord.com',
-        authorization: ServiceAuthorization.cases.Key.make({
-          fields: [{ name: 'token', label: 'Bot token' }],
+    return curateCatalog(
+      [
+        ...googleCatalog,
+        ...keyedCatalog,
+        ExecutorServiceEntry.make({
+          id: discordServiceId,
+          name: 'Discord',
+          description:
+            'Create a bot at discord.com/developers/applications, copy its token, and invite it to your server.',
+          domain: 'discord.com',
+          authorization: ServiceAuthorization.cases.Key.make({
+            fields: [{ name: 'token', label: 'Bot token' }],
+          }),
         }),
-      }),
-      ...remote.filter(
-        (entry) =>
-          Option.isNone(googleService(entry.id)) &&
-          keyedService(entry.id) === undefined &&
-          entry.id !== discordServiceId,
-      ),
-    ]
+      ],
+      remote,
+    )
   })
   const availability = yield* makeAuthorization(http, catalog)
   const installation = yield* makeConnectionOperations(http, availability, publicOnly, mcpWith(key))
@@ -3373,6 +3385,11 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
   })
   return Executor.of({
     catalog: availability.catalog,
+    feed: remoteCatalog().pipe(
+      Effect.map((entries) => (entries.length > 0 ? 'available' : 'unavailable')),
+      // Impact: Routine, the snapshot's writer already logs each failed feed read; this only says so.
+      Effect.catchTag('ServiceUnavailable', () => Effect.succeed('unavailable' as const)),
+    ),
     authorization: availability.authorization,
     as: connectionOperationsFor(installation, members),
   })

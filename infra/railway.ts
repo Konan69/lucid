@@ -303,6 +303,11 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     sleepApplication: true,
     env: {
       PORT: String(ports.executor),
+      /**
+       * Executor's official app feed. Without it the catalog lists only Executor's own built-in
+       * app (`packages/catalog/README.md`, "The feed"), and Vivid offers its own services alone.
+       */
+      EXECUTOR_CATALOG_URL: 'https://catalog.executor.sh/index.json',
       EXECUTOR_OAUTH_CALLBACK_URL: `https://\${{${serviceNames.server}.RAILWAY_PUBLIC_DOMAIN}}/api/connections/return`,
       /**
        * Executor fetches an address a Person gives it, from a network that also holds the
