@@ -103,6 +103,7 @@ const recipes = {
   computer: { check: 'computer' },
   helpers: { check: 'helpers' },
   helperstop: { check: 'helperstop' },
+  unsent: { check: 'unsent' },
   first: {
     phrase:
       'Write a detailed 1000-word guide to planning a community garden. Write directly in this reply as plain paragraphs. Do not create a document or ask questions.',
