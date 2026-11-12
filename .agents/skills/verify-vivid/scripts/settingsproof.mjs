@@ -19,6 +19,7 @@ export async function catalog(state, directory, query, name) {
 
 /** Read the cell as it stands. Earlier real-model journeys may already have taught this Person. */
 export async function settingsProof(state, _id, directory) {
+  const before = await rpc(state, 'ListConnections', undefined, directory, 'connections-before')
   await rpc(state, 'GetMemoryIndex', undefined, directory, 'memory-index')
   const popular = await catalog(state, directory, '', 'popular-services')
   for (const name of ['Gmail', 'Google Drive'])
@@ -29,11 +30,15 @@ export async function settingsProof(state, _id, directory) {
   const searched = await catalog(state, directory, 'Gmail', 'gmail-search')
   NodeAssert.ok(searched.some((service) => service.name === 'Gmail'))
   const connections = await rpc(state, 'ListConnections', undefined, directory, 'connections')
-  NodeAssert.deepEqual(connections.connections, [], 'Catalog browsing must not connect an account')
+  NodeAssert.deepEqual(
+    connections.connections,
+    before.connections,
+    'Catalog browsing changed a connection',
+  )
   await json(directory + '/scope.json', {
     modelCalls: 0,
     scope:
-      'Current cell memory index, public popular catalog and Gmail search, no connected accounts. Rendering and purpose groups require browser settings.',
+      'Current cell memory index, public popular catalog and Gmail search, no connection changed. Rendering and purpose groups require browser settings.',
     blocked: settingsLimits,
   })
 }

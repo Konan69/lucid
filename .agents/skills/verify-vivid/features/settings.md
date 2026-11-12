@@ -19,7 +19,7 @@ After Launch and Doctor on the unchanged commit, run both recipes with the expli
 .agents/skills/verify-vivid/verify browser settings pi-<id>
 ```
 
-HTTP reads the actual `GetMemoryIndex`. Earlier real-model journeys can populate it through learning. It reads popular services and a Gmail search through schema-validated `FindServices`. Gmail and Google Drive must be present in the popular answer. `ListConnections` must remain empty.
+HTTP reads the actual `GetMemoryIndex`. Earlier real-model journeys can populate it through learning. It reads popular services and a Gmail search through schema-validated `FindServices`. Gmail and Google Drive must be present in the popular answer. `ListConnections` must be unchanged, since earlier journeys on the same launch may have connected Verify Pulse.
 
 Browser opens Settings over its existing empty Thread. This avoids Home's separate arrival journey. It checks the current listed descriptions, or the empty sentence when the index has no lines, before and after reload, and checks for obsolete section headings, then checks the Settings navigation groups. It clicks Integrations and compares the visible popular tiles to the real public catalog answer. Every service must appear once, in catalog order within its group. The visible purpose headings must follow the documented order. Gmail must be under Mail and calendar; Google Drive must be under Files and notes.
 
