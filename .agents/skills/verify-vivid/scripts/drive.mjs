@@ -640,7 +640,7 @@ const blocked = {
   retry:
     'Needs a server whose sign-in can be made to fail; database-backed coverage is apps/server/src/connections/integrations.test.ts (replace a Failed personal account).',
   handoff:
-    'No proof-owned Computer: a handoff is prepared and filled on a disposable Person Computer.',
+    'No recipe yet: a handoff is prepared and filled on the disposable Person Computer Launch creates with VIVID_BOAT_API_KEY.',
   unsent: 'Unsent words live in the client; run verify browser unsent.',
   ...discordBlocked(),
   ...githubBlocked(),
@@ -697,7 +697,9 @@ export async function drive(state, feature) {
         }
       }
     } catch (error) {
-      verdict = { feature: name, verdict: 'failed', error: error.stack }
+      verdict = error.message?.startsWith('blocked: ')
+        ? { feature: name, verdict: 'blocked', reason: error.message, error: error.stack }
+        : { feature: name, verdict: 'failed', error: error.stack }
       if (id)
         await rows(state, id, directory).catch((error) =>
           json(directory + '/sql-failure.json', { error: error.message }),

@@ -175,6 +175,8 @@ const panel = `Array.from(document.querySelectorAll('[role="dialog"] section')).
  */
 export async function computerBrowser(state, id, directory, { run, capture }) {
   const health = await rpc(state, 'GetComputerHealth', { depth: 'Deep' }, directory, 'health')
+  // Deep and Shallow run different probes, so only a Shallow read is compared with the one after.
+  const before = await rpc(state, 'GetComputerHealth', { depth: 'Shallow' }, directory, 'before')
   const title = healthTitle(health)
   await run(['open', state.web + '/t/' + id + '?settings=devices'])
   const readings = []
@@ -194,7 +196,7 @@ export async function computerBrowser(state, id, directory, { run, capture }) {
     await capture(stage)
   }
   const after = await rpc(state, 'GetComputerHealth', { depth: 'Shallow' }, directory, 'after')
-  NodeAssert.equal(after._tag, health._tag, 'Reading the panel changed the Computer')
+  NodeAssert.equal(after._tag, before._tag, 'Reading the panel changed the Computer')
   await json(directory + '/computer-panel.json', { health, title, readings })
   await json(directory + '/scope.json', {
     proved: [
@@ -203,7 +205,7 @@ export async function computerBrowser(state, id, directory, { run, capture }) {
       'Reading the panel neither wakes nor makes a Computer',
     ],
     blocked: [
-      'Ready, Degraded and the ability list need a proof-owned Computer (Boat trial plan at its two-machine limit)',
+      'Ready, Degraded and the ability list are shown only when an earlier journey in this run made the Computer; health.json says which title this run saw',
       'A settled recovery line needs a recovery step on a proof-owned Computer',
       'Phone Computer screen needs its own client',
     ],

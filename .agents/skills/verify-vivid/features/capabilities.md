@@ -12,9 +12,8 @@ Evidence retains facts, model answers, tool receipts and device stream cleanup. 
 `get_capabilities` receipt; no answer text is judged.
 
 The browser recipe is the Settings Devices panel for Vivid's computer (`accessbrowser.mjs`
-`computerBrowser`, shared with `computer`): what Vivid can do there is drawn from its health. For
-this run's absent Computer that is the panel's title and its recovery ladder; the ability list
-needs a running proof-owned Computer.
-Deep health Ready and browser restart are blocked. No proof-owned Computer exists. The Boat
-trial plan is at its two-machine limit, and the only Vivid Computer is production's. Never use
-that Computer or enable `VIVID_TEST_BOAT_LIVE` or `VIVID_LIVE_THREAD_COMPUTER`.
+`computerBrowser`, shared with `computer`): what Vivid can do there is drawn from its health. With no
+Computer yet that is the panel's title and its recovery ladder; once the code journey has made
+one, the title is its Deep health (Degraded on 19 November 2026).
+Deep health Ready and browser restart are blocked: no recipe drives it yet. Launch with VIVID_BOAT_API_KEY creates a disposable Person Computer (code, document and files reached one on 19 November 2026), so writing that recipe is the next step. Never use
+production's Computer or enable `VIVID_TEST_BOAT_LIVE` or `VIVID_LIVE_THREAD_COMPUTER`.

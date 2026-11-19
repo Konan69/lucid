@@ -505,19 +505,27 @@ export async function disconnected(state, proof, directory, remove) {
 /** HTTP journey uses the real prompt and tools, then the same public Remove as the browser. */
 export async function watch(state, id, directory) {
   const integration = await connectPulse(state, directory)
-  const marker = 'Pulse ' + crypto.randomUUID().slice(0, 8)
-  await chat(state, id, watchWords(marker), directory)
-  await openedInPlace(state, id, directory)
-  const proof = await occurrence(
-    state,
-    { id, integration, marker, away: async () => undefined },
-    directory,
-  )
-  await completion(state, { id, integration }, directory)
-  await disconnected(state, proof, directory, () =>
-    rpc(state, 'RemoveConnection', { id: integration.connection.id }, directory),
-  )
-  await dismissedAndResumed(state, proof, directory)
+  let removed = false
+  const remove = () => {
+    removed = true
+    return rpc(state, 'RemoveConnection', { id: integration.connection.id }, directory)
+  }
+  try {
+    const marker = 'Pulse ' + crypto.randomUUID().slice(0, 8)
+    await chat(state, id, watchWords(marker), directory)
+    await openedInPlace(state, id, directory)
+    const proof = await occurrence(
+      state,
+      { id, integration, marker, away: async () => undefined },
+      directory,
+    )
+    await completion(state, { id, integration }, directory)
+    await disconnected(state, proof, directory, remove)
+    await dismissedAndResumed(state, proof, directory)
+  } finally {
+    // A failed watch otherwise leaves its Verify Pulse account for the next recipe's model to pick.
+    if (!removed) await remove()
+  }
 }
 
 /**

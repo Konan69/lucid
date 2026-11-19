@@ -127,15 +127,19 @@ export async function checkin(state, id, directory) {
   NodeAssert.ok(RunOrigin.guards.Checkin(run.origin))
   NodeAssert.equal(run.origin.watchId, watching.id)
   const firing = await history(state, item.thread, directory, 'firing-history')
+  // The server reads the open work when the check-in fires and hands it to Vivid
+  // (`readingText` in packages/agent/runtime/src/delivery.ts); Vivid need not call list_open_work.
   NodeAssert.ok(
     firing.messages
+      .filter((message) => message.role === 'system')
       .flatMap((message) => message.parts)
       .some(
         (part) =>
-          part.type === 'dynamic-tool' &&
-          part.toolName === 'list_open_work' &&
-          part.state === 'output-available',
+          part.type === 'text' &&
+          part.text.startsWith('The open work, as read from their records just now:') &&
+          part.text.includes(marker),
       ),
+    'The firing did not carry the server read of the open work',
   )
   await json(directory + '/proof.json', {
     watch: watching.id,

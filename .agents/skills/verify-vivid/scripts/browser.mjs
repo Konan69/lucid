@@ -62,7 +62,7 @@ function normaliseReply(text) {
 
 const missing = {
   retry: 'Needs a server whose sign-in can be made to fail; see features/addresses.md.',
-  handoff: 'No proof-owned Computer',
+  handoff: 'No recipe yet for the handoff step on the disposable Person Computer',
   checkin: 'No browser recipe for a check-in yet; feature checkin proves its timer and Feed post',
   projectchecks: 'No browser recipe for Project check-ins yet; feature projectchecks proves timer firing, progress and closure',
   monitoring: 'Monitoring has no browser surface; feature monitoring proves the Sentry receipt',
@@ -750,7 +750,9 @@ async function journey(state, feature) {
     await run(['errors']).catch(() => {})
     await run(['console']).catch(() => {})
     await capture('failure').catch(() => {})
-    verdict = { ...base, verdict: 'failed', error: error.stack }
+    verdict = error.message?.startsWith('blocked: ')
+      ? { ...base, verdict: 'blocked', reason: error.message, error: error.stack }
+      : { ...base, verdict: 'failed', error: error.stack }
     process.exitCode = 1
   } finally {
     try {

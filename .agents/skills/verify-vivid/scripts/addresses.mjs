@@ -37,6 +37,17 @@ export async function addresses(state, id, directory, browser) {
         words,
         /nothing here is called|(?:open|go to|remove.+in).{0,30}settings/iu,
       )
+      NodeAssert.ok(
+        !page.messages
+          .flatMap((message) => message.parts)
+          .some(
+            (part) =>
+              part.type === 'dynamic-tool' &&
+              part.toolName === 'add_integration' &&
+              part.output?.reason === 'this Vivid is not set up to add a server by address yet',
+          ),
+        'blocked: the Launch Executor allows loopback HTTP and does not declare VIVID_EXECUTOR_PUBLIC_ONLY, so the server refuses an address (features/addresses.md)',
+      )
       const list = await rpc(state, 'ListConnections', undefined, directory, 'accounts-' + index)
       const added = list.connections.filter((connection) => !owned.has(connection.id))
       NodeAssert.equal(added.length, index === 0 ? 1 : 2, 'Unexpected account count')
