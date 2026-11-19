@@ -686,7 +686,7 @@ async function journey(state, feature) {
       if (feature === 'picture') {
         await fs.writeFile(directory + '/pixel.png', Buffer.from(png, 'base64'))
         await run(['upload', 'input[type=file]', directory + '/pixel.png'])
-        await run(['wait', 'button[aria-label="Take off pixel.png"]'])
+        await run(['wait', 'button[aria-label="Remove pixel.png"]'])
       }
       await run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
       const interrupted =
