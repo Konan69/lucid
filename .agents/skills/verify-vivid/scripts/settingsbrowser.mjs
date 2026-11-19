@@ -32,10 +32,12 @@ function assertCatalog(actual, services, query) {
     actual.filter((group) => group.purpose === 'Text Vivid'),
     channels.length === 0 ? [] : [{ purpose: 'Text Vivid', names: channels }],
   )
+  // Discord is both a channel and, for an early-access Person, a catalog service.
+  const order = [...new Set(expected)]
   for (const group of actual)
     NodeAssert.deepEqual(
       group.names,
-      expected.filter((name) => group.names.includes(name)),
+      order.filter((name) => group.names.includes(name)),
     )
 }
 
@@ -87,10 +89,12 @@ export async function settingsBrowser(state, id, directory, browser) {
   )
   NodeAssert.deepEqual(navigation, [
     { tag: 'P', text: 'You' },
-    ...['General', 'What Vivid knows', 'Text Vivid', 'Devices'].map((text) => ({
-      tag: 'BUTTON',
-      text,
-    })),
+    ...['General', 'What Vivid knows', 'What Vivid is doing', 'Text Vivid', 'Devices'].map(
+      (text) => ({
+        tag: 'BUTTON',
+        text,
+      }),
+    ),
     { tag: 'P', text: 'Your space' },
     ...['People', 'Integrations', 'Rules', 'Record'].map((text) => ({ tag: 'BUTTON', text })),
   ])

@@ -4,11 +4,11 @@ Model requirement: none for the implemented journeys. Launch still requires prov
 
 ## Behaviour and entry points
 
-Personal Settings places General, What Vivid knows, Text Vivid, and Devices under You. People, Integrations, Rules, and Record belong under Your space. The [Settings screen](../../../../apps/web/src/screen/Settings.tsx) owns those groups.
+Personal Settings places General, What Vivid knows, What Vivid is doing, Text Vivid, and Devices under You. People, Integrations, Rules, and Record belong under Your space. The [Settings screen](../../../../apps/web/src/screen/Settings.tsx) owns those groups.
 
 The [Memory screen](../../../../apps/web/src/screen/settings/Memory.tsx) shows what the Person's cell remembers: the standing pages Vivid has written, then the newest lines, read through `GetMemoryIndex` each time Settings opens. The recipe compares the visible list with the current index and checks for obsolete Memory section headings. It does not check the content, recall, or privacy of model memory.
 
-The [Integration catalog](../../../../apps/web/src/screen/settings/Connections.tsx) places popular services under purpose headings. A typed search returns one Results group in the order `searchCatalog` ranks it ([curation.ts](../../../../apps/server/src/connections/curation.ts)): the exact name, then a priority service the query names by name or category, then other name words, then category and description. [purpose.ts](../../../../packages/client/state/src/purpose.ts) is shared with the phone. The shipped public RPC is `FindServices`, not `ListServices`.
+The [Integration catalog](../../../../apps/web/src/screen/settings/Connections.tsx) places Text Vivid channel tiles first, then popular services under purpose headings. A typed search filters the channel tiles by name and returns one Results group in the order `searchCatalog` ranks it ([curation.ts](../../../../apps/server/src/connections/curation.ts)): the exact name, then a priority service the query names by name or category, then other name words, then category and description. [purpose.ts](../../../../packages/client/state/src/purpose.ts) is shared with the phone. The shipped public RPC is `FindServices`, not `ListServices`.
 
 ## Run the recipes
 
@@ -19,9 +19,9 @@ After Launch and Doctor on the unchanged commit, run both recipes with the expli
 .agents/skills/verify-vivid/verify browser settings pi-<id>
 ```
 
-HTTP reads the actual `GetMemoryIndex`. Earlier real-model journeys can populate it through learning. It reads popular services and a Gmail search through schema-validated `FindServices`. Gmail and Google Drive must be present in the popular answer. `ListConnections` must remain empty.
+HTTP reads the actual `GetMemoryIndex`. Earlier real-model journeys can populate it through learning. It reads popular services and a Gmail search through schema-validated `FindServices`. Gmail and Google Drive must be present in the popular answer. `ListConnections` must be unchanged, since earlier journeys on the same launch may have connected Verify Pulse.
 
-Browser opens Settings over its existing empty Thread. This avoids Home's separate arrival journey. It checks the current listed descriptions, or the empty sentence when the index has no lines, before and after reload, and checks for obsolete section headings, then checks the Settings navigation groups. It clicks Integrations and compares the visible popular tiles to the real public catalog answer. Every service must appear once, in catalog order within its group. The visible purpose headings must follow the documented order. Gmail must be under Mail and calendar; Google Drive must be under Files and memory.
+Browser opens Settings over its existing empty Thread. This avoids Home's separate arrival journey. It checks the current listed descriptions, or the empty sentence when the index has no lines, before and after reload, and checks for obsolete section headings, then checks the Settings navigation groups. It clicks Integrations and compares the visible popular tiles to the real public catalog answer. Every service must appear once, in catalog order within its group. The visible purpose headings must follow the documented order. Gmail must be under Mail and calendar; Google Drive must be under Files and notes.
 
 Typing Gmail in Search integrations must replace those groups with Results and the real search answer in order. The recipe waits for the actual result tiles, since the app retains the previous catalog while a request is pending. It captures `settings-navigation.json`, `popular-groups.json`, `search-groups.json`, public receipts, snapshots, and screenshots under `browser/settings/`. A final `ListConnections` confirms that browsing connected nothing.
 

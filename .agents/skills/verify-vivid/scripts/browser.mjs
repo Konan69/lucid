@@ -30,6 +30,7 @@ import { libraryBrowser } from './librarybrowser.mjs'
 import { pushBrowser } from './push.mjs'
 import { computerBrowser, integrationsBrowser } from './accessbrowser.mjs'
 import { helpersBrowser, helperstopBrowser } from './helpers.mjs'
+import { unsentBrowser } from './unsent.mjs'
 
 const web = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))
 const { createElement } = web('react')
@@ -61,7 +62,7 @@ function normaliseReply(text) {
 
 const missing = {
   retry: 'Needs a server whose sign-in can be made to fail; see features/addresses.md.',
-  handoff: 'No proof-owned Computer',
+  handoff: 'No recipe yet for the handoff step on the disposable Person Computer',
   checkin: 'No browser recipe for a check-in yet; feature checkin proves its timer and Feed post',
   projectchecks: 'No browser recipe for Project check-ins yet; feature projectchecks proves timer firing, progress and closure',
   monitoring: 'Monitoring has no browser surface; feature monitoring proves the Sentry receipt',
@@ -102,6 +103,7 @@ const recipes = {
   computer: { check: 'computer' },
   helpers: { check: 'helpers' },
   helperstop: { check: 'helperstop' },
+  unsent: { check: 'unsent' },
   first: {
     phrase:
       'Write a detailed 1000-word guide to planning a community garden. Write directly in this reply as plain paragraphs. Do not create a document or ask questions.',
@@ -126,6 +128,11 @@ const recipes = {
   },
 }
 const specialRecipes = {
+  unsent: {
+    drive: unsentBrowser,
+    scope:
+      'Offline composer send kept as Not sent, restored from browser storage after reload, Send again delivered once; see scope.json.',
+  },
   addresses: {
     drive: addresses,
     scope:
@@ -529,6 +536,7 @@ async function journey(state, feature) {
       'projects',
       'helpers',
       'helperstop',
+      'unsent',
     ].includes(feature) && state.modelKind !== 'real'
       ? feature + ' requires a real model.'
       : feature === 'code' && state.computer !== 'disposable'
@@ -678,7 +686,7 @@ async function journey(state, feature) {
       if (feature === 'picture') {
         await fs.writeFile(directory + '/pixel.png', Buffer.from(png, 'base64'))
         await run(['upload', 'input[type=file]', directory + '/pixel.png'])
-        await run(['wait', 'button[aria-label="Take off pixel.png"]'])
+        await run(['wait', 'button[aria-label="Remove pixel.png"]'])
       }
       await run(['find', 'role', 'button', 'click', '--name', 'Send', '--exact'])
       const interrupted =
@@ -730,7 +738,7 @@ async function journey(state, feature) {
         thread: id,
         scope:
           feature === 'document'
-            ? 'create, rendered tool card and reload; versioning needs feature document; no Artifact opener exists in web source'
+            ? 'create, reply bubbles, no step rows and reload; versioning needs feature document; the Artifact viewer is not driven'
             : feature === 'reload'
               ? 'reopen existing Thread, reload saved history, send contextual follow-up and reload both turns'
               : feature === 'first'
@@ -742,7 +750,9 @@ async function journey(state, feature) {
     await run(['errors']).catch(() => {})
     await run(['console']).catch(() => {})
     await capture('failure').catch(() => {})
-    verdict = { ...base, verdict: 'failed', error: error.stack }
+    verdict = error.message?.startsWith('blocked: ')
+      ? { ...base, verdict: 'blocked', reason: error.message, error: error.stack }
+      : { ...base, verdict: 'failed', error: error.stack }
     process.exitCode = 1
   } finally {
     try {

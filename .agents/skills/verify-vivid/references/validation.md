@@ -8,4 +8,4 @@ Keep state, launch/build logs, doctor, public request/response/stream/history, S
 
 Round 1 used a private server composition and hard-wired rehearsal. Its retained evidence does not establish real-runtime behaviour coverage. Round 2 deletes that composition and boots the product entry. Do not cite the round-1 proof as a substitute.
 
-The eight lifecycle tests use temporary directories. Formatting, lint and syntax checks do not replace real-runtime feature proof. Native clients, external authorities and Artifact opening remain separate claims with their own prerequisites.
+The nine lifecycle tests use temporary directories. Formatting, lint and syntax checks do not replace real-runtime feature proof. Native clients, external authorities and Artifact opening remain separate claims with their own prerequisites.

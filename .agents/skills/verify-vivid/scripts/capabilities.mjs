@@ -3,7 +3,8 @@ import { chat, history, json, rpc } from './wire.mjs'
 import { command } from './process.mjs'
 import { connectedOther } from './devices.mjs'
 
-const blockedComputer = 'blocked: no proof-owned Computer (Boat trial plan at its two-machine limit; the only Vivid Computer is production’s)'
+const blockedComputer =
+  'blocked: no recipe yet; Launch with VIVID_BOAT_API_KEY creates a disposable Person Computer'
 
 /** Only this run’s synthetic Person and container receive fixture rows. The finally block is
  * registered before insertion; no provider binding or machine is created or adopted. */

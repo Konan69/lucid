@@ -44,13 +44,14 @@ const web = createRequire(new URL('../../../../apps/web/package.json', import.me
 const { pictureAddress } = await import(web.resolve('@vivid/state'))
 
 import { textingDiscordProof, textingDiscordBlocked } from './textingdiscord.mjs'
+// capabilities and computer need an Absent Computer, so they run before any recipe that can wake it.
 export const features = [
+  'capabilities',
+  'computer',
   'addresses',
   'pages',
   'completion',
   'retry',
-  'capabilities',
-  'computer',
   'first',
   'reload',
   'tool',
@@ -90,6 +91,7 @@ export const features = [
   'texting-discord',
   'helpers',
   'helperstop',
+  'unsent',
 ]
 export const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
@@ -638,7 +640,8 @@ const blocked = {
   retry:
     'Needs a server whose sign-in can be made to fail; database-backed coverage is apps/server/src/connections/integrations.test.ts (replace a Failed personal account).',
   handoff:
-    'No proof-owned Computer: a handoff is prepared and filled on a disposable Person Computer.',
+    'No recipe yet: a handoff is prepared and filled on the disposable Person Computer Launch creates with VIVID_BOAT_API_KEY.',
+  unsent: 'Unsent words live in the client; run verify browser unsent.',
   ...discordBlocked(),
   ...githubBlocked(),
   ...textingDiscordBlocked(),
@@ -694,7 +697,9 @@ export async function drive(state, feature) {
         }
       }
     } catch (error) {
-      verdict = { feature: name, verdict: 'failed', error: error.stack }
+      verdict = error.message?.startsWith('blocked: ')
+        ? { feature: name, verdict: 'blocked', reason: error.message, error: error.stack }
+        : { feature: name, verdict: 'failed', error: error.stack }
       if (id)
         await rows(state, id, directory).catch((error) =>
           json(directory + '/sql-failure.json', { error: error.message }),
