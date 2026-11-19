@@ -22,8 +22,8 @@ const LONG = [
 ]
 
 export const helperLimits = [
-  'Executor and ComputerUse helpers need a proof-owned Computer: blocked: no proof-owned Computer.',
-  'ReadOnly reads files on the Computer: blocked: no proof-owned Computer.',
+  'Executor and ComputerUse helpers: blocked: no recipe drives them yet (a disposable Person Computer is available).',
+  'ReadOnly reads files on the Computer: blocked: no recipe drives it yet.',
   'Restart and cell owner moves across spawn, report and stop are not driven here.',
   'Phone and desktop native rows need their own device runs.',
 ]

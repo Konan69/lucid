@@ -75,7 +75,8 @@ export async function unsentBrowser(state, id, directory, browser) {
   NodeAssert.equal(arrived[0].key, keys[0], 'Send again must reuse the original delivery key')
   const reply = answer(delivered, arrived[0].submissionId)
   NodeAssert.ok(reply.length > 0, 'The delivered words must get an assistant answer')
-  // The answer's opening words, as the Thread draws them after reload.
+  // The answer's opening words, as the Thread draws them after reload. The Person's own words stay
+  // on the page, so the opening must appear more often than it does in those words.
   const opening = reply.replace(/[*_`#>\[\]()]/g, '').split(/\s+/).slice(0, 4).join(' ')
   await run([
     'wait',
@@ -86,7 +87,7 @@ export async function unsentBrowser(state, id, directory, browser) {
   await run([
     'wait',
     '--fn',
-    `document.body.innerText.includes(${JSON.stringify(nonce)}) && document.body.innerText.includes(${JSON.stringify(opening)}) && !${alerts}.includes('Not sent.')`,
+    `document.body.innerText.includes(${JSON.stringify(nonce)}) && document.body.innerText.split(${JSON.stringify(opening)}).length - 1 > ${words.split(opening).length - 1} && !${alerts}.includes('Not sent.')`,
   ])
   await capture('sent-after-reload')
   await json(directory + '/scope.json', {
