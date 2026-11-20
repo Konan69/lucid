@@ -1,19 +1,59 @@
-# Vivid
+# Lucid
 
-One person, one Vivid—simple alone and organizational by design.
+Lucid is an AI teammate for personal and shared work through conversations called Threads.
+It uses connected services and a remote Computer to carry out requests and report progress.
 
-Vivid watches Integration events and posts useful updates to the Feed.
+The code and UI use the working name Vivid. The public page is https://lucid.konan.sh.
 
-Vivid is an AI teammate for everyday work, reached through a Thread. This repository holds the
-whole product: web, mobile, desktop, application server, conversation runtime, shared contracts, tests,
-and design documents. Backend product logic lives in `apps/server`, organized by domain.
+## What a Person can do
 
-## Start
+The code in this repository implements these capabilities.
 
-Requires Node 24 or newer, pnpm `12.4.2`, and Docker for local PostgreSQL. Set `AUTH_SECRET`,
-`OPENROUTER_API_KEY`, `OPENCODE_API_KEY`, and `VIVID_RUNTIME_TOKEN` in the environment before starting the stack.
-`AUTH_SECRET` needs at least 32 characters, 12 distinct characters, and 3 character classes.
-See [Infrastructure](docs/19-infrastructure.md) for configuration and current setup limits.
+- Conversations. Chat with streaming replies, send more instructions while Vivid works, and stop work.
+  Search and organize Threads. Attach pictures to private Threads and answer questions through cards and forms.
+  Replies can include interactive tables, charts, maps, and schedules.
+- Shared work. Create Companies, invite members, set roles, and share Threads with attributed messages.
+  Create nested Projects with goals, next steps, progress, and completion proof.
+- Tasks and background work. Keep to-dos and waiting-on items in the Feed.
+  Ask Vivid to watch Integration events or arrange check-ins through a timer Integration.
+  A check-in is scheduled only after the provider confirms it. Inspect or stop background work in Settings.
+- Integrations and approval. Connect service accounts, add Integrations through MCP addresses or OpenAPI documents, and ask Vivid to use them.
+  Review outgoing drafts, allow or decline actions, set plain-language rules, and read the action record.
+- Library and generated work. Upload PDF, Markdown, and plain-text files up to 10 MiB each into folders.
+  Ask questions with filename and page citations through keyword search.
+  Read, edit, share, and browse versions of generated Markdown documents. Receive generated files with previews and saved editable sources.
+- Memory. Inspect, search, correct, or forget saved facts and preferences. Read the sources attached to saved memories.
+  Ask Vivid to recall earlier conversations.
+- Computer and helpers. Ask Vivid to browse, run commands and JavaScript, and use files and desktop apps on its persistent remote Computer.
+  The Computer image includes office, creative, and engineering apps with an application finder.
+  Watch the screen, take over, hand back, or turn the Computer off. Vivid can delegate independent parts of a request to helpers.
+- Messaging. Text Vivid through iMessage. Discord is available when its bot is configured. WhatsApp is unavailable.
+
+## Clients and server
+
+- Web in `apps/web` uses Vite and React.
+- Phone in `apps/mobile` uses Expo and React Native. Its iOS code includes dictation for supported iOS 26 languages,
+  Live Activities, widgets, shortcuts, and notification reply and approval actions. See [the mobile README](apps/mobile/README.md).
+- Desktop in `apps/desktop` uses Electron and the web renderer. It adds browser tabs, native notifications,
+  permitted personal-device access, and website sign-in copying with native consent. See [the desktop README](apps/desktop/README.md).
+- The application server in `apps/server` owns product domains, authorization, and PostgreSQL records.
+  It connects to Executor for Integrations, Boat for the Computer, and Photon for iMessage.
+  See [the server README](apps/server/README.md).
+
+`apps/cells` hosts one celld cell per Person. `packages/agent/runtime` uses Pi Durable `1.4.0`
+with native Durable Object SQLite for conversations. Saved memory shares the cell's SQLite database.
+PostgreSQL holds product records, including auth, Company and Membership data, Thread metadata, Runs, and Library files.
+
+Shared wire contracts and `VividRpc` live in `packages/contracts`. Shared RPC clients live in
+`packages/client/rpc`, and shared client state lives in `packages/client/state`.
+
+## Run locally
+
+Use Node 24 or newer, pnpm `12.4.2`, Docker for PostgreSQL, and celld `0.6.2` on `PATH`.
+Supply the required credentials in the process environment before starting the stack.
+These include model keys, runtime authority, Google sign-in, Executor, Boat, Photon, and push settings.
+Use [the infrastructure setup](docs/19-infrastructure.md#run-locally) and `infra/env.ts` for the full configuration.
+The root `.env.example` alone is insufficient.
 
 ```sh
 pnpm install
@@ -21,73 +61,54 @@ pnpm infra:verify
 pnpm infra:dev
 ```
 
-Alchemy owns the local stack, including product PostgreSQL 18 on port `55433`, server (`8787`),
-and web (`5178`). Product migrations run auth then product. Runtime startup is transitioning to
-[Person cells](docs/27-runtime-cells.md); the existing Node/PG wiring is not a working cell launch.
-Cell host, Notes, infrastructure, and verification integration are in progress and unproven.
-Keep the real local database, cell storage, and Alchemy state read/copy only during tests and
-audits. Product database tests require disposable PostgreSQL through `VIVID_TEST_DATABASE_URL`;
-runtime proofs require disposable cells with native Pi SQLite.
+Alchemy starts PostgreSQL 18 on port `55433`, native celld development mode on `5173`,
+the application server on `8787`, and the web client on `5178`. Startup applies auth migrations before product migrations.
+The infrastructure guide records a known local sign-in origin mismatch.
 
-The separate [mobile app](apps/mobile/README.md) uses Expo; the [desktop app](apps/desktop/README.md)
-is an Electron shell around the web renderer. Both connect to the same application server.
+Keep the real local database, cell storage, and Alchemy state read/copy only during tests and audits.
+Product database tests use disposable PostgreSQL through `VIVID_TEST_DATABASE_URL`.
+Runtime proofs use disposable cells with native Pi SQLite.
 
-Workspace settings, dependency catalogs, overrides, build approvals, and patches live in
-`pnpm-workspace.yaml`; `packageManager` and `engines.pnpm` pin pnpm.
+Workspace catalogs, overrides, build approvals, and patches live in `pnpm-workspace.yaml`.
+`packageManager` and `engines.pnpm` in `package.json` pin pnpm.
 
-Useful checks:
+## Verification
+
+`pnpm gate` runs the repository checks defined in `scripts/gate/stages.mjs` and replays unchanged tasks.
+The push hook runs the same gate. `pnpm gate affected` and `pnpm gate focused <test files>` support narrower checks.
+See [the check pipeline](docs/checks.md) for prerequisites and execution hosts.
+
+Product behavior is checked through [the verify-vivid skill](.agents/skills/verify-vivid/SKILL.md)
+and its [feature map](.agents/skills/verify-vivid/features/README.md).
+Run the named features on a Cloudbox devbox selected by `~/bin/devbox-pick`:
 
 ```sh
-pnpm check:package-manager
-pnpm check:versions
-pnpm audit:effect-boundaries
-pnpm check:migrations
-pnpm structure
-pnpm lint
-pnpm format
+pnpm verify feed settings
 ```
 
-For code changes, `pnpm gate` runs every stage (policy, lint, format, typecheck, tooling tests,
-tests) and replays whatever did not change; the push hook runs the same command. `pnpm gate
-affected` and `pnpm gate focused <test files>` are the faster loops. Avoid concurrent TypeScript
-graphs or a typecheck alongside a build.
+The command sends this checkout to a warm verification tree, launches disposable stores and the real product,
+requires a worthy Doctor result, runs each feature and browser recipe, and cleans up.
+Evidence stays under `.cache/verify/` on that host. Reports name the feature file, exact head,
+working-tree status, model, host, and evidence path. Blocked features and scripted rehearsal do not establish verified behavior.
+The skill marks the native cell launcher and product journeys unproven until a real run passes.
 
-## Runtime and persistence
+## Documentation map
 
-The chosen runtime is one celld cell per Person with a native Pi Durable Harness over Durable
-Object SQLite. celld owns activation, ownership, and idle lifecycle. Pi owns conversation
-execution, history, tasks, queues, deduplication, wait, abort, and restart. The existing Pi `1.2.0`
-integration is moving to `1.4.0`. Vivid serves projected conversation state through its gateway.
-Product metadata, authorization, Routines, Library, and other product records belong to the
-server. Tools in `packages/agent/runtime/src/tools` call the server's schema-derived `VividRpc`
-contract. Shared clients live in `packages/client/rpc`, and shared view logic in
-`packages/client/state`.
+Documents in `docs/` include design decisions, implementation notes, and historical research.
+Older product inventories do not establish current behavior.
 
-Vivid's replies use OpenCode Go (`OPENCODE_API_KEY`,
-`packages/agent/runtime/src/providers/opencode.ts`); the default is `opencode-go/glm-5.3-flash`.
-Server title and decision calls use OpenRouter (`OPENROUTER_API_KEY`).
-Vivid has no model retry or fallback layer of its own; the gateway fails over upstreams and
-Pi handles generation retries.
-
-PostgreSQL stores product records, including auth, Company/Membership, Thread metadata, Runs,
-and Library. Conversations and Notes belong to the Person cell's SQLite. HelixDB holds the
-knowledge graph and embeddings. Integrations use Executor; the Computer uses Boat, proven against real Boat on 3 October 2026. All of them are required: the
-server does not start without their settings (`apps/server/README.md`, "External capabilities").
-The hosted stack runs HelixDB and Executor itself; Boat is an outside service. Code and
-contracts call an authorized service relationship a `Connection`; every Person-facing string
-calls it an **Integration**.
-
-The Library accepts PDF, Markdown, and plain-text files up to 10 MiB each. The server stores
-bytes and nested folders in PostgreSQL and indexes extracted passages with `tsvector` and a GIN
-index. `search_library` returns filename/page citations. Library retrieval is keyword-based,
-without OCR or embeddings; HelixDB memory is a separate system.
-
-## Documents
-
-1. [Structure](docs/00-structure.md). Ownership and file placement.
-2. [Principle](docs/01-principle.md) and [Surface](docs/03-surface.md). Product direction and its history.
-3. [Main screen](docs/07-main-screen.md) and [Design language](docs/08-design-language.md). Design proposals and references.
-4. [Design-system lint](docs/designlint.md). Executable contracts and warning ratchets.
-5. [Company and projects](docs/12-company-and-projects.md). The agreed model and open decisions.
-6. [Current feature status](docs/14-product-feature-set-and-grok-bot-parity.md). What works, how it was checked, and what is missing.
-7. [One product](docs/22-one-product.md). Current product direction; domain READMEs explain implemented boundaries.
+- [Structure](docs/00-structure.md) maps ownership and file placement.
+- [Principle](docs/01-principle.md), [Surface](docs/03-surface.md), and [Product definition](docs/23-product-definition.md)
+  describe product intent. [One product](docs/22-one-product.md) records the personal and Company model.
+- [Computer](docs/04-computer.md), [Communication](docs/06-communication.md), and [Company and projects](docs/12-company-and-projects.md)
+  describe those domains and their design decisions.
+- [Main screen](docs/07-main-screen.md), [Design language](docs/08-design-language.md), and [Design-system lint](docs/designlint.md)
+  cover interface design and its enforced contracts.
+- [Infrastructure](docs/19-infrastructure.md) covers configuration and local setup.
+  [Executor scale](docs/24-executor-scale.md) covers the Integration service.
+- [Memory](docs/25-memory.md), [Memory cells](docs/26-memory-cells.md), and [Runtime cells](docs/27-runtime-cells.md)
+  describe cell ownership, storage, and required proofs.
+- [Check pipeline](docs/checks.md), [State machines](docs/statecharts.md), [Typing investigation](docs/typing.md),
+  and [Signals](docs/signals.md) cover engineering checks and client behavior.
+- [Feature status and Grok Bot parity](docs/14-product-feature-set-and-grok-bot-parity.md) is a historical inventory last updated on 3 October 2026.
+  [References](docs/02-references.md) and [Reference mining](docs/21-reference-mining.md) collect earlier research.
