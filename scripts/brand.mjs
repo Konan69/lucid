@@ -20,7 +20,8 @@ const files = NodeChildProcess.execFileSync('git', ['ls-files', '*.md'], { encod
   .split('\n')
   .filter((file) => file.length > 0 && !file.startsWith('.agents/') && !file.startsWith('refs/'))
 
-const CODE_OR_LINK = /(`+)[^`]*?\1|\]\([^)]*\)|<https?:[^>]*>|https?:\/\/\S+/gu
+const CODE_OR_LINK =
+  /(`+)[^`]*?\1|\]\([^)]*\)|^\s{0,3}\[[^\]]+\]:\s*\S+|<https?:[^>]*>|https?:\/\/\S+/gu
 
 const renameLine = (line) => {
   let out = ''
@@ -43,7 +44,11 @@ const proseLineIndexes = (lines) => {
     if (fence === null && open) {
       fence = open[1]
       readable = PROSE_FENCES.has(open[2])
-    } else if (fence !== null && line.trim().startsWith(fence)) fence = null
+    } else if (
+      fence !== null &&
+      new RegExp(`^\\s*${fence[0]}{${fence.length},}\\s*$`, 'u').test(line)
+    )
+      fence = null
     else if (fence === null || readable) prose.push(index)
   })
   return prose

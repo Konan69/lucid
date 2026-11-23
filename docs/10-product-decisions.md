@@ -5,8 +5,8 @@
 **Status:** Canonical product context  
 **Updated:** 2 September 2026
 
-This file separates Lucid's stated decisions from design proposals and assistant assumptions. When
-another document conflicts with this one, this one wins until Lucid changes it.
+This file separates the owner's stated decisions from design proposals and assistant assumptions. When
+another document conflicts with this one, this one wins until the owner changes it.
 
 ## Product
 
@@ -15,7 +15,7 @@ another document conflicts with this one, this one wins until Lucid changes it.
 - The initial relationship and mental model are the person and Lucid. Do not begin by asking the
   person to configure people, agents, skills, connectors, or automations.
 - Lucid must scale to an organization. This is a hard rule, not a post-v1 afterthought.
-- **Lucid never said "no team in v1."** That sentence was an assistant inference and is invalid.
+- **The owner never said "no team in v1."** That sentence was an assistant inference and is invalid.
   The exact set of team features in v1 remains a product-scoping decision.
 - Simplicity and organizational scale must coexist. Earlier internal products lost simplicity when organizational
   concepts and implementation nouns became visible destinations.
@@ -57,7 +57,7 @@ The full model and remaining questions are in [Company and projects](12-company-
 - **Library** replaces both the earlier "Ready when you are" wording and Lucid's use of the label
   "Teach Lucid" or "Teach a task." The latter remains valid only when describing Grok Bot itself.
 - Show Lucid's face and name without a subtitle or status sentence underneath.
-- Lucid did not specify active-row behavior. Selected states, lifecycle shelves, and status styling
+- The owner did not specify active-row behavior. Selected states, lifecycle shelves, and status styling
   are design proposals that must not be reported as his decisions.
 - The interface needs convincing depth: distinguish surface tiers with disciplined contrast,
   hairlines, shadows, and dark-theme edge highlights. Judge these against the supplied screenshots.
@@ -108,18 +108,18 @@ The full model and remaining questions are in [Company and projects](12-company-
 - The repository is now a pnpm workspace with `apps/web`, `apps/server`, `packages/contracts`,
   `packages/client/rpc`, and `packages/design/tokens`.
 - Effect `4.0.0-rc.112` is currently installed in the contracts, runtime, and server packages.
-- Oxlint `1.81.0` is currently installed at the workspace root. Lucid requested the latest RC; the
+- Oxlint `1.81.0` is currently installed at the workspace root. The owner requested the latest RC; the
   installed version must be checked against the registry before claiming that request is complete.
 - A package install or architecture extraction is not permission to continue inventing product UI.
-  Lucid explicitly corrected the assistant for writing code beyond the requested scope.
+  The owner explicitly corrected the assistant for writing code beyond the requested scope.
 
 ## Working discipline
 
 - Attribute statements carefully: distinguish direct decisions, assistant proposals, reference
   behavior, and implementation accidents.
 - Keep documenting product exploration, but do not let documentation silently settle open choices.
-- When Lucid asks what remains, report unfinished work plainly so product sketching can continue.
-- Do not use previous private projects or people as demo content unless Lucid asks for them.
+- When the owner asks what remains, report unfinished work plainly so product sketching can continue.
+- Do not use previous private projects or people as demo content unless the owner asks for them.
 
 ## Still open
 

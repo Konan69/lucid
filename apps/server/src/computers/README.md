@@ -85,7 +85,7 @@ caches are kept out of the snapshots.
 
 Boat itself not answering is not a state the server is in. A connection that fails, a reply that
 does not come in time, or Boat's own 5xx is an outage: the call that met it is refused with
-"Lucid’s computer is not answering right now", nothing about it is written to the Computer's
+`"Vivid’s computer is not answering right now"`, nothing about it is written to the Computer's
 record, and the next call asks Boat again, so it is over when Boat is back, with no restart and
 without anyone pressing Start. A start that Boat refused or could not finish is different: it is
 recorded as failed with its reason. The record says what the last start met, never that Lucid

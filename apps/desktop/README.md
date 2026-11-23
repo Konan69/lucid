@@ -253,7 +253,7 @@ choosing another server ends the link.
   fails. An action past its `expiresAt` is not started, and input is never sent twice. The
   debugger session must be Lucid's own: a page with developer tools open, or with another
   debugger attached, is not acted on.
-- **Stop**: while an action runs on a page, the renderer shows "Lucid is using this page." and a
+- **Stop**: while an action runs on a page, the renderer shows `"Vivid is using this page."` and a
   Stop button (`window.vivid.pages.stopVivid(tab)`). Stop ends that action at once and it is
   answered `Refused: Stopped`. The Person using the page does not stop Lucid: the reference's
   human-control epochs and expected-input matching are deliberately not ported (owner's

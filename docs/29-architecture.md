@@ -371,3 +371,9 @@ sequenceDiagram
 
 The Worker version is a hash that Alchemy computes (`CellWorker` in `infra/cells.ts`). The
 pre-deploy step recomputes it from the image and stops the release when the two differ.
+
+Nothing in the release rolls back. Migrations stay applied when a later step fails. If the
+`worker` step fails after `infra/cli.mjs deploy` has moved the pointer, the previous server keeps
+serving while the fleet runs the new Worker. The server's `/health` then answers 503 when the cells
+speak another wire contract (`apps/server/src/http/router.ts`, `healthRoute`). No step restores the old pointer
+today.

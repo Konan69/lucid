@@ -52,7 +52,7 @@ Borrowed directly from T3 Code, stripped of the developer bits.
   has something to show. This replaces T3's terminal icon.
 - **Hover actions.** Pin, archive, rename. Nothing else.
 
-Status derivation and selected-row styling are design proposals. Lucid did not prescribe an active
+Status derivation and selected-row styling are design proposals. The owner did not prescribe an active
 state; do not attribute one to him without a direct decision.
 
 ## Thread
@@ -79,7 +79,7 @@ sidebar.
   behind the private execution boundary.
 - **A file or document.** Anything Lucid made or was given, opened inline from a chip in the
   thread.
-- **The log.** "What Lucid did" for this thread, with the permissions it asked for and the answers.
+- **The log.** `"What Vivid did"` for this thread, with the permissions it asked for and the answers.
 
 Close it and the layout returns to two columns.
 
