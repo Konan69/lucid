@@ -1,4 +1,4 @@
-# Vivid runtime
+# Lucid runtime
 
 The chosen host is one celld Durable Object cell per Person, with a native Pi Durable
 `Harness` over that cell's SQLite. [Runtime cells](../../../docs/27-runtime-cells.md) defines
@@ -15,7 +15,7 @@ Docker, and verifier commands do not establish a working cell runtime.
 Open Pi's `openDurableObjectSqliteStorage(ctx.storage)` adapter inside the Person cell.
 Use Pi's native `onWake` and alarm pattern from its version-matched README. Arm the wake before
 starting work, keep it armed while work is active, and call `harness.resume()` on an alarm.
-celld supplies the single owner and SQLite durability. Vivid adds no central Persons map,
+celld supplies the single owner and SQLite durability. Lucid adds no central Persons map,
 idle timer, ownership lock, or recovery scheduler.
 
 Memory shares the Person cell's database, separate from Pi's tables. Cell-backed Memory integration and its lifecycle proof remain
@@ -46,7 +46,7 @@ in progress; this document authorizes no production deploy or live-data change.
 ## Models and rehearsal
 
 `src/providers/opencode.ts` declares OpenCode Go and `src/providers/openrouter.ts` OpenRouter. `VIVID_MODEL` selects a declared model; the current default is
-`opencode-go/glm-5.3-flash`. Vivid adds no model retry or fallback layer. Pi handles generation
+`opencode-go/glm-5.3-flash`. Lucid adds no model retry or fallback layer. Pi handles generation
 retries and continuation from its durable tasks.
 
 `VIVID_MODEL=rehearsal/script` opts into the deterministic rehearsal provider. It calls real

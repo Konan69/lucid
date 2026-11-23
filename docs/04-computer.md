@@ -24,7 +24,7 @@ From a public thread, 31 August 2026, answering the question of where an assista
 >
 > Persistence should feel like the default, and I want it to feel like my own local box.
 
-Restated for Vivid: the mistake is bringing pieces of a computer. Per-tool sandboxes give a false
+Restated for Lucid: the mistake is bringing pieces of a computer. Per-tool sandboxes give a false
 sense of isolation. Capability comes from giving the agent a whole machine. Safety comes from that
 machine being separate, pausable, and watchable, and from permissions being about what the agent
 may do, not which fragments it may touch.
@@ -57,7 +57,7 @@ Source pointers: `host/box`, `host/extensions/forever-box`, `host/extensions/box
 
 ## The mapping
 
-|                  | Grok Bot box                           | Vivid                                                  |
+|                  | Grok Bot box                           | Lucid                                                  |
 | ---------------- | -------------------------------------- | ------------------------------------------------------ |
 | Host             | Firecracker pod, or local Docker       | A rented machine behind one owned boundary (see below) |
 | Sleep and wake   | Hibernate, wake on use                 | Same shape, reimplemented                              |
@@ -67,7 +67,7 @@ Source pointers: `host/box`, `host/extensions/forever-box`, `host/extensions/box
 | Network identity | The user's laptop via egress tunnel    | From Grok Bot                                          |
 | Human takeover   | Teach a task, hand back                | From Grok Bot                                          |
 
-Vivid owns the lifecycle and the state, not the hosts: what is synced, when a machine is created,
+Lucid owns the lifecycle and the state, not the hosts: what is synced, when a machine is created,
 stopped and rebuilt. The machine itself is rented (see "Buy the machine" below). Grok Bot
 contributes the desktop, the browser identity, the egress tunnel, the hand-off, and the state-sync
 design. Task machines remain the isolation story for long jobs.
@@ -95,7 +95,7 @@ What the source shows (`host/extensions/box-store-sync`, `host/extensions/foreve
   memory snapshot when one exists and from a remote root-filesystem checkpoint otherwise. Losing the
   snapshot loses nothing but seconds.
 
-Two consequences for Vivid:
+Two consequences for Lucid:
 
 1. **Cost.** One shared machine per Person (not per Thread, not per Run), created on use and
    destroyed when idle. An idle Person costs bucket storage, not a VM. Hibernating a VM is the
@@ -106,7 +106,7 @@ Two consequences for Vivid:
 
 ### Three places work runs
 
-Grok Bot has three execution environments, and Vivid keeps the same split:
+Grok Bot has three execution environments, and Lucid keeps the same split:
 
 | Where                   | What it is                                                                         | Used for                                              |
 | ----------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------- |
@@ -134,7 +134,7 @@ The provider claims below come from Boat’s docs; the real guest proof and its 
 | Interface       | HTTP API, TypeScript and Python SDKs                                                        |
 | Limits          | 1 hour default lifetime, overridable; EU regions only; cloud only; hypervisor not disclosed |
 
-It has the desktop Vivid needs, costs nothing while stopped, and has a TypeScript SDK. Its
+It has the desktop Lucid needs, costs nothing while stopped, and has a TypeScript SDK. Its
 weaknesses are that it is new, EU-only, and resumes from disk rather than memory, so running
 processes do not survive a stop. State sync makes all three tolerable: a stop is already
 survivable, and the provider is replaceable. Self-run Firecracker is a later cost optimisation at
@@ -151,7 +151,7 @@ account that belongs to none, and Boat bills that account. The owner chose this 
 `sandbox.delete`, `exec`, `file.read`, `file.write`, `desktop`, `ssh`, `host`, `snapshot.read`,
 `snapshot.write`, `account.read`. It covers machine operations and read-only account diagnostics,
 with no account-changing authority: no `environment.*`, no `account.admin`, no `agent.prompt`,
-and never `*`. Vivid's provider uses `sandbox.create`, `sandbox.read`, `sandbox.stop`,
+and never `*`. Lucid's provider uses `sandbox.create`, `sandbox.read`, `sandbox.stop`,
 `sandbox.resume`, `exec`, `file.read`, `file.write` and `desktop` today. The live proof additionally
 uses `sandbox.delete` for cleanup; operator limits/usage diagnostics use `account.read`.
 `sandbox.update`, `sandbox.fork`, `ssh`, `host`, `snapshot.read` and `snapshot.write` are available
@@ -165,12 +165,12 @@ binding and creation intent per Person precedes allocation. Restart recovers the
 stop waits for disk archival and ensure resumes that snapshot. An unresolved creation intent
 past the replay window fails explicitly rather than buying a second machine.
 
-Vivid uses Boat's shipped desktop and installed `google-chrome-stable`, with the existing
+Lucid uses Boat's shipped desktop and installed `google-chrome-stable`, with the existing
 guest profile and `--force-renderer-accessibility`. Observed default images vary: one included
 Cua Driver 0.23.2 on the wrong desktop session bus, another omitted the driver entirely.
 The adapter therefore installs the official SHA-256-pinned 0.23.2 binary in the guest's
 persistent home and runs its public daemon in the X11-attested desktop panel's session.
-Only Vivid's guest unit and socket are owned; vendor services are untouched. Cold setup needs
+Only Lucid's guest unit and socket are owned; vendor services are untouched. Cold setup needs
 access to the official GitHub release. Standard permissions and the existing-profile grant
 remain explicit. A new daemon invocation discards cached browser refs and consent sessions.
 No nested desktop image is installed. Browser and desktop actions call the driver's CLI
@@ -201,18 +201,18 @@ Chrome kept its existing user-data directory and exposed port 9222. Preparation 
 inspection and navigation, but the trusted click still refused afterward. Neither driver help
 nor tool descriptions offer a flag to override Linux's background-input restriction.
 
-Vivid therefore sends clicks through the driver's foreground desktop `click` tool, on the same
+Lucid therefore sends clicks through the driver's foreground desktop `click` tool, on the same
 browser window the Person can watch. A fresh semantic page read first proves one accessible
 control; a fresh window screenshot and AT-SPI snapshot then supply its enabled web-content
 bounds. Screen bounds become window-local screenshot coordinates, accounting for capture
 scaling. Missing, ambiguous, disabled or off-window targets fail before input. The Person or
-Vivid must scroll an off-window target into view before clicking. Browser chrome with the same
+Lucid must scroll an off-window target into view before clicking. Browser chrome with the same
 label cannot become the page target. No DOM events are synthesized, and fresh browser state
 always follows input. A sole tab in an exactly bound window proves selection even during a
 native-title update; multiple tabs still require explicit active-tab proof.
 
 Typing uses `browser_type` with `replace: true`: unlike clicks, this trusted CDP text route
-worked on the real image. Vivid independently reads the exact field value afterward and fails
+worked on the real image. Lucid independently reads the exact field value afterward and fails
 an unconfirmed replacement, without retrying input. Clearing may read back as the driver's
 null empty value. Driver delivery receipts alone never establish the intended result.
 
@@ -264,7 +264,7 @@ the screen union belongs to its own lane. Runtime placement and external state s
 ## Reaching the Computer: one SSH connection
 
 **Status: decided 5 October 2026. Built on `feat/native-computer`: the server holds the connection
-and Vivid has Flue's six file and shell tools on its Computer. Its connection code is proven on a real SSH server and on a Person's Computer, and the product path
+and Lucid has Flue's six file and shell tools on its Computer. Its connection code is proven on a real SSH server and on a Person's Computer, and the product path
 (a Thread and a model using the tools) ran on a Person's Computer in production on 6 October 2026.
 `run_command`, the earlier tool that asked for an Approval per command, is deleted: from the model, from programs (a program runs on the Computer and starts its own commands there), from the server and its contract, and with it the command kind of Approval.** This is the step between today and
 "Runtime on the Computer" below. It is deliberately thin, because it is deleted when the runtime
@@ -272,7 +272,7 @@ moves onto the machine.
 
 ### What was wrong before 5 October 2026
 
-Vivid cannot read or write one file on its own Computer. Its runtime runs beside the server, and
+Lucid cannot read or write one file on its own Computer. Its runtime runs beside the server, and
 reaches the machine through one custom tool, `run_command`: the model asks the server, the server
 checks the Approval rules, and the server calls the provider's "run one command" endpoint. The slot
 Flue gives a model for a machine (`useSandbox`) holds an empty stand-in whose file and shell
@@ -281,12 +281,12 @@ slot, which `use_desktop` and `browse` need. Programs (`run_code`) exist for the
 script on the Computer has no other way to an Integration.
 
 That is the opposite of the thesis at the top of this document. The Computer is one machine, and
-Vivid should use it as a person uses theirs.
+Lucid should use it as a person uses theirs.
 
 ### Why SSH, and why not a daemon
 
-Flue does not run on the Computer, now or later. Nothing of Vivid runs on the machine in this
-step: the only thing that touches it is the server's SSH connection. The final shape is Vivid's
+Flue does not run on the Computer, now or later. Nothing of Lucid runs on the machine in this
+step: the only thing that touches it is the server's SSH connection. The final shape is Lucid's
 runtime running on the Computer, and that runtime is pi Durable, which replaces Flue (decided 4
 October 2026). There the runtime is the always-on process, and its file and shell tools are local
 calls. A service of our own on the machine, built now, would be a second daemon that the runtime
@@ -328,12 +328,12 @@ hosted: runtime --> server --SSH--> the Person's Computer
   correctness, not hardening.
 - **Old keys do not pile up.** A key line stays in the machine's authorized keys after its
   connection ends. So the first thing a new connection does, on the machine, is remove every other
-  line of Vivid's and keep every line that is not (the Person's own keys, the provider's tools).
-  Vivid's lines are known by one comment, `vivid-connection`; the line of the one key an
+  line of Lucid's and keep every line that is not (the Person's own keys, the provider's tools).
+  Lucid's lines are known by one comment, `vivid-connection`; the line of the one key an
   installation used before (comment `vivid`) is removed the same way. This relies on one server
   holding a machine's connection at a time. An open connection is not affected when its line goes.
-- **A Person never holds a key of Vivid's.** If a Person is ever given SSH access to their own
-  Computer, it is with that Person's own key, on their own machine. Vivid's key is not reused.
+- **A Person never holds a key of Lucid's.** If a Person is ever given SSH access to their own
+  Computer, it is with that Person's own key, on their own machine. Lucid's key is not reused.
 - **One connection per awake Computer,** held by the server, because the server already owns
   waking, bindings, takeover and the idle stop. It is opened on first use, kept alive, closed when
   the Computer stops, and reopened after a failure with a fresh address. Commands, files and later
@@ -475,8 +475,8 @@ answered "nothing there" without waking it, and only a tool the model calls wake
   the machine: `exists` says no, `stat` and `readdir` refuse. Flue's six tools never call them
   (they use `readFile`, `writeFile`, `exec`, `resolvePath`). This holds whether the Computer is
   asleep or awake, for two more reasons than the wake: a file in the Computer's home must not
-  become part of Vivid's instructions, and a skill directory there with the name of one of
-  Vivid's skills would stop every conversation (Flue throws on that at start). Vivid lists and
+  become part of Lucid's instructions, and a skill directory there with the name of one of
+  Lucid's skills would stop every conversation (Flue throws on that at start). Lucid lists and
   inspects files with `bash`. Tested through Flue itself: a conversation that only looks at the
   desktop sends the server one call, the desktop one.
 - **A connection that dies.** The link knows when its connection closes: every call waiting on it
@@ -503,7 +503,7 @@ answered "nothing there" without waking it, and only a tool the model calls wake
 
 ### The built code on a Person's Computer, 6 October 2026
 
-Run with `apps/server/src/computers/ssh/computer.live.test.ts` against the Vivid Computer bound to
+Run with `apps/server/src/computers/ssh/computer.live.test.ts` against the Lucid Computer bound to
 the developer's own account, from a development machine in Lagos. The machine had its own IPv4
 address and was already running; the proof wakes, stops, creates and deletes nothing, binds no
 Person, and removes its files and its key line at the end. It is the server's own connection code
@@ -517,9 +517,9 @@ with the provider's real key call. It is not the product: no Thread, no model, n
 | 256 KB put, then read back                                                  | Identical; 3.2 s, 5.4 s                             |
 | A command the caller stopped waiting for                                    | Gone, with its child                                |
 | A command past its one-second deadline                                      | Ended, reported as timed out                        |
-| A second opening after the first was closed                                 | A different key; one line of Vivid's on the machine |
-| Lines in the key file that are not Vivid's                                  | Same count before and after                         |
-| After the proof                                                             | No file, no key line of Vivid's, file mode 600      |
+| A second opening after the first was closed                                 | A different key; one line of Lucid's on the machine |
+| Lines in the key file that are not Lucid's                                  | Same count before and after                         |
+| After the proof                                                             | No file, no key line of Lucid's, file mode 600      |
 
 The machine runs OpenSSH 9.6, which takes the signal a cancelled command is ended with. The times
 are from Lagos and include the provider's key call; from the hosted server the path is shorter.
@@ -535,7 +535,7 @@ The Computer was already running.
 | Change one word in that file and show it                 | Changed a file, worked on its computer; the new line          | 33 s |
 
 No Approval and no question appeared. Looked at on the machine afterwards: the file held the
-changed line and was the machine user's, and the key file held exactly one line of Vivid's,
+changed line and was the machine user's, and the key file held exactly one line of Lucid's,
 written when the first request opened the connection. The times are from sending to the answer
 being seen, so they include the model. `run_command` was still mounted during this run, and a
 command step reads the same in a Thread for either tool, so which of the two ran the commands is
@@ -591,7 +591,7 @@ sessions, reachable for human takeover.
 
 ### Deliberately unresolved
 
-- Where the machine runs by default — the user's own cloud account, Vivid-operated, or the Electron
+- Where the machine runs by default — the user's own cloud account, Lucid-operated, or the Electron
   desktop hosting it locally. Alchemy makes several targets reachable; the default is a product
   decision, not a technical one.
 - How the browser profile is seeded and kept in sync without shipping the user's cookies through us.
@@ -606,7 +606,7 @@ there is no requirement to deploy the discarded PG runtime first.
 ## The Person's own browser
 
 The Person target means the retained pages in their signed-in desktop app, not the rest of their
-computer. Existing requests still default to Vivid's cloud Computer. A Person target never falls
+computer. Existing requests still default to Lucid's cloud Computer. A Person target never falls
 back to that Computer. Without a live device subscription it fails `NoDeviceConnected`.
 
 Shared target/device contracts and the server's authenticated request/receipt channel are built.
@@ -632,7 +632,7 @@ The missing input-token receiver must be recovered before desktop control can sh
 **4 October 2026 — stage 1 browser decision.** The desktop app executes Person-computer
 browser actions using T3 Code desktop’s mechanism: `webContents.debugger` CDP. T3’s
 expected-input matching and human-control epochs were deliberately NOT ported: the owner decided
-the same day that touching the page does not interrupt Vivid; only the explicit Stop does.
+the same day that touching the page does not interrupt Lucid; only the explicit Stop does.
 The Codex token receiver was never recovered; that token blocker no longer gates stage 1.
 
 ### Permission for the Person’s browser
@@ -642,7 +642,7 @@ Type, Press and CloseTab on the Person’s computer follow the same table as a w
 Person’s own Integration: with no review a write runs; with review, the Person asked for it or
 it is contained runs, and unasked and reaching other people asks. A destructive action, an Ask
 rule, a Never rule and anything personal in a Thread others can see still ask or refuse. The
-risk, stated plainly: Vivid acts as the Person on every site they are signed in to, without
+risk, stated plainly: Lucid acts as the Person on every site they are signed in to, without
 asking. What stops it is a rule, the Stop on the page, and removing the computer in Settings.
 Earlier the same day these writes always asked; that rule is gone and must not be put back by
 a later review without the owner. Only the Person whose computer it is may decide an Approval
@@ -663,4 +663,4 @@ Each encoded PNG is capped at 8 MiB before device-answer and history retention.
 
 ## The Person's own computer: apps
 
-Allowing a Device once lets Vivid work in any app on that Person's Windows computer, including terminals, through the Vivid desktop app. Nothing is asked after that: no per-app Approval, extra switch or app restrictions. A notice stays visible while Vivid works; Escape or Stop ends the Run. When that Run settles, the server tells its connected Device to end the notice. An offline Device simply misses that signal. Dispatch uses the existing 30-second deadline and content-free ledger and is never replayed after a lost answer. Presence and links live in one process, so the server must run as a single replica.
+Allowing a Device once lets Lucid work in any app on that Person's Windows computer, including terminals, through the Lucid desktop app. Nothing is asked after that: no per-app Approval, extra switch or app restrictions. A notice stays visible while Lucid works; Escape or Stop ends the Run. When that Run settles, the server tells its connected Device to end the notice. An offline Device simply misses that signal. Dispatch uses the existing 30-second deadline and content-free ledger and is never replayed after a lost answer. Presence and links live in one process, so the server must run as a single replica.

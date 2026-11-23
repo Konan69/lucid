@@ -6,7 +6,7 @@ metadata:
   provenance: |-
     Adapted from Muse's shipped procedure, read in full at
     `artifacts/night/raw/wesbos-muse/repo/opt/hatch/skills/wide-research/SKILL.md`.
-    Muse fans out to parallel workers; Vivid does the same with helpers (`spawn_run`), at most four
+    Muse fans out to parallel workers; Lucid does the same with helpers (`spawn_run`), at most four
     at work for one message, while the shared schema, single retry and coverage report stay.
 ---
 

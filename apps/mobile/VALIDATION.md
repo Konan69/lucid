@@ -1,8 +1,8 @@
 # Native validation — 2026-09-05
 
-## Vivid web design-system revision
+## Lucid web design-system revision
 
-The native app now adapts Vivid web's sidebar hierarchy, conversation cards,
+The native app now adapts Lucid web's sidebar hierarchy, conversation cards,
 shared grouping function, compact controls, Face, greeting and composer. CSS
 colors and geometry/type/duration metrics share a generated native export.
 T3's actual pane timing is used by Reanimated; native editor and row interactions
@@ -11,7 +11,7 @@ remain the T3 implementations/adaptations.
 Verified on the Windows Android Studio AVD `Vivid_Android_Studio`, serial
 `emulator-5556`, with the installed native development APK:
 
-- Welcome, sidebar and thread render using Vivid's tokens and actual Face.
+- Welcome, sidebar and thread render using Lucid's tokens and actual Face.
 - A clean emulator/app restart retains saved conversation grouping. Android
   Back closes the sidebar and returns to the welcome view.
 - Pin moves the selected conversation to Pinned. Filtering Pinned and opening
@@ -49,7 +49,7 @@ of live activity and device-local pin/settled state.
 
 ## Observed on Android
 
-- Native home and conversation screens render with the real Vivid assets.
+- Native home and conversation screens render with the real Lucid assets.
 - T3 composer accepts text, selection, replacement and clearing. Android keyboard
   show/hide keeps the composer visible without leaving a blank gap.
 - A real message, “Reply with just ready.”, received “Ready”; history persisted

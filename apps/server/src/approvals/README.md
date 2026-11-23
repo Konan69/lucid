@@ -1,9 +1,9 @@
 # Approvals
 
-Authorization for one consequential action: the exact action Vivid proposed, its risk, the
+Authorization for one consequential action: the exact action Lucid proposed, its risk, the
 rationale, the scope and the decision. This domain is the trust loop's record and its machinery.
 
-- `gate.ts` decides what happens to one thing Vivid wants to do: allowed now, an Approval raised
+- `gate.ts` decides what happens to one thing Lucid wants to do: allowed now, an Approval raised
   in the Thread for the acting Person, or blocked by a rule (in the rule's own wording).
 - `action.ts` binds an Approval to the whole encoded action, so what runs later is exactly what
   was shown.

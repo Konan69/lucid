@@ -1,4 +1,4 @@
-# Vivid mobile
+# Lucid mobile
 
 A separate React Native application for iOS and Android, built with Expo `57.0.24` and React
 Native `0.86.3`. Native stack screens use the same contracts, RPC client, and product state as
@@ -55,7 +55,7 @@ environment file but is not read by current code.
 
 ### Over-the-air updates
 
-An installed build asks its Vivid for newer JavaScript at launch and after a long absence, and
+An installed build asks its Lucid for newer JavaScript at launch and after a long absence, and
 restarts into what it downloaded the next time the app is backgrounded (`src/data/update.ts`).
 The server speaks the Expo Updates protocol itself (`apps/server/src/updates`); no Expo service
 or account is involved.

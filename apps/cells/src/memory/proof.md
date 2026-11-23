@@ -7,7 +7,7 @@ Use the stack's private runtime token without printing or retaining it in eviden
 1. Launch and Doctor at the combined head using verify-vivid. Require `worthy: true`.
 2. Choose fresh Person IDs A and B and Thread IDs T and U. Send authenticated runtime
    `POST /persons/A/threads/T` with `initialData.creator=A`, `scope.acting=B`, a unique
-   idempotency key and a signal attributed to B. Ask Vivid to remember that B's meeting
+   idempotency key and a signal attributed to B. Ask Lucid to remember that B's meeting
    preference is before noon because afternoons are for writing.
 3. Await the returned submission through the native terminal endpoint. Require `Done`.
    Read T's state. Require a successful `write_memory` receipt and retain its layer and file.

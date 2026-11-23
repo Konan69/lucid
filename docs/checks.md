@@ -119,7 +119,7 @@ The plan is to move to `bun check` later. ts-rust's published benchmark on T3 Co
 
 ## Reference and limits
 
-The VCOS reference (`apps/web/TYPECHECK.md` and its shared/server/agent configs) splits a combined program into declaration-producing projects and checks consumers against those outputs. Separate Vivid workspace configs are not equivalent boundaries: source exports pull shared implementation into consumers, and tests import implementation across server/runtime/skills packages. The first cache/concurrency change repairs repeat runs but does not complete this graph optimization.
+The VCOS reference (`apps/web/TYPECHECK.md` and its shared/server/agent configs) splits a combined program into declaration-producing projects and checks consumers against those outputs. Separate Lucid workspace configs are not equivalent boundaries: source exports pull shared implementation into consumers, and tests import implementation across server/runtime/skills packages. The first cache/concurrency change repairs repeat runs but does not complete this graph optimization.
 
 ### Graph optimization design
 
@@ -135,7 +135,7 @@ The RPC client service uses a named interface extending its existing schema-deri
 
 A whole-server declaration prototype exposed Better Auth portability errors and integration fixture imports; that prototype is not part of this change. The server retains one checked source/test project and consumes the shared declaration projects.
 
-VCOS also has a machine-wide queue for heavy work. Turbo concurrency limits apply to one invocation, not to every session on a machine. Vivid's existing Cloudbox policy still applies to heavy gates. This change does not control unrelated jobs.
+VCOS also has a machine-wide queue for heavy work. Turbo concurrency limits apply to one invocation, not to every session on a machine. Lucid's existing Cloudbox policy still applies to heavy gates. This change does not control unrelated jobs.
 
 The former tsgolint backend used approximately 3.6 GiB of private resident memory. That engine created four compiler checker instances by default. Its lint-worker setting was independent of Oxlint's Rust worker count. Lowering Go lint workers limited active semantic work but did not remove the four-instance compiler pool. Worker limits retained the full compiler pool; measured savings came from limiting active semantic work and resetting each package process.
 

@@ -28,7 +28,7 @@ Thread creator's cell (`packages/agent/runtime/src/client.ts`, `Product`;
 - **Native wake.** The cell arms alarms from Pi's `wake()` and resumes work on an alarm.
   celld owns activation and idle lifecycle (`apps/cells/src/main.ts`, `Person`).
 - **One owner per Person.** Pi owns tasks, queues, deduplication, wait, abort, and restart.
-  Vivid registers its tools and learning task with that Harness
+  Lucid registers its tools and learning task with that Harness
   (`packages/agent/runtime/src/person.ts`, `openPerson`).
 - **Shared cell storage.** The fleet declares two nodes and one retained Railway bucket. Each node
   has a separate local volume and advertised peer address (`infra/cells.ts`, `railwayCells`).
@@ -100,7 +100,7 @@ History. Flue and the filesystem-slot design are no longer part of this runtime.
 
 ## Writes per reply
 
-Pi owns conversation commits and streamed progress persistence. Vivid supplies native storage
+Pi owns conversation commits and streamed progress persistence. Lucid supplies native storage
 and model settings rather than a second persistence loop (`packages/agent/runtime/src/cell.ts`,
 `openCell`; `packages/agent/runtime/src/person.ts`, `openPerson`). The carrier keeps the event
 that owns those continuations alive. Replication cost and progress under load need fleet

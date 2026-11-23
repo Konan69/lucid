@@ -69,9 +69,9 @@ History. Helix was removed from personal memory. Its old service and volume rema
 with retention for migration (`infra/railway.ts`, `railwayResources`). Current memory search is
 cell-local FTS5 (`packages/agent/runtime/src/memory.ts`, `search`).
 
-## How Vivid learns
+## How Lucid learns
 
-Vivid can write memory during a reply. After settlement, including a failed or stopped Run,
+Lucid can write memory during a reply. After settlement, including a failed or stopped Run,
 the cell's settlement follower captures each speaker's words and authority before releasing
 frozen delivery context (`packages/agent/runtime/src/settled.ts`, `followSettlements`).
 

@@ -3,7 +3,7 @@
 **Status:** decision and plan, 3 October 2026. It replaces the deployment part of
 [One product](22-one-product.md) "Connections: Executor" ("runs beside the server as one more local
 process"). The product rules there still hold: a Connection maps to an Executor account plus the
-profile that selects it, the model sees `find_tools`, `use_tool` and `connect`, and Vivid stores the
+profile that selects it, the model sees `find_tools`, `use_tool` and `connect`, and Lucid stores the
 mapping and never a credential.
 
 Evidence is the upstream Executor source, branch `v2` at commit `2732ab3`. Paths below are relative
@@ -13,16 +13,16 @@ to that repository: `SH` is `apps/hosted/self-host`, `H` is `apps/hosted/server`
 
 ## The decision
 
-1. Vivid runs Executor's **hosted** shape, built from **our fork**. We do not use the local shape in
+1. Lucid runs Executor's **hosted** shape, built from **our fork**. We do not use the local shape in
    production, and we do not buy Executor Cloud.
 2. Executor becomes a **tenant-aware service**. Its tenant is the owner of a Connection: a Person for
-   a personal Integration, a Company for a shared one. Vivid's server provisions each tenant; no human
+   a personal Integration, a Company for a shared one. Lucid's server provisions each tenant; no human
    ever signs in to Executor, and no Person ever sees the word organization.
 3. Its product database moves to **our PostgreSQL server, in a database of its own**. The embedded
    database is a starting point, not the end state.
-4. Vivid's side stays in one file, `apps/server/src/connections/executor.ts`. Its `ExecutorService`
+4. Lucid's side stays in one file, `apps/server/src/connections/executor.ts`. Its `ExecutorService`
    interface is the seam; the transport behind it changes.
-5. Two operations wait: resuming an approved tool call and cancelling a pending connection. Vivid's
+5. Two operations wait: resuming an approved tool call and cancelling a pending connection. Lucid's
    own Approval gates a consequential action before Executor is called, and a pending connection
    expires.
 
@@ -37,7 +37,7 @@ One SDK and app runtime, shipped three ways.
 | Cloud     | many organizations; free to 3 members, then per seat | external Postgres, object store, Durable Objects     | scales horizontally |
 
 Self-host and Cloud serve the same HTTP API under `/api/organizations/{organization}`. Local serves a
-different one (`/v1/...`, `/dashboard/api/...`), which is what Vivid's adapter spoke until now.
+different one (`/v1/...`, `/dashboard/api/...`), which is what Lucid's adapter spoke until now.
 
 Why self-host is one container (`SH/README.md`, "Data and updates"):
 
@@ -55,13 +55,13 @@ provider `postgresql` on both hosts; self-host hands it PGlite and Cloud hands i
 `DATABASE_URL` on today's self-host image does nothing, because the Go host does not forward it and
 the worker constructs PGlite explicitly (`SH/native/main.go:86`).
 
-## How Vivid's model maps onto it
+## How Lucid's model maps onto it
 
-| Vivid                                | Executor                                              |
+| Lucid                                | Executor                                              |
 | ------------------------------------ | ----------------------------------------------------- |
 | Connection owner: `Personal(person)` | one organization for that Person                      |
 | Connection owner: `Shared(company)`  | one organization for that Company                     |
-| Vivid's server                       | a service principal that may act for any organization |
+| Lucid's server                       | a service principal that may act for any organization |
 | Connection                           | one profile plus the account it selects, on one app   |
 | The acting Person                    | attribution on the call; never an Executor member     |
 | Integration (catalogue entry)        | app                                                   |
@@ -74,22 +74,22 @@ leaves. This is the ownership [One product](22-one-product.md) already defines
 are stored. It is plumbing. It never appears in a string a Person or the model reads, and a Person
 with no Company never meets the idea.
 
-Vivid keeps the mapping from owner to Executor organization, and the organization's id is the opaque
+Lucid keeps the mapping from owner to Executor organization, and the organization's id is the opaque
 one Executor issues. A Person id or Company id is never used as an Executor identity, key or storage
-name. Identity, tenancy and attribution stay separate, as everywhere in Vivid.
+name. Identity, tenancy and attribution stay separate, as everywhere in Lucid.
 
 Executor has no service principal today. API keys belong to a human, and a profile takes its subject
 from the key's owner (`H/src/implementation/api-keys.ts:66`, `H/src/implementation/access.ts:130`).
-Until stage C, Vivid holds one key in one organization and keeps owners apart itself: one profile per
+Until stage C, Lucid holds one key in one organization and keeps owners apart itself: one profile per
 Connection, and only that Connection's stored references are ever sent. Executor lists "per-person
-account selection" as later work; this is the same idea done on Vivid's side.
+account selection" as later work; this is the same idea done on Lucid's side.
 
 ## Stages
 
 | Stage | What changes                                                       | Size | Needed now              |
 | ----- | ------------------------------------------------------------------ | ---- | ----------------------- |
 | A     | Self-host image built from our fork, on Railway, with a volume     | S    | yes                     |
-| A′    | Vivid's adapter rewritten to the hosted API                        | M    | yes                     |
+| A′    | Lucid's adapter rewritten to the hosted API                        | M    | yes                     |
 | B     | Product and auth database on our PostgreSQL through `DATABASE_URL` | M    | soon                    |
 | C     | Many organizations, provisioned and used through a service key     | M    | soon                    |
 | D     | Stateless API with more than one replica                           | L    | no, beyond today's size |
@@ -109,23 +109,23 @@ adapter's own calls:
   replaced by one app per Integration in the organization, read from the organization inventory.
 - `owner` and `subject` are no longer sent. Ownership is the organization in the path.
 - OAuth: Executor chooses the redirect address and ignores one supplied per request. A
-  deployment-wide `EXECUTOR_OAUTH_CALLBACK_URL` sets it, so it is pointed at Vivid's own callback.
-  The provider then returns the Person to Vivid, and Vivid finishes with
+  deployment-wide `EXECUTOR_OAUTH_CALLBACK_URL` sets it, so it is pointed at Lucid's own callback.
+  The provider then returns the Person to Lucid, and Lucid finishes with
   `POST .../connections/{id}/oauth/complete {callbackUrl}` under its key, which is the shape
   `completeSignIn` already has. Executor's own callback page is not used: it requires an Executor
   browser session, which no Person has.
 - Destructive tools: a tool whose app declares approval answers `409 ToolApprovalRequired` with no
   request to resume and no parameter, role or profile switch that lets a key caller proceed. Until
-  the fork lets the service principal state that Vivid's Approval was given, those tools cannot run.
+  the fork lets the service principal state that Lucid's Approval was given, those tools cannot run.
   Reads and ordinary writes run.
 - Four new failure tags need a home in `ExecutorFailure`: `OAuthRenewalFailed`, `AppProviderFailed`,
   `ToolListingTimedOut`, `BuildMemoryExceeded`.
 
 **B. Our PostgreSQL.** Executor gets its own database and its own role on the PostgreSQL server
-Vivid already runs: one server to operate and pay for, two databases. They cannot share one. Executor
-and Vivid both use Better Auth, so both own tables named `user`, `session` and `organization`, and
+Lucid already runs: one server to operate and pay for, two databases. They cannot share one. Executor
+and Lucid both use Better Auth, so both own tables named `user`, `session` and `organization`, and
 each runs its own migrations. Separate databases also keep the rule that library-owned state is never
-mirrored into app tables: Vivid reads Executor only through its API, never through SQL. In the fork: forward `DATABASE_URL` through the Go host, give the worker a
+mirrored into app tables: Lucid reads Executor only through its API, never through SQL. In the fork: forward `DATABASE_URL` through the Go host, give the worker a
 `PgClient` in place of PGlite, point Better Auth's store at the same database, and run migrations and
 first-administrator setup under a lock (their correctness today relies on PGlite having one
 connection, `SH/src/implementation/registration.ts:165`). Files: `SH/src/worker.ts`,
@@ -137,7 +137,7 @@ stay on the volume.
 organization for a Connection owner (a Person or a Company) and runs its defaults; authorization that lets the service act in any
 organization while recording the attributed Person as the profile subject. Remove the three
 single-organization guards. Touches `H/src/contracts/auth.ts`, `H/src/implementation/api-keys.ts`,
-`H/src/implementation/access.ts`, self-host registration, and Vivid's adapter. The risk to design
+`H/src/implementation/access.ts`, self-host registration, and Lucid's adapter. The risk to design
 against is confusing principal with tenant; that is why the three identities stay separate.
 
 **D. Replicas.** Beyond the database, each of these must become shared before two instances are
@@ -180,5 +180,5 @@ That is an expectation from the design, **unverified** by measurement.
 
 1. Stage A on Railway, from the fork.
 2. Stage A′, proven against a disposable instance by a `.live.test.ts` per behaviour.
-3. Cut Vivid over; reconnect accounts.
+3. Cut Lucid over; reconnect accounts.
 4. Stage B, then stage C.

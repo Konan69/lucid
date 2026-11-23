@@ -1,6 +1,6 @@
 # @vivid/desktop
 
-Electron shell for the Vivid web app. It connects to a Vivid server the Person chooses; it never
+Electron shell for the Lucid web app. It connects to a Lucid server the Person chooses; it never
 starts a server, database, or runtime. The shell serves its own bundled web build at the chosen
 origin and forwards only `/api*` and `/health` to the chosen server. Product UI stays in the web
 renderer. Until the shell loads the server's own build, release the shell and server together:
@@ -22,12 +22,12 @@ and updates require release configuration; no updater is installed.
 ## Choosing a server
 
 First launch opens the local `chooser.html`, with no default server and no network authority.
-Enter the origin of a remote or local Vivid server. Remote servers require HTTPS; HTTP is allowed
+Enter the origin of a remote or local Lucid server. Remote servers require HTTPS; HTTP is allowed
 for localhost, loopback and private IP addresses. Credentials, paths, queries and fragments are
 rejected. Main probes `/health` for `{ "ok": true, "service": "vivid" }` with a three-second timeout,
 without cookies or redirects. Only a verified server is saved.
 
-The address to enter is the one people open Vivid at in a browser, which is the server's
+The address to enter is the one people open Lucid at in a browser, which is the server's
 `PUBLIC_URL`. The app serves its interface at that origin and names it as the origin of every
 request it forwards, because Chromium adds `Origin` only after the app has taken the request, and
 the server accepts sign-in from that one origin. In development that is the web dev server
@@ -137,7 +137,7 @@ Renderer layout/scroll and modal/menu coverage detection remain the renderer's r
 
 `watch()` hydrates the current state asynchronously and replays cached state synchronously when
 available. It then delivers whole snapshots: `{ revision, tabs, showing, using }`. `using` is
-`PageOption<Tab>`: the page Vivid is acting on for the length of one action (see "Vivid using
+`PageOption<Tab>`: the page Lucid is acting on for the length of one action (see "Lucid using
 this computer"); the renderer says so on that page. `tabs` is ordered;
 each page has `{ tab, address, title, favicon, loading, canGoBack, canGoForward, failed }`. `showing` is
 `PageOption<Tab>`; `failed` and `favicon` are `PageOption<string>`: clone-safe schema-backed `None`/`Some`
@@ -223,12 +223,12 @@ The page the browser ends on (`src/main/landing.ts`) is one static document with
 nothing to fetch. Its colours are the page and ink of the native window, read from the design
 tokens, in the browser's light or dark.
 
-## Vivid using this computer
+## Lucid using this computer
 
 Once a Person is signed in, the app enrols this installation as one
 of their computers (`EnrolDevice`, with the machine's host name), and waits. Enrolling grants
 nothing. When the Person allows it (Settings → Devices → Your computers, on any surface), the app
-holds `WatchDeviceRequests` open on the live socket and carries out each `BrowserAction` Vivid
+holds `WatchDeviceRequests` open on the live socket and carries out each `BrowserAction` Lucid
 sends, in the app's own Browser, answering on the same connection. Revoking, signing out or
 choosing another server ends the link.
 
@@ -251,14 +251,14 @@ choosing another server ends the link.
   Chromium's debugger on the page (`webContents.debugger`), ported from the reference desktop's
   control session. A control is named by its accessible name, exactly one match or the step
   fails. An action past its `expiresAt` is not started, and input is never sent twice. The
-  debugger session must be Vivid's own: a page with developer tools open, or with another
+  debugger session must be Lucid's own: a page with developer tools open, or with another
   debugger attached, is not acted on.
-- **Stop**: while an action runs on a page, the renderer shows "Vivid is using this page." and a
+- **Stop**: while an action runs on a page, the renderer shows "Lucid is using this page." and a
   Stop button (`window.vivid.pages.stopVivid(tab)`). Stop ends that action at once and it is
-  answered `Refused: Stopped`. The Person using the page does not stop Vivid: the reference's
+  answered `Refused: Stopped`. The Person using the page does not stop Lucid: the reference's
   human-control epochs and expected-input matching are deliberately not ported (owner's
   decision, 4 October 2026). Pages have no bridge, so a website cannot press Stop.
-- **Where Vivid may go** (`main/reach.ts`): a navigation Vivid starts is allowed only to the
+- **Where Lucid may go** (`main/reach.ts`): a navigation Lucid starts is allowed only to the
   public internet. Loopback, private, link-local, carrier-grade NAT and IPv6 unique-local and
   link-local addresses are refused, for the first address (resolved first; every resolved
   address must be public) and for every redirect of that load. The Person's own typing in the
@@ -275,8 +275,8 @@ choosing another server ends the link.
 | The Person pressed Stop                                                                                                      | `Refused: Stopped`                                           |
 | No page is open, or the page closed                                                                                          | `Refused: PageGone`                                          |
 | A local or private address (first hop, resolved name or redirect), a non-web address, or words that are not an address       | `Refused: NotAllowed`                                        |
-| A key outside the ones Vivid may press                                                                                       | `Refused: Unsupported`                                       |
-| The control was not found or is ambiguous, the page refused the text, a debugger command failed, the debugger is not Vivid's | `Failed`                                                     |
+| A key outside the ones Lucid may press                                                                                       | `Refused: Unsupported`                                       |
+| The control was not found or is ambiguous, the page refused the text, a debugger command failed, the debugger is not Lucid's | `Failed`                                                     |
 | Its deadline passed before or during the action, or the link ended                                                           | no answer; the server has already closed it                  |
 
 `Screenshot` answers with the picture (`BrowseResult.picture`, a base64 PNG at most 1280 pixels
@@ -292,12 +292,12 @@ What running it against real pages changed (each is stated beside its code):
   saw the button go down. A page that is not drawn takes clicks this way.
 - A key is pressed only on a page drawn on the window. Keys to an undrawn page arrived, were
   dropped, or arrived after the answer; none of that can be reported honestly. The renderer
-  brings the page Vivid is using forward, the executor waits up to 3 s for it, and otherwise
+  brings the page Lucid is using forward, the executor waits up to 3 s for it, and otherwise
   the step fails with nothing sent. No `Page.bringToFront`: the key after it was dropped.
 - A press the page never saw is `Failed`, after half a second's grace, never a second press.
 - After any action the executor waits for a navigation the page asked for
   (`Page.frameRequestedNavigation`) until the page is neither leaving nor loading.
-- A hop stopped by the rule every page obeys (no loopback) is reported to Vivid as
+- A hop stopped by the rule every page obeys (no loopback) is reported to Lucid as
   `NotAllowed`, not answered as the old page.
 
 ### Apps on the Person's computer (Windows)
@@ -332,7 +332,7 @@ window, nothing asked and nothing banned.
 - **The notice** (`main/notice.ts`, `apps/web/src/notice.tsx`): a small frameless window, top
   centre of the primary display, always on top, shown without taking focus, not in the taskbar,
   and left out of screen captures so it is never in a picture sent to the model. It says
-  "<Vivid's name> is using <app>" with an Esc hint and Stop.
+  "<Lucid's name> is using <app>" with an Esc hint and Stop.
 
 The pair is vendored (`vendor/computer/`) and shipped verbatim by `electron-builder.yml`;
 `scripts/packed.mjs` refuses to package a Windows app without it. On other systems the app
@@ -362,9 +362,9 @@ Not proved:
 - The link against a real server. It needs a signed-in session; only its transport is proved.
 - The refusal of a page with developer tools open. The pages session admits only web addresses,
   so developer tools never open on a page and the case cannot be reached.
-- That the renderer brings the page forward when Vivid starts using it, and the Stop button:
+- That the renderer brings the page forward when Lucid starts using it, and the Stop button:
   the proof has no renderer.
-- DNS rebinding is not closed (see "Where Vivid may go").
+- DNS rebinding is not closed (see "Where Lucid may go").
 
 ## Security
 

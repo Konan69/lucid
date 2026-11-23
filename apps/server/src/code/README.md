@@ -1,6 +1,6 @@
 # Programs
 
-A program is JavaScript Vivid wrote and asked to run with `run_code`. It runs on the Person's
+A program is JavaScript Lucid wrote and asked to run with `run_code`. It runs on the Person's
 Computer. The server keeps everything that needs trust: the Person's identity, the Integrations'
 credentials, the Gate and the Approvals. The program holds none of them.
 

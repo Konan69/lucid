@@ -1,7 +1,7 @@
 # Product feature set and Grok Bot parity
 
-What Vivid can do today, how each claim was checked, and what is not built. "Parity" is a
-directional product target, not a claim that Vivid and Grok Bot are equivalent. Keep this page
+What Lucid can do today, how each claim was checked, and what is not built. "Parity" is a
+directional product target, not a claim that Lucid and Grok Bot are equivalent. Keep this page
 true: change a row in the same change that changes the fact, and write how it was checked.
 
 Last brought up to date on 3 October 2026.
@@ -9,7 +9,7 @@ Last brought up to date on 3 October 2026.
 ## How a row is checked
 
 - **Seen in the app with a real model**: a Person's message in the web app, answered by the model
-  through the gateway, with the tools Vivid actually called read from the Thread.
+  through the gateway, with the tools Lucid actually called read from the Thread.
 - **Live test**: a `.live.test.ts` run against the real service (Executor, HelixDB, Boat, the
   model gateway), skipped unless its suite-specific test configuration and credentials are present.
 - **Rehearsed**: driven in the app with the scripted model (`VIVID_MODEL=rehearsal/script`), which
@@ -22,21 +22,21 @@ Last brought up to date on 3 October 2026.
 
 | Capability                                                                                                                                      | How it was checked                                                |
 | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Vivid answers in a Thread, streaming, with send-while-working and stop                                                                          | Seen in the app with a real model                                 |
+| Lucid answers in a Thread, streaming, with send-while-working and stop                                                                          | Seen in the app with a real model                                 |
 | Personal space and Companies in one product: Memberships, roles, shared and private Threads, attributed messages, presence                      | Tests; seen in the app                                            |
 | Reading a web page (`read_page`), refused for anything not on the public internet                                                               | Seen in the app with a real model                                 |
-| Programs Vivid writes (`run_code`), run on the Person's Computer over its SSH connection; calls for the Person checked on the server            | Tests with the real runner; a live run on a real Boat machine     |
+| Programs Lucid writes (`run_code`), run on the Person's Computer over its SSH connection; calls for the Person checked on the server            | Tests with the real runner; a live run on a real Boat machine     |
 | Cards in a Thread (`show`): table, charts, steps, options, comparison, links, facts, draft, schedule, form, pictures                            | Rehearsed for every kind; charts seen with a real model           |
-| Questions Vivid cannot answer alone (Input requests), answered from a card                                                                      | Seen in the app with a real model                                 |
+| Questions Lucid cannot answer alone (Input requests), answered from a card                                                                      | Seen in the app with a real model                                 |
 | The trust loop: allowed, needs an Approval, or blocked by a rule; the approved action runs later from the stored copy                           | Tests                                                             |
 | Integrations on Executor: the catalogue, signing in or entering a key, finding and using tools                                                  | Live test for the catalogue and reads; seen in the app for search |
 | Adding an Integration by address: an MCP server, or an OpenAPI document Executor can import                                                     | Live test                                                         |
 | Memory on HelixDB: remember, recall, forget, correct, and the background pass after a Run                                                       | Live test; remember and recall seen in the app with a real model  |
 | The Computer on Boat: create, viewer, look, open/read a page, click a link, type/replace/clear a field with readback, files, archive and resume | Live test against real Boat                                       |
 | The Library: folders, PDF and text ingest, search, citations                                                                                    | Tests                                                             |
-| Skills: 23 native runtime folders, and reusable procedures Vivid saves for itself                                                               | Native catalogue, activation and scoped saved-procedure tests     |
+| Skills: 23 native runtime folders, and reusable procedures Lucid saves for itself                                                               | Native catalogue, activation and scoped saved-procedure tests     |
 | Search palette, notifications, Settings, the Company record                                                                                     | Tests; seen in the app                                            |
-| Desktop app: choose a Vivid, sign up, pages beside a Thread with tabs, the Computer tab, switching Vivid                                        | Run for real                                                      |
+| Desktop app: choose a Lucid, sign up, pages beside a Thread with tabs, the Computer tab, switching Lucid                                        | Run for real                                                      |
 | Pictures attached to a message in a private Thread                                                                                              | Tests                                                             |
 
 ## Built, not yet seen working end to end
@@ -68,7 +68,7 @@ Server and runtime leaf typechecks passed under the shared compiler lock in the 
 | The Computer panel showing Boat's viewer inside the app        | Never opened in the app against real Boat                                                                                                                                                                                          |
 | Browser input from a Thread on Boat                            | `computers/thread.live.test.ts` attempted once; stopped before a model call because the night server selects Docker. Successful tool receipts now include the cookie-bound screen relay; Thread-driven Boat input remains unproved |
 | The Person's desktop browser                                   | Target/access/control contracts and PostgreSQL device receipts built; native input-token enforcement is unrecovered, Person route fails closed, runtime option withheld                                                            |
-| Vivid using the desktop (`use_desktop`) from a Thread          | Included in the same opt-in Computer chain proof; blocked on the Boat server configuration, never reached a model call                                                                                                             |
+| Lucid using the desktop (`use_desktop`) from a Thread          | Included in the same opt-in Computer chain proof; blocked on the Boat server configuration, never reached a model call                                                                                                             |
 | Mobile app                                                     | Tests only; never run on a device                                                                                                                                                                                                  |
 | Google Integrations                                            | Need an operator sign-in client set up in Executor (`docs/22-one-product.md`)                                                                                                                                                      |
 | An Approval raised by a real model's action, approved, and run | `approvals/thread.live.test.ts` attempted once; stopped before a model call because the running stack and supplied disposable proof database differ                                                                                |
@@ -92,12 +92,12 @@ same disposable database as the stack; the proof never falls back to an applicat
 ## Not built
 
 - **The durable work log** of a Run (requests, responses, tool calls, model and timing).
-- **Vivid-to-Vivid** across People and Companies (`docs/06-communication.md`).
+- **Lucid-to-Lucid** across People and Companies (`docs/06-communication.md`).
 - **The Person's own computer as a device**, and taking over the Computer to teach a task.
 - **Voice** and **messaging channels** (mail in, Slack and the like); Telegram was cancelled.
-- **To-do lists and project management.** Tasks as Vivid first had them (things Vivid tracked and
+- **To-do lists and project management.** Tasks as Lucid first had them (things Lucid tracked and
   chased) were removed on 3 October 2026. They come back in two different shapes, neither built:
-  for a Person, a to-do list that is theirs: things they mean to do, which Vivid can add to, tick
+  for a Person, a to-do list that is theirs: things they mean to do, which Lucid can add to, tick
   off and remind about; for a Company or team, product and project management: work that has an
   owner, a state and a place in a Project, seen by everyone on it. Until then a reminder is a
   reminder capability awaiting the clock app.
@@ -105,25 +105,25 @@ same disposable database as the stack; the proof never falls back to an applicat
 - **Apps on the Computer and a home screen.** The Computer image carries a browser and the desktop
   stack only. There is no office suite, no creative or engineering apps, and no launcher showing
   what is installed (#4).
-- **Files as Artifacts.** Vivid cannot hand a file built on the Computer to the Person as an
+- **Files as Artifacts.** Lucid cannot hand a file built on the Computer to the Person as an
   Artifact, so a document is Markdown through the document tools, never a Word file (#5).
 - **Spreadsheet, presentation and PDF procedures.** The reference procedures build real files and
   check them by rendering; they wait on the two gaps above (#6).
 - **Parallel workers for wide research.** The same lookup runs over each input in batches inside
   one Run (#8).
 - **Booking by phone, and a map for places.** Both paths exist in the reference procedures and were
-  left out; Vivid has no calling and no map display (#10).
+  left out; Lucid has no calling and no map display (#10).
 
 ## Known limits
 
-- An empty completion from the model is not caught: Vivid has no retry layer of its own, the
+- An empty completion from the model is not caught: Lucid has no retry layer of its own, the
   gateway fails over between providers.
-- Pictures in a reply load automatically, so a page Vivid read could have it show a picture whose
+- Pictures in a reply load automatically, so a page Lucid read could have it show a picture whose
   address carries Thread content elsewhere. Loading on tap or through the server would close it.
 - Adding by address depends on the operator running Executor with public-only egress.
 
 - Installation, revision history and imported provenance persistence remain outside #12 phase 1.
-  Built-ins are registered with the Pi Durable Harness in each Person's cell. Vivid saves
+  Built-ins are registered with the Pi Durable Harness in each Person's cell. Lucid saves
   and reuses verified procedures itself; People never see, name, edit or manage skills. Built-in
   names are reserved and saved procedures never replace them. Saved Person/Company procedures
   keep the authorized `read_skill` path because native catalogue snapshots persist in shared Thread
@@ -135,7 +135,7 @@ same disposable database as the stack; the proof never falls back to an applicat
 
 ## Grok Bot parity map
 
-| Grok Bot capability                          | Vivid today                                                                                                                    |
+| Grok Bot capability                          | Lucid today                                                                                                                    |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | Persistent conversation and background state | Working                                                                                                                        |
 | Browser, terminal and filesystem computer    | Working at the Boat provider, including browser input; app viewer and Thread-driven input unproven                             |

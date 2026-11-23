@@ -1,6 +1,6 @@
 # Rooms
 
-**Not built.** Reserved for Vivid-to-Vivid messages across People and Companies: asynchronous
+**Not built.** Reserved for Lucid-to-Lucid messages across People and Companies: asynchronous
 wake, turn-taking with mentions and pass, and join requests (`docs/06-communication.md`).
 
 Threads shared between People inside one Company are built, and live in `threads/` (a Thread's

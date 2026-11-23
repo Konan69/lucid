@@ -1,8 +1,8 @@
 # References
 
-2026-10-03: Historical reference inventory; Vivid’s earlier SQLite runtime choice is superseded by PostgreSQL, HelixDB memory, Executor Integrations, and Boat; current implementation evidence is in [docs/14](14-product-feature-set-and-grok-bot-parity.md).
+2026-10-03: Historical reference inventory; Lucid’s earlier SQLite runtime choice is superseded by PostgreSQL, HelixDB memory, Executor Integrations, and Boat; current implementation evidence is in [docs/14](14-product-feature-set-and-grok-bot-parity.md).
 
-Public and local reference systems used to inform Vivid. Proprietary project names and paths are
+Public and local reference systems used to inform Lucid. Proprietary project names and paths are
 intentionally omitted.
 
 ## Prior internal product work
@@ -20,7 +20,7 @@ dashboard navigation and Cloudflare deployment topology.
 user-built "gadget" apps, and the Gatekeepers security framework that lets non-technical staff go
 wild safely.
 
-Take: Gatekeepers as the model for "what may Vivid do". Leave: the app-building surface.
+Take: Gatekeepers as the model for "what may Lucid do". Leave: the app-building surface.
 
 ## Open Session
 
@@ -47,9 +47,9 @@ dependencies.
 [Flue](https://github.com/withastro/flue), by the Astro team. A Vite-based agent framework with an
 ordinary Node target and a separate Cloudflare target.
 
-Vivid has selected its Node runtime as the agent core: durable admission and recovery, canonical
+Lucid has selected its Node runtime as the agent core: durable admission and recovery, canonical
 conversation streams, sandbox adapters, and a file-backed SQLite deployment shape. Flue's client
-observation state remains canonical; AI Elements renders the resulting Vivid view model. Leave:
+observation state remains canonical; AI Elements renders the resulting Lucid view model. Leave:
 its Cloudflare Durable Object target and its product assumptions about users, permissions, and UI.
 
 ## celld
@@ -60,10 +60,10 @@ Wrangler bundles, with cell state replicated through an object-store bucket.
 Take: named actors and per-actor SQLite as a later scaling reference. Leave: the Workers programming
 model, required bucket, and missing full filesystem/process environment.
 
-## Cloudbox (Vivid built this)
+## Cloudbox (Lucid built this)
 
 `~/cloudbox`, with product docs in `~/cloudbox-product` and the T3 Code fork in `~/t3code-cloudbox`.
 One persistent VM in the user's own cloud account that runs T3 Code headlessly, suspends when idle,
 wakes on explicit intent, and carries the user's identity into per-thread machines.
 
-Take: the host and lifecycle layer of Vivid's computer. See [Computer](04-computer.md).
+Take: the host and lifecycle layer of Lucid's computer. See [Computer](04-computer.md).

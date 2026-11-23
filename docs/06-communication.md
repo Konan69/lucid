@@ -1,14 +1,14 @@
 # Communication
 
-2026-10-03: Historical Grok Bot communication research and Vivid proposal; current shared Threads supersede only the implementation context, while cross-Person Vivid-to-Vivid remains unbuilt in [docs/14](14-product-feature-set-and-grok-bot-parity.md).
+2026-10-03: Historical Grok Bot communication research and Lucid proposal; current shared Threads supersede only the implementation context, while cross-Person Lucid-to-Lucid remains unbuilt in [docs/14](14-product-feature-set-and-grok-bot-parity.md).
 
 How Grok Bot's bots talk to each other, work in groups, reach other users, fork work, and reach the
 user's own computer. From `~/refs/grok-bot-0.18-reconstructed/source`. This is the substrate for
-Vivid-to-Vivid.
+Lucid-to-Lucid.
 
-## Reaching the Person through Vivid
+## Reaching the Person through Lucid
 
-Vivid delivers its existing recipient-owned Notifications through its own app's push targets:
+Lucid delivers its existing recipient-owned Notifications through its own app's push targets:
 Web Push with VAPID for browsers (including a supporting desktop browser), and Expo push for
 phones. Telegram is cancelled. A target belongs to one Person and one signed-in session; sign-out
 deletes it through the session foreign key, and expired sessions are pruned. Existing Thread
@@ -145,17 +145,17 @@ The system prompt draws a clean line the bot has to respect:
 Source: `host/runner/prompt-collector-glue.ts`, `shared/agents/agent-tool-names.ts`,
 `local-exec-daemon/`.
 
-## What Vivid takes
+## What Lucid takes
 
-- **Vivid-to-Vivid is exactly `SendToAgent` across users.** Asynchronous, wake-on-delivery, visible
+- **Lucid-to-Lucid is exactly `SendToAgent` across users.** Asynchronous, wake-on-delivery, visible
   in both threads, reply is another send. Grok Bot only ships this within one user's bots and uses
-  rooms for cross-user. Vivid makes the cross-user DM the primitive, with the same prompt
-  guardrails, so "ask Dami's Vivid" is one message and the answer lands in the thread.
-- **Rooms become threads with more than one Vivid in them.** The round robin, mentions, and
+  rooms for cross-user. Lucid makes the cross-user DM the primitive, with the same prompt
+  guardrails, so "ask Dami's Lucid" is one message and the answer lands in the thread.
+- **Rooms become threads with more than one Lucid in them.** The round robin, mentions, and
   "(pass)" are the right mechanics. Six members is a sane cap.
 - **The relay is the org server.** Rooms, join requests, presence, and the audit trail live there.
   Polling every four seconds is fine to start.
-- **One shared box per user, per-thread desktops** matches the computer doc: Vivid and its
+- **One shared box per user, per-thread desktops** matches the computer doc: Lucid and its
   subagents share a machine, each fork gets a window.
-- **The box-versus-your-computer split is worth keeping.** Vivid can reach the user's laptop for
+- **The box-versus-your-computer split is worth keeping.** Lucid can reach the user's laptop for
   their files, and does everything else on its own machine.

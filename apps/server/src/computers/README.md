@@ -1,6 +1,6 @@
 # Boat Computer provider
 
-Boat is the only Computer provider and every Vivid has it. `Machine` owns its lifecycle, commands,
+Boat is the only Computer provider and every Lucid has it. `Machine` owns its lifecycle, commands,
 browser input and native desktop actions. `computerStoreLayer` owns Person scope, takeover and
 approvals; `computerHandlers` exposes the shared RPC contract.
 
@@ -57,7 +57,7 @@ configured size (`VIVID_BOAT_SIZE`), or the machine's disk has outgrown that siz
 for each larger size in turn and logs the move. The next start asks for the configured size first
 again, so a machine moved up comes back down when Boat has one. A resume that another caller left
 waiting (an SSH wake, the dashboard) is stopped back to its saved disk once it has waited ten
-seconds, counted from when Vivid first saw it, and started the same way within the same start
+seconds, counted from when Lucid first saw it, and started the same way within the same start
 (`boat/lifecycle.ts`, `withdrawn`). A machine between states cannot be asked who holds it, so this
 stop, like the wake of an archived machine, is made before the holder is settled. When no size
 takes the machine, nothing was started: the Computer stays stopped, the action that needed it is
@@ -75,9 +75,9 @@ told what cures it: files removed, or the provider plan upgraded. `rate_limited`
 25 starts an hour being spent: the start stops asking and says to try again in a few minutes.
 
 A machine Boat calls running does not take commands yet: for about 35 seconds its command endpoint
-answers 502. The first command Vivid sends a woken machine (the holder claim, the snapshot rules
+answers 502. The first command Lucid sends a woken machine (the holder claim, the snapshot rules
 and the desktop launcher, one command) is therefore sent again every two seconds for up to 75
-seconds (`boat/holder.ts`, `asked`). It is Vivid's own and says the same thing each time. A machine
+seconds (`boat/holder.ts`, `asked`). It is Lucid's own and says the same thing each time. A machine
 that never takes it is an outage. The snapshot rules are a `.boxignore` in the Computer's home
 directory, written when there is none: Boat captures every file each minute, counts a hard link as
 a full copy, and starts a machine only on a size that holds everything captured, so download
@@ -85,10 +85,10 @@ caches are kept out of the snapshots.
 
 Boat itself not answering is not a state the server is in. A connection that fails, a reply that
 does not come in time, or Boat's own 5xx is an outage: the call that met it is refused with
-"Vivid’s computer is not answering right now", nothing about it is written to the Computer's
+"Lucid’s computer is not answering right now", nothing about it is written to the Computer's
 record, and the next call asks Boat again, so it is over when Boat is back, with no restart and
 without anyone pressing Start. A start that Boat refused or could not finish is different: it is
-recorded as failed with its reason. The record says what the last start met, never that Vivid
+recorded as failed with its reason. The record says what the last start met, never that Lucid
 stopped trying: the next action starts the Computer again (`store.ts`, `prepare`). Until 6 October
 2026 a failed start waited for a Person to press Start, and one start that met Boat's 502 refused
 every action for the rest of that day. The exception is a failure that asking again cannot cure
@@ -104,7 +104,7 @@ holds it, and its screen. Failing either says nothing about whether the machine 
 told on that read and never recorded as the Computer's state (`store.ts`, `get`). A machine found
 running that the record did not have running counts its idle time from that moment.
 
-A Person's Computer runs nothing but Vivid's product. Gates, builds and test suites run on the
+A Person's Computer runs nothing but Lucid's product. Gates, builds and test suites run on the
 build machine; `scripts/gate/cloud.mjs` refuses a host that resolves to the Computer.
 
 ## Egress
@@ -202,7 +202,7 @@ therefore send traffic out through the Person's home address by using 8791, and 
 8790 in the server's place, which takes the tunnel from the server and lets that program read
 and answer what the browser sends through the proxy (inside HTTPS it sees only where a
 connection goes, not what is said). This is inside the trust the Computer already has: the only
-thing that runs there is Vivid's own Run, which already drives that same browser and can open
+thing that runs there is Lucid's own Run, which already drives that same browser and can open
 any page with the Person's sign-ins. A secret for the tunnel was considered and not built: the
 start command would have to leave it on the Computer for the proxy to read, in the same account
 every program of a Run uses, so it would stop nothing that can reach the port. It would matter
@@ -212,7 +212,7 @@ resolving the name itself, and a program on the Computer cannot widen that.
 
 `egress/address.live.test.ts` (`VIVID_LIVE_EGRESS=1`) opens an address-echo page on a real
 Computer with a real desktop app attached, with egress on and with it off, and compares the
-addresses in the receipts the Computer's browser left, not what Vivid said about them.
+addresses in the receipts the Computer's browser left, not what Lucid said about them.
 
 Boat supplies the real desktop, Chrome and native input driver. Running state carries a short-lived,
 token-gated Viewer address; provider keys never enter client state or model context. Browser and

@@ -4,7 +4,7 @@ description: |-
   When the Person wants something to happen later or on its own (a reminder at a time, something every morning, a page or feed checked for a change), or wants a live display they can read and act on (a tracker, a list, a counter) that none of their Integrations already holds.
 metadata:
   provenance: |-
-    Adapted from Executor 2.0.0-beta.23's own app-authoring skill (packages/app-templates/executor/skills/app-authoring: SKILL.md, tools.md, events.md, workflows.md), for apps framework 0.0.1-beta.92. Vivid's names replace Executor's where they differ.
+    Adapted from Executor 2.0.0-beta.23's own app-authoring skill (packages/app-templates/executor/skills/app-authoring: SKILL.md, tools.md, events.md, workflows.md), for apps framework 0.0.1-beta.92. Lucid's names replace Executor's where they differ.
 ---
 
 You make it yourself, as an Integration of your own: a small app whose source you write with `make_integration`. The app does one thing on its own (waits for a time, ticks on a schedule, checks something) and emits an **event** when it happens. You then `watch` that event with an instruction saying what to do, and each time it fires you wake in the background and put what matters on the Person's Feed with `post`. The app only says _that_ something happened; the watch instruction holds the work. An app that only holds data for a display (see `references/displays.md`) has tools and no event: skip the event, the watch and the timing questions.
@@ -13,7 +13,7 @@ Agree the outcome first: what, and for background work when and in which time zo
 
 ## The source
 
-Send TypeScript source and any app-owned SQL migrations the reference requires; Vivid adds `package.json` and pins the framework. `index.ts` has a default `defineApp(requirements, { tools, workflows?, schedules? })` export from `"apps"`. Tools are query (reads) and mutation (changes); both take `{ input: object({...}) }` and a handler `async (ctx, input) => result`. Return small JSON.
+Send TypeScript source and any app-owned SQL migrations the reference requires; Lucid adds `package.json` and pins the framework. `index.ts` has a default `defineApp(requirements, { tools, workflows?, schedules? })` export from `"apps"`. Tools are query (reads) and mutation (changes); both take `{ input: object({...}) }` and a handler `async (ctx, input) => result`. Return small JSON.
 
 An event is declared in `requirements.events` and emitted from a mutation:
 

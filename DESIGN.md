@@ -1,18 +1,18 @@
-# Vivid — Design language
+# Lucid — Design language
 
-What any agent (human or AI) must follow to touch Vivid's UI. Ground truth:
+What any agent (human or AI) must follow to touch Lucid's UI. Ground truth:
 `packages/design/tokens/src/tokens.css` is the single source for every value
 in this file. If code and this file disagree, fix one of them — never fork.
 
 ## The one product rule
 
 Every screen must justify why it is not a message in the thread. One surface:
-a thread list, a thread, a settings gear. Vivid is the agent — the word
+a thread list, a thread, a settings gear. Lucid is the agent — the word
 "agent" never appears in the product. See `docs/01-principle.md`.
 
 ## Sources, and what each settled
 
-| Source          | What Vivid took                                                                           |
+| Source          | What Lucid took                                                                           |
 | --------------- | ----------------------------------------------------------------------------------------- |
 | Open Session    | Surface ramp, shadow tiers, edge shadow rule, type weights, composer radius, rail heights |
 | Grok Bot (Sand) | Alpha ink from one base, status hue pairs, the ten face colors, and theme tokens          |
@@ -33,12 +33,12 @@ don't have, the tokens change first, then the component.
   that must be read stop at `ink-3`; `ink-4` is for marks and placeholders.
 - **Hairlines are alpha ink** at 6–30%. Lines separate structure; shadows
   create depth. Never both on one element.
-- **Accent is Vivid's color** (`#7c6cff`). It appears on the face, the focus
+- **Accent is Lucid's color** (`#7c6cff`). It appears on the face, the focus
   ring, the one primary button, and "Needs you". Nowhere else.
 - **Status hues are a convention**: sky = working, accent = needs you,
   amber = approve, green = success, red = danger. A thread reads the same hue
   in the sidebar, the thread, and the header. Nothing decorative uses them.
-- **Faces are the ten Grok Bot colors.** Vivid's face is always violet.
+- **Faces are the ten Grok Bot colors.** Lucid's face is always violet.
 
 ## Elevation
 

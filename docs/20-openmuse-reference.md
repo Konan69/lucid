@@ -1,22 +1,22 @@
 # OpenMuse reference: what to borrow
 
-2026-10-03: Historical borrowing plan; built Approvals, Input requests, Run records, Executor-owned Integration credentials, and Boat supersede its Vivid gap claims; current truth is in domain READMEs and [docs/14](14-product-feature-set-and-grok-bot-parity.md), and Watches and the Feed own proactivity; reminders await the clock app.
+2026-10-03: Historical borrowing plan; built Approvals, Input requests, Run records, Executor-owned Integration credentials, and Boat supersede its Lucid gap claims; current truth is in domain READMEs and [docs/14](14-product-feature-set-and-grok-bot-parity.md), and Watches and the Feed own proactivity; reminders await the clock app.
 
 OpenMuse (`CopilotKit/OpenMuse`, MIT) is a single-owner personal-assistant template: Hono server,
 CopilotKit runtime over AG-UI, Expo client, PGlite/PostgreSQL, a Playwright browser worker, and an
-optional Docker "computer". This note records the mechanisms worth adapting into Vivid, with exact
+optional Docker "computer". This note records the mechanisms worth adapting into Lucid, with exact
 source locations, and what must change on the way in.
 
 - **Checkout:** `refs/openmuse` (ignored), commit `ef8f608`, 22 Sep 2026. Line numbers refer to it.
 - **License:** MIT. Copied code keeps the MIT notice and names its origin in JSDoc; identifiers take
-  Vivid's vocabulary (see "Borrowed code takes Vivid's names" in `CLAUDE.md`).
+  Lucid's vocabulary (see "Borrowed code takes Lucid's names" in `CLAUDE.md`).
 - **Reading rule:** borrow the _behavior and invariants_. Their implementation style — one JSONB
   `records` table, `zod`, string status fields, optional-field bags, Promise classes, `setInterval`
-  polling, a catch-all `AppError(message, status)` — does not meet Vivid's standard and is not ported.
+  polling, a catch-all `AppError(message, status)` — does not meet Lucid's standard and is not ported.
 
 ## Summary
 
-| #   | Mechanism                                              | OpenMuse source                                                                                     | Vivid target                             | Priority |
+| #   | Mechanism                                              | OpenMuse source                                                                                     | Lucid target                             | Priority |
 | --- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------- | ---------------------------------------- | -------- |
 | 1   | Hash-bound, expiring approval with atomic claim        | `apps/server/src/actions.ts`, `apps/server/src/db.ts:77-94`, `packages/domain/src/index.ts:117-156` | `apps/server/src/approvals` (empty)      | P0       |
 | 2   | Outcome-unknown for uncertain external writes          | `packages/integrations/src/google.ts:19-27,551-606`, `apps/server/src/db.ts:90-94`                  | Approvals + Connections                  | P0       |
@@ -37,7 +37,7 @@ source locations, and what must change on the way in.
 | 17  | Inline result cards linked to durable records          | `apps/mobile/src/thread-artifacts.tsx`, `browser-tool-card.tsx`, `mail-tool-card.tsx`               | Thread UI (web + mobile)                 | P1       |
 | 18  | Suggestions with source evidence                       | `apps/server/src/engine/service.ts:441-577`                                                         | Today                                    | P2       |
 
-P0 is the trust loop Vivid lacks entirely: Approval, Input request, Run lease, and honest
+P0 is the trust loop Lucid lacks entirely: Approval, Input request, Run lease, and honest
 uncertainty. Everything else rides on it.
 
 ## 1. Approval bound to a content hash, with expiry and an atomic claim
@@ -66,7 +66,7 @@ both execute. Every transition writes an activity entry (`actions.ts:192-201`).
 States (`packages/domain/src/index.ts:142-150`): `awaiting_review → executing → succeeded | failed |
 outcome_unknown`, or `awaiting_review → denied | cancelled | expired`.
 
-**Vivid mapping.** `docs/10-product-decisions.md`/`CLAUDE.md` define Approval as "authorization for one consequential
+**Lucid mapping.** `docs/10-product-decisions.md`/`CLAUDE.md` define Approval as "authorization for one consequential
 action, preserving action, risk, rationale, scope, and decision". OpenMuse has action + decision but
 no risk, rationale, or scope, and no decider identity.
 
@@ -119,7 +119,7 @@ cheap, and prevents duplicate emails and events. P0.
 Task states: `queued, running, waiting_approval, waiting_input, scheduled, paused, succeeded,
 failed, cancelled` (`packages/domain/src/agent.ts:3-12`).
 
-**Vivid mapping.** This is Vivid's **Run**: one bounded attempt to advance a Thread.
+**Lucid mapping.** This is Lucid's **Run**: one bounded attempt to advance a Thread.
 Product Run records live in `apps/server/src/threads`; Flue owns conversation execution and its durable lifecycle.
 
 **Adapt.**
@@ -140,7 +140,7 @@ list of what is missing (`service.ts:844-864` stores `missingFields`). `answer()
 and CAS-moves the task to `queued` (`service.ts:306-330`). The worker picks it up; completed steps
 are skipped because their results were checkpointed (`service.ts:813-835,866-876`).
 
-**Adapt.** Vivid's **Input request** is a durable record, not a status string: it belongs to a Run,
+**Adapt.** Lucid's **Input request** is a durable record, not a status string: it belongs to a Run,
 names the Thread, carries a schema for the expected answer, and is answered by a Person with
 permission. The answer decodes against that schema before the Run is requeued. OpenMuse's
 single `question` string is too weak to render a form. Take the "resume by requeue, skip
@@ -156,7 +156,7 @@ returns the stored result instead of repeating the side effect. After the run ha
 (waiting or finished), further tool calls return `{paused: true}` (`model.ts:55-62`).
 
 **Adapt.** Worth keeping for side-effecting tools that are not behind an Approval. Check first how
-Flue replays a turn after a crash (`pnpm exec flue docs …`) — the journal belongs at Vivid's tool
+Flue replays a turn after a crash (`pnpm exec flue docs …`) — the journal belongs at Lucid's tool
 adapter boundary and must not duplicate Flue's own transcript.
 
 ## 6. Keyed notifications and outcome publication
@@ -168,7 +168,7 @@ encode the event: `task-done:<id>`, `task-error:<id>:<attempts>`, `input:<id>:<h
 every 60 s re-publishes outcomes for all tasks (`service.ts:73-80`), which is what makes publication
 survive a crash between "commit outcome" and "notify".
 
-**Adapt.** Vivid notifications (`apps/server/src/notifications`, 22 lines) should take the
+**Adapt.** Lucid notifications (`apps/server/src/notifications`, 22 lines) should take the
 semantic-key idempotency with a unique index. Replace the full-table rescan with an outbox written
 in the same transaction as the Run/Approval state change.
 
@@ -182,13 +182,13 @@ restricts IPv6 to `2000::/3` minus documentation/6to4/Teredo. The browser contex
 request through it and aborts failures; WebSockets are closed; popups closed; dialogs dismissed
 (`apps/worker/src/browser.ts:215-235`).
 
-**Vivid mapping.** `docs/04-computer.md` already requires that egress through the Person's laptop
+**Lucid mapping.** `docs/04-computer.md` already requires that egress through the Person's laptop
 "cannot reach the LAN". This is a ready, tested classifier for that rule.
 
 **Adapt.** Port `isPublicIp` and the URL check nearly verbatim as a pure module with its tests
 (`tests/browser.test.ts`). Route-level checks alone leave a DNS-rebinding gap, because the browser
 resolves the name again; OpenMuse closes it with an egress proxy that connects only to the
-already-validated address, never a second lookup (`apps/worker/src/proxy.ts`). Vivid's egress
+already-validated address, never a second lookup (`apps/worker/src/proxy.ts`). Lucid's egress
 path, including the laptop relay, needs the same property.
 
 ## 8. Persistent browser profile and take-control console
@@ -201,7 +201,7 @@ page (`apps/server/src/browser-console.ts`) that shows a PNG screenshot refreshe
 posts clicks (scaled to 1280×800), typed text, keys, and scroll. It never runs remote page code in
 the app document.
 
-**Vivid mapping.** Vivid's target is a whole desktop over VNC with a synced Chrome profile
+**Lucid mapping.** Lucid's target is a whole desktop over VNC with a synced Chrome profile
 (`docs/04-computer.md`), so the screenshot console is not the destination. It is a credible
 **interim** Computer: real, persistent, and takeable, shippable before the desktop exists.
 
@@ -226,7 +226,7 @@ which `CLAUDE.md` forbids; a VNC stream or event-driven frames replace it.
 - on timeout or a lost Docker client, **stops the whole container**, because `docker exec` cannot be
   cancelled reliably, and the lease is not released until the stop is confirmed.
 
-**Vivid mapping.** Vivid wants a whole machine, not a 30-second sandbox; OpenMuse's limits are the
+**Lucid mapping.** Lucid wants a whole machine, not a 30-second sandbox; OpenMuse's limits are the
 opposite thesis. Two ideas still transfer to `apps/server/src/computers`: receipt-before-execute
 with an idempotency key, and "kill the whole unit when you cannot prove a command stopped".
 
@@ -248,7 +248,7 @@ headers. Sign over Company + Artifact id + version, read the key with `Config.re
 `connectionId` so a token from a replaced connection cannot overwrite the new one
 (`db.ts:105-111`).
 
-**Adapt.** Vivid currently stores Google `access_token` and `refresh_token` as plaintext `text`
+**Adapt.** Lucid currently stores Google `access_token` and `refresh_token` as plaintext `text`
 columns (`apps/server/src/connections/tables.ts:9-10`). Adopt the envelope, read the key through
 `Config.redacted`, and bind the AAD to the Connection id (not a global constant) so a ciphertext
 cannot be moved between Connections. Also take the refresh guard: a refreshed token only lands if
@@ -259,7 +259,7 @@ the Connection id still matches. P1, arguably P0 before any shared deployment.
 Beyond the write-uncertainty rule (§2): calendar updates and deletes read the event, require an ETag,
 and send `If-Match` so a stale review cannot overwrite a changed event
 (`google.ts:523-548,787-816`); requests use `redirect: "error"` and a 30 s timeout
-(`google.ts:564-575`); attachment size caps are explicit (`google.ts:15-17`). Vivid already has a
+(`google.ts:564-575`); attachment size caps are explicit (`google.ts:15-17`). Lucid already has a
 Google Connection (`apps/server/src/connections/google`); compare against these points rather than
 porting the file.
 
@@ -278,7 +278,7 @@ stripping is worth taking into Library ingestion regardless of form filling.
 return an Input request listing the supported fields → fill a new copy (original kept, linked by
 `parentId`) → checkpoint → propose `email.send` with the filled file attached → `waiting_approval`.
 Each step checkpoints so a re-lease resumes at the right step. Use it as the acceptance scenario for
-Vivid's Run + Input request + Approval slice; as a product feature it can run in response to an app event.
+Lucid's Run + Input request + Approval slice; as a product feature it can run in response to an app event.
 
 ## 15. Page watch with change dedupe
 
@@ -286,14 +286,14 @@ Vivid's Run + Input request + Approval slice; as a product feature it can run in
 differs), `contains`, or `price_below` (a USD regex, `service.ts:993-996`). Level-triggered
 conditions notify only on the transition into matched (`service.ts:935-936`); change notifications
 are keyed by content hash (`service.ts:979`). The watch reschedules itself as a `scheduled` task.
-Vivid currently reacts to Executor app events through Watches. Scheduled public-page checks are unavailable.
+Lucid currently reacts to Executor app events through Watches. Scheduled public-page checks are unavailable.
 
 ## 16. Client message queue
 
 `apps/mobile/src/conversation-queue.ts` is an external store (`subscribe`/`getSnapshot`, suitable
 for `useSyncExternalStore`) holding messages typed while a response streams. It sends them one at a
 time; on failure it pauses and **never resends** the failed message (`conversation-queue.ts:38-41`).
-Vivid's Flue runtime already admits messages mid-response (`docs/14-product-feature-set-and-grok-bot-parity.md`), so take only the
+Lucid's Flue runtime already admits messages mid-response (`docs/14-product-feature-set-and-grok-bot-parity.md`), so take only the
 "visible pending list + pause on failure, no implicit resend" behavior into `packages/client`.
 The composer keeps the draft on stop (`apps/mobile/src/chat.tsx:307-316`).
 
@@ -303,7 +303,7 @@ Tool results render as cards in the Thread and link to the saved record rather t
 re-described in prose: `FileThreadCard` and `TaskThreadCard` (`apps/mobile/src/thread-artifacts.tsx`),
 the browser card with its live/running state (`browser-tool-card.tsx`), and mail results
 (`mail-tool-card.tsx`). Borrow the pattern — every Run output is an Artifact with a card that opens
-it — not the components; Vivid's UI is built to its own design language (`docs/08-design-language.md`).
+it — not the components; Lucid's UI is built to its own design language (`docs/08-design-language.md`).
 
 ## 18. Suggestions with evidence
 
@@ -311,22 +311,22 @@ it — not the components; Vivid's UI is built to its own design language (`docs
 content-derived id, and retires suggestions whose source was already answered or completed. The
 matching is keyword regex (`/form|permission|complete|fill|sign/`, `/coffee|meet|available/`), which
 is a demo, not a model. Keep the shape — `reason` + `evidence[]` + accept/edit/dismiss, retire when
-obsolete — for Today; generate the suggestions with Vivid itself.
+obsolete — for Today; generate the suggestions with Lucid itself.
 
 ## Not worth borrowing
 
 - **Storage model.** One `records(owner, kind, id, data jsonb)` table (`apps/server/src/db.ts:130-132`)
-  with JSONB-containment CAS. No schema, no migrations, no relations. Vivid uses Drizzle tables.
+  with JSONB-containment CAS. No schema, no migrations, no relations. Lucid uses Drizzle tables.
 - **Identity.** One owner behind a shared access key (`auth.ts:15-40`). No Person, Company, or
   Membership. Every mechanism above must be re-scoped to Company tenancy.
 - **Thread history.** Live mode depends on CopilotKit Intelligence, a separate paid service outside
-  the MIT license. Flue owns this in Vivid.
+  the MIT license. Flue owns this in Lucid.
 - **Computer thesis.** A network-less 30-second container is "pieces of a computer"; see
   `docs/04-computer.md`.
 - **Polling everywhere.** 1 s worker tick, 60 s maintenance rescan of every table, 2 s screenshot
   refresh.
 - **Error model.** `AppError(message, httpStatus)` and string-matched `outcomeUnknown` flags.
-- **Feature sprawl.** Separate Ideas, Goals, Tracking, Finance, and Documents screens; Vivid's first
+- **Feature sprawl.** Separate Ideas, Goals, Tracking, Finance, and Documents screens; Lucid's first
   screen is the Thread (`docs/01-principle.md`).
 - **Finance CSV** (`apps/server/src/engine/finance.ts`) and the **OpenBot** adapter
-  (`packages/backends/src/openbot.ts`): demos without a Vivid use.
+  (`packages/backends/src/openbot.ts`): demos without a Lucid use.

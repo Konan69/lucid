@@ -1,7 +1,7 @@
 ---
 name: remember-and-correct-preferences
 description: |-
-  When the Person asks Vivid to remember, revise or forget how they like to work.
+  When the Person asks Lucid to remember, revise or forget how they like to work.
 metadata:
   provenance: |-
     Shipped guidance keeps completion evidence and permission beside the steps.

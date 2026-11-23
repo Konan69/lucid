@@ -7,7 +7,7 @@ metadata:
     Adapted from Muse's shipped procedure, read in full at
     `artifacts/night/raw/wesbos-muse/repo/opt/hatch/skills/artifacts/testing/SKILL.md`.
     Kept: look at what was rendered, scan for leftover scaffolding, stop after three failed fixes.
-    Its per-format gate scripts have no Vivid tool and are not carried over.
+    Its per-format gate scripts have no Lucid tool and are not carried over.
 ---
 
 A deliverable is checked by looking at what the Person will see, freshly, not by trusting the steps that produced it. Run this before saying that a document, page or data file is ready, and whenever the Person asks for a check. Never hand it over while a check below fails.

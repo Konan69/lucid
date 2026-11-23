@@ -1,4 +1,4 @@
-# One product: a person's Vivid and a team's Vivid are the same Vivid
+# One product: a person's Lucid and a team's Lucid are the same Lucid
 
 2026-10-03: This remains build scope and design intent; measured implementation status is in [docs/14](14-product-feature-set-and-grok-bot-parity.md) and domain READMEs. The extended Boat proof in [docs/04](04-computer.md) supersedes the browser-input refusal claim below; provider input now works, while app viewing and Thread-driven input remain unproven.
 
@@ -8,25 +8,25 @@ one wins until it is revised.
 
 ## The decision
 
-There is one Vivid. A Person who signs up gets their own space and nothing else: the first screen
+There is one Lucid. A Person who signs up gets their own space and nothing else: the first screen
 is still the Thread and nothing is configured. A **Company** exists only because someone created it
 on purpose, by name; it is never made on a Person's behalf. Creating one, or accepting an
-invitation to one, adds a second workspace beside the personal one. Inside it the same Vivid works
+invitation to one, adds a second workspace beside the personal one. Inside it the same Lucid works
 the same way, with shared Threads, shared knowledge and shared Connections beside what stays
 private. There is no personal product and no team product, and no roster.
 
 A session is always working in exactly one **workspace**: `Personal`, or `Company` with the role the
 Person holds there. Switching is one call and every open screen follows it.
 
-Vivid follows these Team Bot rules, applied to itself:
+Lucid follows these Team Bot rules, applied to itself:
 
-| Rule                      | In Vivid                                                                                                                                             |
+| Rule                      | In Lucid                                                                                                                                             |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Set up once               | A Company owner or admin adds shared Connections, rules, skills and Library files once; they reach every Person's Threads.                           |
 | Conversations are private | A Thread is seen only by its audience. Nobody, including an owner, reads a Thread they are not in.                                                   |
 | Acts as the asker         | A personal Connection is used only for the Person who owns it. A shared Connection is read-only for everyone.                                        |
-| Two memories              | Notes with each Person are private. Company memory is shared and is written only when someone says the whole Company should know, and Vivid says so. |
-| Shared work asks first    | In a shared Thread, Vivid asks a Person before using that Person's own Connection.                                                                   |
+| Two memories              | Notes with each Person are private. Company memory is shared and is written only when someone says the whole Company should know, and Lucid says so. |
+| Shared work asks first    | In a shared Thread, Lucid asks a Person before using that Person's own Connection.                                                                   |
 | Secrets stay secret       | Credential values never enter model context, a Thread, or a log.                                                                                     |
 | Usage follows the asker   | A Run is attributed to the Person who started it.                                                                                                    |
 | Admins control reach      | Admins invite and remove people, set Company rules and shared Connections, and read the audit record. They do not read private Threads.              |
@@ -64,7 +64,7 @@ private, because there is nobody to share it with.
 ### Who may see what
 
 One module, `apps/server/src/auth/access.ts`, turns a call into an **Actor** (the Person it acts
-for, their workspace, and whether a Person or Vivid is calling) and supplies the conditions every
+for, their workspace, and whether a Person or Lucid is calling) and supplies the conditions every
 query is scoped with. Thread reach is decided in `threads/access.ts`. No handler re-derives either.
 
 - **Thread:** the creator, the listed participants, or every Member when the audience is Company.
@@ -102,13 +102,13 @@ The runtime proposes; the server decides. Nothing consequential runs from model 
    behavior stricter. A **Never** rule refuses the action, and it cannot be approved in the Thread.
    A read with no rule against it runs.
 5. Everything else that touches the Person's own accounts or browser, or is destructive, goes to
-   **Review**. Undoable work on Vivid's own Computer runs without one. The reviewer is a separate
+   **Review**. Undoable work on Lucid's own Computer runs without one. The reviewer is a separate
    typed decision made by the server (`approvals/review.ts`, Effect `Decision` answered by Jev), not
-   the model doing the work, so Vivid never approves its own action. It is given the exact action
+   the model doing the work, so Lucid never approves its own action. It is given the exact action
    (tool, complete arguments, summary, Integration) and what the acting Person said in the turn
-   Vivid is working on, with their message before it as background only. Those words are read
+   Lucid is working on, with their message before it as background only. Those words are read
    from the conversation history and attributed by the server's own record of who started each
-   Run, never by a name or by what Vivid says was asked. A Watch contributes no Person-authored request; its instruction and outside payload are untrusted. An answer counts
+   Run, never by a name or by what Lucid says was asked. A Watch contributes no Person-authored request; its instruction and outside payload are untrusted. An answer counts
    only in a private Thread. The reviewer returns three measurements: how likely it is that the
    Person **asked** for this (or it is a necessary step of what they asked), how likely the action
    goes **beyond** the request (a recipient, account or amount they did not name), and its
@@ -117,7 +117,7 @@ The runtime proposes; the server decides. Nothing consequential runs from model 
    - An action the Person asked for, and that stays inside what they asked, runs, including a
      send, a payment or a delete. That is how "I told it to do this" becomes "it did it" without
      the working model vouching for itself.
-   - An action Vivid chose on its own runs when it is contained, and asks when it reaches other
+   - An action Lucid chose on its own runs when it is contained, and asks when it reaches other
      people, spends money or cannot be undone.
    - An **ask first** rule always asks. An **allow automatically** rule lets an undoable action run
      without a review; a destructive one is still reviewed. Neither bypasses a Never rule.
@@ -128,7 +128,7 @@ The runtime proposes; the server decides. Nothing consequential runs from model 
      failure gets one retry. Reading the request stays inside the first attempt's three-second
      limit; each provider attempt uses the same remaining budget. Missing requests, oversized arguments, disabled decisions,
      or unavailable review after retry leave the action unreviewed: a write runs, a destructive
-     action asks. Never, Company and ask-first rules still bind. Background changes run only when Jev rates them contained; otherwise Vivid asks.
+     action asks. Never, Company and ask-first rules still bind. Background changes run only when Jev rates them contained; otherwise Lucid asks.
    - Executor's per-tool approval is machinery underneath. A Jev-reviewed action or the Person's
      approval can answer its saved request at once. A read or an Allow-rule action goes back
      through the Gate for a review when Executor reveals that it needs approval. An unreviewed
@@ -140,7 +140,7 @@ The runtime proposes; the server decides. Nothing consequential runs from model 
    proposed rule to that Person's allow instructions (the newest twenty are kept). The claim is
    one conditional update, so two answers cannot both run the action. The server executes the stored
    action, not a new proposal, so the preview and the action cannot drift.
-8. The outcome returns to the Thread as a signal and Vivid continues. A write whose result is
+8. The outcome returns to the Thread as a signal and Lucid continues. A write whose result is
    uncertain is recorded as **outcome unknown** and is never retried silently.
 9. Every allowed, blocked, approved and denied action writes an **AuditEntry**. Review status, fallback reasons and retry decisions are traced as tags; the reviewer's
    measurements are not part of the AuditEntry.
@@ -149,11 +149,11 @@ The mechanism is Grok Bot's Auto-review (0.30 `source/host/extensions/auto-revie
 `source/packages/agent/smart-mode-classifier-context.ts`, and the approval card in
 `frontend/src-0.30/views/send-message-auto-review-approval-card.tsx`): an independent classifier call
 returning allow or block with a proposed allow rule, the same context limits and the same three
-questions. Vivid uses the review budget and retry policy above. Two things differ. Grok Bot's classifier
-returns allow or block; Vivid's returns measurements and the server decides, so the thresholds and
-the precedence are code, not prompt. Grok Bot rejects the action when the classifier fails; Vivid
+questions. Lucid uses the review budget and retry policy above. Two things differ. Grok Bot's classifier
+returns allow or block; Lucid's returns measurements and the server decides, so the thresholds and
+the precedence are code, not prompt. Grok Bot rejects the action when the classifier fails; Lucid
 uses the effect label only when unreviewed: a write runs and a destructive action asks. And Grok Bot's
-classifier runs on its vendor's backend, whose prompt and model are not in the shipped app; Vivid's
+classifier runs on its vendor's backend, whose prompt and model are not in the shipped app; Lucid's
 decision wording is ours and is judged by the live evaluation `approvals/review.live.test.ts`. The
 proposed rule and **Always allow** from the reviewer are not built: the typed decision answers
 measurements, and Jev does not write text.
@@ -165,9 +165,9 @@ Background work started by a Watch goes through the same review. Its instruction
 payload are untrusted. Nobody being present grants authority: when the reviewer says ask, the Approval waits
 for the Person, and an Approval that expires unanswered is a refusal.
 
-The **Computer** is Vivid's own machine, and work on it is contained there: a command or a browser
-step is not an action in anyone's account. Vivid's shell and files there are its own: once a
-Person has allowed Vivid its Computer, a command or a file change is never asked about, never
+The **Computer** is Lucid's own machine, and work on it is contained there: a command or a browser
+step is not an action in anyone's account. Lucid's shell and files there are its own: once a
+Person has allowed Lucid its Computer, a command or a file change is never asked about, never
 forbidden by a rule and not written to the audit record. A browser or desktop step runs without
 asking when no rule matches; a rule can still forbid it or make it ask, and if the rule check
 cannot run, it asks. Those steps are shown on the Computer's screen and are not recorded one by
@@ -181,7 +181,7 @@ the people in a shared Thread, or steered by what someone writes, so nothing in 
 handle on a record.
 
 - **Who and where is injected, not said.** The server sends each delivery to the runtime with its
-  scope beside it: the Person Vivid acts for, and the Library folder the work is confined to when
+  scope beside it: the Person Lucid acts for, and the Library folder the work is confined to when
   there is one (a scoped folder). The conversation itself carries only the speaker's name and the
   delivery's turn number. Tools receive the scope through a Layer; the model cannot read it or
   change it. After a restart the runtime asks the server for the scope of a turn, with its own
@@ -193,13 +193,13 @@ handle on a record.
 - **Every tool result is a view.** Each record a tool returns is projected, field by field, into
   what a person would be told about it. A test builds every view from records whose identifiers
   are recognisable markers and fails if one reaches the model.
-- **The outside world's data is not Vivid's.** An email address is how a person is reached, and a
+- **The outside world's data is not Lucid's.** An email address is how a person is reached, and a
   provider's own record ids are what its tools take back, so a Connection tool's output passes
   through as the provider gave it.
 - **One exception, and why.** The cards for an Approval, a question and a service to connect are
   drawn by the clients from the tool result in the conversation, so those three results still
   carry the reference the card needs.
-- **One response is for one Person.** In a shared Thread, a message from someone else while Vivid
+- **One response is for one Person.** In a shared Thread, a message from someone else while Lucid
   is still answering is not joined into that response; it is refused with a sentence, and sent
   again when the answer is done. Otherwise the rest of one Person's request would run with
   another's accounts.
@@ -214,9 +214,9 @@ Executor is the Connection layer. It runs beside the server as one more local pr
 its authenticated HTTP API. Its key authorizes its whole installation, so it is never exposed to a
 client or to the runtime; the server holds it and owns the permission model.
 
-- A Vivid **Connection** maps to one Executor account plus the profile that selects it.
+- A Lucid **Connection** maps to one Executor account plus the profile that selects it.
 - The catalog of services, the live tool list, the read or write classification and credential
-  storage come from Executor. Vivid stores the mapping and the ownership, never a credential.
+  storage come from Executor. Lucid stores the mapping and the ownership, never a credential.
 - The model sees a small fixed tool set: `find_tools` and `use_tool`, plus `connect` to offer a
   service in the Thread. Fifty connected services cost the prompt what one does. A tool is named by
   the account and tool it was shown under, and the server resolves that pair exactly.
@@ -227,7 +227,7 @@ The hand-written Google providers are retired when the Executor path covers the 
 ### Google Integrations
 
 Gmail, Google Calendar, Google Drive, Google Docs, Google Sheets and Google Tasks are part of every
-Vivid. The server carries each one as the source of an Executor app
+Lucid. The server carries each one as the source of an Executor app
 (`apps/server/src/connections/google.ts`) and installs it itself. There is no setting for them, no
 identifier to configure and no operator step on Executor. They were once a file of app identifiers
 an operator produced on one Executor and named in a setting. A deploy cannot carry a file, so the
@@ -238,7 +238,7 @@ hosted server never offered Google.
   feed is unavailable.
 - **Installing.** Executor's catalogue names each service's OpenAPI definition
   (`curated/google-*`, kind `openapi`) but installs only MCP entries. So the first Begin for a
-  service deploys Vivid's source with `POST …/apps/deploy`. The app's name carries a hash of the
+  service deploys Lucid's source with `POST …/apps/deploy`. The app's name carries a hash of the
   source (`Vivid Gmail 614f2d9f89b222a5`). Every later Begin, from any server on the same source,
   finds that app in the organization's inventory. A server whose source changed installs a new app
   beside it, and a Connection made earlier keeps the app it names. The app is shared code:
@@ -250,18 +250,18 @@ hosted server never offered Google.
   token only then), and no resource parameter. The provider declares the API host, so app code
   holds a token handle and Executor's network swaps in the real token only on a request to that
   host. Each service has one API host and one account, so a tool takes Google's own input.
-- **The client.** Executor holds no Google client of its own. Vivid sends the installation's one
+- **The client.** Executor holds no Google client of its own. Lucid sends the installation's one
   Google client on every `…/oauth/start` as `client: { clientId, clientSecret }`, and Executor
   keeps it encrypted under the owner, provider, callback and scopes
   (`packages/sdk/src/implementation/oauth.ts`, `resolveSetup` and `beginOAuth`). It is the client
-  a Person signs in to Vivid with: **GOOGLE_CLIENT_ID** and **GOOGLE_CLIENT_SECRET**, which the
-  server already requires. Vivid stores account and profile references and the pending OAuth
+  a Person signs in to Lucid with: **GOOGLE_CLIENT_ID** and **GOOGLE_CLIENT_SECRET**, which the
+  server already requires. Lucid stores account and profile references and the pending OAuth
   state, never a Google grant.
 
 What the Google client must allow, in **Google Cloud > APIs & Services > Credentials**, under
 **Authorized redirect URIs**:
 
-- `https://<domain>/api/auth/callback/google`, where sign-in to Vivid returns
+- `https://<domain>/api/auth/callback/google`, where sign-in to Lucid returns
   (**GOOGLE_REDIRECT_URI**).
 - `https://<domain>/api/connections/return`, where every Integration's sign-in returns. It is
   Executor's one deployment-wide callback (`EXECUTOR_OAUTH_CALLBACK_URL` in `infra/railway.ts`),
@@ -296,35 +296,35 @@ Google references: [web-server OAuth and exact redirect matching](https://develo
 
 ### Integrations added by address
 
-A Person can hand Vivid the address of an MCP server or an OpenAPI document and Vivid adds it as an
+A Person can hand Lucid the address of an MCP server or an OpenAPI document and Lucid adds it as an
 Integration. An address someone typed is untrusted, so two things stand between it and the
-network Vivid runs in:
+network Lucid runs in:
 
-1. **Vivid checks first.** The address must be `http` or `https` with no credentials in it. Every
+1. **Lucid checks first.** The address must be `http` or `https` with no credentials in it. Every
    DNS answer and every redirect is checked at connection time, and anything loopback, private,
    link-local or otherwise not public is refused. A documentation page is followed to its
    specification under the same check.
 2. **Executor must be public-only too.** Executor fetches the checked address again from its own
-   process, and Vivid cannot constrain that second fetch. So adding by address is off until the
+   process, and Lucid cannot constrain that second fetch. So adding by address is off until the
    operator has run Executor with loopback access disabled
    (`EXECUTOR_URL_ALLOW_LOOPBACK_HTTP=false`) and no private-origin exceptions, on a network where
    it cannot reach internal services, and has then declared it with
-   `VIVID_EXECUTOR_PUBLIC_ONLY=true`. Without that declaration Vivid tells the Person that this
-   Vivid is not set up to add a server by address, and adds nothing.
+   `VIVID_EXECUTOR_PUBLIC_ONLY=true`. Without that declaration Lucid tells the Person that this
+   Lucid is not set up to add a server by address, and adds nothing.
 
 What can be added is what Executor can import. An MCP server, and an OpenAPI document that asks
 for no sign-in, a key, or OAuth's authorization-code flow, are added and usable at once or after
 the Person signs in. A document that signs in only by a method Executor's import does not know
-(OAuth's implicit flow is one) is refused, and Vivid says it cannot add that service rather than
+(OAuth's implicit flow is one) is refused, and Lucid says it cannot add that service rather than
 adding something that would fail on first use.
 
-The declaration is a promise about the deployment, not something Vivid can verify. An address that
-answers publicly when Vivid checks it and privately when Executor fetches it is stopped only by
+The declaration is a promise about the deployment, not something Lucid can verify. An address that
+answers publicly when Lucid checks it and privately when Executor fetches it is stopped only by
 Executor's own egress, which is why the second step is not optional.
 
 ## Memory: HelixDB
 
-HelixDB holds Vivid's memory: a graph of records, each with a vector and a full-text index, all
+HelixDB holds Lucid's memory: a graph of records, each with a vector and a full-text index, all
 partitioned by Company.
 
 - **Records:** fact, preference, person, organization, decision, workstream. Each has aliases and
@@ -334,13 +334,13 @@ partitioned by Company.
   extracts candidate records from that exchange, reconciles them against what exists (new, duplicate,
   extends, updates), and writes them to the narrowest scope the Thread allows.
 - **Company memory needs intent.** A record becomes Company memory when a Person says the whole
-  Company should know it. Vivid says when it has saved one.
+  Company should know it. Lucid says when it has saved one.
 - **Read at the start of a Run:** a one-page brief (who this Person is, how they like to work, what
   is in motion), then `recall` on demand. Recall fuses graph, vector and full-text results inside the
   scopes `Access` allows.
 - **Memory is not evidence.** A current fact (a booking, a balance, a status) is confirmed through a
-  Connection before Vivid acts on it.
-- **Visible and correctable.** Settings shows what Vivid knows, by scope. A Person can correct or
+  Connection before Lucid acts on it.
+- **Visible and correctable.** Settings shows what Lucid knows, by scope. A Person can correct or
   forget a record and download everything held about them.
 
 ## Realtime
@@ -372,42 +372,42 @@ The surface rule in [Principle](01-principle.md) holds: a Thread list, a Thread,
 - **Workspaces.** The switcher at the top of the sidebar lists the personal space and every Company
   the Person belongs to, and ends with **Create a company**: a name, and that is all. An invitation
   link shows who invited them and to what before they accept.
-- **Sidebar.** Vivid, then Projects, Library, Skills and Integrations, then Threads
+- **Sidebar.** Lucid, then Projects, Library, Skills and Integrations, then Threads
   grouped by attention:
   **Needs you**, **Working**, then by day. A shared Thread shows the faces of the people in it. A
   search palette (⌘K) finds Threads, Messages and Library items.
-- **Thread.** The header carries Vivid's face, the title, a line saying how Vivid is doing ("Here
+- **Thread.** The header carries Lucid's face, the title, a line saying how Lucid is doing ("Here
   with you", "Working on it…", "Waiting for you"), and **Share**: add people by name, or share
-  with the whole Company. A button opens what is around Vivid: its computers, its integrations and
-  what it lately did here. In a shared Thread each Message shows who sent it, and Vivid shows who it is answering.
+  with the whole Company. A button opens what is around Lucid: its computers, its integrations and
+  what it lately did here. In a shared Thread each Message shows who sent it, and Lucid shows who it is answering.
   Cards in the Thread: a question to answer, an action to approve, a service to connect, a draft to
   send, a result to open.
-- **Reminders.** Unavailable until the clock app lands. Vivid promises future work only when it has a Watch for it.
+- **Reminders.** Unavailable until the clock app lands. Lucid promises future work only when it has a Watch for it.
 - **Library.** Two shelves: **Mine** and the Company's.
-- **Skills.** What Vivid knows how to do: a starter set that ships with it, and what the Person or
+- **Skills.** What Lucid knows how to do: a starter set that ships with it, and what the Person or
   their Company has taught it. Trying one starts a Thread and asks for it in words.
 - **Settings.** General; **People** (invite, roles, remove); **Integrations** (mine and shared);
-  **Rules** (mine and the Company's); **What Vivid knows**; notifications. People, shared
+  **Rules** (mine and the Company's); **What Lucid knows**; notifications. People, shared
   Integrations and Company rules appear only in a Company workspace.
 - **The Computer.** A panel beside the Thread, laid out like a browser window: tabs across the top,
   a toolbar that says who has the keyboard, and the machine's screen. It can be widened to work
   in. In the desktop app the same strip holds pages the Person opens beside the Thread, each a
   browser view the app owns; a link in a reply opens there instead of leaving the app.
 - **Mobile** uses the same contracts and the same Thread, and pairs with a server by a code shown
-  on a signed-in device, so a phone reaches a Vivid running on the Person's own machine.
+  on a signed-in device, so a phone reaches a Lucid running on the Person's own machine.
 - **Desktop** is the same web surface in a packaged app that remembers which server it talks to.
 
 ## How it looks
 
-Vivid is a character the Person works with, and the surface is built so that reads at a glance.
+Lucid is a character the Person works with, and the surface is built so that reads at a glance.
 
 - **A warm canvas.** Paper in light, charcoal in dark; ink and hairlines are tinted the same way.
   Nothing on the page is a neutral grey.
 - **Two typefaces, shipped with the app.** Geist for everything read and operated. Bricolage
-  Grotesque for what Vivid says at size: the greeting, a page's opening line, its own name.
-- **One filled shape in a Thread.** What the Person said is in Vivid's colour; everything else is
+  Grotesque for what Lucid says at size: the greeting, a page's opening line, its own name.
+- **One filled shape in a Thread.** What the Person said is in Lucid's colour; everything else is
   the surface. Words that did not arrive are a dashed outline, never a faded copy.
-- **Vivid's face where work happens.** In the Thread's header with its standing, beside each
+- **Lucid's face where work happens.** In the Thread's header with its standing, beside each
   reply, on the first screen and the welcome. One identity, with moods; there is no roster.
 - **Waiting is shown, not announced.** A reply that starts within a second shows nothing. A longer
   one gets an orb beside the step it is on, and a light travels the composer's edge. A request
@@ -415,9 +415,9 @@ Vivid is a character the Person works with, and the surface is built so that rea
   runs only while there is something to wait for; nothing animates at rest.
 - **The word is Integration.** People see "Integration" for what the code calls a Connection.
 
-## What Vivid can do on its own
+## What Lucid can do on its own
 
-- **Connect what it needs.** Asked to do something that needs a service, Vivid finds it among the
+- **Connect what it needs.** Asked to do something that needs a service, Lucid finds it among the
   Person's integrations or the catalogue, and can add one from an address (an MCP server, an
   OpenAPI spec, a docs page that links one). Signing in or entering a key happens on a card in the
   Thread; a key goes straight to the integration and never into the Thread or the model.
@@ -426,15 +426,15 @@ Vivid is a character the Person works with, and the surface is built so that rea
   pointer and keys; `bash` is a shell. The Computer wakes when work needs it and stops
   when idle. The machine is Boat's (see [The Computer](04-computer.md)); a local container stands
   in for it offline.
-- **Write a program.** `run_code` runs JavaScript Vivid wrote over the tools it already has. The
+- **Write a program.** `run_code` runs JavaScript Lucid wrote over the tools it already has. The
   program runs on the Person's Computer, with that machine's files, network and Node, and holds no
   credentials; every call it makes for the Person is authorised on the server as the acting Person
   and passes the same Gate, and an Approval ends the program.
 - **Read the web.** `read_page` reads one public page without a Computer.
-- **Follow procedures.** A starter set of skills ships with Vivid; a saved one of the same name
+- **Follow procedures.** A starter set of skills ships with Lucid; a saved one of the same name
   replaces it for whoever saved it.
-- **React to events.** A Watch subscribes to an Integration app event through Executor. Events wake Vivid in a background Thread and useful findings reach the Person through the Feed.
-- **Check in.** Vivid takes up open work by itself and decides when; a Person can ask for a fixed
+- **React to events.** A Watch subscribes to an Integration app event through Executor. Events wake Lucid in a background Thread and useful findings reach the Person through the Feed.
+- **Check in.** Lucid takes up open work by itself and decides when; a Person can ask for a fixed
   time in words. See [docs/23](23-product-definition.md).
 
 ## Build order
@@ -460,8 +460,8 @@ Each step leaves a product that runs.
 
 - **Voice.** No calls in this build, and the page loads nothing for them.
 - **Chat channels** (Slack, mail-in). The Thread model above is what they will deliver into.
-- **Ambient participation.** Vivid answers when addressed; it does not join rooms unasked.
-- **To-do lists and project management.** Decided 3 October 2026: Tasks, as work Vivid tracked
+- **Ambient participation.** Lucid answers when addressed; it does not join rooms unasked.
+- **To-do lists and project management.** Decided 3 October 2026: Tasks, as work Lucid tracked
   and followed up, are deleted. They will be designed again as two things. A Person gets a to-do
   list of their own. A Company or team gets product and project management: owned work with a
   state, inside a Project. Nothing of either is built; reminders await the clock app.

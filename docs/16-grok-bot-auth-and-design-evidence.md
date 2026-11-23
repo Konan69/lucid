@@ -1,6 +1,6 @@
 # Grok Bot 0.39: auth and design evidence
 
-2026-10-03: Historical Grok Bot evidence, not Vivid’s auth or UI implementation; Vivid’s Better Auth boundary and current platform state supersede its Vivid mappings in the app READMEs and [docs/14](14-product-feature-set-and-grok-bot-parity.md).
+2026-10-03: Historical Grok Bot evidence, not Lucid’s auth or UI implementation; Lucid’s Better Auth boundary and current platform state supersede its Lucid mappings in the app READMEs and [docs/14](14-product-feature-set-and-grok-bot-parity.md).
 
 This report treats the reconstruction as evidence, not as an invitation to fill gaps. `PROVENANCE.md` says the immutable release is the product specification and requires an inspectable artifact anchor for each recovered behavior (`~/refs/grok-bot-0.39-reconstructed/PROVENANCE.md:17-29`). The release is Grok Bot 0.39.0, upstream package `sand` (`~/refs/grok-bot-0.39-reconstructed/PROVENANCE.md:3-11`).
 
@@ -126,7 +126,7 @@ The activity slot maps running plus composing to `typing`, running without compo
 
 The backend send contract also models dispatch, echo, rejection, interrupt, widget response/dismissal, and local-tool permission resolution (`~/agency/vivid/refs/grok-bot-0.30/protos/GrokBotService.proto:1170-1235`; `.../GrokBotService.proto:1291-1302`).
 
-## What Vivid should copy
+## What Lucid should copy
 
 | Copy                                                                   | Evidence-based reason                                                                                                                                                                                 |
 | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -136,7 +136,7 @@ The backend send contract also models dispatch, echo, rejection, interrupt, widg
 | Typed edge declarations plus runtime validation and top-frame trust.   | Declaration/schema validation and sender checks are separate gates (`.../preload.ts:115-312`; `.../ea1-edge-frames-and-dialogs.ts:168-241`; `.../ea2-otel-tracing.ts:2214-2235`).                     |
 | Semantic tokens and state-driven activity UI.                          | The token namespaces and explicit working/awaiting/error states are reusable without copying renderer class hashes (`.../main-core-mc3-services.ts:698-899`; `.../m4-components.tsx:3480-3630`).      |
 
-## What Vivid should not copy
+## What Lucid should not copy
 
 | Do not copy                                                              | Evidence-based reason                                                                                                                                                                                                                                                   |
 | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
