@@ -1,7 +1,7 @@
 # Grok Bot: machine infrastructure and product surface
 
-Vivid removed scheduled jobs on 16 October 2026. Scheduling references below describe the third-party reference only; Vivid uses Watches and the Feed.
-2026-10-03: Historical Grok Bot evidence and Vivid mappings; Boat’s real-service proof supersedes the implementation context, while current Computer behavior and limits live in [docs/04](04-computer.md) and [docs/14](14-product-feature-set-and-grok-bot-parity.md); reference unknowns remain unknown.
+Lucid removed scheduled jobs on 16 October 2026. Scheduling references below describe the third-party reference only; Lucid uses Watches and the Feed.
+2026-10-03: Historical Grok Bot evidence and Lucid mappings; Boat’s real-service proof supersedes the implementation context, while current Computer behavior and limits live in [docs/04](04-computer.md) and [docs/14](14-product-feature-set-and-grok-bot-parity.md); reference unknowns remain unknown.
 
 **Evidence scope.** This is an artifact map of Grok Bot 0.30/0.39, not a product
 review. `SandBoxService.proto` is treated as the machine wire spine; the 0.39
@@ -161,7 +161,7 @@ unavailable, verifies `sand-data` after container replacement, and separately
 supports `recreate-from-store` hydration (`~/refs/grok-bot-0.39-reconstructed/frontend/src-main/main-app/ea2-coordinator-ipc.ts:2460-2555,2690-2765`).
 This is a dev fallback, not proof of the production server implementation.
 
-**Conclusion for Vivid:** Grok’s evidence agrees with the Vivid domain rule that
+**Conclusion for Lucid:** Grok’s evidence agrees with the Lucid domain rule that
 the Computer’s ordinary POSIX disk is live truth and object storage may snapshot
 it but is not the filesystem the agent executes against (`CONTEXT.md:117-127`).
 Grok’s store is also used for transcript/blob side-channel reads. Whether the production cloud implementation
@@ -289,7 +289,7 @@ an animated product tour plus job examples, optional role, daily-tool selection,
 then Bot creation and computer hand-off. The exact answer payload for `meet` is
 **unknown — no artifact anchor**.
 
-## 2. The Bot/agent model versus Vivid
+## 2. The Bot/agent model versus Lucid
 
 A Bot is a first-class durable record with id, name, description, title, avatar
 shape/color, avatar URL/version, created/updated times, harness, role, optional
@@ -307,11 +307,11 @@ wire model supports Bot-to-Bot messaging and room member turns
 renderer exposes “Messaging another assistant” and “Waiting on another Bot”
 (`~/refs/grok-bot-0.39-reconstructed/frontend/src-0.39/i18n/default/shared.json:472-474,879-895`).
 
-This is deliberately unlike Vivid’s stated “one person, one Vivid”: Vivid’s rule
+This is deliberately unlike Lucid’s stated “one person, one Lucid”: Lucid’s rule
 says one surface, no roster, no agent configuration, with capabilities arriving
 inside the thread (`docs/01-principle.md:5-28`). Grok is evidence for persistent
 identity, readable state, and capability-backed work—not for copying a Bot roster
-into Vivid.
+into Lucid.
 
 ## 3. Feature inventory
 
@@ -406,7 +406,7 @@ This establishes a product hand-off between Bot activity and human screen use.
 Whether “hand-off” also means the cloud Bot delegates to the user-computer
 bridge in every case is **unknown — no artifact anchor**.
 
-# Part C — implications for Vivid
+# Part C — implications for Lucid
 
 ## Take
 
@@ -420,15 +420,15 @@ bridge in every case is **unknown — no artifact anchor**.
 
 ## Reject
 
-| Reject for one person + one Vivid                                            | Why it belongs to Grok’s multi-Bot/team product instead                                                                                                                                                                                                                                 |
+| Reject for one person + one Lucid                                            | Why it belongs to Grok’s multi-Bot/team product instead                                                                                                                                                                                                                                 |
 | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A Bot roster, per-Bot settings, hidden Bots, sections, Bot-to-Bot messaging. | Grok’s data model and UI explicitly support many named agents, team agents, hidden sidebar state, and agent messaging (`refs/grok-bot-0.30/protos/GrokBotService.proto:804-854,1263-1276`; `~/refs/grok-bot-0.39-reconstructed/frontend/src-0.39/i18n/default/core.json:1878-1930`).    |
-| A first-class Plugins/Skills/Connectors destination.                         | Grok needs marketplace/install/team-required/plugin-variable machinery; Vivid’s principle says capabilities arrive in-thread and engineering categories stay underneath (`refs/grok-bot-0.30/protos/DashboardService.proto:2762-2804,6712-6895`; `docs/01-principle.md:18-28`).         |
+| A first-class Plugins/Skills/Connectors destination.                         | Grok needs marketplace/install/team-required/plugin-variable machinery; Lucid’s principle says capabilities arrive in-thread and engineering categories stay underneath (`refs/grok-bot-0.30/protos/DashboardService.proto:2762-2804,6712-6895`; `docs/01-principle.md:18-28`).         |
 | Team/admin pod management in the main product.                               | Member pod scans, kill-by-cluster/pod, host status, snapshot and admin transcript RPCs are backend/operator controls (`refs/grok-bot-0.30/protos/SandBoxService.proto:228-379,551-588`).                                                                                                |
 | Treat computer-image upgrades as routines.                                   | The separate upgrade schedule targets an image and pauses/resumes assistants; it is not a user job or recurring Bot task (`refs/grok-bot-0.30/protos/SandBoxService.proto:390-438`; `~/refs/grok-bot-0.39-reconstructed/frontend/src-0.39/i18n/default/settings.json:334-335,931-932`). |
 | Copy the onboarding’s multiple-Bot framing.                                  | “Give each Bot a job” and three Bot examples are optimized for a team of assistants (`named screenshot 01-give-each-bot-a-job.png`; `~/refs/grok-bot-0.39-reconstructed/frontend/src-0.39/i18n/default/core.json:3817-3818`).                                                           |
 
-## Open questions for Vivid
+## Open questions for Lucid
 
 1. ~~Does one Person own one persistent Computer, or does each Thread get its own machine?~~
    **Resolved on re-inspection (7 Sep 2026) — the evidence does settle this.**
@@ -438,7 +438,7 @@ bridge in every case is **unknown — no artifact anchor**.
    no user id, no project id. The box is therefore scoped **implicitly to the authenticated
    principal**: identity arrives via the bearer token and `x-cursor-team-id` header, never as a
    request field (see `docs/16-grok-bot-auth-and-design-evidence.md`, "Backend request
-   authentication"). This is the same shape Vivid's own `listProjects` now uses — the scope is not an
+   authentication"). This is the same shape Lucid's own `listProjects` now uses — the scope is not an
    argument, so it cannot be supplied.
 
    The subdivision is `EnsureSandBoxWindowRequest`, whose entire payload is
@@ -450,7 +450,7 @@ bridge in every case is **unknown — no artifact anchor**.
    **Conclusion:** one persistent box per authenticated principal, subdivided by indexed windows —
    not a machine per thread. This maps directly onto `CONTEXT.md`: **Computer** = the box (one per
    Person), **Work area** = a window (a bounded context inside it). Grok Bot's model supports
-   Vivid's existing distinction rather than contradicting it.
+   Lucid's existing distinction rather than contradicting it.
 
    **Caveat — wire contract is not product.** The 0.39 reconstruction contains **no** reference to
    `ensureSandBoxWindow`, `windowIndex`, or `window_index` anywhere in `src-main` or `src-0.39`.

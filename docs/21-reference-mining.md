@@ -1,15 +1,15 @@
-# Reference mining: what the category ships, and what Vivid takes
+# Reference mining: what the category ships, and what Lucid takes
 
-Vivid removed scheduled jobs on 16 October 2026. Scheduling references below describe the third-party reference only; Vivid uses Watches and the Feed.
-2026-10-03: Historical 1 October reference survey and adaptation intent; later product direction lives in [docs/22](22-one-product.md), and implemented behavior superseding its gap claims is in [docs/14](14-product-feature-set-and-grok-bot-parity.md); Vivid proactivity is now Watches and the Feed; reminders await the clock app.
+Lucid removed scheduled jobs on 16 October 2026. Scheduling references below describe the third-party reference only; Lucid uses Watches and the Feed.
+2026-10-03: Historical 1 October reference survey and adaptation intent; later product direction lives in [docs/22](22-one-product.md), and implemented behavior superseding its gap claims is in [docs/14](14-product-feature-set-and-grok-bot-parity.md); Lucid proactivity is now Watches and the Feed; reminders await the clock app.
 
 **Mined:** 1 October 2026. **Scope:** every reference saved in the seven weeks to that date, read at
 the source rather than at the headline: the full conversation behind each saved post, the linked
 article, the repository, the shipped strings and the official documentation.
 
 This document is the evidence base for [One product](22-one-product.md). It records what each
-reference does, where the proof is, and what Vivid adapts. Borrowed mechanisms take Vivid's names
-before they land (see "Borrowed code takes Vivid's names" in `CLAUDE.md`).
+reference does, where the proof is, and what Lucid adapts. Borrowed mechanisms take Lucid's names
+before they land (see "Borrowed code takes Lucid's names" in `CLAUDE.md`).
 
 ## What was read
 
@@ -29,7 +29,7 @@ OpenAI Dots and Manus Cue. Each is a named assistant with a face, reached throug
 that owns a persistent cloud computer, connects to a person's accounts, asks before consequential
 actions, runs work on a schedule or when something happens, and remembers. In the last week of
 September the category turned multiplayer: Grok Bot shipped Team Bots, Company Brain was open
-sourced, and the Multiplayer AI Manifesto set out what shared work with an assistant requires. Vivid
+sourced, and the Multiplayer AI Manifesto set out what shared work with an assistant requires. Lucid
 is that product for ordinary work, with the personal assistant and the team capabilities in one
 place rather than in two products.
 
@@ -85,7 +85,7 @@ product serving a person and a team. Its rules, verbatim in substance:
 9. **Admins control reach, not content.** Who gets the Bot by default, team rules, connector policy,
    audit log of creation, publication, skill changes and account links.
 
-**Vivid takes:** the privacy, attribution, memory, credential and authority rules, applied to Vivid itself rather than to a roster of Bots. Vivid uses Watches and the Feed for proactivity. **Vivid leaves:** scheduled jobs, the roster, the marketplace as a destination, per-Bot settings and the model picker.
+**Lucid takes:** the privacy, attribution, memory, credential and authority rules, applied to Lucid itself rather than to a roster of Bots. Lucid uses Watches and the Feed for proactivity. **Lucid leaves:** scheduled jobs, the roster, the marketplace as a destination, per-Bot settings and the model picker.
 
 ### Meta Muse — the trust model
 
@@ -105,10 +105,10 @@ that opened `/opt`.
 - Purchases always ask, with the exact amount and merchant.
 - The person can browse the machine's files from the Library tab and download everything it holds.
 
-**Vivid takes:** the application server as the only authority (the runtime proposes, the server
+**Lucid takes:** the application server as the only authority (the runtime proposes, the server
 decides), credentials that never enter model context, approval scopes as a closed set, read and write
-separated per Connection, and "download what Vivid holds about me". **Vivid leaves:** the kernel
-taint tracking and the in-VM cell, which belong to a machine Vivid does not provision yet.
+separated per Connection, and "download what Lucid holds about me". **Lucid leaves:** the kernel
+taint tracking and the in-VM cell, which belong to a machine Lucid does not provision yet.
 
 ### Instinct and Poke — memory
 
@@ -132,7 +132,7 @@ article, the "how instinct works under the hood" thread, the Poke storage case s
 - Weak points found by the teardown: multi-hop recall across sessions, implicit personalization, and
   no procedural memory.
 
-**Vivid takes:** the one-pager, linked records with aliases, the background reconciler, dated
+**Lucid takes:** the one-pager, linked records with aliases, the background reconciler, dated
 corrections, and the split between memory and live evidence. HelixDB replaces files and keyword
 matching with a graph plus vector plus full-text index, which answers the multi-hop weakness.
 
@@ -169,9 +169,9 @@ Sources: `refs/company-brain` (Apache-2.0), <https://supermemory.ai/blog/open-so
 - Open Session: presence faces on a row, "ask a teammate for a review" puts the session in their
   sidebar, walkthroughs of finished work.
 
-**Vivid takes:** the room-scoped memory graph, reads fall back and writes stay personal, the
+**Lucid takes:** the room-scoped memory graph, reads fall back and writes stay personal, the
 mid-run gate, the suspended approval, the budget, the privacy rule, the audit questions, and
-presence. **Vivid leaves:** ambient participation in channels it was not asked into; Vivid answers
+presence. **Lucid leaves:** ambient participation in channels it was not asked into; Lucid answers
 when addressed.
 
 ### OpenAI Dots, Manus Cue, ChatGPT Work — the rest of the field
@@ -195,7 +195,7 @@ Sources: launch coverage of 29 September, `refs/open-dot`, `refs/open-dots`,
   screen offers **personalized suggestions** computed from calendar, mail and memory; scheduled tasks
   either start fresh each run or wake an existing conversation.
 
-**Vivid takes:** read-only background work, the rule checker and its tool metadata, suggestions on
+**Lucid takes:** read-only background work, the rule checker and its tool metadata, suggestions on
 the empty screen computed from the person's own context, and both kinds of scheduled work.
 
 ### OpenBot — conversation structure
@@ -213,7 +213,7 @@ Source: `refs/openbot` (MIT), `docs/internals/openbot.md` in that checkout.
   the same operation.** There is no second copy of the validation.
 - Each top-level chat owns one screen on the shared machine, created on demand.
 
-**Vivid takes:** Project main Thread with child Threads, grouped delivery, one operation behind both
+**Lucid takes:** Project main Thread with child Threads, grouped delivery, one operation behind both
 the interface and the tool, and revisioned instructions.
 
 ### Executor — Connections
@@ -236,8 +236,8 @@ Sources: the Executor v2 checkout (MIT), <https://executor.sh>.
 - Approvals in the SDK are stored, expire after fifteen minutes, are claimed once, and are bound to
   the exact invocation. An interrupted MCP program is not resumable after a restart.
 
-**Vivid takes:** Executor as the Connection layer behind the application server, reached over its
-HTTP API, with Vivid's own authority deciding who may use which account in which Thread.
+**Lucid takes:** Executor as the Connection layer behind the application server, reached over its
+HTTP API, with Lucid's own authority deciding who may use which account in which Thread.
 
 ### Harness engineering — how the runtime should behave
 
@@ -251,7 +251,7 @@ harness bugs, the asynchronous-tool harness, the Durable Object memory post.
 - Write large tool output to a file and return a pointer; never truncate silently.
 - Independent checks run in parallel. A procedure discovered once is saved as a skill; in the
   comparison that removed more than 80% of tool calls.
-- From the bug list, the failures that apply to Vivid: a crash mid tool call leaves a dangling call; a
+- From the bug list, the failures that apply to Lucid: a crash mid tool call leaves a dangling call; a
   cut stream reported as a successful empty turn; two parallel approvals waking one turn and running
   the action twice; a stop overwritten by a stale write; a parent waiting forever on a child that
   died; a malformed deny rule failing open; no completion signal, so the agent polls.
@@ -264,6 +264,6 @@ harness bugs, the asynchronous-tool harness, the Durable Object memory post.
 3. A person's own accounts are never used on another person's behalf. Shared work asks.
 4. Memory has a private part and a shared part, is written by a background pass, and is read with
    the asker's access.
-5. Repeated work can become a skill; app events can wake Vivid through a Watch.
+5. Repeated work can become a skill; app events can wake Lucid through a Watch.
 6. Three attention states are enough: needs you, unread, working.
 7. Shared work needs to know who is speaking, needs a real stop, and needs an audit trail.

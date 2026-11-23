@@ -8,7 +8,7 @@ metadata:
     semantics "Solo bookkeeping", the load-bearing versus defaultable split, Defaults, "The event
     link is the proof", and the "every Sunday evening, plan the week" routine. Kept: a work block
     is a private hold with no attendees and no notification, only meaning-changing gaps are
-    asked, and the connector's own event link is the report. Changed for Vivid: the work comes from the
+    asked, and the connector's own event link is the report. Changed for Lucid: the work comes from the
     Project's next step (`read_project`) and the Person's to-dos (`list_todos`), the calendar is
     reached through a connected Integration, and a recurring plan is a Routine.
 ---

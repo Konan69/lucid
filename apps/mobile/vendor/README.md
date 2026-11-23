@@ -2,7 +2,7 @@
 
 Third-party source kept in the tree because it is not published to a registry. It is copied
 unchanged, so its file and symbol names are the library's own, as they would be under
-`node_modules`. Vivid's code imports each through its `index.ts` and nothing deeper.
+`node_modules`. Lucid's code imports each through its `index.ts` and nothing deeper.
 
 | Directory | Library                | Source                                                                                                            | Commit                                     |
 | --------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
@@ -15,4 +15,4 @@ with `@shopify/react-native-skia`. `orb` takes its geometry from the published
 `thinking-orbs/engine`, the same code the web runs.
 
 To update one, copy the upstream `src` over the directory and record the new commit here. Do not
-edit the copies; a change Vivid needs goes in the component that uses them.
+edit the copies; a change Lucid needs goes in the component that uses them.

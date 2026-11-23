@@ -5,17 +5,17 @@
 **Status:** Canonical product context  
 **Updated:** 2 September 2026
 
-This file separates Vivid's stated decisions from design proposals and assistant assumptions. When
-another document conflicts with this one, this one wins until Vivid changes it.
+This file separates the owner's stated decisions from design proposals and assistant assumptions. When
+another document conflicts with this one, this one wins until the owner changes it.
 
 ## Product
 
-- Vivid is an AI teammate for ordinary work, not a coding tool.
+- Lucid is an AI teammate for ordinary work, not a coding tool.
 - The experience must be dead simple for non-technical people.
-- The initial relationship and mental model are the person and Vivid. Do not begin by asking the
+- The initial relationship and mental model are the person and Lucid. Do not begin by asking the
   person to configure people, agents, skills, connectors, or automations.
-- Vivid must scale to an organization. This is a hard rule, not a post-v1 afterthought.
-- **Vivid never said "no team in v1."** That sentence was an assistant inference and is invalid.
+- Lucid must scale to an organization. This is a hard rule, not a post-v1 afterthought.
+- **The owner never said "no team in v1."** That sentence was an assistant inference and is invalid.
   The exact set of team features in v1 remains a product-scoping decision.
 - Simplicity and organizational scale must coexist. Earlier internal products lost simplicity when organizational
   concepts and implementation nouns became visible destinations.
@@ -24,10 +24,10 @@ another document conflicts with this one, this one wins until Vivid changes it.
 
 The promising substrate already exists in the Grok Bot reference:
 
-- asynchronous Vivid-to-Vivid messages that wake the recipient;
+- asynchronous Lucid-to-Lucid messages that wake the recipient;
 - shared rooms and bounded group turns;
 - cross-user invitations and membership;
-- forks and subagents that keep the primary Vivid responsive;
+- forks and subagents that keep the primary Lucid responsive;
 - shared organizational memory and policy beneath each person's experience.
 
 These capabilities do not require an agent roster or an organization dashboard on the main screen.
@@ -54,10 +54,10 @@ The full model and remaining questions are in [Company and projects](12-company-
   information density of T3 Code's sidebar.
 - The sidebar must use product language, not architecture language.
 - Current sidebar exploration: **Today** and **Library**.
-- **Library** replaces both the earlier "Ready when you are" wording and Vivid's use of the label
-  "Teach Vivid" or "Teach a task." The latter remains valid only when describing Grok Bot itself.
-- Show Vivid's face and name without a subtitle or status sentence underneath.
-- Vivid did not specify active-row behavior. Selected states, lifecycle shelves, and status styling
+- **Library** replaces both the earlier "Ready when you are" wording and Lucid's use of the label
+  "Teach Lucid" or "Teach a task." The latter remains valid only when describing Grok Bot itself.
+- Show Lucid's face and name without a subtitle or status sentence underneath.
+- The owner did not specify active-row behavior. Selected states, lifecycle shelves, and status styling
   are design proposals that must not be reported as his decisions.
 - The interface needs convincing depth: distinguish surface tiers with disciplined contrast,
   hairlines, shadows, and dark-theme edge highlights. Judge these against the supplied screenshots.
@@ -82,24 +82,24 @@ The full model and remaining questions are in [Company and projects](12-company-
 - The web client uses Vite.
 - The agent runtime is first. Do not design it backwards from the UI, a cloud provider, or a broad
   set of speculative contracts.
-- Vivid is one ordinary, long-lived program with one artifact, state directory, lifecycle, and API.
+- Lucid is one ordinary, long-lived program with one artifact, state directory, lifecycle, and API.
   It may supervise child processes internally; those are not separately deployed services.
 - The local baseline requires no cloud account: file-backed SQLite, local artifacts, filesystem,
   subprocesses, and browser access. The same program may run on a laptop, container, or VM.
 - Each Person has one Pi Durable Harness over celld Durable Object SQLite. Pi owns canonical
   conversation state, queues, deduplication, waits, abort, and restart. See [Runtime cells](27-runtime-cells.md).
 - Do not maintain a second canonical message array beside Pi Durable.
-- Effect structures Vivid's product services and may run durable product jobs such as schedules or
+- Effect structures Lucid's product services and may run durable product jobs such as schedules or
   connector ingestion. It does not wrap or duplicate Pi Durable agent-turn recovery.
 - WorkflowAgent, Workflow SDK, Nitro, and a required Postgres World are not part of the selected
   runtime. They remain evaluated alternatives in the research record.
 - Cloudflare is optional infrastructure, not the canonical runtime. Do not require Workers,
-  Durable Objects, bindings, or object storage merely to run Vivid.
+  Durable Objects, bindings, or object storage merely to run Lucid.
 - Use T3 Code's useful platform split as a reference: shared web renderer for browser and Electron
   desktop; native mobile UI over shared contracts and client runtime; backend owns durable agent
   work and streams typed events to clients.
 - Explain architecture in conversation when requested. Writing a document alone is not an answer.
-- Vivid's computer follows the whole-machine thesis: a persistent, private machine carrying agent
+- Lucid's computer follows the whole-machine thesis: a persistent, private machine carrying agent
   state and execution context. Cloudbox contributes lifecycle, wake, and identity; Grok Bot
   contributes desktop, browser identity, egress, takeover, messaging, and fork mechanics.
 
@@ -108,18 +108,18 @@ The full model and remaining questions are in [Company and projects](12-company-
 - The repository is now a pnpm workspace with `apps/web`, `apps/server`, `packages/contracts`,
   `packages/client/rpc`, and `packages/design/tokens`.
 - Effect `4.0.0-rc.112` is currently installed in the contracts, runtime, and server packages.
-- Oxlint `1.81.0` is currently installed at the workspace root. Vivid requested the latest RC; the
+- Oxlint `1.81.0` is currently installed at the workspace root. The owner requested the latest RC; the
   installed version must be checked against the registry before claiming that request is complete.
 - A package install or architecture extraction is not permission to continue inventing product UI.
-  Vivid explicitly corrected the assistant for writing code beyond the requested scope.
+  The owner explicitly corrected the assistant for writing code beyond the requested scope.
 
 ## Working discipline
 
 - Attribute statements carefully: distinguish direct decisions, assistant proposals, reference
   behavior, and implementation accidents.
 - Keep documenting product exploration, but do not let documentation silently settle open choices.
-- When Vivid asks what remains, report unfinished work plainly so product sketching can continue.
-- Do not use previous private projects or people as demo content unless Vivid asks for them.
+- When the owner asks what remains, report unfinished work plainly so product sketching can continue.
+- Do not use previous private projects or people as demo content unless the owner asks for them.
 
 ## Still open
 

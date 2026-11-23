@@ -3,49 +3,112 @@
 Lucid is an AI teammate for personal and shared work through conversations called Threads.
 It uses connected services and a remote Computer to carry out requests and report progress.
 
-The code and UI use the working name Vivid. The public page is https://lucid.konan.sh.
+The public page is https://lucid.konan.sh. Code identifiers keep the earlier name: packages are
+`@vivid/*`, the RPC group is `VividRpc`, and settings start with `VIVID_`.
 
 ## What a Person can do
 
 The code in this repository implements these capabilities.
 
-- Conversations. Chat with streaming replies, send more instructions while Vivid works, and stop work.
+- Conversations. Chat with streaming replies, send more instructions while Lucid works, and stop work.
   Search and organize Threads. Attach pictures to private Threads and answer questions through cards and forms.
   Replies can include interactive tables, charts, maps, and schedules.
 - Shared work. Create Companies, invite members, set roles, and share Threads with attributed messages.
   Create nested Projects with goals, next steps, progress, and completion proof.
 - Tasks and background work. Keep to-dos and waiting-on items in the Feed.
-  Ask Vivid to watch Integration events or arrange check-ins through a timer Integration.
+  Ask Lucid to watch Integration events or arrange check-ins through a timer Integration.
   A check-in is scheduled only after the provider confirms it. Inspect or stop background work in Settings.
-- Integrations and approval. Connect service accounts, add Integrations through MCP addresses or OpenAPI documents, and ask Vivid to use them.
+- Integrations and approval. Connect service accounts, add Integrations through MCP addresses or OpenAPI documents, and ask Lucid to use them.
   Review outgoing drafts, allow or decline actions, set plain-language rules, and read the action record.
 - Library and generated work. Upload PDF, Markdown, and plain-text files up to 10 MiB each into folders.
   Ask questions with filename and page citations through keyword search.
   Read, edit, share, and browse versions of generated Markdown documents. Receive generated files with previews and saved editable sources.
 - Memory. Inspect, search, correct, or forget saved facts and preferences. Read the sources attached to saved memories.
-  Ask Vivid to recall earlier conversations.
-- Computer and helpers. Ask Vivid to browse, run commands and JavaScript, and use files and desktop apps on its persistent remote Computer.
+  Ask Lucid to recall earlier conversations.
+- Computer and helpers. Ask Lucid to browse, run commands and JavaScript, and use files and desktop apps on its persistent remote Computer.
   The Computer image includes office, creative, and engineering apps with an application finder.
-  Watch the screen, take over, hand back, or turn the Computer off. Vivid can delegate independent parts of a request to helpers.
-- Messaging. Text Vivid through iMessage. Discord is available when its bot is configured. WhatsApp is unavailable.
+  Watch the screen, take over, hand back, or turn the Computer off. Lucid can delegate independent parts of a request to helpers.
+- Messaging. Text Lucid through iMessage. Discord is available when its bot is configured. WhatsApp is unavailable.
 
-## Clients and server
+## How it fits together
 
-- Web in `apps/web` uses Vite and React.
-- Phone in `apps/mobile` uses Expo and React Native. Its iOS code includes dictation for supported iOS 26 languages,
-  Live Activities, widgets, shortcuts, and notification reply and approval actions. See [the mobile README](apps/mobile/README.md).
-- Desktop in `apps/desktop` uses Electron and the web renderer. It adds browser tabs, native notifications,
-  permitted personal-device access, and website sign-in copying with native consent. See [the desktop README](apps/desktop/README.md).
-- The application server in `apps/server` owns product domains, authorization, and PostgreSQL records.
-  It connects to Executor for Integrations, Boat for the Computer, and Photon for iMessage.
-  See [the server README](apps/server/README.md).
+Three clients talk to one application server over a WebSocket. The server keeps product records in
+PostgreSQL and hands each conversation to a Person cell: one celld Durable Object per Person, which
+runs the agent with Pi Durable and keeps conversation history and memory in its own SQLite
+database. The agent calls back into the server for every product action, so authorization happens
+in one place.
 
-`apps/cells` hosts one celld cell per Person. `packages/agent/runtime` uses Pi Durable `1.4.0`
-with native Durable Object SQLite for conversations. Saved memory shares the cell's SQLite database.
-PostgreSQL holds product records, including auth, Company and Membership data, Thread metadata, Runs, and Library files.
+```mermaid
+flowchart LR
+	subgraph clients["Clients"]
+		web["Web<br/>apps/web"]
+		phone["Phone<br/>apps/mobile"]
+		desktop["Desktop<br/>apps/desktop"]
+	end
+	server["Application server<br/>apps/server"]
+	pg[("PostgreSQL<br/>product records")]
+	cell["Person cell<br/>apps/cells + Pi Durable"]
+	sqlite[("Cell SQLite<br/>conversations, memory")]
+	web & phone & desktop -- "VividRpc over /api/live" --> server
+	server --> pg
+	server -- "admit, watch state" --> cell
+	cell -- "tool calls, /api/rpc" --> server
+	cell --> sqlite
+	cell --> models(["OpenCode Go or OpenRouter"])
+	server --> executor(["Executor<br/>Integrations"])
+	server --> boat(["Boat<br/>the Computer"])
+	server --> photon(["Photon<br/>iMessage"])
+```
 
-Shared wire contracts and `VividRpc` live in `packages/contracts`. Shared RPC clients live in
-`packages/client/rpc`, and shared client state lives in `packages/client/state`.
+[Architecture](docs/29-architecture.md) follows one message through every hop, with the file that
+handles each one.
+
+## Components
+
+| Directory                | What it is                                                                                                                                                                  |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web`               | Browser app: Vite, React 19, TanStack Router, Tailwind 4                                                                                                                    |
+| `apps/mobile`            | Phone app: Expo 57 and React Native, with iOS dictation, Live Activities, widgets, shortcuts and notification actions. See [the mobile README](apps/mobile/README.md)       |
+| `apps/desktop`           | Electron around the web renderer, with browser tabs, native notifications and permitted access to the Person's own device. See [the desktop README](apps/desktop/README.md) |
+| `apps/server`            | Product domains, authorization and PostgreSQL records. See [the server README](apps/server/README.md)                                                                       |
+| `apps/cells`             | The celld Worker that hosts one Person cell per Person                                                                                                                      |
+| `packages/contracts`     | Wire schemas and `VividRpc`, the one declaration of every product call                                                                                                      |
+| `packages/client/rpc`    | RPC clients derived from `VividRpc`, over HTTP and WebSocket                                                                                                                |
+| `packages/client/state`  | Live queries, caches and optimistic sends shared by web and phone                                                                                                           |
+| `packages/agent/runtime` | Pi Durable conversation execution, instructions, model providers and tools                                                                                                  |
+| `packages/agent/skills`  | Built-in skill procedures                                                                                                                                                   |
+| `packages/design`        | Tokens, and the geometry of Lucid's face and service marks                                                                                                                  |
+| `infra`                  | The Alchemy stack for local development and production                                                                                                                      |
+
+## Infrastructure
+
+Alchemy declares both environments in `alchemy.run.ts`. Locally, `pnpm infra:dev` starts
+PostgreSQL 18 in Docker, the migrations, a celld Worker, the server and the web client. Production
+runs in one Railway project: the server is built from `main` and also serves the web app, two
+celld nodes run the Person cells, and Executor runs beside them.
+
+```mermaid
+flowchart TB
+	clients(["Clients"]) -- "HTTPS and WebSocket" --> server
+	subgraph railway["Railway (infra/railway.ts)"]
+		server["vivid-server<br/>server + web build"]
+		pg[("vivid-postgres")]
+		a["cells-a"] & b["cells-b"]
+		bucket[("Cells bucket")]
+		executor["vivid-executor"]
+	end
+	server --> pg
+	server -- "private mesh" --> a & b
+	a & b --> bucket
+	server --> executor
+	server --> outside(["Boat, Photon, Google, Sentry"])
+```
+
+Before a new server takes traffic, Railway runs `infra/predeploy.mjs` in the new image: migrations,
+source maps to Sentry, then the cell Worker, read back from the bucket. A failed step keeps the
+previous server running. [Architecture](docs/29-architecture.md#infrastructure) has the full
+resource list and the release sequence, and [Infrastructure](docs/19-infrastructure.md) has every
+setting.
 
 ## Run locally
 
@@ -97,6 +160,8 @@ The skill marks the native cell launcher and product journeys unproven until a r
 Documents in `docs/` include design decisions, implementation notes, and historical research.
 Older product inventories do not establish current behavior.
 
+- [Architecture](docs/29-architecture.md) shows the components, the path of one message, and the
+  local and production infrastructure, with diagrams.
 - [Structure](docs/00-structure.md) maps ownership and file placement.
 - [Principle](docs/01-principle.md), [Surface](docs/03-surface.md), and [Product definition](docs/23-product-definition.md)
   describe product intent. [One product](docs/22-one-product.md) records the personal and Company model.

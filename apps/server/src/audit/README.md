@@ -3,7 +3,7 @@
 The record of consequential things that happened: one row per event, never updated or deleted.
 
 - `tables.ts` and `record.ts`: appending an entry, always inside the transaction of the change it
-  records, attributed to a Person, a Company when there is one, and to Vivid when Vivid acted.
+  records, attributed to a Person, a Company when there is one, and to Lucid when Lucid acted.
 - `store.ts`: reading the record. A Company's admins see the Company's entries; a Member sees only
   their own.
 - `handlers.ts`: the RPC surface behind Settings → Record.

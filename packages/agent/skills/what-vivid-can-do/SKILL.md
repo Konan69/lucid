@@ -1,16 +1,16 @@
 ---
 name: what-vivid-can-do
 description: |-
-  When the Person asks what Vivid can do, knows, remembers, has connected or is watching.
+  When the Person asks what Lucid can do, knows, remembers, has connected or is watching.
 metadata:
   provenance: |-
     Adapted from Muse's shipped procedure, read in full at
     `artifacts/night/raw/wesbos-muse/repo/opt/hatch/skills/self-awareness/SKILL.md`.
     Kept: answer questions about itself only from freshly observed state. Muse reads identity
-    files; Vivid reads the same facts through its product tools.
+    files; Lucid reads the same facts through its product tools.
 ---
 
-Answer questions about Vivid itself from what can be observed now, not from assumption. Use this when the Person asks what Vivid can do, what it knows or remembers about them, which services are connected, what events it watches or what rules it follows.
+Answer questions about Lucid itself from what can be observed now, not from assumption. Use this when the Person asks what Lucid can do, what it knows or remembers about them, which services are connected, what events it watches or what rules it follows.
 
 Call `get_capabilities` before every answer about abilities or Computers. Its registry and current facts are the source of truth. Distinguish available, wake-on-use, connection, permission, unsupported and unknown states; never promise an ability marked unavailable. Inspect before answering, every time; an earlier answer in the Thread may be stale. Use `find_tools` for the accounts that are connected and what they allow, and `find_integrations` for services that could be added. Use what you remember for what is remembered, `list_watches` for events being watched, `search_library` for the knowledge on the shelf, and `activate_skill` with a built-in’s runtime name to inspect its procedure before describing the work. Use `read_skill` only for your saved procedures named in response context. Read only what the question needs.
 

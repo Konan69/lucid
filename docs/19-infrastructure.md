@@ -312,15 +312,15 @@ Drizzle generation is a separate developer action.
 Required by the stack:
 
 - `AUTH_SECRET` — the server requires at least 32 characters, 12 distinct characters, and 3 character classes.
-- `OPENCODE_API_KEY` — OpenCode Go, which Vivid's replies come through.
+- `OPENCODE_API_KEY` — OpenCode Go, which Lucid's replies come through.
 - `OPENROUTER_API_KEY` for server title and decision calls.
 - `VIVID_RUNTIME_TOKEN` — authority shared only between the application server and runtime host.
-- `VIVID_BOAT_API_KEY` — the Boat key Vivid's Computer is reached with. A secret.
+- `VIVID_BOAT_API_KEY` — the Boat key Lucid's Computer is reached with. A secret.
 - `VIVID_BOAT_TEMPLATE` — the name of the prepared Boat template a Person's Computer is restored
   from (`infra/computer/prepare.py` prints it).
 - No SSH key is a setting. The server makes a key pair for each connection to a Computer and
   has Boat authorize it on that one machine (`docs/04-computer.md`, "Reaching the Computer").
-- `VIVID_PHOTON_PROJECT_ID`, `VIVID_PHOTON_PROJECT_SECRET` — the Photon project Vivid texts
+- `VIVID_PHOTON_PROJECT_ID`, `VIVID_PHOTON_PROJECT_SECRET` — the Photon project Lucid texts
   through. The secret is a secret.
 - `VIVID_PUSH_VAPID_PUBLIC`, `VIVID_PUSH_VAPID_PRIVATE`, `VIVID_PUSH_SUBJECT` — the key pair and
   contact (`https:` or `mailto:`) that notifications while away are signed with. Generate the pair
@@ -331,7 +331,7 @@ Required by the stack:
   ```
 
 - `VIVID_EXECUTOR_KEY`, `VIVID_EXECUTOR_ORGANIZATION` — the key and organization the server uses
-  on Executor, which gives Vivid its Integrations. Both are minted on the deployed Executor.
+  on Executor, which gives Lucid its Integrations. Both are minted on the deployed Executor.
 - `VIVID_EXECUTOR_PUBLIC_URL` — Executor's public origin (`https://` plus its Railway public domain). Its sign-in checks the request Origin against it and refuses the private address, so member provisioning signs in there.
 - `VIVID_EXECUTOR_OWNER_EMAIL`, `VIVID_EXECUTOR_OWNER_PASSWORD` — the Executor owner's sign-in. The
   server invites each Person's own Executor member with it the first time that Person connects an
@@ -444,7 +444,7 @@ Computer: the server starts its runner there over its SSH connection to the Comp
 it prints, and answers its calls on the same channel. Until 5 October 2026 a program ran on the server's own host inside
 user-systemd, a cgroup and bubblewrap, which an ordinary container does not have, so production
 refused every program. The server image therefore carries no isolation tools, and the only
-requirement is the one every Vivid already has: a Computer provider.
+requirement is the one every Lucid already has: a Computer provider.
 
 These recipes provide packaging, not deployment resources. Alchemy remains the resource owner;
 building an image neither calls Railway nor changes the local development graph.

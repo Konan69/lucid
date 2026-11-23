@@ -3,7 +3,7 @@
 The server owns product logic and persistence, alongside Better Auth's generated identity tables in PostgreSQL. Its Company, Membership,
 and invitation concepts use Better Auth's organization-plugin backend, but are configured with the
 physical model names `company` and `membership`. That mapping is internal to the auth boundary;
-the contracts and HTTP routes use only the Vivid glossary terms.
+the contracts and HTTP routes use only the Lucid glossary terms.
 
 Browser clients and the Electron web renderer use Better Auth's HttpOnly session cookie. The
 phone app uses a bearer session token kept in SecureStore.
@@ -39,7 +39,7 @@ never the supplied value.
 | `PUBLIC_URL`           | No       | If supplied, must be an absolute URL; defaults to `http://localhost:3000`.     |
 | `GOOGLE_CLIENT_ID`     | Yes      | The Google client's id, for sign-in and for Google Integrations.               |
 | `GOOGLE_CLIENT_SECRET` | Yes      | That client's secret; kept redacted.                                           |
-| `GOOGLE_REDIRECT_URI`  | Yes      | Must be an absolute URL: the address Google returns a sign-in to Vivid to.     |
+| `GOOGLE_REDIRECT_URI`  | Yes      | Must be an absolute URL: the address Google returns a sign-in to Lucid to.     |
 
 Supply configuration in the process environment. The server's `dev` script does not load an
 `.env` file. `.env.example` lists every setting the server does not start without, these and the
@@ -71,7 +71,7 @@ these, and the failure names the variable (`requiredSetting` in `src/config.ts`)
 
 - **Computer:** Boat. `VIVID_BOAT_API_KEY` and `VIVID_BOAT_TEMPLATE` (`src/computers/README.md`).
   No SSH key is configured: each connection to a Computer makes its own.
-- **Memory:** the acting Person's cell, reached through the runtime client. Settings reads and edits the same memory Vivid uses.
+- **Memory:** the acting Person's cell, reached through the runtime client. Settings reads and edits the same memory Lucid uses.
 - **Integrations:** Executor. `VIVID_EXECUTOR_URL`, `VIVID_EXECUTOR_KEY`,
   `VIVID_EXECUTOR_ORGANIZATION`, and for each Person's own Executor member
   `VIVID_EXECUTOR_PUBLIC_URL`, `VIVID_EXECUTOR_OWNER_EMAIL`, `VIVID_EXECUTOR_OWNER_PASSWORD` and `VIVID_EXECUTOR_SEAL_KEY`.
@@ -86,11 +86,11 @@ these, and the failure names the variable (`requiredSetting` in `src/config.ts`)
 
 There is no server that runs without one of them, and no local stand-in for any of them. What can
 still happen is the service itself not answering. That is never a mode the server settles into: it
-is a typed failure on the call that met it, the Person or Vivid is told it is not answering right
+is a typed failure on the call that met it, the Person or Lucid is told it is not answering right
 now, and the next call tries again, so it is over when the service is back, with no restart. Check
 [current status](../../docs/14-product-feature-set-and-grok-bot-parity.md) for limits.
 
-The Google client above is the installation's one Google client. A Person signs in to Vivid with
+The Google client above is the installation's one Google client. A Person signs in to Lucid with
 it, and Executor signs a Person in to a Google Integration with it: Gmail, Calendar, Drive, Docs,
 Sheets and Tasks, which the server carries and installs on Executor itself
 (`src/connections/google.ts`). The client must allow two return addresses on the server's public

@@ -1,6 +1,6 @@
 # Input requests
 
-A durable set of one to four questions a Run cannot safely answer alone. Vivid asks everything
+A durable set of one to four questions a Run cannot safely answer alone. Lucid asks everything
 needed in one `ask_person` call; the request survives its Run and resumes work only after every
 question has an answer.
 
@@ -34,5 +34,5 @@ withdraw requests. The conditional update leaves answered and withdrawn rows unc
 Admission publishes the Person and Thread topics so open inboxes and Thread cards refresh.
 
 The runtime receives the message exactly as the Person wrote it. Nothing is added to their
-words: Vivid reads its own unanswered questions followed by their message, and the request's
+words: Lucid reads its own unanswered questions followed by their message, and the request's
 record says it was withdrawn.

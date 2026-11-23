@@ -4,10 +4,10 @@
 
 Undecided as of 2026-09-02.
 
-1. **The first greeting.** What Vivid says on day one, before there is a thread to show. It carries
+1. **The first greeting.** What Lucid says on day one, before there is a thread to show. It carries
    the whole product with no nav to help it. This is the first thing to design.
 2. **The desktop client.** Grok Bot's egress tunnel and teach-a-task both need a client on the
-   user's laptop. Vivid needs one for the same reasons. Electron, or the T3 Code fork's shell.
+   user's laptop. Lucid needs one for the same reasons. Electron, or the T3 Code fork's shell.
 3. **Memory.** The organizational-memory direction, retrieval model, and how much belongs
    per-user in v1.
 4. **What "connectors" become in the UI.** The "what do you use every day" grid answers it once.

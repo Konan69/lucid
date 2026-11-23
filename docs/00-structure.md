@@ -38,6 +38,7 @@ apps/
   mobile/     ● Expo. Same surface, native.
   desktop/    ● Electron shell around the web renderer.
   server/     ● The application server. ALL product logic. See "Server" below.
+  cells/      ● The celld Worker: one Person cell per Person, memory, the Pi host.
 
 packages/
   contracts/  ● The only declaration of every boundary.
@@ -48,24 +49,23 @@ packages/
     rpc/      ● derived VividRpc clients over HTTP and WebSocket
     state/    ● shared view logic, live cache, subscriptions and optimistic writes
 
-  agent/              everything that is Vivid-the-model rather than Vivid-the-product
-    runtime/  ◐ Pi Durable: conversation execution, history, model adapter; moving to Person cells
-    runtime/src/tools/      ● the tools Vivid can call; each one is an RPC call to the server
-    runtime/src/providers/  ● the model gateway provider, and the scripted rehearsal model
+  agent/              everything that is Lucid-the-model rather than Lucid-the-product
+    runtime/  ● Pi Durable inside the Person cell: conversation execution, history, memory
+    runtime/src/tools/      ● the tools Lucid can call; product tools are RPC calls to the server
+    runtime/src/providers/  ● OpenCode Go and OpenRouter, and the scripted rehearsal model
+    skills/   ● the built-in skill procedures and their manifest, read by cells and the server
     prompts/  ○ nothing here; the instructions live in runtime/src/agents/vivid.ts
-    skills/   ○ nothing here; skills are server records (apps/server/src/skills)
     evals/    ○ nothing here; live checks are `.live.test.ts` files beside the code
 
   design/             one visual language for three surfaces
     tokens/   ● colour, type, radius, motion values; web CSS + generated native
-    marks/    ● Vivid's face and third-party service marks as data, drawn by web and native
+    marks/    ● Lucid's face and third-party service marks as data, drawn by web and native
     motion/   ○ shared durations, curves and spring values
 
-  computer/           the Person's machine (docs/04-computer.md)
-    state/    ● manifest, capture, restore, archive; external state sync remains planned
-    machine/  ○ nothing here; the provider boundary is built in apps/server/src/computers
-    desktop/  ○ nothing here; viewing is built in the server and the apps, take-over is not built
-    device/   ○ the local daemon on the Person's own computer: permissioned exec, copy in and out
+  compiler/   ● stops direct compiler commands, so repository checks own typechecking
+
+The Person's machine (docs/04-computer.md) has no package. The Boat provider is built in
+apps/server/src/computers, and the desktop app owns local Computer access.
 
 infra/        ● Alchemy stack modules        scripts/  ● repository tooling
 docs/         ● these documents              tools/    ● vendored lint plugins
@@ -86,30 +86,18 @@ rule; `store.ts` holds no HTTP or RPC type.
 
 ```
 main.ts  config.ts
-database/  auth/  http/  rpc/  runtime/          infrastructure and composition adapters
+auth/  builds/  database/  http/  live/  observability/  rpc/  runtime/
 
-people/         ○ Person profile and preferences (not built)             docs/12
-companies/      ● Company, Membership, invitation                        docs/12, 22
-projects/       ● recursive work containers, inheritance                 docs/12
-threads/        ● Threads, audience, deliveries, Run records, pictures   docs/03, 07, 22
-runs/           ○ the durable work log (not built; records are in threads/) docs/14
-inputs/         ● Input requests: questions a Run cannot answer alone    docs/03
-approvals/      ● the trust loop: gate, record, runner, replay           docs/22
-rules/          ● standing rules that pre-decide actions, and the judge  docs/22
-artifacts/      ● Thread documents, immutable versions and runtime tools docs/14
-notifications/  ● what needs a Person's attention                        docs/22
-library/        ● Library items, folders, ingest, search                 docs/03
-connections/    ● Integrations on Executor: accounts, sign-in, tools     docs/22
-skills/         ● saved procedures and the ones Vivid ships with         docs/22
-memory/         ● memory on HelixDB: extraction, graph, recall, the page docs/25
-computers/      ● a machine per Person: Boat and local providers, browser, desktop  docs/04
-code/           ● programs Vivid writes, run on the Person's Computer    docs/22
-search/         ● the search palette across a workspace                  docs/03
-live/           ● change topics that keep every client current           docs/09
-rooms/          ○ Vivid-to-Vivid across People and Companies (not built) docs/06
-settings/       ● theme and per-Person settings                          docs/09
-audit/          ● the append-only record of consequential actions        docs/22
+actions/  activity/  appearance/  approvals/  artifacts/  audit/  channels/  code/  companies/
+computers/  connections/  decisions/  drafts/  dreams/  feed/  forget/  inputs/  library/
+notifications/  owed/  projects/  push/  rules/  runs/  search/  settings/  skills/  threads/
+todos/  updates/  watches/  work/
+
+not built: people/  rooms/
 ```
+
+[Architecture](29-architecture.md#server-domains) lists every domain, grouped, with what it owns
+and the outside service it calls.
 
 Most persisted domains use `tables.ts` · `store.ts` · `handlers.ts` and behavior tests. Provider
 and projection domains contain only their actual concerns; schedulers and ingestion have named

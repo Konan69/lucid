@@ -5,7 +5,7 @@
 **Status:** Direction for implementation  
 **Updated:** 2 September 2026
 
-Vivid is one long-lived program first, with web, desktop, and mobile as clients. The program owns
+Lucid is one long-lived program first, with web, desktop, and mobile as clients. The program owns
 the agent runtime, durable state, scheduling, permissions, and computer. It runs unchanged on a
 laptop or ordinary VM; no cloud provider defines its internal model.
 
@@ -17,7 +17,7 @@ renderer, while its Expo app has a native UI over shared contracts and client ru
 
 The local `t3code-cloudbox` source shows this split:
 
-| Part            | T3 Code implementation                                          | Useful lesson for Vivid                                                                                    |
+| Part            | T3 Code implementation                                          | Useful lesson for Lucid                                                                                    |
 | --------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | Web             | React 19, Vite, Tailwind 4, TanStack Router                     | Keep the browser client fast and ordinary.                                                                 |
 | Desktop         | Electron shell around the web renderer                          | Reuse the web UI where desktop and browser behavior match. Add native bridges only for OS capabilities.    |
@@ -25,7 +25,7 @@ The local `t3code-cloudbox` source shows this split:
 | Backend         | Effect-based Node service with HTTP and RPC/WebSocket transport | Put agent execution, machine access, and durable work outside the UI. Stream typed events to every client. |
 | Shared packages | Contracts, client runtime, utilities, theme palettes            | Make schemas and state transitions the stable cross-platform boundary.                                     |
 
-## Vivid target
+## Lucid target
 
 ```mermaid
 flowchart LR
@@ -33,7 +33,7 @@ flowchart LR
   Desktop[Desktop · Electron + web renderer] --> Runtime
   Mobile[Mobile · Expo + React Native] --> Runtime
   Runtime --> Contracts[Typed contracts]
-  Contracts --> Program[Vivid program · HTTP + realtime]
+  Contracts --> Program[Lucid program · HTTP + realtime]
   Program --> Agent[Flue Node runtime]
   Agent --> Computer[Local or remote persistent computer]
   Agent --> Connectors[Mail · calendar · files · browser]
@@ -45,7 +45,7 @@ flowchart LR
 - `apps/web`: the current Vite app. It owns browser routing, responsive layout, and web accessibility.
 - `apps/desktop`: an Electron host for the web build. It owns window chrome, updates, notifications, deep links, and local-device bridges.
 - `apps/mobile`: an Expo app with native thread, attention, approval, and notification screens. It consumes the same contracts and runtime but not the web component tree.
-- `apps/server`: the entrypoint for the Vivid program: authenticated API, realtime stream, agent
+- `apps/server`: the entrypoint for the Lucid program: authenticated API, realtime stream, agent
   loop, schedules, permission gates, connector calls, file-backed SQLite, and computer supervision.
   Flue Node owns agent admission, conversation history, streaming, and restart reconciliation. The
   name does not imply a separately hosted backend.
@@ -53,9 +53,9 @@ flowchart LR
 ### Shared packages
 
 - `packages/contracts`: request, response, event, thread, approval, and task schemas.
-- `packages/client/rpc`: a framework-neutral Vivid store over Flue observation, plus connection
+- `packages/client/rpc`: a framework-neutral Lucid store over Flue observation, plus connection
   state, optimistic updates, event reduction, offline queue, and product command methods.
-- `packages/domain`: pure Vivid rules such as thread state and permission decisions.
+- `packages/domain`: pure Lucid rules such as thread state and permission decisions.
 - `packages/design/tokens`: colors, type, spacing, radii, and semantic status names. Web exports CSS variables; mobile exports TypeScript values.
 
 ## Runtime flow
@@ -66,7 +66,7 @@ flowchart LR
 4. The server emits typed progress, question, approval, and completion events.
 5. Every signed-in client reduces those events into the same thread state.
 
-The same program may run on the user's laptop or their persistent Vivid machine. Desktop and mobile
+The same program may run on the user's laptop or their persistent Lucid machine. Desktop and mobile
 connect to its one authenticated service boundary. Hosting changes reachability, not runtime
 semantics.
 
@@ -76,14 +76,14 @@ Theme is a user preference with three values: `system`, `light`, and `dark`. The
 
 ## Implementation order
 
-1. Run one real agent loop inside the local Vivid program.
+1. Run one real agent loop inside the local Lucid program.
 2. Configure Flue with a file SQLite path, then prove recovery by killing and restarting it mid-task.
 3. Give it the real local computer path: filesystem, subprocesses, and browser.
 4. Serve the existing Vite UI and stream runtime events into the thread.
 5. Package the same program and state directory for a generic Linux VM or container.
 6. Add Electron and native mobile clients after the runtime protocol is earned by real behavior.
 
-AI Elements remains the web presentation layer. Its source-owned components render Vivid's message
+AI Elements remains the web presentation layer. Its source-owned components render Lucid's message
 view model; `useChat` is not the canonical state owner because it cannot faithfully represent
 Flue's durable snapshots, multiple writers, queued submissions, and settlements.
 

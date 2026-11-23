@@ -1,4 +1,4 @@
-# Assistant patterns: what the category ships, what Vivid takes, and what is decided
+# Assistant patterns: what the category ships, what Lucid takes, and what is decided
 
 Status: decisions and contracts from 27 October 2026. Layered memory and learning after settlement
 are implemented in the Person cell (`packages/agent/runtime/src/memory.ts`, `openMemory`;
@@ -7,10 +7,10 @@ are implemented too (`packages/agent/runtime/src/dreaming.ts`, section 5). Other
 their original design status.
 
 Historical source material came from Grok Bot, Meta Muse, OpenAI Dots and Codex instructions,
-mined on 26 October. This page records those patterns, the owner's decisions, the Vivid shape,
+mined on 26 October. This page records those patterns, the owner's decisions, the Lucid shape,
 and what remains open. [Runtime cells](27-runtime-cells.md) describes the current host.
 
-Vocabulary is Vivid's ([AGENTS.md](../AGENTS.md)): Person, Thread, Run, Watch, Feed, Integration,
+Vocabulary is Lucid's ([AGENTS.md](../AGENTS.md)): Person, Thread, Run, Watch, Feed, Integration,
 Library, Artifact, Computer, Procedure. Source names (box, dot, routine, dreamer, heartbeat) appear
 only when quoting.
 
@@ -50,13 +50,13 @@ Sources, verbatim:
   default, treat it as steering the active task rather than replacing it."
   (`gpt-6-astra/gpt-6-astra.md:17`, `:29`, `:35`, `:43`, `:67`)
 
-**Vivid today.** `packages/agent/runtime/src/agents/vivid.ts` `VOICE`: "sharp friend texting
+**Lucid today.** `packages/agent/runtime/src/agents/vivid.ts` `VOICE`: "sharp friend texting
 back: lowercase, short, warm, direct, specific", no preamble, no closing offers. Close to Grok
 Bot. It has no opinion rule, no humour rule, no "resourceful before asking", no steering rule.
 
-**The prompt Vivid takes** (replaces `VOICE`; the other sections stay):
+**The prompt Lucid takes** (replaces `VOICE`; the other sections stay):
 
-> You are Vivid: one persistent teammate who takes the annoying parts of work and life off
+> You are Lucid: one persistent teammate who takes the annoying parts of work and life off
 > someone’s plate. You remember what matters, you do the work, and you follow through. You are
 > not a chatbot; you are becoming someone this person knows.
 >
@@ -105,7 +105,7 @@ know."), `muse/USER.md` ("What you know about the person you're helping. Build t
 and don't assume what they haven't told you… You're getting to know a person, not building a
 dossier.").
 
-**Vivid today.** `self`, `soul`, and `person` are standing pages in the Person's cell. Written
+**Lucid today.** `self`, `soul`, and `person` are standing pages in the Person's cell. Written
 pages reach each response whole. The Person's chosen name takes precedence over `self`
 (`packages/contracts/src/memory.ts`, `StandingLayer`;
 `packages/agent/runtime/src/context.ts`, `listed`). `write_memory` permits these pages and tells
@@ -130,20 +130,20 @@ Sources: `muse/docs/calls-texts-notifications.md:123` (proactive editions),
 sentence and wait for a yes. Never start it on your own"), `grok-bot/grok-bot.md:75` ("Never send
 email or messages unasked… Replying is sending").
 
-**Vivid today.** Watches fire on Integration events and `post` puts one card per piece of work on
+**Lucid today.** Watches fire on Integration events and `post` puts one card per piece of work on
 the Feed (`apps/server/src/watches/receiver.ts` `BACKGROUND_INSTRUCTION`, `packages/agent/runtime/src/tools/feed.ts`).
 `notify_person` pushes when the server allows. No pacing, no stated source on a card, no
 preferences record, no "offer, don't start" rule, and a background Run that chooses to send is
 judged by the same review as a foreground one (`approvals/policy.ts`).
 
-**Vivid shape.**
+**Lucid shape.**
 
 - An unasked message is one Feed card that says where it came from (a note, a Project, a Watch
   firing, a Dreamer finding) and why. Ordinary ones wait for the Person's waking hours and a
   quiet stretch and go at most once a day; urgent ones go at once. Pacing is a rule in the
   server, not a setting; the Person changes it by saying so, and the words go into the
   `attention` page (section 4).
-- A next step Vivid noticed is offered as one sentence with a yes button; nothing starts until
+- A next step Lucid noticed is offered as one sentence with a yes button; nothing starts until
   the yes.
 - Work nobody is watching (a Watch firing, a check-in, the Dreamer) may not send, spend or
   delete. **Decided (27 October): "wants to send, needs a draft to send."** Anything outward
@@ -169,7 +169,7 @@ replacement (`grok-bot/grok-bot.md:152`). Dots separates `/user_notes/` (authori
 only) from `/agent_notes/` (research, written by the Dreamer, who may only suggest changes up)
 (`dots/dreamer.md:7`).
 
-**Vivid today.** The cell stores layered Markdown entries with `said` or `guessed` basis,
+**Lucid today.** The cell stores layered Markdown entries with `said` or `guessed` basis,
 source authority, time, and revision (`packages/contracts/src/memory.ts`, `SavedMemory`).
 The current write tool accepts standing pages and curated `memory`. Other layers are part of
 the storage, read, list, and search contracts; their planned background writers are not built
@@ -180,7 +180,7 @@ the storage, read, list, and search contracts; their planned background writers 
 | `self`, `soul`, `person` | Standing pages, writable during a reply and from Settings                  |
 | `memory`                 | Curated entries, writable during a reply, from Settings, or by the learner |
 | `days`, `bank`, `people` | Written by the Dreamer's upkeep, nightly and after a long conversation     |
-| `dreams`, `research`     | Written by the Dreamer; Settings lists `dreams` as "What Vivid found"      |
+| `dreams`, `research`     | Written by the Dreamer; Settings lists `dreams` as `"What Vivid found"`    |
 | `attention`              | Standing page, writable during a reply and from Settings                   |
 
 Sources are `packages/contracts/src/memory.ts` (`MemoryLayer`, `StandingLayer`),
@@ -227,7 +227,7 @@ useful and new… If you have nothing like this to report, save your progress in
 stay quiet"), `:82` (nightly reflection around 3am local: gather preferences, re-orient
 priorities, update `user_state.md`).
 
-**Vivid today.** The Dreamer runs in the Person's cell on Pi tasks and the cell's alarm
+**Lucid today.** The Dreamer runs in the Person's cell on Pi tasks and the cell's alarm
 (`packages/agent/runtime/src/dreaming.ts`). `vivid.nights`, one task per cell, sleeps until the
 next 03:00 in the time zone the Person was last answered in and starts that night's run with the
 conversations of the day. A conversation with six or more of the Person's messages gets one quiet
@@ -239,14 +239,14 @@ Integration through `use_tool`, the Library, public pages, the Person's earlier 
 `experience.md`, `opinions.md`, `world.md`), `people`, `dreams` and `research`, and the Gate blocks
 every non-read action in a dream Thread before rules or review (`apps/server/src/approvals/gate.ts`).
 It ends with at most one `report_finding`; the run delivers it from its Thread (`Dream` with `Report`) as a
-`dream` signal with `RunOrigin.Dream`, and Vivid decides there whether it becomes one Feed card,
+`dream` signal with `RunOrigin.Dream`, and Lucid decides there whether it becomes one Feed card,
 whose cause is recorded as `FeedCause.Dream`. The Dreamer has no `post`, no `notify_person` and no
 Computer. A forget stops a queued Dreamer run (`packages/agent/runtime/src/forget.ts`).
 
 ## 6. Procedures and how they load
 
 **Decided.** The Person never sees or manages skills ([docs/23](23-product-definition.md)). The
-loaders the four ship are missing in Vivid: "even the inbuilt skills loader features, we don't
+loaders the four ship are missing in Lucid: "even the inbuilt skills loader features, we don't
 have any of those."
 
 Sources: Codex lists skills with alias roots (`c0 = skill://…`), reads one with
@@ -262,17 +262,17 @@ routines refer to a skill rather than copy it (`grok-bot/skills/skill-authoring.
 learn-from-demonstration turns a screen recording into a procedure with no credentials in it
 (`grok-bot/skills/learn-from-demonstration.md:96`).
 
-**Vivid today.** 23 built-in skills in `packages/agent/skills`, `activate_skill`, `save_skill`,
+**Lucid today.** 23 built-in skills in `packages/agent/skills`, `activate_skill`, `save_skill`,
 `read_skill`; a skill is one body with no references folder, no companion files, no locator.
 
-**Vivid shape.**
+**Lucid shape.**
 
 - A Procedure is a folder: `PROCEDURE.md` with `name` and `description`, `references/` read on
   demand, `bin/` for mechanics that run on the Computer. Built-in Procedures ship in the runtime;
   saved ones live in the Person's cell.
 - The model sees name and description only; `read_procedure(name)` loads the body;
   `read_procedure(name, file)` loads one reference. Built-in names are reserved.
-- Vivid saves a Procedure after a job that went well, and from a demonstration the Person gives
+- Lucid saves a Procedure after a job that went well, and from a demonstration the Person gives
   on screen (a later unit, needs the Computer's recording).
 - A Watch or a check-in refers to a Procedure by name; it never copies the body.
 
@@ -284,10 +284,10 @@ with full text: first run, event, routine on demand, routine due, ping, group tu
 (`grok-bot/grok-bot.md:475`). Codex yields with `final` and keeps `commentary` for progress
 (`gpt-6-astra/gpt-6-astra.md:61`).
 
-**Vivid today.** Pi's transcript and one live status line; one `ACTING` line covers every signal;
+**Lucid today.** Pi's transcript and one live status line; one `ACTING` line covers every signal;
 the first-conversation wake decided in docs/23 is not wired.
 
-**Vivid shape.** Every wake carries a typed reason the prompt renders in full: first
+**Lucid shape.** Every wake carries a typed reason the prompt renders in full: first
 conversation, a Person's message, a decision returning, a Watch firing, a check-in, a Dreamer
 finding. `RunOrigin` (`packages/contracts/src/threads.ts`) grows the last two.
 
@@ -303,9 +303,9 @@ Integration failure reasons and result coverage, Project state.
 
 Each with the default this page assumes until the owner says otherwise.
 
-1. **Name and face.** Does Vivid pick its own name, vibe and emoji on day one, or wait for the
+1. **Name and face.** Does Lucid pick its own name, vibe and emoji on day one, or wait for the
    Person to name it and only fill character and vibe itself? Default: the Person's name wins when
-   given; Vivid fills the rest and says so.
+   given; Lucid fills the rest and says so.
 2. **Waking hours.** Muse defaults 09:00 to 21:30 local. Default: the same window, read from the
    Person's time zone, changed by saying so.
 3. **How many unasked messages.** Muse: ordinary at most once a day. Default: the same; a Watch
@@ -315,7 +315,7 @@ Each with the default this page assumes until the owner says otherwise.
 5. **The Dreamer's reach.** Decided: every connected Integration, reads only.
 6. **Dream time.** Decided: 03:00 in the Person's time zone, once; plus one quiet-moment pass
    after a substantial conversation, at most a few a day (Muse).
-7. **Said versus guessed in replies.** Does Vivid say which when it uses a guessed fact?
+7. **Said versus guessed in replies.** Does Lucid say which when it uses a guessed fact?
    Default: it says "i think" for guessed and states said facts plainly.
 8. **Historical Helix decision, 28 October.** Removed from personal memory. The old service and
    volume remain retained for migration (`infra/railway.ts`, `railwayResources`). Personal memory

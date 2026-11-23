@@ -1,6 +1,6 @@
-# Vivid conversation runtime
+# Lucid conversation runtime
 
-This package runs Vivid's conversations with Pi Durable. The chosen host is one celld Person
+This package runs Lucid's conversations with Pi Durable. The chosen host is one celld Person
 cell with Pi's native Durable Object SQLite storage. [Runtime cells](../../../docs/27-runtime-cells.md)
 is authoritative. celld owns activation, ownership, and idle lifecycle. Pi owns tasks, queues,
 deduplication, wait, abort, and restart. Product state and authorization remain in `apps/server`;
@@ -19,7 +19,7 @@ Read the installed packages before changing anything that touches Pi
   `openDurableObjectSqliteStorage(ctx.storage)` and use Pi 1.4.0's README `onWake`/alarm pattern.
   Arm wake before starting work and resume on alarms. celld owns eviction and ownership.
 - `src/app.ts`: the HTTP routes (`packages/contracts/src/runtime.ts` documents the contract).
-- `src/person.ts`: Vivid's definition, tools, and the bridge from Pi's callbacks into Effect.
+- `src/person.ts`: Lucid's definition, tools, and the bridge from Pi's callbacks into Effect.
 - `src/threads.ts`: one Pi conversation per Thread, and the documents that relate the two.
 - `src/admission.ts`: admitting one delivery exactly once.
 - `src/delivery.ts`: a delivery as the model reads it and as Pi places it; the delivery scope
@@ -27,9 +27,9 @@ Read the installed packages before changing anything that touches Pi
 - `src/deliveries.ts`: what is kept beside a delivery while it can be answered, including the
   context frozen for its response.
 - `src/authority.ts`: whom a tool call acts for.
-- `src/context.ts`: what Vivid is told at the start of a response: the Person's memory brief, the
+- `src/context.ts`: what Lucid is told at the start of a response: the Person's memory brief, the
   skills it can use, their time zone.
-- `src/agents/vivid.ts`: Vivid's definition: the instruction text, the two prompt sections and the
+- `src/agents/vivid.ts`: Lucid's definition: the instruction text, the two prompt sections and the
   order tools are offered in.
 - `src/skills.ts`, `src/frontmatter.ts`: the built-in skills: the catalogue section and
   `activate_skill`.
@@ -37,7 +37,7 @@ Read the installed packages before changing anything that touches Pi
   settlement read.
 - `src/settled.ts`: what follows every settlement: releasing kept records, recording metadata.
 - `src/models.ts`, `src/providers/`: the model collection and the selected model.
-- `src/client.ts`: who Vivid is acting for (`Acting`) and the product client (`Product`).
+- `src/client.ts`: who Lucid is acting for (`Acting`) and the product client (`Product`).
 - `src/tools/`: model tools. Each is a thin, typed call to `VividRpc`; they do not own server
   stores, schedulers, credentials, or product routes, and they never decide whether an action is
   allowed.
@@ -162,4 +162,4 @@ they are not instructions to build a separate recovery framework.
 'image', mimeType }` with no address. Its bytes are still in the transcript, inside the tool
   result, and reach only the model. No screen draws one today.
 
-The opt-in rehearsal model uses pi’s faux provider to exercise real Vivid tools and display cards without a model provider key. It reconstructs deterministic scenes from conversation context and reports real tool receipts and failures; it is for product rehearsal and is never a default. Set `VIVID_MODEL=rehearsal/script` before starting the runtime to register it, then send a supported phrase such as “show a table” or “run a program”; an unrecognized message lists all phrases.
+The opt-in rehearsal model uses pi’s faux provider to exercise real Lucid tools and display cards without a model provider key. It reconstructs deterministic scenes from conversation context and reports real tool receipts and failures; it is for product rehearsal and is never a default. Set `VIVID_MODEL=rehearsal/script` before starting the runtime to register it, then send a supported phrase such as “show a table” or “run a program”; an unrecognized message lists all phrases.

@@ -1,7 +1,7 @@
 ---
 name: first-conversation
 description: |-
-  When the Person has just arrived and this is their first Thread with Vivid.
+  When the Person has just arrived and this is their first Thread with Lucid.
 metadata:
   provenance: |-
     Adapted from the reference assistant's first conversation, observed in its desktop app on

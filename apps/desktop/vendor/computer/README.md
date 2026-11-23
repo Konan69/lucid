@@ -1,6 +1,6 @@
 # The Computer binaries
 
-Vivid uses the Windows Computer supervisor and engine binaries directly. They are
+Lucid uses the Windows Computer supervisor and engine binaries directly. They are
 **not in the repository** — the pair is ~56 MB — and are fetched from this
 repository's own GitHub Releases on demand:
 
@@ -8,7 +8,7 @@ repository's own GitHub Releases on demand:
 sh fetch.sh        # from this directory; needs gh with access to Konan69/vivid
 ```
 
-They are vendored, used as-is, and never reimplemented in Vivid's own code
+They are vendored, used as-is, and never reimplemented in Lucid's own code
 (see the root `AGENTS.md`: "Vendor reference binaries; never reimplement them").
 The desktop app's `scripts/build.mjs` runs the fetch before building, and
 `scripts/packed.mjs` refuses to package a Windows app that is missing the pair.
@@ -31,7 +31,7 @@ references which; a wrong guess breaks the Computer silently.
 
 1. `Codex is using your computer` → `Vivid is using your computer` — the pill's
    text, an exact same-length byte swap. Nothing else string-wise.
-2. Colors: the pill accent and the cursor ghost's fill are Vivid's primary
+2. Colors: the pill accent and the cursor ghost's fill are Lucid's primary
    (`#346bf1`); anything animated (border pulse, size breath, shimmer) pulses in
    those colors unchanged.
 3. The forbidden-target classifier returns "allowed" always (entry `31 c0 c3`):

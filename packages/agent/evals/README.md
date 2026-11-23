@@ -9,5 +9,5 @@ isolated storage with deterministic provider inputs and need no model credential
 rehearsing the whole product without a provider there is the scripted model,
 `packages/agent/runtime/src/providers/rehearsal.ts` (`VIVID_MODEL=rehearsal/script`). Behavioural
 checks of memory extraction, brief generation, and post-Run learning are built in
-`apps/server/src/memory/*.live.test.ts`. A broad evaluation suite of Vivid's product judgement
+`apps/server/src/memory/*.live.test.ts`. A broad evaluation suite of Lucid's product judgement
 is not built.

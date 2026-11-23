@@ -1,10 +1,10 @@
-# State machines in Vivid
+# State machines in Lucid
 
 **Decided 10 October 2026: client lifecycles are machines on `@typeonce/effect-machine`.** The rule is in `AGENTS.md` ("Lifecycles are machines"); the first machine is `packages/client/state/src/connecting.ts`. Everything below the next heading is the evaluation of 20 September 2026, kept for its reasoning; its version numbers and its "deferred" status are superseded by this section.
 
 ## What was run on 10 October 2026
 
-Both candidates were installed against Effect 4.0.2 and driven through the same Integration press flow (press, ask the server, sign in away from the app, come back, key form). The original measurements below used Effect Machine 0.40.0. Vivid now pins Effect Machine and its React catalog entry to 0.46.0, whose Effect peer accepts 4.0.2. The measurements have not been repeated for 0.46.0.
+Both candidates were installed against Effect 4.0.2 and driven through the same Integration press flow (press, ask the server, sign in away from the app, come back, key form). The original measurements below used Effect Machine 0.40.0. Lucid now pins Effect Machine and its React catalog entry to 0.46.0, whose Effect peer accepts 4.0.2. The measurements have not been repeated for 0.46.0.
 
 | Check                                                                    | `@xstate/effect` 0.1.0-alpha.7 on XState 6.0.0-alpha.65 | Effect Machine 0.40.0 (original run) |
 | ------------------------------------------------------------------------ | ------------------------------------------------------- | ------------------------------------ |
@@ -40,18 +40,18 @@ Versions below record the evaluation, not a recommendation to install without re
 
 | Option                       | Evidence at evaluation                                                                                                                         | Main tradeoff                                                                                                   |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Effect Machine               | Upstream manifest declares 0.38.0 and an exact Effect `4.0.0-rc.116` peer, matching Vivid.                                                     | Effect-native schemas, planning, scoped execution, and statecharts; young API and experimental tooling.         |
+| Effect Machine               | Upstream manifest declares 0.38.0 and an exact Effect `4.0.0-rc.116` peer, matching Lucid.                                                     | Effect-native schemas, planning, scoped execution, and statecharts; young API and experimental tooling.         |
 | XState plus `@xstate/effect` | rat-stack pins XState `6.0.0-alpha.58`, a vendored bridge `0.1.0-alpha.2`, and Effect `4.0.0-rc.115`.                                          | Established XState ecosystem, but this specific Effect integration is alpha and needs compatibility validation. |
-| Existing Vivid approach      | Effect programs, schemas, guarded persistence, and Flue conversation execution. Neither machine library was present in the evaluated checkout. | Appropriate for simple behavior; transition rules can become scattered as lifecycles grow.                      |
+| Existing Lucid approach      | Effect programs, schemas, guarded persistence, and Flue conversation execution. Neither machine library was present in the evaluated checkout. | Appropriate for simple behavior; transition rules can become scattered as lifecycles grow.                      |
 
 The local VCOS checkout at `~/work/VCOS` uses `@typeonce/effect-machine@0.3.0`
 with Effect rc.112 for lifecycle transitions, active-run coordination, Connection catalog state,
 and review workflows. Treat it as a design reference, not current API guidance. Adapt any borrowed
-design to Vivid's names and ownership boundaries.
+design to Lucid's names and ownership boundaries.
 
 rat-stack is an application scaffold, not the library VCOS uses. Its shared schema-backed
 capability projected into HTTP, CLI, and MCP is useful inspiration, but does not justify a stack
-migration. Vivid already has Effect, Alchemy, and quality gates; deployment provider choice is
+migration. Lucid already has Effect, Alchemy, and quality gates; deployment provider choice is
 independent of state-machine choice.
 
 ## Current application fit
@@ -79,7 +79,7 @@ These are evaluation candidates, not claims that the complete features are imple
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | Approvals and Input requests      | Pending, answered, rejected, expired, and cancelled states; late responses and competing decisions from multiple devices. |
 | Computer lifecycle                | Starting, resuming an archived machine, verifying readiness, stopping, and recovery.                                      |
-| Human takeover                    | Control ownership, when Vivid must stop acting, and what authorizes resumption.                                           |
+| Human takeover                    | Control ownership, when Lucid must stop acting, and what authorizes resumption.                                           |
 | Offline commands and reconnection | Local queueing, submission, acknowledgement, rejection, and safe retry.                                                   |
 
 Computer availability and control ownership are separate concerns. The retired application archive
@@ -109,7 +109,7 @@ assume it is a general durable workflow replacement. Snapshot schema upgrades al
 application responsibility; version mismatch rejection is not a migration strategy.
 
 React integration exists for both options. The exact versions evaluated have not been proven in
-Vivid's Expo/Hermes environment. Bundle impact, startup cost, streamed-update behavior, and native
+Lucid's Expo/Hermes environment. Bundle impact, startup cost, streamed-update behavior, and native
 mount/background/unmount semantics remain unmeasured.
 
 ## Revisit scope and acceptance criteria

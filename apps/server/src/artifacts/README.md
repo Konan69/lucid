@@ -14,7 +14,7 @@ Every reader of a Thread may open and revise its documents. Removal additionally
 creator or an admin/owner membership in that Thread's Company; admin status grants no access to
 private Threads. The active workspace does not override Thread access.
 
-Vivid supplies a title and whole Markdown body. The server resolves the working Run from the
+Lucid supplies a title and whole Markdown body. The server resolves the working Run from the
 authenticated Thread, checks its acting Person and locks it until the write commits. No delivery
 turn or model identifier is needed. Missing, ended or wrong-Person Runs write nothing. The current
 Run reservation permits same-Person deliveries to join; multiple working Runs refuse the write
@@ -27,7 +27,7 @@ Actual mutations publish the Thread topic after commit. No existing audit event 
 local document revision, so this domain adds no audit record. Removing a Thread cascades through
 its documents and every version.
 
-People see an Artifact where Vivid delivered it in a Thread, as a card that opens it with its
+People see an Artifact where Lucid delivered it in a Thread, as a card that opens it with its
 versions (`WatchArtifact`), and in the Library, which lists every Artifact the Person can reach in
 the workspace (`WatchArtifactShelf`). A write announces the `artifacts` part of its Thread's owner
 and Company so only those shelves read again.

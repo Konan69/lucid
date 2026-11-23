@@ -24,14 +24,14 @@ mobile, where the thread is the whole screen.
 
 Top to bottom.
 
-1. **Vivid.** Face and the word Vivid, with no descriptive status line underneath it.
+1. **Lucid.** Face and the word Lucid, with no descriptive status line underneath it.
 2. **Product entry points.** Today and Library are the current exploration because they
    describe things a person wants to do. They replace infrastructure nouns such as Agents,
    Skills, Connectors, and Automations.
 3. **New thread** and **search**, one row.
 4. **Threads, grouped by state**, in this order, each group collapsible and hidden when empty:
-   - **Needs you.** Threads where Vivid is waiting on an answer or an approval. A colored dot.
-   - **Working.** Threads Vivid is currently acting in. A soft pulse.
+   - **Needs you.** Threads where Lucid is waiting on an answer or an approval. A colored dot.
+   - **Working.** Threads Lucid is currently acting in. A soft pulse.
    - **Recent.** Everything else, newest first, by day: Today, Yesterday, This week, Earlier.
    - **Pinned** sits above Recent if anything is pinned.
    - **Archived** at the bottom, collapsed.
@@ -44,15 +44,15 @@ content and participants; its exact v1 presentation remains open.
 
 Borrowed directly from T3 Code, stripped of the developer bits.
 
-- **Title** Vivid wrote, one line, truncated.
+- **Title** Lucid wrote, one line, truncated.
 - **Status label** in color, right-aligned, only when it is not "ready": Working, Needs you,
   Approve, Failed. Ready rows show nothing. This is a design proposal, not a user decision.
 - **Unread** is a bold title, not a badge.
-- **A tiny indicator** when Vivid is using its screen in that thread, so the user knows the panel
+- **A tiny indicator** when Lucid is using its screen in that thread, so the user knows the panel
   has something to show. This replaces T3's terminal icon.
 - **Hover actions.** Pin, archive, rename. Nothing else.
 
-Status derivation and selected-row styling are design proposals. Vivid did not prescribe an active
+Status derivation and selected-row styling are design proposals. The owner did not prescribe an active
 state; do not attribute one to him without a direct decision.
 
 ## Thread
@@ -60,13 +60,13 @@ state; do not attribute one to him without a direct decision.
 Open Session's thread, with Grok Bot's voice.
 
 - **Header.** Title, editable inline. A share or "add someone" affordance at the right, which is how
-  a colleague's Vivid or a colleague joins this thread later. That is the org mechanic's only
+  a colleague's Lucid or a colleague joins this thread later. That is the org mechanic's only
   fixed UI.
-- **Messages.** User on the right, Vivid on the left with its face. Three kinds of Vivid message:
+- **Messages.** User on the right, Lucid on the left with its face. Three kinds of Lucid message:
   plain text, a collapsible working block with a one-line summary and step count, and a card when
-  Vivid needs input, with labeled options, a one-line tradeoff each, an "or type your own" field,
+  Lucid needs input, with labeled options, a one-line tradeoff each, an "or type your own" field,
   and one Answer button.
-- **Composer.** One box with attach, mic, send. While Vivid works it reads "Queue for when Vivid
+- **Composer.** One box with attach, mic, send. While Lucid works it reads "Queue for when Lucid
   finishes". No model or mode picker.
 
 ## Panel, on demand
@@ -74,18 +74,18 @@ Open Session's thread, with Grok Bot's voice.
 The third column exists so the sidebar never has to. It opens from a message, never from the
 sidebar.
 
-- **Vivid's screen.** A live work preview for this thread. It opens from the working block, or from
+- **Lucid's screen.** A live work preview for this thread. It opens from the working block, or from
   "watch" in the header when the row indicator is on. Its transport and control implementation sit
   behind the private execution boundary.
-- **A file or document.** Anything Vivid made or was given, opened inline from a chip in the
+- **A file or document.** Anything Lucid made or was given, opened inline from a chip in the
   thread.
-- **The log.** "What Vivid did" for this thread, with the permissions it asked for and the answers.
+- **The log.** `"What Vivid did"` for this thread, with the permissions it asked for and the answers.
 
 Close it and the layout returns to two columns.
 
 ## Empty state
 
-The sidebar shows only Vivid and You. The thread area is Vivid's greeting: the face, "Hi. What
+The sidebar shows only Lucid and You. The thread area is Lucid's greeting: the face, "Hi. What
 should I take off your plate?", and three suggestion cards written as sentences. The composer has
 focus. Typing anything creates the first thread and the first sidebar row.
 

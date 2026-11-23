@@ -7,7 +7,7 @@ metadata:
     Adapted from Muse's shipped procedure, read in full at
     `artifacts/night/raw/wesbos-muse/repo/opt/hatch/skills/places-search/SKILL.md`.
     Kept: full-intent queries, one area per search and no place named without a returned result.
-    Its map display and photo detection have no Vivid tool and are dropped.
+    Its map display and photo detection have no Lucid tool and are dropped.
 ---
 
 Use this for standing places people can visit: restaurants, cafes, bars, hotels, parks, attractions, shops and local services. It is not for itineraries, choosing a city, dated events or directions.
