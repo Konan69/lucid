@@ -180,7 +180,7 @@ the storage, read, list, and search contracts; their planned background writers 
 | `self`, `soul`, `person` | Standing pages, writable during a reply and from Settings                  |
 | `memory`                 | Curated entries, writable during a reply, from Settings, or by the learner |
 | `days`, `bank`, `people` | Written by the Dreamer's upkeep, nightly and after a long conversation     |
-| `dreams`, `research`     | Written by the Dreamer; Settings lists `dreams` as `"What Vivid found"`      |
+| `dreams`, `research`     | Written by the Dreamer; Settings lists `dreams` as `"What Vivid found"`    |
 | `attention`              | Standing page, writable during a reply and from Settings                   |
 
 Sources are `packages/contracts/src/memory.ts` (`MemoryLayer`, `StandingLayer`),
