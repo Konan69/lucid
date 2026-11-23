@@ -63,7 +63,7 @@ flowchart LR
 | `packages/agent/skills`  | `@vivid/skills`         | Built-in skill procedures and their manifest                                      | Cells, server                              |
 | `packages/design/tokens` | `@vivid/tokens`         | Colour, type, radius and motion tokens as CSS, plus generated native values       | Web, phone                                 |
 | `packages/design/marks`  | `@vivid/marks`          | Geometry for Lucid's face, figure and service marks                               | Web, phone                                 |
-| `packages/compiler`      | `@vivid/compiler`       | Blocks direct `tsc` and `tsserver` so repository checks own typechecking          | Root tooling                               |
+| `packages/compiler`      | `@vivid/compiler`       | Stops direct compiler commands, so repository checks own typechecking             | Root tooling                               |
 
 `packages/agent/prompts`, `packages/agent/evals` and `packages/design/motion` hold only a README.
 The agent's instructions live in `packages/agent/runtime/src/agents/vivid.ts`, and live checks sit

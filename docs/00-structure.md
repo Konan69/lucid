@@ -62,7 +62,7 @@ packages/
     marks/    ● Lucid's face and third-party service marks as data, drawn by web and native
     motion/   ○ shared durations, curves and spring values
 
-  compiler/   ● blocks direct tsc and tsserver, so repository checks own typechecking
+  compiler/   ● stops direct compiler commands, so repository checks own typechecking
 
 The Person's machine (docs/04-computer.md) has no package. The Boat provider is built in
 apps/server/src/computers, and the desktop app owns local Computer access.
