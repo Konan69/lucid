@@ -15,9 +15,8 @@ import { memoryTools } from './memory.ts'
 import { notifyTools } from './notify.ts'
 import { feedTools } from './feed.ts'
 import { followTools } from './follow.ts'
-import { projectNamed, projectTools } from './projects.ts'
+import { projectTools } from './projects.ts'
 import { forgetTools } from './forget.ts'
-import type { ProjectOf } from './memory.ts'
 import { owedTools } from './owed.ts'
 import { todoTools } from './todos.ts'
 import { watchTools } from './watches.ts'
@@ -60,11 +59,7 @@ export function tools(
       )
     return resolvePerson(call)
   }, memory)
-  /** A Project-scoped memory names its Project; the name resolves through the call's own scope. */
-  const project: ProjectOf = (name) =>
-    // @effect-diagnostics-next-line strictEffectProvide:off -- The per-call authority Layer, as in toolRunner.
-    projectNamed(name).pipe(Effect.provide(current()))
-  return catalogue(runTool, run, runMemory, project).map((definition) =>
+  return catalogue(runTool, run, runMemory).map((definition) =>
     durableTool({
       ...definition,
       execute(args, api, context) {
@@ -81,7 +76,6 @@ function catalogue(
   runTool: ReturnType<typeof toolRunner>,
   run: ReturnType<typeof scopedRunner>,
   runMemory: ReturnType<typeof memoryRunner>,
-  project: ProjectOf,
 ): ToolRegistration[] {
   return [
     ...computerTools(runTool, run),
@@ -89,7 +83,7 @@ function catalogue(
     ...connectionTools(runTool),
     ...askTools(runTool),
     ...followTools(),
-    ...memoryTools(runMemory, project),
+    ...memoryTools(runMemory),
     ...forgetTools(runTool),
     ...notifyTools(runTool),
     ...skillTools(runTool),

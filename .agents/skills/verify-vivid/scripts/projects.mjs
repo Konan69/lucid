@@ -2,25 +2,28 @@ import * as assert from 'node:assert/strict'
 import { CreateProjectRequest, Tool } from '@vivid/contracts'
 import { chat, history, json, rpc, settled } from './wire.mjs'
 
-/** The Project the journey makes for the Person before talking about it. */
-export const PROJECT_NAME = 'Site launch'
+/**
+ * The Project the journey makes for the Person before talking about it. Unique per journey: the
+ * HTTP and browser recipes share one account, and two Projects of one name are ambiguous to Vivid.
+ */
+export const projectName = () => 'Site launch ' + crypto.randomUUID().slice(0, 6)
 
 /**
  * What a Person says about a Project's goal, then how it moved, then that it is done. No tool,
  * field or state is named (the owner, 26 October 2026: ask as a Person asks).
  */
-export const DEFINE_PROMPT =
-  "We're launching the site, that's my Site launch project. It's done when the domain resolves."
-export const PROGRESS_PROMPT =
-  'Update on Site launch: I bought the domain this morning and pointed it at the host.'
-export const DONE_PROMPT = 'Good news on Site launch: the domain resolves now.'
+export const definePrompt = (name) =>
+  `We're launching the site, that's my ${name} project. It's done when the domain resolves.`
+export const progressPrompt = (name) =>
+  `Update on ${name}: I bought the domain this morning and pointed it at the host.`
+export const donePrompt = (name) => `Good news on ${name}: the domain resolves now.`
 
 /** Make the Project through the public call the Projects page's form makes. */
 export async function createProject(state, directory) {
   return rpc(
     state,
     'CreateProject',
-    CreateProjectRequest.make({ name: PROJECT_NAME, parentProjectId: null }),
+    CreateProjectRequest.make({ name: projectName(), parentProjectId: null }),
     directory,
     'created',
   )
@@ -88,19 +91,19 @@ export async function projects(state, id, directory) {
   const created = await createProject(state, directory)
   assert.equal(created.work._tag, 'Unspecified', 'A new Project should have no objective')
 
-  const definedRun = await say(state, id, DEFINE_PROMPT, 1, directory)
+  const definedRun = await say(state, id, definePrompt(created.name), 1, directory)
   await updateCalls(state, id, definedRun, directory, 'define')
   const defined = await projectNow(state, created, directory, 'defined')
   assertDefined(defined)
 
   const before = Date.now()
-  const progressRun = await say(state, id, PROGRESS_PROMPT, 2, directory)
+  const progressRun = await say(state, id, progressPrompt(created.name), 2, directory)
   await updateCalls(state, id, progressRun, directory, 'progress')
   const progressed = await projectNow(state, created, directory, 'progressed')
   assertProgressed(progressed, before)
   assert.equal(progressed.work.objective, defined.work.objective, 'Progress replaced the objective')
 
-  const doneRun = await say(state, id, DONE_PROMPT, 3, directory)
+  const doneRun = await say(state, id, donePrompt(created.name), 3, directory)
   await updateCalls(state, id, doneRun, directory, 'done')
   const done = await projectNow(state, created, directory, 'done')
   assert.equal(done.work._tag, 'Completed', 'The Project is not done after the Person said so')

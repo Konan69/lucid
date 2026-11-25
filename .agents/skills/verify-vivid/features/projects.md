@@ -8,7 +8,7 @@ A Project knows what done means, where it stands and the next step (`ProjectWork
 
 ## How to get to it (user POV)
 
-Make a Project called "Site launch". In any Thread, say: "We're launching the site, that's my Site launch project. It's done when the domain resolves." Later say: "Update on Site launch: I bought the domain this morning and pointed it at the host." Open the Project from the sidebar. "Where it stands" shows the goal, that line with its date, and the next step.
+Make a Project called "Site launch" (the recipes add a short unique suffix, because both share one account and two Projects of one name are ambiguous). In any Thread, say: "We're launching the site, that's my Site launch project. It's done when the domain resolves." Later say: "Update on Site launch: I bought the domain this morning and pointed it at the host." Open the Project from the sidebar. "Where it stands" shows the goal, that line with its date, and the next step.
 
 ## Driving it with verify-vivid
 

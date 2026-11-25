@@ -1,7 +1,7 @@
 import * as assert from 'node:assert/strict'
 import {
-  DEFINE_PROMPT,
-  PROGRESS_PROMPT,
+  definePrompt,
+  progressPrompt,
   assertDefined,
   assertProgressed,
   createProject,
@@ -44,11 +44,11 @@ export async function projectsBrowser(state, id, directory, { run, capture }) {
   )
   const created = await createProject(state, directory)
 
-  const definedRun = await send(state, id, run, DEFINE_PROMPT, 1, directory)
+  const definedRun = await send(state, id, run, definePrompt(created.name), 1, directory)
   await updateCalls(state, id, definedRun, directory, 'define')
   assertDefined(await projectNow(state, created, directory, 'defined'))
   const before = Date.now()
-  const progressRun = await send(state, id, run, PROGRESS_PROMPT, 2, directory)
+  const progressRun = await send(state, id, run, progressPrompt(created.name), 2, directory)
   await updateCalls(state, id, progressRun, directory, 'progress')
   const project = await projectNow(state, created, directory, 'progressed')
   assertProgressed(project, before)
