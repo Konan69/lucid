@@ -781,6 +781,9 @@ importers:
       ipaddr.js:
         specifier: 2.2.0
         version: 2.2.0
+      jose:
+        specifier: 6.2.10
+        version: 6.2.10
       kysely:
         specifier: 'catalog:'
         version: 0.29.5

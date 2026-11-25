@@ -7,12 +7,10 @@ import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Redacted from 'effect/Redacted'
-import * as Ref from 'effect/Ref'
 import * as Schema from 'effect/Schema'
 import * as Cookies from 'effect/http/Cookies'
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
-import { requiredSetting, settingSecret, settingText } from '../config.ts'
 import {
   Database,
   decodeStored,
@@ -31,8 +29,9 @@ import {
   installationCaller,
   type ExecutorPrincipal,
 } from './executor.ts'
-import { memberPassword, seal, sealSecret, unseal, type SealSecret } from './seal.ts'
+import { seal, sealSecret, unseal, type SealSecret } from './seal.ts'
 import { executorMembers } from './tables.ts'
+import { ExecutorAuthorization, ExecutorSignIn } from './issuer.ts'
 
 /**
  * Each Person's own Executor member, made the first time one of their own Connections needs it.
@@ -43,13 +42,9 @@ import { executorMembers } from './tables.ts'
  * Sending a Person's Connection calls with their member's key therefore makes Executor, not only
  * Vivid's row mapping, refuse anyone else.
  *
- * Self-host sends no invitation email, so the owner adds a member in one exchange
- * (`apps/hosted/self-host/src/implementation/registration.ts`): the owner signs in, invites an
- * address, and redeeming the invitation (`/self-host/register`) creates the user, its membership
- * and a session together. That session mints the member's organization-pinned key
- * (`/api-key/create`, `apps/hosted/server/src/contracts/api-keys.ts` `CreateApiKey`). The
- * installation key cannot do any of this: API keys do not open sessions
- * (`enableSessionForAPIKeys: false`).
+ * Members originate through Vivid's SSO provider. Executor creates a verified user and its SSO
+ * account together, so later browser sign-in never needs to link an unverified credential user.
+ * The returned session mints the member's organization-pinned key.
  */
 export interface ExecutorMembersService {
   /** The credential to send for a Connection's app and account, decided by its principal. */
@@ -86,7 +81,7 @@ const decodeState = decodeStored(MemberState, 'Executor member')
 const encodeState = encodeStored(MemberState, 'Executor member')
 
 const context = { service: 'connections' as const, tool: null }
-const Invitation = Schema.Struct({ id: Schema.NonEmptyString })
+const SignInAddress = Schema.Struct({ url: Schema.String })
 const CreatedKey = Schema.Struct({ key: Schema.NonEmptyString })
 const CurrentSession = Schema.Struct({ user: Schema.Struct({ id: ExecutorUserId }) })
 
@@ -98,6 +93,7 @@ interface Answer {
   readonly status: number
   readonly cookies: Cookies.Cookies
   readonly body: Option.Option<Schema.Json>
+  readonly location: Option.Option<string>
 }
 
 /** A 2xx body in the expected shape; any other answer is Executor refusing this caller. */
@@ -118,13 +114,10 @@ const sessionOf = (answer: Answer) =>
 
 /**
  * The calls to Executor's auth routes. Each sends the instance's own origin, which Better Auth
- * checks on cookie-authenticated writes, and carries a session as its cookie header. Sign-in
- * answers `None` when Executor refuses the email and password, which is how a retry finds out
- * whether an earlier attempt already made the member.
+ * checks on cookie-authenticated writes, and carries the state/session cookie between requests.
  */
-function makeAuth(transport: HttpClient.HttpClient, url: string) {
+function makeAuth(transport: HttpClient.HttpClient, url: string, origin: string) {
   const client = HttpClient.withScope(transport)
-  const origin = new URL(url).origin
   /** Send one request. A limit and a server failure stay distinct from a refusal. */
   const exchange = Effect.fn('ExecutorMembers.exchange')(
     function* (request: HttpClientRequest.HttpClientRequest, session: Option.Option<Session>) {
@@ -147,7 +140,7 @@ function makeAuth(transport: HttpClient.HttpClient, url: string) {
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.Json)),
         Effect.option,
       )
-      const answer: Answer = { status: response.status, cookies: response.cookies, body }
+      const answer: Answer = { status: response.status, cookies: response.cookies, body, location: Option.fromUndefinedOr(response.headers['location']) }
       return answer
     },
     Effect.scoped,
@@ -162,45 +155,21 @@ function makeAuth(transport: HttpClient.HttpClient, url: string) {
       Effect.flatMap((request) => exchange(request, session)),
     )
   return {
-    signIn: Effect.fn('ExecutorMembers.signIn')(function* (
-      email: string,
-      password: Redacted.Redacted<string>,
-    ) {
-      const answer = yield* post(
-        '/sign-in/email',
-        { email, password: Redacted.value(password) },
-        Option.none(),
-      )
-      if (answer.status === 401 || answer.status === 403) return Option.none<Session>()
-      if (answer.status !== 200) return yield* ExecutorAccessDenied.make(context)
-      return Option.some(yield* sessionOf(answer))
-    }),
-    /** `None` when Executor no longer accepts the owner's session. */
-    invite: Effect.fn('ExecutorMembers.inviteAs')(function* (
-      owner: Session,
-      organization: string,
-      email: string,
-    ) {
-      const answer = yield* post(
-        '/organization/invite-member',
-        { organizationId: organization, email, role: 'member', resend: true },
-        Option.some(owner),
-      )
-      if (answer.status === 401) return Option.none<string>()
-      return Option.some((yield* read(Invitation)(answer)).id)
-    }),
-    register: Effect.fn('ExecutorMembers.register')(function* (
-      email: string,
-      password: Redacted.Redacted<string>,
-      invitation: string,
-    ) {
-      const answer = yield* post(
-        '/self-host/register',
-        { name: 'Vivid member', email, password: Redacted.value(password), invitation },
-        Option.none(),
-      )
-      if (answer.status !== 200) return yield* ExecutorAccessDenied.make(context)
-      return yield* sessionOf(answer)
+    /** Keep Executor's state cookie server-side; only this issuer may approve the returned request. */
+    signIn: Effect.fn('ExecutorMembers.signIn')(function* (email: string, issuer: ExecutorSignIn['Service']) {
+      const started = yield* post('/sign-in/social', { provider: 'sso', callbackURL: origin, disableRedirect: true }, Option.none())
+      const address = yield* read(SignInAddress)(started)
+      const authorizationUrl = yield* Schema.decodeUnknownEffect(Schema.URLFromString)(address.url).pipe(Effect.mapError(() => ExecutorResponseInvalid.make(context)))
+      if (authorizationUrl.href.split('?')[0] !== issuer.discovery.authorization_endpoint)
+        return yield* ExecutorResponseInvalid.make(context)
+      const authorization = yield* Schema.decodeUnknownEffect(ExecutorAuthorization)(Object.fromEntries(authorizationUrl.searchParams)).pipe(Effect.mapError(() => ExecutorResponseInvalid.make(context)))
+      const callback = yield* issuer.issue(email, authorization).pipe(Effect.mapError(() => ExecutorAccessDenied.make(context)))
+      // Executor advertises its public callback. Internal transport still reaches that exact route
+      // on the private origin, while cookie-write Origin checks use the public browser origin.
+      const completed = yield* exchange(HttpClientRequest.get(`${url}${callback.pathname}${callback.search}`), Option.some(yield* sessionOf(started)))
+      if (completed.status !== 302 || Option.isNone(completed.location) || new URL(completed.location.value).searchParams.has('error'))
+        return yield* ExecutorAccessDenied.make(context)
+      return yield* sessionOf(completed)
     }),
     /** Pinned to the organization; no expiry, as the installation key has none. */
     mintKey: (member: Session, organization: string) =>
@@ -221,35 +190,6 @@ function makeAuth(transport: HttpClient.HttpClient, url: string) {
 }
 type Auth = ReturnType<typeof makeAuth>
 
-/**
- * The installation owner's session, kept between provisionings: Executor allows only a few
- * sign-ins per window from one address, and every member needs the owner to invite it. A session
- * Executor no longer accepts is replaced once.
- */
-const makeOwner = Effect.fn('ExecutorMembers.owner')(function* (
-  auth: Auth,
-  credentials: { readonly email: string; readonly password: Redacted.Redacted<string> },
-  organization: string,
-) {
-  const held = yield* Ref.make(Option.none<Session>())
-  const session = Effect.fn('ExecutorMembers.ownerSession')(function* (fresh: boolean) {
-    const current = yield* Ref.get(held)
-    if (!fresh && Option.isSome(current)) return current.value
-    const signedIn = yield* auth.signIn(credentials.email, credentials.password)
-    // The owner's own sign-in refused is a wrong setting, not a member to make.
-    if (Option.isNone(signedIn)) return yield* ExecutorAccessDenied.make(context)
-    yield* Ref.set(held, signedIn)
-    return signedIn.value
-  })
-  return Effect.fn('ExecutorMembers.invite')(function* (email: string) {
-    const first = yield* auth.invite(yield* session(false), organization, email)
-    if (Option.isSome(first)) return first.value
-    const retried = yield* auth.invite(yield* session(true), organization, email)
-    if (Option.isNone(retried)) return yield* ExecutorAccessDenied.make(context)
-    return retried.value
-  })
-})
-
 /** A random sign-in that says nothing about the Person; `.invalid` is reserved never to resolve. */
 const newMemberEmail = () => `m-${NodeCrypto.randomBytes(12).toString('hex')}@members.vivid.invalid`
 
@@ -260,24 +200,11 @@ const memberLock = (person: PersonId) =>
 const makeMembers = Effect.fn('ExecutorMembers.make')(function* () {
   const database = yield* Database
   const { url, organization } = yield* executorAddress()
-  const ownerEmail = yield* requiredSetting(
-    'VIVID_EXECUTOR_OWNER_EMAIL',
-    settingText,
-    "the Executor owner's email",
-  )
-  const ownerPassword = yield* requiredSetting(
-    'VIVID_EXECUTOR_OWNER_PASSWORD',
-    settingSecret,
-    "the Executor owner's password",
-  )
+  const issuer = yield* ExecutorSignIn
+  const origin = yield* issuer.dashboard.pipe(Effect.mapError(() => ExecutorAccessDenied.make(context)))
   const secret = yield* sealSecret()
-  const auth = makeAuth(yield* HttpClient.HttpClient, url)
-  const invite = yield* makeOwner(
-    auth,
-    { email: ownerEmail, password: ownerPassword },
-    organization,
-  )
-  const provision = makeProvision({ auth, invite, secret, organization })
+  const auth = makeAuth(yield* HttpClient.HttpClient, url, origin)
+  const provision = makeProvision({ auth, issuer, secret, organization })
 
   /** The member's key from a Ready row, opened for this request only. */
   const keyOf = (person: PersonId, state: Extract<MemberState, { readonly _tag: 'Ready' }>) =>
@@ -343,9 +270,7 @@ const readMember = Effect.fn('ExecutorMembers.read')(function* (
 })
 
 /**
- * The Person's member email, written as Provisioning on the first ask. `fresh` says this call made
- * the row, so Executor has never been asked about the email and the sign-in a retry starts with
- * can be skipped, which keeps provisioning inside Executor's sign-in limit.
+ * Persist the member's random SSO identity before making external requests, so every retry uses it.
  */
 const claimMember = Effect.fn('ExecutorMembers.claim')(function* (
   database: Database['Service'],
@@ -366,45 +291,44 @@ const claimMember = Effect.fn('ExecutorMembers.claim')(function* (
       .returning({ email: executorMembers.email }),
   )
   const [made] = inserted
-  if (made !== undefined) return { email: made.email, fresh: true }
+  if (made !== undefined) return { email: made.email }
   // Another attempt made the row first; a Person deleted meanwhile has no row to continue.
   const existing = yield* database.run(readMember(database, person))
   if (Option.isNone(existing))
     return yield* new DatabaseFailure({
       message: 'Executor member was not returned by the database',
     })
-  return { email: existing.value.email, fresh: false }
+  return { email: existing.value.email }
 })
 
-/**
- * Make or find the member for an email and mint its key. Idempotent from any point it stopped:
- * a member already registered is found by signing in with its derived password; one that is not
- * is invited and registered; then a key is minted from that session. A key minted by an attempt
- * whose write was lost stays unused at Executor.
- */
+/** Repeat the same SSO identity after a crash, then mint a key and seal it for this Person. */
 function makeProvision(input: {
   readonly auth: Auth
-  readonly invite: (email: string) => Effect.Effect<string, MemberFailure>
+  readonly issuer: ExecutorSignIn['Service']
   readonly secret: SealSecret
   readonly organization: string
 }) {
-  const { auth, invite, secret, organization } = input
+  const { auth, issuer, secret, organization } = input
   return Effect.fn('ExecutorMembers.provision')(function* (
     person: PersonId,
-    claimed: { readonly email: string; readonly fresh: boolean },
+    claimed: { readonly email: string },
   ) {
-    const password = memberPassword(secret, claimed.email)
-    const existing = claimed.fresh
-      ? Option.none<Session>()
-      : yield* auth.signIn(claimed.email, password)
-    const session = Option.isSome(existing)
-      ? existing.value
-      : yield* auth.register(claimed.email, password, yield* invite(claimed.email))
+    const session = yield* auth.signIn(claimed.email, issuer)
     const key = yield* auth.mintKey(session, organization)
     const user = yield* auth.userOf(session)
     return MemberState.cases.Ready.make({ user, sealedKey: seal(secret, person, key) })
   })
 }
+
+/** Browser authorization first provisions through the same serialized path as an Integration. */
+export const executorIdentity = Effect.fn('ExecutorMembers.identity')(function* (person: PersonId) {
+  const members = yield* ExecutorMembers
+  yield* members.caller({ principal: 'member', personId: person })
+  const database = yield* Database
+  const identity = yield* database.run(readMember(database, person))
+  if (Option.isNone(identity)) return yield* ExecutorAccessDenied.make(context)
+  return identity.value.email
+})
 
 /**
  * The caller a Connection's app and account are reached as: the installation owner, or the

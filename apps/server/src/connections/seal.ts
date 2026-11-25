@@ -7,13 +7,10 @@ import { requiredSetting, settingSecret } from '../config.ts'
 
 /**
  * The secret behind each Person's Executor member: it seals the member's API key where it is
- * stored (`executorMembers` in `tables.ts`) and derives the member's password, which is never
- * stored. Losing it loses every member's sign-in, so it is set once per installation and never
- * rotated without moving the members too.
+ * stored (`executorMembers` in `tables.ts`). SSO owns sign-in independently of this seal key.
  *
- * The setting is 32 random bytes in base64 (`openssl rand -base64 32`). Two keys are derived from
- * it with HKDF-SHA256, one for sealing and one for passwords, so neither use can be turned against
- * the other.
+ * The setting is 32 random bytes in base64 (`openssl rand -base64 32`). A key is derived from
+ * it with HKDF-SHA256 using the existing sealing label.
  */
 export const sealSecret = Effect.fn('ExecutorMembers.secret')(function* () {
   const encoded = yield* requiredSetting(
@@ -32,7 +29,6 @@ export const sealSecret = Effect.fn('ExecutorMembers.secret')(function* () {
     Buffer.from(NodeCrypto.hkdfSync('sha256', material, Buffer.alloc(0), label, 32))
   return {
     sealing: Redacted.make(derive('vivid executor member key seal')),
-    passwords: Redacted.make(derive('vivid executor member password')),
   }
 })
 export type SealSecret = Effect.Success<ReturnType<typeof sealSecret>>
@@ -85,15 +81,3 @@ export const unseal = Effect.fn('ExecutorMembers.unseal')(function* (
   })
 })
 
-/**
- * The member's Executor password: HMAC-SHA256 of its email under the password key, in base64url
- * (43 characters, inside Executor's 8 to 128). Derived on each use and never stored, so a lost
- * key is minted again by signing in with it.
- */
-export function memberPassword(secret: SealSecret, email: string): Redacted.Redacted<string> {
-  return Redacted.make(
-    NodeCrypto.createHmac('sha256', Redacted.value(secret.passwords))
-      .update(email, 'utf8')
-      .digest('base64url'),
-  )
-}

@@ -36,6 +36,7 @@
     "effect": "catalog:",
     "html-to-text": "9.0.5",
     "ipaddr.js": "2.2.0",
+    "jose": "6.2.10",
     "kysely": "catalog:",
     "mime": "4.1.0",
     "pg": "catalog:",
