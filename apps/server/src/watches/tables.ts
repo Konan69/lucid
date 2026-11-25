@@ -13,7 +13,7 @@ import { connections } from '../connections/tables.ts'
  * sent to Executor: with Vivid's key they are the subscription's identity there, so renewal and
  * unsubscribe repeat them unchanged (executor@2.0.0-beta.23 `packages/sdk/src/implementation/
  * events.ts` `subscriptionId`). The signing secret is derived, never stored (`signature.ts`).
- * The required Connection survives removal as a tombstone, so stopped Watches keep their history.
+ * Removing the Connection cascades to its Watches; background Threads and Runs stay.
  *
  * A name is unique among a Person's live Watches, because Vivid stops a Watch by its name.
  */
@@ -27,7 +27,7 @@ export const watches = pgTable(
     connectionId: text('connection_id')
       .$type<ConnectionId>()
       .notNull()
-      .references(() => connections.id, { onDelete: 'no action' }),
+      .references(() => connections.id, { onDelete: 'cascade' }),
     event: text('event').notNull(),
     subscribedName: text('subscribed_name').notNull(),
     arguments: jsonb('arguments').notNull(),

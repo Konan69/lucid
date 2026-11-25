@@ -4,6 +4,10 @@ import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import { runIdentifier } from './process.mjs'
 
+/** Completed run evidence retention. Source: unmeasured. Only an exit receipt and a free
+ * owner lock admit deletion, so the retention period never bounds active work. */
+const evidenceRetentionDays = 2
+
 /**
  * One connection for the push, the start and the stream: a second `ssh` reuses the first one's
  * socket and skips the handshake, which is most of a focused run's waiting.
@@ -31,6 +35,36 @@ const sshOptions = [
  */
 export const snapshotIgnore = ['node_modules/', '.cache/', '.turbo/', 'runs/', 'cache/']
 
+/** Prefer the first free warm tree to retain deterministic cache reuse. If all are busy,
+ * blocking flock waiters compete for every slot. Exec retains only the chosen descriptor;
+ * the kernel frees all contenders and the run lease when their owner exits. */
+const capacityScript = String.raw`
+import fcntl, os, queue, sys, threading
+home, sha, run, label, *args = sys.argv[1:]
+ready = queue.Queue()
+slots = max(1, len(os.sched_getaffinity(0)) // 4)
+fds = [os.open(f"{home}/trees/slot-{index}.lock", os.O_CREAT | os.O_WRONLY, 0o600) for index in range(slots)]
+def acquire(index, fd):
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    ready.put((index, fd))
+selected = None
+for index, fd in enumerate(fds):
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        continue
+    selected = (index, fd)
+    break
+if selected is None:
+    for index, fd in enumerate(fds):
+        threading.Thread(target=acquire, args=(index, fd), daemon=True).start()
+    selected = ready.get()
+index, fd = selected
+os.dup2(fd, 9, inheritable=True)
+os.environ['VIVID_GATE_SLOT'] = f'slot-{index}'
+os.execvp('bash', ['bash', f'{home}/runs/{run}.sh', sha, run, label, *args])
+`
+
 /**
  * The machine's side of a run. The machine keeps a fixed, small number of warm trees, one per
  * gate it will run at once (one for every four cores), not one per branch: a tree is a worktree
@@ -52,8 +86,13 @@ sha="$1"; run="$2"; label="$3"; shift 3
 home="$HOME/vivid-gate/fast"; log="$home/runs/$run.log"
 mkdir -p "$home/trees" "$home/runs" "$home/cache/turbo"
 printf '%s\n' @IGNORE@ > "$home/.boxignore"
-find "$home/runs" -type f -mtime +2 -delete
+while IFS= read -r receipt; do
+  owner="$(dirname "$receipt")/$(basename "$receipt" .exit)"
+  (flock -n 8 || exit 0; rm -f "$owner.exit" "$owner.log" "$owner.sh" "$owner.pid") 8>"$owner.lock"
+done < <(find "$home/runs" -name '*.exit' -mtime +@EVIDENCE@)
 find "$home/cache" -type f -mtime +7 -delete
+exec 8>"$home/runs/$run.lock"
+flock -x 8
 cat > "$home/runs/$run.sh" <<'RUN'
 set -uo pipefail
 sha="$1"; run="$2"; label="$3"; shift 3
@@ -61,15 +100,7 @@ home="$HOME/vivid-gate/fast"
 export PATH="$HOME/.local/bin:$PATH" HUSKY=0 ELECTRON_SKIP_BINARY_DOWNLOAD=1
 export VIVID_GATE_CACHE="$home/cache/turbo"
 finish() { echo "$1" > "$home/runs/$run.exit"; exit "$1"; }
-cores=$(nproc); slots=$(( cores / 4 )); [ "$slots" -ge 1 ] || slots=1
-slot=""
-while [ -z "$slot" ]; do
-  for index in $(seq 0 $(( slots - 1 ))); do
-    exec 9>"$home/trees/slot-$index.lock"
-    if flock -n 9; then slot="slot-$index"; break; fi
-  done
-  [ -n "$slot" ] || sleep 1
-done
+slot="$VIVID_GATE_SLOT"
 tree="$home/trees/$slot"
 [ -d "$tree" ] || git --git-dir="$home/repo.git" worktree add -q --detach "$tree" "$sha" || finish 92
 cd "$tree" || finish 92
@@ -94,26 +125,63 @@ fi
 $capped node scripts/gate.mjs "$@" --here --sha "$label"
 finish $?
 RUN
-setsid nohup bash "$home/runs/$run.sh" "$sha" "$run" "$label" "$@" > "$log" 2>&1 < /dev/null &
+touch "$log"
+setsid nohup python3 -c @CAPACITY@ "$home" "$sha" "$run" "$label" "$@" > "$log" 2>&1 < /dev/null &
 echo $! > "$home/runs/$run.pid"
-`.replace('@IGNORE@', snapshotIgnore.map((rule) => `'${rule}'`).join(' '))
+`
+  .replace('@IGNORE@', snapshotIgnore.map((rule) => `'${rule}'`).join(' '))
+  .replace('@EVIDENCE@', String(evidenceRetentionDays))
+  .replace('@CAPACITY@', shellWord(capacityScript))
 
 /**
- * Follow the run's log until its exit file exists, then leave with the run's own exit code.
+ * Follow log byte offsets until the owner releases its lock, then drain to EOF and read its receipt.
  * ssh itself exits 255 when the connection is lost, which no gate run does.
  */
 export const followScript = String.raw`
-home="$HOME/vivid-gate/fast"; run="$1"
-touch "$home/runs/$run.log"
-tail -n +1 -f "$home/runs/$run.log" &
-tail=$!
-runner="$(cat "$home/runs/$run.pid")"
-# The runner's own process id, written when it started. A runner that was killed writes no exit
-# file, so its absence with no live runner is a failure, not something to wait on.
-while [ ! -f "$home/runs/$run.exit" ] && kill -0 "$runner" 2>/dev/null; do sleep 0.2; done
-sleep 0.3; kill "$tail" 2>/dev/null; wait "$tail" 2>/dev/null
-[ -f "$home/runs/$run.exit" ] || { echo "the run ended without a result"; exit 93; }
-exit "$(cat "$home/runs/$run.exit")"
+node --input-type=module - "$HOME/vivid-gate/fast/runs/$1" <<'FOLLOW'
+import * as fs from 'node:fs'
+import { spawn } from 'node:child_process'
+const run = process.argv[2]
+const log = fs.openSync(run + '.log', 'r')
+let offset = 0
+// Register before the first read. The final read follows owner release, not a guessed drain time.
+const drain = () => {
+  const buffer = Buffer.alloc(65536)
+  for (;;) {
+    const size = fs.readSync(log, buffer, 0, buffer.length, offset)
+    if (size === 0) return
+    let written = 0
+    while (written < size) written += fs.writeSync(1, buffer, written, size - written)
+    offset += size
+  }
+}
+const watcher = fs.watch(run + '.log', drain)
+const owner = spawn('flock', ['--shared', run + '.lock', 'true'])
+owner.once('error', (error) => { console.error(error.message); process.exit(93) })
+owner.once('close', (code) => {
+  drain()
+  watcher.close()
+  fs.closeSync(log)
+  if (code !== 0 || !fs.existsSync(run + '.exit')) {
+    console.error('the run ended without a result')
+    process.exitCode = 93
+    return
+  }
+  const receipt = fs.readFileSync(run + '.exit', 'utf8').trim()
+  // A killed writer can leave an empty receipt. Number('') is zero, not proof of success.
+  if (!/^(0|[1-9][0-9]{0,2})$/.test(receipt) || Number(receipt) > 254) {
+    console.error('the run ended without a valid result')
+    process.exitCode = 93
+    return
+  }
+  process.exitCode = Number(receipt)
+})
+// Closing a follower owns its waiting child, never the detached gate.
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.once(signal, () => { owner.kill(); process.exit(1) })
+}
+drain()
+FOLLOW
 `
 
 function git(root, args, environment) {

@@ -8,7 +8,7 @@ import {
   Workspace,
   type WatchArguments,
 } from '@vivid/contracts'
-import { and, eq, isNull } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { Clock, Context, Effect, Layer, Option, Queue, Ref, type Redacted } from 'effect'
 import type { Actor } from '../auth/access.ts'
 import { personTable } from '../auth/tables.ts'
@@ -209,11 +209,7 @@ export const executorLayer = Layer.effectContext(
 const fixtureConnection = Effect.fn('WatchTest.fixtureConnection')(function* (actor: Actor) {
   const database = yield* Database
   const rows = yield* database.run(
-    database
-      .select()
-      .from(connections)
-      .where(and(eq(connections.personId, actor.person.id), isNull(connections.removedAt)))
-      .limit(1),
+    database.select().from(connections).where(eq(connections.personId, actor.person.id)).limit(1),
   )
   if (rows.length > 0) return
   const id = ConnectionId.make(crypto.randomUUID())

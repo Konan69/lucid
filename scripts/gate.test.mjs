@@ -97,6 +97,38 @@ void test('a lock is exclusive, and the kernel frees it when its owner ends', as
   after()
   assert.equal(slotCount(8), 2)
   assert.equal(slotCount(2), 1)
+  // No completion receipt means ownership is unconfirmed, even when evidence is old.
+  const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-gate-owner-'))
+  t.after(() => NodeFS.rmSync(home, { recursive: true, force: true }))
+  const runs = NodePath.join(home, 'vivid-gate/fast/runs')
+  NodeFS.mkdirSync(runs, { recursive: true })
+  const active = NodePath.join(runs, 'active.log')
+  NodeFS.writeFileSync(active, 'still owned\n')
+  NodeFS.utimesSync(active, new Date(0), new Date(0))
+  const env = { ...withoutRepositoryEnvironment(process.env), HOME: home }
+  const started = NodeChildProcess.spawnSync('bash', ['-s', '--', 'absent', 'cleanup', 'label'], {
+    input: remoteScript,
+    env,
+    encoding: 'utf8',
+  })
+  assert.equal(started.status, 0, started.stderr)
+  const followed = NodeChildProcess.spawnSync('bash', ['-s', '--', 'cleanup'], {
+    input: followScript,
+    env,
+    encoding: 'utf8',
+  })
+  assert.equal(followed.status, 92, followed.stdout + followed.stderr)
+  assert.ok(NodeFS.existsSync(active), 'unconfirmed ownership must preserve run evidence')
+  assert.equal(NodeFS.readFileSync(active, 'utf8'), 'still owned\n')
+  // An interrupted receipt write must never turn an empty file into a successful gate.
+  NodeFS.writeFileSync(NodePath.join(runs, 'partial.log'), '')
+  NodeFS.writeFileSync(NodePath.join(runs, 'partial.exit'), '')
+  const partial = NodeChildProcess.spawnSync('bash', ['-s', '--', 'partial'], {
+    input: followScript,
+    env,
+    encoding: 'utf8',
+  })
+  assert.notEqual(partial.status, 0, 'an incomplete receipt must fail closed')
 })
 
 /**

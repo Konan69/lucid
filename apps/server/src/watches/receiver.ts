@@ -51,7 +51,7 @@ class WatchBodyTooLarge extends Schema.TaggedError<WatchBodyTooLarge>()(
   {},
   { title: 'Watch body too large' },
 ) {}
-/** No Watch has this id, or the request does not verify: answered alike, so nothing is disclosed. */
+/** The callback path does not contain a valid Watch identifier. */
 class WatchUnknown extends Schema.TaggedError<WatchUnknown>()(
   'WatchUnknown',
   {},
@@ -62,7 +62,7 @@ class WatchUnsigned extends Schema.TaggedError<WatchUnsigned>()(
   {},
   { title: 'Watch unsigned' },
 ) {}
-/** A verified request for a Watch that stopped: 410 ends that delivery at Executor for good. */
+/** A verified request for a stopped or deleted Watch ends that delivery at Executor for good. */
 class WatchGone extends Schema.TaggedError<WatchGone>()('WatchGone', {}, { title: 'Watch gone' }) {}
 class WatchBodyInvalid extends Schema.TaggedError<WatchBodyInvalid>()(
   'WatchBodyInvalid',
@@ -125,7 +125,7 @@ export const threadOf = (watch: WatchId, eventId: string) =>
 export const bodyOf = (record: WatchRecord, event: WatchEvent) =>
   [
     BACKGROUND_INSTRUCTION,
-    `Watch: ${record.watch.name} (${record.watch.event} in ${record.watch.account})`,
+    `Watch: ${record.watch.name} (${record.watch.event})`,
     `What to do: ${record.watch.instruction}`,
     `The event, as JSON:\n${JSON.stringify(event.data)}`,
   ].join('\n\n')
@@ -166,9 +166,6 @@ const accept = Effect.fn('Http.Watch.accept')(function* () {
   const route = yield* HttpRouter.RouteContext
   const id = yield* decodeId(route.params.id).pipe(Effect.mapError(() => new WatchUnknown({})))
   const body = yield* readBody(request)
-  const found = yield* (yield* WatchStore).find(id)
-  if (Option.isNone(found)) return yield* new WatchUnknown({})
-  const record = found.value
   const headers = request.headers
   const signed = {
     id: headers['webhook-id'],
@@ -177,7 +174,7 @@ const accept = Effect.fn('Http.Watch.accept')(function* () {
   }
   if (signed.id === undefined || signed.timestamp === undefined || signed.signatures === undefined)
     return yield* new WatchUnsigned({})
-  const secret = secretFor((yield* ServerConfig).AUTH_SECRET, record.watch.id)
+  const secret = secretFor((yield* ServerConfig).AUTH_SECRET, id)
   const now = yield* Clock.currentTimeMillis
   if (
     !verify(
@@ -187,6 +184,9 @@ const accept = Effect.fn('Http.Watch.accept')(function* () {
     )
   )
     return yield* new WatchUnsigned({})
+  const found = yield* (yield* WatchStore).find(id)
+  if (Option.isNone(found)) return yield* new WatchGone({})
+  const record = found.value
   if (WatchState.guards.Stopped(record.watch.state)) return yield* new WatchGone({})
   const decoded = yield* decodeBody(body).pipe(Effect.mapError(() => new WatchBodyInvalid({})))
   if (isVerification(decoded))
@@ -201,7 +201,7 @@ const status = (code: number) => Effect.succeed(HttpServerResponse.empty({ statu
 /**
  * Typed failures map at the boundary. Anything that should be tried again (the database, the
  * runtime, a Thread busy with another Run) answers 5xx or 409, which Executor retries; only a
- * stopped Watch answers 410, which ends that delivery.
+ * stopped or deleted Watch answers 410, which ends that delivery.
  */
 export const watchRoutes = HttpRouter.add(
   'POST',

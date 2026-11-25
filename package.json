@@ -47,6 +47,7 @@
     "@sentry/cli": "3.8.0",
     "@shadcn/lint": "0.1.1",
     "@types/node": "catalog:",
+    "@typeonce/oxlint-plugin-effect-machine": "catalog:",
     "alchemy": "catalog:",
     "effect": "catalog:",
     "husky": "9.1.7",

@@ -3,9 +3,9 @@ import { createFlueClient } from '@flue/sdk'
 import { FeedItem, type FeedCardId } from '@vivid/contracts'
 import { feed } from '@vivid/state'
 import { Effect, Layer, Option, Result } from 'effect'
-import { Atom, AtomRegistry, AsyncResult } from 'effect/reactivity'
+import { Atom, AsyncResult } from 'effect/reactivity'
 import { create } from 'zustand'
-import { act, change } from './app'
+import { change } from './app'
 import { changing, live } from './live'
 import { say } from './said'
 import { engine } from './runtime'
@@ -93,19 +93,10 @@ const machineFor = (card: FeedCardId): feed.PressAtoms => {
   return machine
 }
 
-/**
- * Waits for machine startup before queuing a press. Duplicate presses are refused by the machine,
- * including two clicks queued before the first Sending snapshot reaches a component.
- */
+/** The bridge queues startup writes and the machine refuses duplicate presses before redraw. */
 const press = (item: feed.Waiting, how: feed.Settling) => {
   const machine = machineFor(item.card)
-  void act(
-    AtomRegistry.getResult(engine.registry, machine.ref).pipe(
-      Effect.flatMap((ref) => ref.send(feed.PressEvents.Press({ item, how }))),
-      // Startup failure leaves no press to draw. Expected delivery refusals stay in Unsent.
-      Effect.ignore,
-    ),
-  )
+  engine.registry.set(machine.send, feed.PressEvents.Press({ item, how }))
 }
 
 /**

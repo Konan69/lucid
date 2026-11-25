@@ -168,23 +168,32 @@ describe.skipIf(!testDatabaseConfigured)('Watch receiver', () => {
       }).pipe(Effect.scoped),
     )
 
-    it.effect('answers 404 for an unknown Watch and 410 once a Watch has stopped', () =>
-      Effect.gen(function* () {
-        const post = yield* receiver()
-        const { actor, watch, url, secret } = yield* activeWatch()
-        const unknown = url.replace(/[^/]+$/u, 'not-a-watch')
-        const missing = yield* post(
-          unknown,
-          event('evt_1'),
-          secretFor((yield* ServerConfig).AUTH_SECRET, WatchId.make('not-a-watch')),
-          Option.none(),
-        )
-        expect(missing).toEqual({ status: 404, text: '' })
-        yield* (yield* Watches).stop(actor, request.name)
-        const gone = yield* post(url, event('evt_9'), secret, Option.none())
-        expect(gone.status).toBe(410)
-        expect(yield* deliveriesOf(watch.id)).toEqual([])
-      }).pipe(Effect.scoped),
+    it.effect(
+      'answers 401 for a forged unknown Watch and 410 for a signed unknown or stopped Watch',
+      () =>
+        Effect.gen(function* () {
+          const post = yield* receiver()
+          const { actor, watch, url, secret } = yield* activeWatch()
+          const unknown = url.replace(/[^/]+$/u, 'not-a-watch')
+          const missing = yield* post(
+            unknown,
+            event('evt_1'),
+            secretFor((yield* ServerConfig).AUTH_SECRET, WatchId.make('not-a-watch')),
+            Option.some('v1,AAAA'),
+          )
+          expect(missing).toEqual({ status: 401, text: '' })
+          const removed = yield* post(
+            unknown,
+            event('evt_1'),
+            secretFor((yield* ServerConfig).AUTH_SECRET, WatchId.make('not-a-watch')),
+            Option.none(),
+          )
+          expect(removed.status).toBe(410)
+          yield* (yield* Watches).stop(actor, request.name)
+          const gone = yield* post(url, event('evt_9'), secret, Option.none())
+          expect(gone.status).toBe(410)
+          expect(yield* deliveriesOf(watch.id)).toEqual([])
+        }).pipe(Effect.scoped),
     )
   })
 })

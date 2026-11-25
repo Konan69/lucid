@@ -5,6 +5,7 @@ import { describe, expect, layer } from '@effect/vitest'
 import { ConnectionId, ConnectionStep, PersonId, ServiceId } from '@vivid/contracts'
 import { ConfigProvider, Config, Effect, Layer, Schema, Redacted, Option } from 'effect'
 import { eq } from 'drizzle-orm'
+import { executorEventsLayer } from '../watches/events.ts'
 import { testDatabaseLayer } from '../database/testdb.ts'
 import { Database } from '../database/client.ts'
 import { Executor, ExecutorAccountId, ExecutorReferences, executorLayer } from './executor.ts'
@@ -31,7 +32,7 @@ const Receipt = Schema.Struct({
 })
 const decodeReceipt = Schema.decodeUnknownEffect(Schema.fromJsonString(Receipt))
 
-const configured = executorLayer.pipe(
+const configured = Layer.mergeAll(executorLayer, executorEventsLayer).pipe(
   Layer.provide(NodeHttpClient.layerUndici),
   Layer.provide(
     ConfigProvider.layer(

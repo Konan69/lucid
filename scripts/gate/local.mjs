@@ -281,7 +281,8 @@ function lintWorkers(environment) {
 
 async function runStages(root, selection, environment, { runId, directory }) {
   const selected = stages.filter((stage) => selection.stages.includes(stage.name))
-  const needsDatabase = selected.some((stage) => stage.name === 'test')
+  // Proof exercises the gate's own database leases against the same disposable server.
+  const needsDatabase = selected.some((stage) => stage.name === 'test' || stage.name === 'proof')
   const database = needsDatabase ? await openRunDatabase(root, environment, runId) : undefined
   stopChildrenOnSignal(() => (database === undefined ? Promise.resolve() : database.close()))
   const env = {

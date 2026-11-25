@@ -1,7 +1,7 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "288dbd66-bded-41cc-a3f1-f2f1ae322ea6",
+  "id": "5345388b-589f-443c-9220-f61a926b6e32",
   "prevIds": [
     "21b761f8-d296-4db5-aecb-c4961e8d5908"
   ],
@@ -1219,19 +1219,6 @@
       "generated": null,
       "identity": null,
       "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "vivid_connections"
-    },
-    {
-      "type": "bigint",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "removed_at",
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_connections"
@@ -5608,7 +5595,7 @@
         "id"
       ],
       "onUpdate": "NO ACTION",
-      "onDelete": "NO ACTION",
+      "onDelete": "CASCADE",
       "name": "vivid_watches_connection_id_vivid_connections_id_fkey",
       "entityType": "fks",
       "schema": "public",

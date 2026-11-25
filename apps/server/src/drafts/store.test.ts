@@ -12,7 +12,7 @@ import { ThreadStore, threadStoreLayer } from '../threads/store.ts'
 import { threads } from '../threads/tables.ts'
 import { draftHandlers } from './handlers.ts'
 import { DraftStore, draftStoreLayer } from './store.ts'
-import { drafts } from './tables.ts'
+import { draftGenerations, drafts } from './tables.ts'
 import {
   beforeTransaction,
   current,
@@ -34,6 +34,65 @@ const save = (caller: Caller, place: DraftPlace, text: string) =>
   draftHandlers
     .SaveDraft(SaveDraftRequest.make({ place, text, device: 'laptop' }))
     .pipe(signedIn(caller))
+
+/**
+ * Cap regressions need pre-existing places without replaying every setup save transaction.
+ * Seed the same rows and counter atomically; the boundary-crossing save still uses the handler.
+ */
+const seedDrafts = Effect.fn('DraftTest.seedDrafts')(function* (
+  caller: Caller,
+  rows: ReadonlyArray<
+    Pick<typeof drafts.$inferInsert, 'text' | 'revision' | 'savedAt'> & {
+      readonly threadId: ThreadId
+      readonly archived: boolean
+    }
+  >,
+) {
+  const database = yield* Database
+  const personId = caller.actor.person.id
+  const companyId = Workspace.match(caller.actor.workspace, {
+    Personal: () => null,
+    Company: ({ company }) => company.id,
+  })
+  const generation = Math.max(0, ...rows.map((row) => row.revision))
+  yield* database.transaction((tx) =>
+    Effect.gen(function* () {
+      yield* tx.insert(threads).values(
+        rows.map(
+          (row) =>
+            ({
+              id: row.threadId,
+              personId,
+              companyId,
+              title: 'Unsent work',
+              titleSource: 'Person',
+              updatedAt: 0,
+              archived: row.archived,
+            }) satisfies typeof threads.$inferInsert,
+        ),
+      )
+      yield* tx.insert(drafts).values(
+        rows.map(
+          (row) =>
+            ({
+              personId,
+              companyId,
+              place: 'InThread',
+              threadId: row.threadId,
+              text: row.text,
+              revision: row.revision,
+              savedAt: row.savedAt,
+              device: 'laptop',
+            }) satisfies typeof drafts.$inferInsert,
+        ),
+      )
+      yield* tx
+        .insert(draftGenerations)
+        .values({ personId, generation })
+        .onConflictDoUpdate({ target: draftGenerations.personId, set: { generation } })
+    }),
+  )
+})
 
 describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
   layer(testLayer)((it) => {
@@ -87,24 +146,18 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
           Effect.gen(function* () {
             const test = yield* fixture()
             const database = yield* Database
-            const archived = yield* thread(test.personal)
-            yield* save(
-              test.personal,
-              DraftPlace.cases.InThread.make({ thread: archived }),
-              'archived',
-            )
-            yield* (yield* ThreadStore).patch(test.personal.actor.person.id, archived, {
-              archived: true,
-            })
+            const archived = ThreadId.make(crypto.randomUUID())
             yield* TestClock.setTime(at)
-            for (let i = 0; i < 50; i++) {
-              const id = yield* thread(test.personal)
-              yield* save(
-                test.personal,
-                DraftPlace.cases.InThread.make({ thread: id }),
-                `kept ${i}`,
-              )
-            }
+            yield* seedDrafts(test.personal, [
+              { threadId: archived, text: 'archived', revision: 1, savedAt: 0, archived: true },
+              ...Array.from({ length: 50 }, (_, i) => ({
+                threadId: ThreadId.make(crypto.randomUUID()),
+                text: `kept ${i}`,
+                revision: i + 2,
+                savedAt: at,
+                archived: false,
+              })),
+            ])
             // This sorts behind all existing UUID places: old offset(50) trimmed the written row.
             const last = ThreadId.make(`!${crypto.randomUUID()}`)
             yield* database.run(
@@ -118,7 +171,8 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
             )
             const place = DraftPlace.cases.InThread.make({ thread: last })
             yield* save(test.personal, place, 'just saved')
-            const listed = (yield* current(test.personal)).drafts
+            // Read the real WatchDrafts loader directly; subscription delivery has separate tests.
+            const listed = (yield* (yield* DraftStore).list(test.personal.actor)).drafts
             expect(listed).toHaveLength(50)
             expect(listed.map((draft) => draft.revision)).toEqual(
               Array.from({ length: 50 }, (_, i) => 52 - i),
@@ -331,20 +385,50 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
       it.effect('fifty cap drops the oldest only in the saved workspace, newest first', () =>
         Effect.gen(function* () {
           const test = yield* fixture()
-          yield* save(test.member, newThread, 'Company keeps its draft')
+          const database = yield* Database
+          // These are pre-cap rows; only the final write needs the save handler's transaction.
+          yield* database.run(
+            database.insert(drafts).values([
+              {
+                personId: test.personal.actor.person.id,
+                companyId: test.company.id,
+                place: 'NewThread',
+                text: 'Company keeps its draft',
+                revision: 1,
+                savedAt: 0,
+                device: 'laptop',
+              },
+              {
+                personId: test.personal.actor.person.id,
+                place: 'NewThread',
+                text: 'oldest',
+                revision: 2,
+                savedAt: at,
+                device: 'laptop',
+              },
+            ]),
+          )
           yield* TestClock.setTime(at)
-          yield* save(test.personal, newThread, 'oldest')
-          for (let i = 1; i <= 50; i++) {
-            yield* TestClock.setTime(at - i)
-            const id = yield* thread(test.personal)
-            yield* save(test.personal, DraftPlace.cases.InThread.make({ thread: id }), `words ${i}`)
-          }
-          const listed = (yield* current(test.personal)).drafts
+          yield* seedDrafts(
+            test.personal,
+            Array.from({ length: 49 }, (_, i) => ({
+              threadId: ThreadId.make(crypto.randomUUID()),
+              text: `words ${i + 1}`,
+              revision: i + 3,
+              savedAt: at - i - 1,
+              archived: false,
+            })),
+          )
+          yield* TestClock.setTime(at - 50)
+          const id = yield* thread(test.personal)
+          yield* save(test.personal, DraftPlace.cases.InThread.make({ thread: id }), 'words 50')
+          const store = yield* DraftStore
+          const listed = (yield* store.list(test.personal.actor)).drafts
           expect(listed).toHaveLength(50)
           expect(listed.map((draft) => draft.text)).toEqual(
             Array.from({ length: 50 }, (_, i) => `words ${50 - i}`),
           )
-          expect((yield* current(test.member)).drafts).toMatchObject([
+          expect((yield* store.list(test.member.actor)).drafts).toMatchObject([
             { text: 'Company keeps its draft' },
           ])
         }).pipe(Effect.scoped),
@@ -418,16 +502,55 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
     it.effect('concurrent device saves retain every revision and enforce the workspace cap', () =>
       Effect.gen(function* () {
         const test = yield* fixture()
-        const places = yield* Effect.forEach(Array.from({ length: 51 }), () =>
-          thread(test.personal).pipe(
-            Effect.map((id) => DraftPlace.cases.InThread.make({ thread: id })),
+        const database = yield* Database
+        // Four writers are the original concurrency bound. Start them at the cap boundary rather
+        // than paying for twelve earlier waves. An absent counter still exercises insert races
+        // and legacy revision recovery before these four writes must receive 48 through 51.
+        yield* seedDrafts(
+          test.personal,
+          Array.from({ length: 47 }, (_, i) => ({
+            threadId: ThreadId.make(crypto.randomUUID()),
+            text: 'parallel',
+            revision: i + 1,
+            savedAt: 0,
+            archived: false,
+          })),
+        )
+        yield* database.run(
+          database
+            .delete(draftGenerations)
+            .where(eq(draftGenerations.personId, test.personal.actor.person.id)),
+        )
+        const places = Array.from({ length: 4 }, () =>
+          DraftPlace.cases.InThread.make({ thread: ThreadId.make(crypto.randomUUID()) }),
+        )
+        yield* database.run(
+          database.insert(threads).values(
+            places.map(
+              (place) =>
+                ({
+                  id: place.thread,
+                  personId: test.personal.actor.person.id,
+                  title: 'Unsent work',
+                  titleSource: 'Person',
+                  updatedAt: 0,
+                }) satisfies typeof threads.$inferInsert,
+            ),
           ),
         )
-        yield* Effect.forEach(places, (place) => save(test.personal, place, 'parallel'), {
-          concurrency: 4,
-        })
-        expect((yield* current(test.personal)).drafts).toHaveLength(50)
-        const database = yield* Database
+        const written = yield* Effect.forEach(
+          places,
+          (place) => save(test.personal, place, 'parallel'),
+          {
+            concurrency: 4,
+          },
+        )
+        expect(written.every((answer) => DraftSaved.guards.Kept(answer))).toBe(true)
+        expect(written.map((answer) => answer.generation).toSorted((a, b) => a - b)).toEqual([
+          48, 49, 50, 51,
+        ])
+        const afterSaves = yield* current(test.personal)
+        expect(afterSaves.drafts).toHaveLength(50)
         expect(
           yield* database.run(
             database
@@ -438,7 +561,7 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
         ).toHaveLength(50)
         // Save one surviving place on two devices at once: the returning revisions must differ,
         // and the latest one must be the durable whole-text winner, with no read/increment race.
-        const [kept] = (yield* current(test.personal)).drafts
+        const [kept] = afterSaves.drafts
         if (kept === undefined) expect.fail('The cap removed every draft')
         const saved = yield* Effect.all(
           [

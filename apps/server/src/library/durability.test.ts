@@ -1,4 +1,5 @@
 import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem'
+import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
 import { layer as pgClientLayer, PgClient } from '@effect/sql-pg/PgClient'
 import { describe, expect, layer } from '@effect/vitest'
@@ -32,7 +33,8 @@ import {
   ExtractionUnavailable,
   extractPdf,
 } from './extraction.ts'
-import { fixture, pendingWork, storedWork } from './fixtures.ts'
+import { fixture as libraryFixture, pendingWork, storedWork } from './fixtures.ts'
+import { type Launch, processOptions } from './extraction/process.ts'
 import { Fixture } from './fixtures/mode.ts'
 import { CRASH_TIMEOUT_MS } from './fixtures/process/mode.ts'
 import { GROW_HEAP_MB, nativeLaunch, extractWith, reportRemoved } from './fixtures/launch.ts'
@@ -61,15 +63,46 @@ class DeliveryRefused extends Schema.TaggedError<DeliveryRefused>()(
   { title: 'Library delivery test refused' },
 ) {}
 
-/** Preserve the original SQL failure when P12's infallible finalizer must fail the test as a defect. */
+/** Cleanup failures must fail the owning case instead of contaminating the next queue consumer. */
 class QueueCleanupFailed extends Schema.TaggedError<QueueCleanupFailed>()(
   'QueueCleanupFailed',
-  { operation: Schema.Literal('LibraryDurability.P12.cleanup'), cause: SqlError },
+  { cause: SqlError },
   { title: 'Library ingestion test queue cleanup failed' },
 ) {}
 
 const decodeTopics = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.String)))
 const pdfBytes = NodeFS.readFileSync(new URL('./fixtures/readable.pdf', import.meta.url))
+
+/**
+ * SDK work has no foreign key to product rows. Register its removal before any item is offered,
+ * while the Person and documents still exist. LIFO release removes this case's obligations
+ * before libraryFixture deletes its rows, including when delivery or an assertion is interrupted.
+ */
+const fixture = Effect.fn('LibraryDurability.fixture')(function* () {
+  const data = yield* libraryFixture()
+  const sql = yield* SqlClient.SqlClient
+  yield* Effect.addFinalizer(() =>
+    sql`
+      DELETE FROM ${sql(WORK_TABLE)} WHERE queue_name = ${INGESTION_QUEUE_NAME}
+      AND id IN (SELECT id FROM vivid_library_documents WHERE person_id = ${data.owner.actor.person.id})
+    `.pipe(
+      Effect.asVoid,
+      Effect.catch((cause) => Effect.die(new QueueCleanupFailed({ cause }))),
+    ),
+  )
+  return data
+})
+
+/** Deleted and queue-only items cannot be found through the fixture's document-owner subquery. */
+const cleanupItem = Effect.fn('LibraryDurability.cleanupItem')(function* (id: LibraryItemId) {
+  const sql = yield* SqlClient.SqlClient
+  yield* Effect.addFinalizer(() =>
+    sql`DELETE FROM ${sql(WORK_TABLE)} WHERE queue_name = ${INGESTION_QUEUE_NAME} AND id = ${id}`.pipe(
+      Effect.asVoid,
+      Effect.catch((cause) => Effect.die(new QueueCleanupFailed({ cause }))),
+    ),
+  )
+})
 
 /** SQL receipt for ownership, independent of the queue's product-facing state projection. */
 const decodeClaims = Schema.decodeUnknownEffect(
@@ -124,6 +157,21 @@ const createItem = Effect.fn('LibraryDurability.createItem')(function* (
 const delivery = Effect.fn('LibraryDurability.delivery')(function* (extract: typeof extractPdf) {
   const queue = yield* libraryIngestion(Schedule.forever)
   return yield* takeIngestion(queue, ingestOwed(ingestionOperations(yield* Database), extract))
+})
+
+/**
+ * Recovery here proves redelivery of the same bytes and SQL claim, not another cold parser start.
+ * P12 separately proves that a real PDF still parses after native extraction failure.
+ */
+const recoveredPdf: typeof extractPdf = (bytes) => {
+  expect(bytes).toEqual(new Uint8Array(pdfBytes))
+  return Effect.succeed(['Vivid extraction fixture'])
+}
+
+/** The retry must acknowledge this item's second claim, rather than merely leave no pending work. */
+const recover = Effect.fn('LibraryDurability.recover')(function* (id: LibraryItemId) {
+  yield* delivery(recoveredPdf)
+  expect(yield* storedWork(id)).toEqual([{ state: 'completed', attempts: 2 }])
 })
 
 /**
@@ -277,6 +325,7 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
           new TextEncoder().encode('removed garnet'),
           'text/plain',
         )
+        yield* cleanupItem(item.document.id)
         yield* (yield* LibraryStore).removeItem(owner.actor, item.document.id)
         yield* delivery(extractPdf)
         expect(yield* storedWork(item.document.id)).toEqual([{ state: 'completed', attempts: 1 }])
@@ -336,24 +385,39 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
       }),
     )
 
-    /** Q7: an exiting real extraction process is infrastructure failure, not a failed file. */
+    /**
+     * Q7: a real startup exit leaves work owed. A bare Node exit needs no TypeScript loader or
+     * RPC server; extraction.test.ts E5 covers death inside a handler. Await native receipts,
+     * rather than paying for two cold runtimes merely to leave the queue clean.
+     */
     it.effect('Q7 retains an unavailable extraction obligation', () =>
       Effect.gen(function* () {
         expect(yield* pendingWork()).toEqual([])
         const { owner } = yield* fixture()
         const item = yield* createItem(owner.actor, pdfBytes, 'application/pdf')
-        const owned = nativeLaunch(Fixture.cases.exit.make({}), EXTRACTION_HEAP_MB)
-        expect(yield* delivery(extractWith(owned.launch)).pipe(Effect.flip)).toBeInstanceOf(
+        const ended = yield* Deferred.make<number | null>()
+        const reportDir = yield* Deferred.make<string>()
+        // Exit before loading application code so this queue policy proof pays only native startup.
+        const launch: Launch = (directory) => {
+          const child = NodeChildProcess.fork(new URL('./fixtures/main.ts', import.meta.url), [], {
+            ...processOptions({ heapMb: EXTRACTION_HEAP_MB, reportDir: directory }),
+            execArgv: ['--eval', 'process.exit(1)'],
+          })
+          child.once('exit', (code) => Deferred.doneUnsafe(ended, Effect.succeed(code)))
+          Deferred.doneUnsafe(reportDir, Effect.succeed(directory))
+          return child
+        }
+        expect(yield* delivery(extractWith(launch)).pipe(Effect.flip)).toBeInstanceOf(
           ExtractionUnavailable,
         )
-        expect(yield* Deferred.isDone(owned.reportDir)).toBe(true)
-        yield* Deferred.await(owned.ended)
-        expect(yield* reportRemoved(owned)).toBe(true)
+        expect(yield* Deferred.isDone(reportDir)).toBe(true)
+        expect(yield* Deferred.await(ended)).toBe(1)
+        expect(NodeFS.existsSync(yield* Deferred.await(reportDir))).toBe(false)
         expect(yield* storedWork(item.document.id)).toEqual([{ state: 'pending', attempts: 1 }])
         expect(yield* (yield* LibraryStore).getItem(owner.actor, item.document.id)).toMatchObject({
           value: { status: 'processing' },
         })
-        yield* delivery(extractPdf)
+        yield* recover(item.document.id)
       }),
     )
 
@@ -377,7 +441,7 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
         expect(yield* (yield* LibraryStore).getItem(owner.actor, item.document.id)).toMatchObject({
           value: { status: 'processing' },
         })
-        yield* delivery(extractPdf)
+        yield* recover(item.document.id)
       }),
     )
 
@@ -402,7 +466,7 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
           value: { status: 'processing' },
         })
         const queue = yield* libraryIngestion(Schedule.forever)
-        const ingest = ingestOwed(ingestionOperations(yield* Database), extractPdf)
+        const ingest = ingestOwed(ingestionOperations(yield* Database), recoveredPdf)
         expect(
           yield* queue.take((job, metadata) =>
             ingest(job.itemId, metadata.attempts).pipe(Effect.as(metadata.attempts)),
@@ -431,27 +495,6 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
         Effect.gen(function* () {
           expect(yield* pendingWork()).toEqual([])
           const { owner } = yield* fixture()
-          const sql = yield* SqlClient.SqlClient
-          /**
-           * Intentional cleanup write to the SDK-owned table, limited to this case's Person/items.
-           * Register before either offer; LIFO cleanup runs before fixture() removes its Person,
-           * keeping the subselect valid even after a failed assertion. rc.116 Effect.addFinalizer
-           * requires Effect<void, never, R>; a tagged defect retains the original SqlError and
-           * identifies the cleanup operation without adding credentials or connection settings.
-           */
-          yield* Effect.addFinalizer(() =>
-            sql`
-            DELETE FROM ${sql(WORK_TABLE)} WHERE queue_name = ${INGESTION_QUEUE_NAME}
-            AND id IN (SELECT id FROM vivid_library_documents WHERE person_id = ${owner.actor.person.id})
-          `.pipe(
-              Effect.asVoid,
-              Effect.catch((cause) =>
-                Effect.die(
-                  new QueueCleanupFailed({ operation: 'LibraryDurability.P12.cleanup', cause }),
-                ),
-              ),
-            ),
-          )
           // A valid trailing PDF comment gives the heap item its own digest; otherwise createItem's
           // real shelf deduplication would make the healthy upload the same already-failed item.
           const heapBytes = new Uint8Array([
@@ -634,8 +677,7 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
           value: { status: 'processing' },
         })
         expect(yield* storedWork(item.document.id)).toEqual([{ state: 'pending', attempts: 1 }])
-        // Repay through the public delivery seam so the next case's pending precondition stays honest.
-        yield* delivery(extractPdf)
+        yield* recover(item.document.id)
       }),
     )
 
@@ -650,6 +692,7 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
           expect(sql).not.toBe(suiteClient)
           const queue = yield* libraryIngestion(Schedule.forever)
           const itemId = LibraryItemId.make(crypto.randomUUID())
+          yield* cleanupItem(itemId)
           yield* sql
             .withTransaction(
               queue

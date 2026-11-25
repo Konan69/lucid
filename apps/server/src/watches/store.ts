@@ -10,6 +10,7 @@ import {
   PersonId,
   ConnectionId,
   Watch,
+  DatabaseFailure,
   WatchArguments,
   WatchId,
   WatchState,
@@ -17,7 +18,7 @@ import {
 } from '@vivid/contracts'
 import { ownedHere, type Actor } from '../auth/access.ts'
 import { Database, decodeStored, returned } from '../database/client.ts'
-import { accountOf, holdConnection } from './apps.ts'
+import { accountNames, holdConnection } from './apps.ts'
 import { watches } from './tables.ts'
 
 /** A live Watch of this Person already has this name; Vivid stops Watches by name, so it must differ. */
@@ -67,10 +68,10 @@ const decodeWatch = decodeStored(StoredWatch, 'Watch')
 
 /**
  * A Watch with what only the server holds: whose it is and the exact subscription key sent to
- * Executor. `watch` is what its owner and Vivid read.
+ * Executor. Display names are added only for owner-facing reads.
  */
 export interface WatchRecord {
-  readonly watch: Watch
+  readonly watch: Omit<Watch, 'account'>
   readonly personId: PersonId
   readonly companyId: CompanyId | null
   readonly connectionId: ConnectionId
@@ -88,16 +89,15 @@ const record = Effect.fn('WatchStore.record')(function* (row: typeof watches.$in
     Stopped: ({ stopReason }) => WatchState.cases.Stopped.make({ reason: stopReason }),
   })
   return {
-    watch: Watch.make({
+    watch: {
       id: stored.id,
       name: stored.name,
-      account: yield* accountOf(stored.connectionId, stored.companyId),
       event: stored.event,
       arguments: stored.arguments,
       instruction: stored.instruction,
       state,
       createdAt: stored.createdAt,
-    }),
+    },
     personId: stored.personId,
     companyId: stored.companyId,
     connectionId: stored.connectionId,
@@ -139,8 +139,6 @@ const makeWrites = (database: Database['Service']) => {
     )
     if (taken.length > 0) return yield* new WatchNameTaken({})
     const now = yield* Clock.currentTimeMillis
-    // A concurrent removal locks this same Connection before stopping its Watches. A creation
-    // resolved before removal must not insert a new live subscription after the tombstone.
     const rows = yield* database.transaction((tx) =>
       Effect.gen(function* () {
         yield* holdConnection(tx, input.connectionId)
@@ -150,9 +148,7 @@ const makeWrites = (database: Database['Service']) => {
           .returning()
       }),
     )
-    return yield* record(yield* returned(rows, 'Watch')).pipe(
-      Effect.provideService(Database, database),
-    )
+    return yield* record(yield* returned(rows, 'Watch'))
   })
 
   /** Executor granted (or renewed) the subscription; a Watch stopped meanwhile stays stopped. */
@@ -169,10 +165,7 @@ const makeWrites = (database: Database['Service']) => {
         .where(and(eq(watches.id, id), live))
         .returning(),
     )
-    return yield* Effect.forEach(rows, record).pipe(
-      Effect.provideService(Database, database),
-      Effect.map(first),
-    )
+    return yield* Effect.forEach(rows, record).pipe(Effect.map(first))
   })
 
   /** Executor refused the subscription: a Watch that never became Active leaves no trace. */
@@ -192,14 +185,29 @@ const makeWrites = (database: Database['Service']) => {
         .where(and(eq(watches.id, id), live))
         .returning(),
     )
-    return yield* Effect.forEach(rows, record).pipe(
-      Effect.provideService(Database, database),
-      Effect.map(first),
-    )
+    return yield* Effect.forEach(rows, record).pipe(Effect.map(first))
   })
 
   return { insertPending, activate, discard, stop }
 }
+
+/** Missing names violate the Connection FK's promise; never invent an account label. */
+const withAccount = (record: WatchRecord, names: ReadonlyMap<string, string>) => {
+  const account = names.get(record.connectionId)
+  if (account === undefined)
+    return Effect.fail(new DatabaseFailure({ message: 'Watch Connection has no name' }))
+  return Effect.succeed({ ...record, watch: Watch.make({ ...record.watch, account }) })
+}
+
+/** One inventory read names the entire result; receiver and renewal never call this projection. */
+const presentAll = Effect.fn('WatchStore.presentAll')(function* (
+  actor: Actor,
+  records: ReadonlyArray<WatchRecord>,
+) {
+  if (records.length === 0) return []
+  const names = yield* accountNames(actor)
+  return yield* Effect.forEach(records, (record) => withAccount(record, names))
+})
 
 /** Reads of Watch rows, for their owner, for the receiver and for renewal. */
 const makeReads = (database: Database['Service']) => {
@@ -212,7 +220,9 @@ const makeReads = (database: Database['Service']) => {
         .where(and(ownedHere(watches, actor), live))
         .orderBy(asc(watches.createdAt), asc(watches.id)),
     )
-    return yield* Effect.forEach(rows, record).pipe(Effect.provideService(Database, database))
+    return yield* presentAll(actor, yield* Effect.forEach(rows, record)).pipe(
+      Effect.provideService(Database, database),
+    )
   })
 
   /** One of the Actor's live Watches by its name. */
@@ -224,7 +234,7 @@ const makeReads = (database: Database['Service']) => {
         .where(and(ownedHere(watches, actor), live, eq(watches.name, name)))
         .limit(1),
     )
-    return yield* Effect.forEach(rows, record).pipe(
+    return yield* presentAll(actor, yield* Effect.forEach(rows, record)).pipe(
       Effect.provideService(Database, database),
       Effect.map(first),
     )
@@ -235,10 +245,7 @@ const makeReads = (database: Database['Service']) => {
     const rows = yield* database.run(
       database.select().from(watches).where(eq(watches.id, id)).limit(1),
     )
-    return yield* Effect.forEach(rows, record).pipe(
-      Effect.provideService(Database, database),
-      Effect.map(first),
-    )
+    return yield* Effect.forEach(rows, record).pipe(Effect.map(first))
   })
 
   /**
@@ -262,10 +269,16 @@ const makeReads = (database: Database['Service']) => {
         )
         .orderBy(asc(watches.createdAt), asc(watches.id)),
     )
-    return yield* Effect.forEach(rows, record).pipe(Effect.provideService(Database, database))
+    return yield* Effect.forEach(rows, record)
   })
 
-  return { list, named, find, due }
+  /** Creation returns a display record only after Executor has answered. */
+  const present = Effect.fn('WatchStore.present')(function* (actor: Actor, record: WatchRecord) {
+    const names = yield* accountNames(actor).pipe(Effect.provideService(Database, database))
+    return yield* withAccount(record, names)
+  })
+
+  return { list, named, find, due, present }
 }
 
 /** The service owns Watch rows; Executor and delivery stay with the caller. */

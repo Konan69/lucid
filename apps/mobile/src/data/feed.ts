@@ -2,9 +2,8 @@ import { useAtomValue } from '@effect/atom-react'
 import type { FeedCardId } from '@vivid/contracts'
 import { feed } from '@vivid/state'
 import { Effect, Layer, Option, Result } from 'effect'
-import { AsyncResult, Atom, AtomRegistry } from 'effect/reactivity'
+import { AsyncResult, Atom } from 'effect/reactivity'
 import { randomUUID } from 'expo-crypto'
-import { start } from './app'
 import { confirm } from './haptics'
 import type { LiveData } from './live'
 import { say } from './threads'
@@ -79,17 +78,10 @@ const machineFor = (data: LiveData, card: FeedCardId): feed.PressAtoms => {
   return machine
 }
 
-/** Queue presses after actor startup. The actor refuses repeats, even before React redraws. */
+/** The bridge queues startup writes and the machine refuses duplicate presses before redraw. */
 const press = (data: LiveData, item: feed.Waiting, how: feed.Settling): void => {
   const machine = machineFor(data, item.card)
-  void start(
-    AtomRegistry.getResult(data.registry, machine.ref).pipe(
-      Effect.flatMap((ref) => ref.send(feed.PressEvents.Press({ item, how }))),
-      // Startup faults remain in the machine atoms. This event boundary carries typed failures
-      // as values, including a session stopped before its queued press reaches the actor.
-      Effect.result,
-    ),
-  )
+  data.registry.set(machine.send, feed.PressEvents.Press({ item, how }))
 }
 
 /** Say the card's filled-in button words in its Thread, reusing a failed delivery's key. */

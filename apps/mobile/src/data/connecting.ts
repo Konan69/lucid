@@ -232,12 +232,12 @@ function owing() {
     },
     /**
      * The machine moved. Every card a press carried whose attempt is not the machine's any more
-     * is owed nothing, except `kept`: the card of a press the machine has not shown yet.
+     * is owed nothing. Idle sends publish the new state before returning to the presser.
      */
-    prune: (now: Attempt, kept: Option.Option<string>) => {
+    prune: (now: Attempt) => {
       for (const card of carried) {
         const holds = !connecting.Standing.guards.Still(standingForCard(now, card))
-        if (holds || Option.exists(kept, (held) => held === card)) continue
+        if (holds) continue
         owed.delete(card)
         carried.delete(card)
       }
@@ -289,28 +289,13 @@ export function makeConnecting(session: Session) {
   /** How many attempts this session has begun: each press is named by the next number. */
   let begun = 0
 
-  /**
-   * The card of a press made here that the machine has not yet shown, when there is one.
-   *
-   * The machine takes a press on its own turn, so for a moment after a press the snapshot still
-   * reads as it did, and a second press in that moment would pass `waitingOn` as well, be felt,
-   * and then be refused by the machine. A press is therefore accepted here, at once, and nothing
-   * else is until the machine has moved.
-   */
-  let unshown: Option.Option<{ readonly card: Option.Option<string> }> = Option.none()
-
   const cards = owing()
 
   // Held for as long as the session: an attempt outlives the screen that pressed it (the app
   // leaves the front for the provider's page, a card scrolls away), and so does what it says.
-  // Each time the machine moves, what cards are owed is pruned, and the press that was waited on
-  // has then been answered.
+  // Each time the machine moves, what cards are owed is pruned.
   const unmount = registry.subscribe(attempt, (now) => {
-    cards.prune(
-      now,
-      Option.flatMap(unshown, (press) => press.card),
-    )
-    unshown = Option.none()
+    cards.prune(now)
   })
 
   /**
@@ -350,13 +335,12 @@ export function makeConnecting(session: Session) {
 
     /**
      * Makes one press, and answers whether it was made. A press the machine would not take (the
-     * server is still being asked, anywhere) does nothing, and neither does one made before the
-     * machine has shown the last (`unshown`); the machine refuses it as well. The press names its
+     * server is still being asked, anywhere) does nothing. Idle sends publish their state before
+     * returning, so the next press reads the machine's own waiting state. The press names its
      * attempt and says its moment: the machine reads no clock when it decides.
      */
     press: ({ pressed, asked, card }: Pressing): boolean => {
-      if (waitingOn(registry.get(attempt)) || Option.isSome(unshown)) return false
-      unshown = Option.some({ card })
+      if (waitingOn(registry.get(attempt))) return false
       if (Option.isSome(card)) cards.carry(card.value)
       begun += 1
       registry.set(

@@ -45,7 +45,13 @@ export const stages = [
   { name: 'tooling', lane: 'tests', tasks: ['test:tooling'] },
   { name: 'test', lane: 'tests', tasks: ['test'] },
   // Reversal reads branch history and must run afresh, outside Turbo's content-only cache.
-  { name: 'proof', commands: [['node', 'scripts/proof.mjs']] },
+  {
+    name: 'proof',
+    commands: [
+      ['node', '--test', 'scripts/gate/database.test.mjs'],
+      ['node', 'scripts/proof.mjs'],
+    ],
+  },
 ]
 
 export const stageNames = stages.map((stage) => stage.name)
