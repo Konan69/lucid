@@ -119,6 +119,7 @@ import {
   DisplayApprovalUnsupported,
   UseToolRequest,
 } from './connections.js'
+import { UseDiscordRequest } from './discord.js'
 import {
   Conflict,
   DatabaseConstraintViolation,
@@ -723,6 +724,12 @@ const ResolveTool = Rpc.make('ResolveTool', {
 })
 /** Vivid asking to do one thing through a Connection. The server decides whether it happens. */
 const UseTool = Rpc.make('UseTool', { ...call, payload: UseToolRequest, success: ToolOutcome })
+/** Vivid reading or writing in a Discord server the acting Person connected, through Vivid's bot. */
+const UseDiscord = Rpc.make('UseDiscord', {
+  ...call,
+  payload: UseDiscordRequest,
+  success: ToolOutcome,
+})
 /** A display's Query or Mutation, run for the Person who is looking at it. */
 const UseDisplayTool = Rpc.make('UseDisplayTool', {
   ...call,
@@ -1037,6 +1044,7 @@ export const VividRpc = RpcGroup.make(
   FindTools,
   ResolveTool,
   UseTool,
+  UseDiscord,
   UseDisplayTool,
   OfferConnection,
   ListMemory,

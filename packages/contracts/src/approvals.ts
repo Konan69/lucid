@@ -1,5 +1,6 @@
 import { Schema } from 'effect'
 import { BrowserAction, DefaultBrowseTarget, DesktopAction } from './computers.js'
+import { DiscordWrite } from './discord.js'
 import { ApprovalId, ConnectionId, PersonSummary, RunId, ThreadId } from './identity.js'
 
 /**
@@ -25,6 +26,16 @@ export const ActionTarget = Schema.TaggedUnion({
   Browser: { action: BrowserAction, target: DefaultBrowseTarget },
   /** One pointer or keyboard action on the Computer's desktop. */
   Desktop: { action: DesktopAction },
+  /**
+   * A message Vivid's own Discord bot writes in a server the Person connected. `account` and
+   * `channel` are how the Person knows them ("Discord (Proxi Consult)", "#dev"), for the card.
+   */
+  Discord: {
+    connectionId: ConnectionId,
+    account: Schema.String,
+    channel: Schema.String,
+    write: DiscordWrite,
+  },
 })
 export type ActionTarget = typeof ActionTarget.Type
 
