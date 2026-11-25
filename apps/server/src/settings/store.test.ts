@@ -23,13 +23,11 @@ describe.skipIf(!testDatabaseConfigured)('Settings persistence', () => {
         expect(yield* store.get(personId)).toMatchObject({
           theme: 'system',
           timezone: 'UTC',
-          notify: true,
           egress: false,
         })
         const preferences = yield* store.patch(personId, {
           theme: 'dark',
           timezone: 'Africa/Lagos',
-          notify: false,
           egress: true,
         })
         expect(yield* store.setAppearance(personId, appearance)).toEqual(appearance)
@@ -37,7 +35,6 @@ describe.skipIf(!testDatabaseConfigured)('Settings persistence', () => {
         expect(yield* store.patch(personId, { theme: 'light' })).toMatchObject({
           theme: 'light',
           timezone: 'Africa/Lagos',
-          notify: false,
           egress: true,
         })
         expect(

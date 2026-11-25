@@ -14,7 +14,6 @@ import {
 } from '@vivid/contracts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
 import { announce, Topic } from '../live/changes.ts'
-import { settingsTable } from '../settings/tables.ts'
 import { notifications } from '../notifications/tables.ts'
 import { Push } from '../push/delivery.ts'
 import { PushTargets } from '../push/targets.ts'
@@ -33,12 +32,6 @@ export const oweNotice = Effect.fn('Notifier.owe')(function* (input: {
   return yield* database
     .transaction((tx) =>
       Effect.gen(function* () {
-        const rows = yield* tx
-          .select({ notify: settingsTable.notify })
-          .from(settingsTable)
-          .where(eq(settingsTable.personId, notice.personId))
-          .limit(1)
-        if (rows[0] !== undefined && !rows[0].notify) return false
         const now = yield* Clock.currentTimeMillis
         const inserted = yield* tx
           .insert(notifications)
