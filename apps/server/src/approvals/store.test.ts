@@ -646,7 +646,7 @@ layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
             )
             const store = yield* ApprovalStore
             const action = ProposedAction.make({ ...test.connectionAction, effect: 'read' })
-            const approval = yield* store.raise(test.companyVivid, action, unbound)
+            const approval = yield* store.raise(test.companyVivid, action, test.bound)
             const result = yield* Effect.result(
               store.decide(test.member, {
                 id: approval.id,

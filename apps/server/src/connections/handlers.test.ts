@@ -560,10 +560,12 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         expect((yield* store.get(ownerActor, step.connection.id)).status).toBe(
           'needs-authorization',
         )
+        // The generation an Approval raised before the removal would have been bound to.
+        const generation = yield* generationOf(step.connection.id)
         yield* store.remove(ownerActor, step.connection.id)
         const calls = yield* Ref.get(probe.calls)
         const outcome = yield* connectionRunner({
-          connectionGeneration: yield* generationOf(step.connection.id),
+          connectionGeneration: generation,
           person: ownerActor.person,
           workspace: ownerActor.workspace,
           target: ActionTarget.cases.Connection.make({

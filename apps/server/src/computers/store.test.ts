@@ -1015,12 +1015,15 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
             .set({ state: 'stopped', finishedAt: 1 })
             .where(eq(runs.id, browser.runId)),
         )
-        const settled = yield* store.decide(browser.test.personal, {
-          id: approval.id,
-          digest: approval.digest,
-          decision: ApprovalDecision.cases.AllowOnce.make({}),
-        })
-        expect(settled.state._tag).toBe('Failed')
+        // The claim sees the stopped Run and closes the ask as changed before anything runs.
+        const refused = yield* Effect.flip(
+          store.decide(browser.test.personal, {
+            id: approval.id,
+            digest: approval.digest,
+            decision: ApprovalDecision.cases.AllowOnce.make({}),
+          }),
+        )
+        expect(refused._tag).toBe('ApprovalChanged')
         expect(yield* Queue.size(browser.requests)).toBe(0)
       }).pipe(Effect.scoped, (program) => scopedCase(personBrowserLayer, program, 'fresh')),
     )
