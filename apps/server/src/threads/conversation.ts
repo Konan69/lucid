@@ -97,6 +97,19 @@ export const Admitted = Schema.Struct({
 })
 export interface Admitted extends Schema.Schema.Type<typeof Admitted> {}
 
+/** Old receipts have no tag on disk. Keep their shape readable until the cutover maps them. */
+export const StoredReceipt = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.tagDefaultOmit('Legacy'),
+    runId: RunId,
+    offset: Schema.String,
+    incarnation: Schema.String,
+  }),
+  Schema.Struct({ _tag: Schema.tagDefaultOmit('Pi'), ...Admitted.fields }),
+]).pipe(Schema.toTaggedUnion('_tag'))
+export type StoredReceipt = typeof StoredReceipt.Type
+
+
 export interface ConversationService {
   /**
    * Delivers a server signal and records its Run. Watch events, Approval outcomes and

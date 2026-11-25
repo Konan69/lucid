@@ -29,7 +29,7 @@ import {
   encodeStored,
   type DatabaseInfrastructureError,
 } from '../database/client.ts'
-import { Admitted, StoredRunOrigin } from './conversation.ts'
+import { Admitted, StoredReceipt, StoredRunOrigin } from './conversation.ts'
 import { runs, threads } from './tables.ts'
 import { summaryFor } from './wire.ts'
 
@@ -200,6 +200,7 @@ export class RunStore extends Context.Service<RunStore, RunStoreService>()('vivi
 type DatabaseService = Database['Service']
 
 const decodeReceipt = decodeStored(Admitted, 'Run admission receipt')
+const decodeStoredReceipt = decodeStored(StoredReceipt, 'Run admission receipt')
 const encodeReceipt = encodeStored(Admitted, 'Run admission receipt')
 const decodeOrigin = decodeStored(StoredRunOrigin, 'Run origin')
 
@@ -266,9 +267,12 @@ const toRun = Effect.fn('RunStore.toRun')(function* (
   summaries: ReadonlyMap<PersonId, PersonSummary>,
 ) {
   const person = yield* summaryFor(summaries, row.personId)
-  const receipt = row.receipt === null ? undefined : yield* decodeReceipt(row.receipt)
+  const receipt = row.receipt === null ? undefined : yield* decodeStoredReceipt(row.receipt)
   return Run.make({
-    submissionId: receipt === undefined ? undefined : String(receipt.submissionId),
+    submissionId:
+      receipt === undefined
+        ? undefined
+        : StoredReceipt.match(receipt, { Legacy: () => undefined, Pi: (pi) => String(pi.submissionId) }),
     id: row.id,
     threadId: row.threadId,
     turn: row.turn,
@@ -439,18 +443,18 @@ const makeEnd = (database: DatabaseService) =>
     )
   })
 
-/** Receiptless reservations have no runtime identity to observe after a server crash.
- * The cutover importer carries working legacy Runs; only saved Pi receipts resume here. */
+/** Receiptless and unmapped legacy work have no Pi identity to observe after a server crash.
+ * End them once as Unknown; only mapped Pi receipts resume observation. */
 const makeWorking = Effect.fn('RunStore.working')(function* (database: DatabaseService) {
   const rows = yield* database.run(database.select().from(runs).where(eq(runs.state, 'working')))
   const resumed = yield* Effect.forEach(
     rows,
     Effect.fn('RunStore.resume')(function* (run) {
-      if (run.receipt === null) {
+      const receipt = run.receipt === null ? undefined : yield* decodeStoredReceipt(run.receipt)
+      if (receipt === undefined || StoredReceipt.guards.Legacy(receipt)) {
         yield* makeEnd(database)(run.id, RunEnding.cases.Unknown.make({}))
         return []
       }
-      yield* decodeReceipt(run.receipt)
       return [{ id: run.id, threadId: run.threadId, personId: run.personId }]
     }),
   )
