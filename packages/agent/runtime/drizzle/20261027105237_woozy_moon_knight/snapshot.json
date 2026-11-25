@@ -1,9 +1,9 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "eb608276-7f94-4c48-807b-c3f1e9094279",
+  "id": "8f2a7dae-a3ed-4fab-bb23-c8c94235fca0",
   "prevIds": [
-    "1972df48-78f2-4216-8570-9e30555511cb"
+    "56be2a13-3ddf-4ec2-a936-6b525e7fb5f0"
   ],
   "ddl": [
     {
@@ -1681,7 +1681,7 @@
       "table": "submissions"
     },
     {
-      "value": "\"status\" IN ('pending', 'running', 'waiting', 'completing', 'terminal')",
+      "value": "\"status\" IN ('pending', 'running', 'waiting', 'sleeping', 'completing', 'terminal')",
       "name": "tasks_status",
       "entityType": "checks",
       "schema": "runtime",

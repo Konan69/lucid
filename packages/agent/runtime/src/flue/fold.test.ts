@@ -3,6 +3,7 @@ import { PersonId, ThreadId } from '@vivid/contracts'
 import { ConfigProvider, Context, Effect, Layer, Option, Result, type Schema } from 'effect'
 import { databaseConfigured, disposableDatabase } from '../../tests/database.ts'
 import { query } from '../../tests/stores.ts'
+import { settingsLayer } from '../settings.ts'
 import { FlueSource, flueSourceLayer } from './source.ts'
 import {
   AnswerMissing,
@@ -100,7 +101,18 @@ const folded = Effect.fn('FlueFoldTest.read')(function* (
   const context = yield* Layer.build(
     flueSourceLayer.pipe(
       Layer.provide(
-        ConfigProvider.layer(ConfigProvider.fromUnknown({ VIVID_FLUE_DATABASE_URL: database })),
+        settingsLayer.pipe(
+          Layer.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromUnknown({
+                DATABASE_URL: database,
+                VIVID_MEMORY_DIR: '/unused',
+                VIVID_RUNTIME_TOKEN: 'fixture-runtime-token',
+                VIVID_SERVER_URL: 'http://server.invalid',
+              }),
+            ),
+          ),
+        ),
       ),
     ),
   )

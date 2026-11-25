@@ -86,7 +86,7 @@ built or run since the move to Pi Durable.
 
 1. Stop the Flue runtime and application server. Import before the Pi runtime first serves.
 2. Run `pnpm --filter @vivid/agent-runtime db:migrate` against the target `DATABASE_URL`.
-3. Set `VIVID_FLUE_DATABASE_URL` to the old Flue database and supply the runtime settings above.
+3. Supply the runtime settings above. `DATABASE_URL` must contain Flue's tables beside the runtime schema.
 4. Run `pnpm --filter @vivid/agent-runtime import:flue`. Require zero failed Threads before proceeding.
 5. Run the server's old-Run cutover command, then start Pi and the application server.
 
@@ -99,5 +99,5 @@ A conversation created by the runtime fails with `created by the runtime before 
 Every import also upserts `runtime.imported_submissions(person_id, flue_submission_id,
 submission_id)` from committed Pi receipts in the current Thread conversations. The server reads
 this output to rewrite old Runs. If the process stops between import and mapping, rerun the import
-or run `pnpm --filter @vivid/agent-runtime import:flue --map`. Mapping alone needs no Flue database.
+or run `pnpm --filter @vivid/agent-runtime import:flue --map`. Mapping alone does not read Flue tables.
 Both commands take the runtime's exclusive store authority, so neither runs while Pi serves.

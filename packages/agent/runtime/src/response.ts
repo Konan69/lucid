@@ -16,7 +16,7 @@ import {
   type SubmissionRecord,
   type Tx,
 } from '@earendil-works/pi-durable'
-import { RuntimeSettlement, RuntimeSubmissionId } from '@vivid/contracts'
+import { RuntimeSettlement, RuntimeSubmissionId, textOf, type Worded } from '@vivid/contracts'
 import { Effect, Option, Schema } from 'effect'
 import { replyRecord } from './recovery.ts'
 import { runInputs } from './deliveries.ts'
@@ -163,9 +163,9 @@ const ownEntries = (entries: ReadonlyArray<EntryRecord>, own: Option.Option<Read
  * between the first delivery's entry and the answer counts towards usage, failed attempts
  * included, as they do in Pi's own usage ledger. `own` names the run's deliveries when there is no answer to stop at.
  *
- * `reply` is the response's words as main's `readSubmissionReply` gave them (Flue 2.2.2
- * `replyFromSnapshot`): every text part of the response, across all its model turns, joined by
- * a blank line. Tool calls and results are not words.
+ * `reply` quotes only the last assistant message, as main's settled notices and channel replies
+ * do. Its text and thinking become the contract's parts before `textOf` reads the words, so
+ * thinking mid-sentence follows the same rule as the clients. Earlier tool steps are not quoted.
  */
 const measure = Effect.fn('Response.measure')(function* (
   conversation: Conversation,
@@ -184,14 +184,18 @@ const measure = Effect.fn('Response.measure')(function* (
   const steps = messages.filter(
     (message) => message.stopReason !== 'error' && message.stopReason !== 'aborted',
   )
+  const final = steps.at(-1)
   return {
-    reply: steps
-      .flatMap((message) =>
-        message.content.flatMap((part) =>
-          part.type === 'text' && part.text.length > 0 ? [part.text] : [],
-        ),
-      )
-      .join('\n\n'),
+    reply: textOf({
+      parts: (final === undefined ? [] : final.content).flatMap(
+        (part): Worded['parts'][number][] => {
+          if (part.type === 'text') return [{ type: 'text', text: part.text, state: 'done' }]
+          if (part.type === 'thinking')
+            return [{ type: 'reasoning', text: part.thinking, state: 'done' }]
+          return []
+        },
+      ),
+    }),
     startedAt: opened === undefined ? Option.none<number>() : Option.some(opened.timestamp),
     model: Option.map(
       Option.fromUndefinedOr(messages.at(-1)),

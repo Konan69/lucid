@@ -39,8 +39,8 @@ const print = (line: Report) => Console.log(JSON.stringify(line))
  * settings, models, skills and product client, and closed when the run ends. Unlike a serving
  * runtime it never calls `resume()`, so no unfinished reply in a store starts running here.
  *
- * It needs the runtime's settings (`settings.ts`) and `VIVID_FLUE_DATABASE_URL`, the database to
- * read Flue's conversations from, which is only ever read.
+ * It needs the runtime's settings (`settings.ts`). Flue's tables are read from the same
+ * `DATABASE_URL` as the runtime stores; the source connection is read-only.
  */
 const run = Effect.fn('Flue.import')(function* () {
   const scope = yield* Effect.scope

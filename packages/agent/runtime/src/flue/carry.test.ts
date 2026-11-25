@@ -4,8 +4,8 @@ import * as NodeURL from 'node:url'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { describe, expect, it } from '@effect/vitest'
 import { ConversationState, ThreadId } from '@vivid/contracts'
-import { ConfigProvider, Effect, Exit, Layer, Option, Result, Schema, Scope } from 'effect'
-import { databaseConfigured, disposableDatabase } from '../../tests/database.ts'
+import { Effect, Exit, Layer, Option, Redacted, Result, Schema, Scope } from 'effect'
+import { databaseConfigured } from '../../tests/database.ts'
 import { start, world, type World } from '../../tests/process.ts'
 import {
   ada,
@@ -17,6 +17,7 @@ import {
   type Runtime,
 } from '../../tests/requests.ts'
 import { query } from '../../tests/stores.ts'
+import { RuntimeSettings } from '../settings.ts'
 import { ensureConversation } from '../threads.ts'
 import { carry, Landed } from './carry.ts'
 import { fold, Item, type Carried } from './fold.ts'
@@ -263,8 +264,7 @@ const insertStream = Effect.fn('FlueCarryTest.insertStream')(function* (
 })
 
 /** A source database shaped like production's: Flue's tables beside the product's Threads. */
-const sourceDatabase = Effect.fn('FlueCarryTest.source')(function* () {
-  const source = yield* disposableDatabase()
+const sourceDatabase = Effect.fn('FlueCarryTest.source')(function* (source: string) {
   for (const statement of SOURCE_TABLES) yield* query(source, statement)
   const log = [[BIRTH], ...REPLY_BATCHES].map((batch) => JSON.stringify(batch))
   yield* insertStream(source, KEPT, log)
@@ -705,7 +705,7 @@ const entryCount = (database: string) =>
   )
 
 /** Drive the shipped CLI with fixture-only settings, including its nonzero partial-failure exit. */
-const importFlue = (given: World, source: string, args: ReadonlyArray<string>) =>
+const importFlue = (given: World, args: ReadonlyArray<string>) =>
   Effect.callback<{ code: number | null; output: string }, Error>((resume) => {
     const child = NodeChildProcess.spawn(
       NodeProcess.execPath,
@@ -715,7 +715,6 @@ const importFlue = (given: World, source: string, args: ReadonlyArray<string>) =
         env: {
           ...NodeProcess.env,
           DATABASE_URL: given.database,
-          VIVID_FLUE_DATABASE_URL: source,
           VIVID_MEMORY_DIR: given.notes,
           VIVID_RUNTIME_TOKEN: 'fixture-runtime-token',
           VIVID_SERVER_URL: 'http://server.invalid',
@@ -751,7 +750,7 @@ describe.skipIf(!databaseConfigured)('carrying Flue history into a Person’s st
       Effect.scoped(
         Effect.gen(function* () {
           const given = yield* world()
-          const source = yield* sourceDatabase()
+          const source = yield* sourceDatabase(given.database)
           yield* query(source, 'UPDATE vivid_conversations SET person_id = $1 WHERE id = $2', [
             ada,
             OTHER,
@@ -807,7 +806,7 @@ describe.skipIf(!databaseConfigured)('carrying Flue history into a Person’s st
         VALUES ($1, 3, 'w', 1, 3, $2)`,
             [`agents/vivid/${KEPT}`, JSON.stringify(added)],
           )
-          const imported = yield* importFlue(given, source, [])
+          const imported = yield* importFlue(given, [])
           expect(imported.code).toBe(1)
           expect(imported.output).toContain(
             JSON.stringify({
@@ -880,7 +879,7 @@ describe.skipIf(!databaseConfigured)('carrying Flue history into a Person’s st
             [mapping.person_id, mapping.flue_submission_id, mapping.submission_id],
           )
         const entries = yield* entryCount(given.database)
-        const repaired = yield* importFlue(given, 'postgres://unreachable.invalid/flue', ['--map'])
+        const repaired = yield* importFlue(given, ['--map'])
         expect(repaired.code, repaired.output).toBe(0)
         expect(repaired.output).toContain('"mapped":2')
         expect(
@@ -1255,13 +1254,24 @@ describe.skipIf(!databaseConfigured)('carrying Flue history into a Person’s st
   )
 
   it.effect('carries only Threads the product still has, under the creator it records', () =>
-    scenario((_given, runtime) =>
+    scenario((given, runtime) =>
       Effect.gen(function* () {
-        const source = yield* sourceDatabase()
+        yield* sourceDatabase(given.database)
         const reading = yield* Layer.build(
           flueSourceLayer.pipe(
             Layer.provide(
-              ConfigProvider.layer(ConfigProvider.fromUnknown({ VIVID_FLUE_DATABASE_URL: source })),
+              Layer.succeed(
+                RuntimeSettings,
+                RuntimeSettings.of({
+                  notesDirectory: given.notes,
+                  databaseUrl: Redacted.make(given.database),
+                  token: Redacted.make('fixture-runtime-token'),
+                  serverUrl: new URL('http://server.invalid'),
+                  idleMillis: IDLE,
+                  host: '127.0.0.1',
+                  port: 0,
+                }),
+              ),
             ),
           ),
         )

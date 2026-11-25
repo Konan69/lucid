@@ -2,6 +2,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import {
   fauxAssistantMessage,
   fauxText,
+  fauxThinking,
   fauxToolCall,
   type FauxResponseFactory,
 } from '@earendil-works/pi-ai/providers/faux'
@@ -596,7 +597,7 @@ describe.skipIf(!databaseConfigured)('the runtime over HTTP', () => {
   )
 
   it.effect(
-    'gives the reply every word of the response, and asks the model to think as main did',
+    'quotes only the final answer whole across thinking, and asks the model to think as main did',
     () =>
       scenario((given, runtime) =>
         Effect.gen(function* () {
@@ -616,13 +617,17 @@ describe.skipIf(!databaseConfigured)('the runtime over HTTP', () => {
           }
           given.faux.setResponses([
             working,
-            fauxAssistantMessage([fauxText('Sent it.'), fauxText('Anything else?')]),
+            fauxAssistantMessage([
+              fauxText('Sent'),
+              fauxThinking('The delivery succeeded.'),
+              fauxText(' it.'),
+            ]),
           ])
           const receipt = yield* admit(runtime, ada, delivery('thread-1', 'key-1'))
           expect(yield* settled(runtime, ada, 'thread-1', receipt.submissionId)).toEqual(
             RuntimeSettlement.cases.Done.make({
               answeredBy: receipt.submissionId,
-              reply: 'I found the report.\n\nSent it.\n\nAnything else?',
+              reply: 'Sent it.',
               toolCalls: 1,
             }),
           )

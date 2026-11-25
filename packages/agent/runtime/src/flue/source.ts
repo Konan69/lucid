@@ -1,10 +1,11 @@
 import { PersonId, ThreadId } from '@vivid/contracts'
-import { Config, Context, Effect, Layer, Option, Redacted, Schema } from 'effect'
+import { Context, Effect, Layer, Option, Redacted, Schema } from 'effect'
 import { Pool, type PoolClient } from 'pg'
+import { RuntimeSettings } from '../settings.ts'
 
 /**
- * Where the old conversations are read: the product database production's Vivid ran Flue 2.2.2
- * on (`VIVID_FLUE_DATABASE_URL`). Flue kept every Thread's conversation there as an event log
+ * Where the old conversations are read: the runtime's own database (`DATABASE_URL`), where
+ * production's Vivid ran Flue 2.2.2. Flue kept every Thread's conversation there as an event log
  * (`flue_conversation_streams`, `flue_conversation_stream_batches`, `flue_attachments`, created by
  * `@flue/postgres` 2.2.2), beside the product's own Thread table (`vivid_conversations`, the
  * server's `threads` in `apps/server/src/threads/tables.ts`). Nothing here writes: every
@@ -195,11 +196,11 @@ const idleFailure = (_cause: Error) => {}
 export const flueSourceLayer = Layer.effect(
   FlueSource,
   Effect.gen(function* () {
-    const url = yield* Config.Redacted('VIVID_FLUE_DATABASE_URL')
+    const settings = yield* RuntimeSettings
     const pool = yield* Effect.acquireRelease(
       Effect.sync(() =>
         new Pool({
-          connectionString: Redacted.value(url),
+          connectionString: Redacted.value(settings.databaseUrl),
           max: 1,
           options: '-c default_transaction_read_only=on',
         }).on('error', idleFailure),
