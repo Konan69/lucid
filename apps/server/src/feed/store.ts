@@ -91,10 +91,7 @@ const makeStore = (database: Database['Service']) => {
     )
   })
 
-  /**
-   * Only a persisted card can be seen or put away. A derived Feed id without a card row, as in a
-   * Conversation, returns NotFound for either mark rather than inventing acknowledgement of an ask.
-   */
+  /** The Person looked at a card, or dealt with it. Only their own card moves. */
   const mark = Effect.fn('FeedStore.mark')(function* (
     person: PersonId,
     request: typeof MarkFeedCardRequest.Type,

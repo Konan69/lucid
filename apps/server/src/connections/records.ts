@@ -45,7 +45,7 @@ export const storedRowSchema = createSelectSchema(connections, {
   references: Schema.Union([ExecutorReferences, LegacyExecutorReferences]),
   returnsTo: SignInSurface,
   status: Schema.Literals(['ready', 'needs-authorization', 'failed']),
-}).mapFields(({ label: _retired, ...fields }) => fields)
+}).mapFields(({ label: _retired, removedAt: _removed, ...fields }) => fields)
 const rowSchema = storedRowSchema.mapFields((fields) => ({
   ...fields,
   references: ExecutorReferences,
@@ -101,7 +101,11 @@ const usable = (actor: Actor) => {
 export const listRecords = Effect.fn('Connections.listRecords')(function* (actor: Actor) {
   const database = yield* Database
   const rows = yield* database.run(
-    database.select().from(connections).where(usable(actor)).orderBy(desc(connections.createdAt)),
+    database
+      .select()
+      .from(connections)
+      .where(and(usable(actor), isNull(connections.removedAt)))
+      .orderBy(desc(connections.createdAt)),
   )
   return yield* Effect.forEach(rows, decodeRow)
 })
@@ -118,7 +122,7 @@ export const getRecord = Effect.fn('Connections.getRecord')(function* (
     database
       .select()
       .from(connections)
-      .where(and(eq(connections.id, id), scope))
+      .where(and(eq(connections.id, id), scope, isNull(connections.removedAt)))
       .limit(1),
   )
   const row = rows[0]
@@ -149,6 +153,7 @@ export const callbackTrip = Effect.fn('Connections.callbackTrip')(function* (sta
       .from(connections)
       .where(
         and(
+          isNull(connections.removedAt),
           eq(connections.status, 'needs-authorization'),
           sql`${connections.references}->>'_tag' = 'OAuthSigningIn'`,
           sql`${connections.references}->>'stateHash' = ${stateHash}`,
@@ -266,6 +271,7 @@ export const saveState = Effect.fn('Connections.saveState')(function* (
       .where(
         and(
           eq(connections.id, row.id),
+          isNull(connections.removedAt),
           eq(connections.personId, row.personId),
           eq(connections.status, row.status),
           eq(connections.updatedAt, row.updatedAt),
@@ -302,7 +308,13 @@ export const saveIdentity = Effect.fn('Connections.saveIdentity')(function* (
     database
       .update(connections)
       .set({ identity })
-      .where(and(eq(connections.id, row.id), eq(connections.updatedAt, row.updatedAt)))
+      .where(
+        and(
+          eq(connections.id, row.id),
+          eq(connections.updatedAt, row.updatedAt),
+          isNull(connections.removedAt),
+        ),
+      )
       .returning(),
   )
   if (rows.length === 0)
@@ -333,6 +345,7 @@ export const saveName = Effect.fn('Connections.saveName')(function* (
       .where(
         and(
           eq(connections.id, row.id),
+          isNull(connections.removedAt),
           eq(connections.personId, row.personId),
           row.companyId === null
             ? isNull(connections.companyId)
@@ -368,6 +381,7 @@ export const retainTrip = Effect.fn('Connections.retainTrip')(function* (
       .where(
         and(
           eq(connections.id, row.id),
+          isNull(connections.removedAt),
           row.companyId === null
             ? isNull(connections.companyId)
             : eq(connections.companyId, row.companyId),

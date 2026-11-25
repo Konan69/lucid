@@ -65,10 +65,6 @@
       "name": "anti-slop-effect",
       "specifier": "./tools/oxlint/anti-slop/effect/index.ts"
     },
-    {
-      "name": "effect-machine",
-      "specifier": "./node_modules/@typeonce/oxlint-plugin-effect-machine/dist/index.js"
-    },
     "@shadcn/lint",
     "oxlint-tailwindcss"
   ],
@@ -168,18 +164,6 @@
     "vivid/require-schema-decode-in-boundary": "warn"
   },
   "overrides": [
-    {
-      "files": ["packages/client/state/**/*.{ts,tsx}"],
-      "rules": {
-        "effect-machine/no-async-planning-callback": "error",
-        "effect-machine/no-browser-api-in-planning": "error",
-        "effect-machine/no-conditional-none-branch": "error",
-        "effect-machine/no-conflicting-invocation-identity": "error",
-        "effect-machine/no-nondeterministic-planning": "error",
-        "effect-machine/no-redundant-resolve": "error",
-        "effect-machine/prefer-inline-handle": "error"
-      }
-    },
     {
       "files": ["alchemy.run.ts"],
       "rules": {

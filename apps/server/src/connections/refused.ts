@@ -1,4 +1,4 @@
-import { inArray, like, or } from 'drizzle-orm'
+import { and, isNull, inArray, like, or } from 'drizzle-orm'
 import { Effect, Layer } from 'effect'
 import { Database } from '../database/client.ts'
 import { refusedService, refusedServices, refusedHosts } from './curation.ts'
@@ -19,9 +19,12 @@ export const removeRefused = Effect.fn('Connections.removeRefused')(function* ()
       .select()
       .from(connections)
       .where(
-        or(
-          inArray(connections.service, refusedServices),
-          ...refusedHosts.map((host) => like(connections.service, `url:%${host}%`)),
+        and(
+          isNull(connections.removedAt),
+          or(
+            inArray(connections.service, refusedServices),
+            ...refusedHosts.map((host) => like(connections.service, `url:%${host}%`)),
+          ),
         ),
       ),
   )

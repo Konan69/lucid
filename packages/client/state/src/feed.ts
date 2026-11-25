@@ -200,9 +200,8 @@ export const pressKey = (
 export const seenReports = () => {
   const reported = new Map<FeedCardId, string>()
   return {
-    /** Derived asks have no persisted post to mark. Reserve only posted cards before delivery. */
+    /** Reserve before delivery so concurrent visibility events cannot send twice. */
     claim: (item: Waiting): boolean => {
-      if (item.post === null) return false
       const post = revisionOf(item)
       if (reported.get(item.card) === post) return false
       reported.set(item.card, post)
@@ -239,21 +238,11 @@ export const askedWords = (item: Waiting): string =>
 const Delivery = Schema.Struct({ card: FeedCardId, thread: ThreadId, pressed: Pressed })
 export interface Delivery extends Schema.Schema.Type<typeof Delivery> {}
 
-/** Revision and delivery key must both match, including after a state is left and re-entered. */
-const sameDelivery = Schema.toEquivalence(Delivery)
-
 /** A send was refused or its receipt was lost. Retrying keeps its delivery identity. */
 export class SendRefused extends Schema.TaggedError<SendRefused>()(
   'FeedSendRefused',
   { card: FeedCardId },
   { title: 'FeedSendRefused' },
-) {}
-
-/** A queued failure keeps the delivery it actually answered, rather than the current state's. */
-class DeliveryRefused extends Schema.TaggedError<DeliveryRefused>()(
-  'FeedDeliveryRefused',
-  { delivery: Delivery },
-  { title: 'FeedDeliveryRefused' },
 ) {}
 
 /** A surface owns how words are delivered and how a card is marked done. */
@@ -307,24 +296,14 @@ const deliveryOf = (
   }),
 })
 
-/**
- * Effect Machine 0.46 can queue an outcome before re-entry and handle it afterwards. Both
- * receipts carry their delivery so a replaced press cannot complete the current Sending state.
- */
+/** The invoked effect owns completion and failure; handlers never write a result after a wait. */
 export const PressMachine = Machine.make({
   id: 'FeedPress',
   root: PressStates,
   events: PressEvents,
-  branches: {
-    pressed: { sending: { target: 'Sending' } },
-    delivered: { sent: { target: 'Sent' }, unsent: { target: 'Unsent' } },
-  },
+  branches: { pressed: { sending: { target: 'Sending' } } },
   effects: {
-    send: (delivery: Delivery) =>
-      Sending.use((service) => service.send(delivery)).pipe(
-        Effect.as(delivery),
-        Effect.mapError(() => new DeliveryRefused({ delivery })),
-      ),
+    send: (delivery: Delivery) => Sending.use((service) => service.send(delivery)),
   },
 }).handle({
   initial: { target: 'Idle' },
@@ -339,23 +318,15 @@ export const PressMachine = Machine.make({
         src: 'send',
         input: ({ state }) => ({ card: state.card, thread: state.thread, pressed: state.pressed }),
         onDone: {
-          branches: 'delivered',
-          declinable: true,
-          resolve: (context) =>
-            sameDelivery(context.output, context.state)
-              ? context.select.sent({ data: context.output })
-              : context.decline(),
+          target: 'Sent',
+          data: ({ state }) => ({ card: state.card, thread: state.thread, pressed: state.pressed }),
         },
         onFailure: {
-          branches: 'delivered',
-          declinable: true,
-          resolve: (context) =>
-            sameDelivery(context.error.delivery, context.state)
-              ? context.select.unsent({ data: context.error.delivery })
-              : context.decline(),
+          target: 'Unsent',
+          data: ({ state }) => ({ card: state.card, thread: state.thread, pressed: state.pressed }),
         },
       },
-      // A newer post replaces this invocation; queued receipts still need the identity check above.
+      // A newer post replaces this invocation. A receipt for the old post then has nowhere to land.
       on: {
         Press: {
           branches: 'pressed',

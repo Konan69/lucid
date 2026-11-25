@@ -531,11 +531,6 @@ const rememberListCatalog = Effect.fn('Connections.rememberListCatalog')(
     ),
 )
 
-type ConnectionAuthority = Executor | Database | Audit | ServerConfig | Changes
-type ProvideAuthority = <A, E, R>(
-  effect: Effect.Effect<A, E, R>,
-) => Effect.Effect<A, E, Exclude<R, ConnectionAuthority>>
-
 /** Capture authority once; the adapter owns discovery and catalog cache lifetimes. */
 const makeStore = Effect.fn('Connections.makeStore')(function* () {
   const executor: ExecutorService = yield* Executor
@@ -549,7 +544,9 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     ServerConfig,
     Changes,
   )(yield* Effect.context<Executor | Database | Audit | ServerConfig | Changes>())
-  const provide: ProvideAuthority = (effect) => effect.pipe(Effect.provide(dependencies))
+  const provide = <A, E>(
+    effect: Effect.Effect<A, E, Executor | Database | Audit | ServerConfig | Changes>,
+  ) => effect.pipe(Effect.provide(dependencies))
   const catalogServices = Effect.fn('Connections.catalog')(function* () {
     return (yield* executor.catalog.pipe(Effect.mapError(executorFailure))).map(catalogService)
   })
@@ -632,7 +629,9 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
 /** Registration owns allocation and its failure translation; management owns existing accounts. */
 function makeRegistration(input: {
   readonly executor: ExecutorService
-  readonly provide: ProvideAuthority
+  readonly provide: <A, E>(
+    effect: Effect.Effect<A, E, Executor | Database | Audit | ServerConfig | Changes>,
+  ) => Effect.Effect<A, E>
   readonly catalogServices: () => Effect.Effect<
     ReadonlyArray<Service>,
     ReturnType<typeof executorFailure>
@@ -857,7 +856,9 @@ const resumeExisting = Effect.fn('Connections.resumeExistingState')(function* (
 const makeManagement = (input: {
   readonly executor: ExecutorService
   readonly database: typeof Database.Service
-  readonly provide: ProvideAuthority
+  readonly provide: <A, E>(
+    effect: Effect.Effect<A, E, Executor | Database | Audit | ServerConfig | Changes>,
+  ) => Effect.Effect<A, E>
   readonly get: (
     actor: Actor,
     id: ConnectionId,

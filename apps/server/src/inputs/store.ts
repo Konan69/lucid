@@ -33,7 +33,6 @@ import {
   type DatabaseInfrastructureError,
 } from '../database/client.ts'
 import { changed, Changes, Topic } from '../live/changes.ts'
-import { announceFeed } from '../feed/changes.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { readableBy, requireThread } from '../threads/access.ts'
 import { notifiesFrom } from '../threads/place.ts'
@@ -220,23 +219,19 @@ const ask = Effect.fn('Inputs.ask')(function* (actor: Actor, request: AskInputRe
     return yield* new NotFound({ message: 'Thread not found in workspace' })
   const database = yield* Database
   const questions = yield* encodeQuestions(request.questions)
-  const rows = yield* database.transaction((tx) =>
-    Effect.gen(function* () {
-      const written = yield* tx
-        .insert(inputRequests)
-        .values({
-          id: NodeCrypto.randomUUID(),
-          threadId,
-          personId: actor.person.id,
-          runId: null,
-          questions,
-          status: 'waiting',
-          createdAt: yield* Clock.currentTimeMillis,
-        })
-        .returning()
-      if (written.length > 0) yield* announceFeed(tx, [threadId])
-      return written
-    }),
+  const rows = yield* database.run(
+    database
+      .insert(inputRequests)
+      .values({
+        id: NodeCrypto.randomUUID(),
+        threadId,
+        personId: actor.person.id,
+        runId: null,
+        questions,
+        status: 'waiting',
+        createdAt: yield* Clock.currentTimeMillis,
+      })
+      .returning(),
   )
   const input = yield* returned(yield* view(rows), 'Input request')
   yield* changed(actor, Topic.thread(threadId))
@@ -280,23 +275,19 @@ const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: Answ
       attributes: { request: request.id },
     }),
   })
-  const updated = yield* database.transaction((tx) =>
-    Effect.gen(function* () {
-      const written = yield* tx
-        .update(inputRequests)
-        .set({
-          status: 'answered',
-          answeredBy: actor.person.id,
-          answers,
-          settledAt: now,
-          signal: yield* encodeSignal(signal),
-          signalDueAt: now,
-        })
-        .where(and(eq(inputRequests.id, request.id), eq(inputRequests.status, 'waiting')))
-        .returning()
-      if (written.length > 0) yield* announceFeed(tx, [row.threadId])
-      return written
-    }),
+  const updated = yield* database.run(
+    database
+      .update(inputRequests)
+      .set({
+        status: 'answered',
+        answeredBy: actor.person.id,
+        answers,
+        settledAt: now,
+        signal: yield* encodeSignal(signal),
+        signalDueAt: now,
+      })
+      .where(and(eq(inputRequests.id, request.id), eq(inputRequests.status, 'waiting')))
+      .returning(),
   )
   if (updated.length === 0)
     return yield* new Conflict({ message: 'Input request already answered' })
@@ -319,22 +310,18 @@ export const withdrawWaiting = Effect.fn('Inputs.withdrawWaiting')(function* (
   personId: PersonId,
 ) {
   const database = yield* Database
-  const rows = yield* database.transaction((tx) =>
-    Effect.gen(function* () {
-      const written = yield* tx
-        .update(inputRequests)
-        .set({ status: 'withdrawn', settledAt: yield* Clock.currentTimeMillis })
-        .where(
-          and(
-            eq(inputRequests.threadId, threadId),
-            eq(inputRequests.personId, personId),
-            eq(inputRequests.status, 'waiting'),
-          ),
-        )
-        .returning()
-      if (written.length > 0) yield* announceFeed(tx, [threadId])
-      return written
-    }),
+  const rows = yield* database.run(
+    database
+      .update(inputRequests)
+      .set({ status: 'withdrawn', settledAt: yield* Clock.currentTimeMillis })
+      .where(
+        and(
+          eq(inputRequests.threadId, threadId),
+          eq(inputRequests.personId, personId),
+          eq(inputRequests.status, 'waiting'),
+        ),
+      )
+      .returning(),
   )
   const withdrawn = yield* view(rows)
   if (withdrawn.length > 0)

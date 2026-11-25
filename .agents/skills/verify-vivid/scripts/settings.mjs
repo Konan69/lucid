@@ -3,30 +3,19 @@ import * as os from 'node:os'
 import { parseEnv } from 'node:util'
 import { boot } from './process.mjs'
 
-/**
- * Each allowed alias names one Boat sandbox. Boat sets `BOAT_ID` on the box and keeps it across
- * restarts; the hostname changes on every start, so a hostname map went stale whenever a box
- * restarted (all three by 24 October 2026). The production Vivid Computer (`bx_yjj2hakd`) is in
- * no entry, so it is refused like any unknown box. Refresh only when a box is replaced.
- */
+/** These host identities are established over SSH from devbox-pick's allowed aliases. Refresh after replacement. */
 const hosts = {
-  'cloudbox-konan': 'bx_gu65277z',
-  'cloudbox-konan2': 'bx_8b9c35bp',
-  'cloudbox-konan3': 'bx_5suus7qp',
+  'cloudbox-konan': 'box-node-a12c0c06aaf7d4a6',
+  'cloudbox-konan2': 'box-node-0679eca2d05326b3',
+  'cloudbox-konan3': 'box-node-b33a619732667f20',
 }
 export async function host() {
   const devbox = process.env.VIVID_VERIFY_DEVBOX
-  if (!Object.hasOwn(hosts, devbox) || hosts[devbox] !== process.env.BOAT_ID)
+  if (!Object.hasOwn(hosts, devbox) || hosts[devbox] !== os.hostname())
     throw new Error(
-      'Selected devbox does not match this Boat sandbox; production and unknown hosts refused',
+      'Selected devbox does not match the actual host; production and unknown hosts refused',
     )
-  return {
-    devbox,
-    sandbox: process.env.BOAT_ID,
-    hostname: os.hostname(),
-    hostBoot: boot,
-    hostSelection: 'devbox-pick; Boat sandbox id verified',
-  }
+  return { devbox, hostBoot: boot, hostSelection: 'devbox-pick; SSH hostname verified' }
 }
 
 /** Credentials require an explicit file or environment; other tools' auth stores are never read. */

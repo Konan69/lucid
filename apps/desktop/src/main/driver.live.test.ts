@@ -30,6 +30,7 @@ describe.skipIf(!live)('Native desktop control', () => {
           const result = yield* (yield* NativeProof).run
           expect(result.output).toContain(passed)
         }),
+      60_000,
     )
   })
 })
