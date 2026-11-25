@@ -22,6 +22,7 @@ const makeWorld = Effect.fn('ComputerStateTest.world')(function* () {
   const first = path.join(root, 'first')
   const second = path.join(root, 'second')
   yield* fs.makeDirectory(first)
+  yield* fs.makeDirectory(second)
   const archive = yield* Layer.build(directoryArchive(path.join(root, 'archive')))
   const firstHome = yield* Layer.build(localHome(first))
   const secondHome = yield* Layer.build(localHome(second))
@@ -75,6 +76,13 @@ layer(platform)('Computer state', (it) => {
         yield* write(first, '.vivid/restored.json', '{"computerId":"other","revision":9}')
         yield* write(first, '.config/google-chrome/SingletonLock', 'invalid-host:0')
         yield* write(first, '.config/google-chrome/Default/Cache/big', 'junk')
+        yield* write(first, '.config/google-chrome/Default/Service Worker/CacheStorage/x', 'junk')
+        yield* write(first, '.config/google-chrome/Default/Service Worker/ScriptCache/x', 'junk')
+        yield* write(
+          first,
+          '.config/google-chrome/Default/Service Worker/Database/data',
+          'registration',
+        )
         yield* write(first, '.config/google-chrome/Default/GPUCache/big', 'junk')
         yield* write(first, '.config/google-chrome/Crashpad/metrics', 'junk')
         yield* write(first, '.config/google-chrome/Default/Preferences', '{"seconds_missed":0}')
@@ -98,6 +106,19 @@ layer(platform)('Computer state', (it) => {
         expect(yield* fs.exists(path.join(second, '.config/google-chrome/Default/Cache'))).toBe(
           false,
         )
+        expect(
+          yield* fs.exists(
+            path.join(second, '.config/google-chrome/Default/Service Worker/CacheStorage'),
+          ),
+        ).toBe(false)
+        expect(
+          yield* fs.exists(
+            path.join(second, '.config/google-chrome/Default/Service Worker/ScriptCache'),
+          ),
+        ).toBe(false)
+        expect(
+          yield* read(second, '.config/google-chrome/Default/Service Worker/Database/data'),
+        ).toBe('registration')
         expect(yield* fs.exists(path.join(second, '.config/google-chrome/Crashpad'))).toBe(false)
         expect(yield* read(second, '.config/google-chrome/Default/Preferences')).toBe(
           '{"seconds_missed":0}',
@@ -107,30 +128,6 @@ layer(platform)('Computer state', (it) => {
           Option.some(1),
         )
       }),
-  )
-
-  it.effect('service worker registrations keep their scripts and drop CacheStorage', () =>
-    Effect.gen(function* () {
-      const { fs, path, first, second, archive, firstHome, secondHome, write, read } =
-        yield* makeWorld()
-      const serviceWorker = '.config/google-chrome/Default/Service Worker'
-      yield* write(first, `${serviceWorker}/Database/data`, 'registration')
-      yield* write(first, `${serviceWorker}/ScriptCache/script`, 'worker script')
-      yield* write(first, `${serviceWorker}/CacheStorage/response`, 'cached response')
-
-      yield* captureComputer({ computerId }).pipe(
-        Effect.provide(archive),
-        Effect.provide(firstHome),
-      )
-      yield* restoreComputer({ computerId }).pipe(
-        Effect.provide(archive),
-        Effect.provide(secondHome),
-      )
-
-      expect(yield* read(second, `${serviceWorker}/Database/data`)).toBe('registration')
-      expect(yield* read(second, `${serviceWorker}/ScriptCache/script`)).toBe('worker script')
-      expect(yield* fs.exists(path.join(second, `${serviceWorker}/CacheStorage`))).toBe(false)
-    }),
   )
 
   it.effect('a later capture sends only what changed and restore removes what was deleted', () =>
